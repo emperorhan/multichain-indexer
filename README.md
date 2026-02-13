@@ -10,39 +10,43 @@ Go 채널 기반의 4단계 파이프라인과 Node.js gRPC 사이드카로 구�
 
 ## Architecture Overview
 
+> 상세 다이어그램: [`docs/diagrams/indexer_architecture.drawio`](docs/diagrams/indexer_architecture.drawio) (draw.io에서 열기)
+
 ```mermaid
 graph LR
     subgraph external_left [" "]
         RPC["Solana RPC\n(JSON-RPC 2.0)"]
     end
 
-    subgraph go_process ["Go Indexer Process"]
-        COORD["Coordinator\n1 goroutine"]
-        FETCH["Fetcher\nN workers"]
-        NORM["Normalizer\nN workers"]
-        INGEST["Ingester\n1 writer (atomic)"]
+    subgraph go_process ["Go Pipeline Process"]
+        COORD["Coordinator\n1 goroutine · ticker"]
+        FETCH["Fetcher Pool\nN workers (default 2)"]
+        NORM["Normalizer\nN workers (default 2)"]
+        INGEST["Ingester\n1 goroutine · single-writer"]
 
         COORD -- "jobCh\n(buffered)" --> FETCH
         FETCH -- "rawBatchCh\n(buffered)" --> NORM
-        NORM -- "normalizedCh\n(buffered)" --> INGEST
+        NORM -- "normalizedCh\n(BalanceEvents)" --> INGEST
     end
 
-    subgraph sidecar ["Node.js Sidecar"]
-        DECODER["PluginDispatcher"]
-        SPL["SPL Token\nPlugin"]
-        SYS["System\nPlugin"]
-        DECODER --> SPL
-        DECODER --> SYS
+    subgraph sidecar ["Node.js Sidecar · gRPC :50051"]
+        TX_DEC["Transaction Decoder\ninstruction ownership"]
+        DISP["PluginDispatcher\npriority routing"]
+        SPL["generic_spl_token\nSPL Token / Token-2022"]
+        SYS["generic_system\nSystem Program"]
+        TX_DEC --> DISP
+        DISP --> SPL
+        DISP --> SYS
     end
 
     subgraph external_right [" "]
-        PG[("PostgreSQL 16\nbalance_events\n+ JSONB")]
+        PG[("PostgreSQL 16\nbalance_events\n(signed delta) + JSONB")]
         REDIS[("Redis 7\n(future)")]
     end
 
     RPC -. "HTTPS" .-> FETCH
-    NORM -. "gRPC :50051" .-> DECODER
-    INGEST -- "sql.Tx upsert" --> PG
+    NORM -. "gRPC" .-> TX_DEC
+    INGEST -- "Atomic sql.Tx\nupsert + cursor" --> PG
     COORD -. "read config\n& cursors" .-> PG
 ```
 
