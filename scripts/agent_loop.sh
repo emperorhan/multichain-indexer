@@ -25,6 +25,8 @@ AGENT_MAX_AUTO_RETRIES="${AGENT_MAX_AUTO_RETRIES:-2}"
 AGENT_IN_PROGRESS_TIMEOUT_HOURS="${AGENT_IN_PROGRESS_TIMEOUT_HOURS:-6}"
 AGENT_AUTO_CLEANUP_ENABLED="${AGENT_AUTO_CLEANUP_ENABLED:-true}"
 AGENT_DEPRECATE_DUPLICATES_ENABLED="${AGENT_DEPRECATE_DUPLICATES_ENABLED:-true}"
+OMX_SAFE_MODE="${OMX_SAFE_MODE:-true}"
+OMX_FORBIDDEN_FLAGS="${OMX_FORBIDDEN_FLAGS:---madmax,--yolo,--dangerously-bypass-approvals-and-sandbox}"
 AUTONOMY_DRY_RUN="${AUTONOMY_DRY_RUN:-false}"
 AGENT_EXEC_CMD="${AGENT_EXEC_CMD:-}"
 PLANNING_EXEC_CMD="${PLANNING_EXEC_CMD:-scripts/planning_executor.sh}"
@@ -299,6 +301,55 @@ This issue has been re-queued with label \`ready\`."
   done < <(jq -c '.[]' <<<"${issues}")
 }
 
+trim_ws() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "${value}"
+}
+
+first_matching_forbidden_token() {
+  local text="$1"
+  local forbidden_csv="$2"
+  local token
+  local -a tokens=()
+
+  IFS=',' read -r -a tokens <<<"${forbidden_csv}"
+  for token in "${tokens[@]}"; do
+    token="$(trim_ws "${token}")"
+    [ -n "${token}" ] || continue
+    if printf '%s' "${text}" | grep -F -q -- "${token}"; then
+      echo "${token}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+validate_executor_command_policy() {
+  local hit
+
+  if [ "${OMX_SAFE_MODE}" != "true" ]; then
+    return 0
+  fi
+
+  if [ -n "${AGENT_EXEC_CMD}" ] && hit="$(first_matching_forbidden_token "${AGENT_EXEC_CMD}" "${OMX_FORBIDDEN_FLAGS}" || true)"; then
+    if [ -n "${hit}" ]; then
+      log "policy violation: AGENT_EXEC_CMD contains forbidden token '${hit}'"
+      return 1
+    fi
+  fi
+
+  if [ -n "${PLANNING_EXEC_CMD}" ] && hit="$(first_matching_forbidden_token "${PLANNING_EXEC_CMD}" "${OMX_FORBIDDEN_FLAGS}" || true)"; then
+    if [ -n "${hit}" ]; then
+      log "policy violation: PLANNING_EXEC_CMD contains forbidden token '${hit}'"
+      return 1
+    fi
+  fi
+
+  return 0
+}
 list_linked_pr_numbers() {
   local issue_number="$1"
   gh issue view "${issue_number}" \
@@ -580,8 +631,13 @@ create_branch_for_issue() {
     return 0
   fi
 
-  git fetch origin "${BASE_BRANCH}"
-  git checkout -B "${branch}" "origin/${BASE_BRANCH}" >/dev/null
+  if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+    git fetch origin "${branch}"
+    git checkout -B "${branch}" "origin/${branch}" >/dev/null
+  else
+    git fetch origin "${BASE_BRANCH}"
+    git checkout -B "${branch}" "origin/${BASE_BRANCH}" >/dev/null
+  fi
   echo "${branch}"
 }
 
@@ -835,7 +891,6 @@ push_issue_branch() {
   LAST_PUSH_ERROR="${push_output}"
   return 1
 }
-
 handle_push_failure() {
   local issue_number="$1"
   local issue_url="$2"
@@ -924,9 +979,12 @@ process_issue() {
 main() {
   local issue_json processed=0
 
-  log "repo=${REPO} queue=${AGENT_QUEUE_NAME} include=${AGENT_INCLUDE_LABELS:-<none>} exclude=${AGENT_EXCLUDE_LABELS:-<none>} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} retries=${AGENT_MAX_AUTO_RETRIES} stale_timeout_h=${AGENT_IN_PROGRESS_TIMEOUT_HOURS} cleanup=${AGENT_AUTO_CLEANUP_ENABLED} dedupe=${AGENT_DEPRECATE_DUPLICATES_ENABLED} dry_run=${AUTONOMY_DRY_RUN} self_heal=${RALPH_SELF_HEAL_ENABLED}"
+  log "repo=${REPO} queue=${AGENT_QUEUE_NAME} include=${AGENT_INCLUDE_LABELS:-<none>} exclude=${AGENT_EXCLUDE_LABELS:-<none>} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} retries=${AGENT_MAX_AUTO_RETRIES} stale_timeout_h=${AGENT_IN_PROGRESS_TIMEOUT_HOURS} cleanup=${AGENT_AUTO_CLEANUP_ENABLED} dedupe=${AGENT_DEPRECATE_DUPLICATES_ENABLED} omx_safe=${OMX_SAFE_MODE} dry_run=${AUTONOMY_DRY_RUN} self_heal=${RALPH_SELF_HEAL_ENABLED}"
   if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "${RALPH_SELF_HEAL_ENABLED}" = "true" ]; then
     ensure_actions_pr_permissions || true
+  fi
+  if ! validate_executor_command_policy; then
+    exit 2
   fi
   run_issue_cleanup
   requeue_stale_in_progress_issues

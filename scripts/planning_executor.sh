@@ -6,6 +6,12 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 2
 fi
 
+CODEX_SAFETY_GUARD_CMD="${CODEX_SAFETY_GUARD_CMD:-scripts/codex_safety_guard.sh}"
+if [ ! -x "${CODEX_SAFETY_GUARD_CMD}" ]; then
+  echo "codex safety guard script is missing or not executable: ${CODEX_SAFETY_GUARD_CMD}" >&2
+  exit 2
+fi
+
 ISSUE_NUMBER="${AGENT_ISSUE_NUMBER:-}"
 ISSUE_TITLE="${AGENT_ISSUE_TITLE:-}"
 ISSUE_URL="${AGENT_ISSUE_URL:-}"
@@ -79,6 +85,7 @@ cmd+=(
   --cd "$(pwd)"
 )
 
+"${CODEX_SAFETY_GUARD_CMD}" "${cmd[@]}"
 "${cmd[@]}" "${PROMPT}"
 
 if [ "${PLANNER_FANOUT_ENABLED}" = "true" ]; then

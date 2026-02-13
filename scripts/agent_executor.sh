@@ -6,6 +6,19 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 2
 fi
 
+MODEL_ROUTER_CMD="${MODEL_ROUTER_CMD:-scripts/codex_model_router.sh}"
+CODEX_SAFETY_GUARD_CMD="${CODEX_SAFETY_GUARD_CMD:-scripts/codex_safety_guard.sh}"
+
+if [ ! -x "${MODEL_ROUTER_CMD}" ]; then
+  echo "model router script is missing or not executable: ${MODEL_ROUTER_CMD}" >&2
+  exit 2
+fi
+
+if [ ! -x "${CODEX_SAFETY_GUARD_CMD}" ]; then
+  echo "codex safety guard script is missing or not executable: ${CODEX_SAFETY_GUARD_CMD}" >&2
+  exit 2
+fi
+
 ISSUE_NUMBER="${AGENT_ISSUE_NUMBER:-}"
 ISSUE_TITLE="${AGENT_ISSUE_TITLE:-}"
 ISSUE_URL="${AGENT_ISSUE_URL:-}"
@@ -23,28 +36,31 @@ AGENT_CODEX_MODEL_COMPLEX="${AGENT_CODEX_MODEL_COMPLEX:-gpt-5.3-codex}"
 AGENT_CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-workspace-write}"
 AGENT_CODEX_APPROVAL="${AGENT_CODEX_APPROVAL:-never}"
 AGENT_CODEX_SEARCH="${AGENT_CODEX_SEARCH:-true}"
+AGENT_CODEX_COMPLEX_LABELS="${AGENT_CODEX_COMPLEX_LABELS:-risk/high,priority/p0,sev0,sev1,decision/major,area/storage,type/bug}"
 
 supports_codex_search() {
   codex --help 2>/dev/null | grep -q -- "--search"
 }
 
-select_model() {
-  if [ -n "${AGENT_CODEX_MODEL_OVERRIDE}" ]; then
-    echo "${AGENT_CODEX_MODEL_OVERRIDE}"
-    return 0
-  fi
-
-  # High-risk/high-priority issues use a stronger model; default path uses fast model.
-  if [[ "${ISSUE_LABELS}" == *"risk/high"* ]] || [[ "${ISSUE_LABELS}" == *"priority/p0"* ]]; then
-    echo "${AGENT_CODEX_MODEL_COMPLEX}"
-    return 0
-  fi
-
-  echo "${AGENT_CODEX_MODEL_FAST}"
-}
-
-SELECTED_MODEL="$(select_model)"
-echo "[agent-executor] issue=#${ISSUE_NUMBER} model=${SELECTED_MODEL}" >&2
+SELECTED_MODEL="$(AGENT_ISSUE_LABELS="${ISSUE_LABELS}" \
+  AGENT_CODEX_MODEL="${AGENT_CODEX_MODEL_OVERRIDE}" \
+  AGENT_CODEX_MODEL_FAST="${AGENT_CODEX_MODEL_FAST}" \
+  AGENT_CODEX_MODEL_COMPLEX="${AGENT_CODEX_MODEL_COMPLEX}" \
+  AGENT_CODEX_COMPLEX_LABELS="${AGENT_CODEX_COMPLEX_LABELS}" \
+  "${MODEL_ROUTER_CMD}" --model)"
+SELECTED_PROFILE="$(AGENT_ISSUE_LABELS="${ISSUE_LABELS}" \
+  AGENT_CODEX_MODEL="${AGENT_CODEX_MODEL_OVERRIDE}" \
+  AGENT_CODEX_MODEL_FAST="${AGENT_CODEX_MODEL_FAST}" \
+  AGENT_CODEX_MODEL_COMPLEX="${AGENT_CODEX_MODEL_COMPLEX}" \
+  AGENT_CODEX_COMPLEX_LABELS="${AGENT_CODEX_COMPLEX_LABELS}" \
+  "${MODEL_ROUTER_CMD}" --profile)"
+SELECTED_REASON="$(AGENT_ISSUE_LABELS="${ISSUE_LABELS}" \
+  AGENT_CODEX_MODEL="${AGENT_CODEX_MODEL_OVERRIDE}" \
+  AGENT_CODEX_MODEL_FAST="${AGENT_CODEX_MODEL_FAST}" \
+  AGENT_CODEX_MODEL_COMPLEX="${AGENT_CODEX_MODEL_COMPLEX}" \
+  AGENT_CODEX_COMPLEX_LABELS="${AGENT_CODEX_COMPLEX_LABELS}" \
+  "${MODEL_ROUTER_CMD}" --reason)"
+echo "[agent-executor] issue=#${ISSUE_NUMBER} model=${SELECTED_MODEL} profile=${SELECTED_PROFILE} reason=${SELECTED_REASON}" >&2
 
 PROMPT="$(cat <<EOF
 You are the autonomous implementation executor for this repository.
@@ -85,4 +101,5 @@ cmd+=(
   --cd "$(pwd)"
 )
 
+"${CODEX_SAFETY_GUARD_CMD}" "${cmd[@]}"
 "${cmd[@]}" "${PROMPT}"

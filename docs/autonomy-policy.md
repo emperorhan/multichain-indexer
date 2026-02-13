@@ -65,7 +65,8 @@
 - Manager agent: deterministic rules 기반(모델 비의존)으로 whitelist 셋 생성
 - Developer agent:
   - 기본: `AGENT_CODEX_MODEL_FAST` (`gpt-5.3-codex-spark`)
-  - 고위험/최고우선(`risk/high` 또는 `priority/p0`): `AGENT_CODEX_MODEL_COMPLEX` (`gpt-5.3-codex`)
+  - 복잡 라우팅: `scripts/codex_model_router.sh`가 라벨 기반으로 `AGENT_CODEX_MODEL_COMPLEX`를 선택
+  - 기본 복잡 라벨: `risk/high, priority/p0, sev0, sev1, decision/major, area/storage, type/bug`
 - QA agent:
   - 검증 실행: deterministic 테스트 러너
   - 실패 triage 요약: `QA_TRIAGE_CODEX_MODEL` (`gpt-5.3-codex`)
@@ -100,7 +101,7 @@
 - `AGENT_MAX_AUTO_RETRIES` (기본 `2`): 동일 이슈 자동 재시도 횟수
 - `AGENT_IN_PROGRESS_TIMEOUT_HOURS` (기본 `6`): `in-progress` 정체 이슈 자동 복구 임계시간
 - `AGENT_AUTO_CLEANUP_ENABLED` (기본 `true`): 해결/폐기 이슈 자동 정리 단계 활성화
-- `AGENT_DEPRECATE_DUPLICATES_ENABLED` (기본 `true`): `agent/discovered` 중복 이슈 deprecated 자동 정리 활성화
+- `AGENT_DEPRECATE_DUPLICATES_ENABLED` (기본 `true`): `agent/discovered` 중복 이슈 자동 정리 활성화
 - `RALPH_SELF_HEAL_ENABLED` (기본 `true`): 권한/운영 오류 자동 복구 시도 활성화
 - `DECISION_REMINDER_HOURS` (기본 `24`): `decision-needed` 리마인드 코멘트 간격(시간)
 - `AGENT_DEVELOPER_INCLUDE_LABELS` (기본 비어 있음): developer queue 포함 필터(CSV, 모든 라벨 일치)
@@ -113,9 +114,13 @@
 - `AGENT_CODEX_MODEL` (기본 빈값): developer 모델 강제 오버라이드(설정 시 fast/complex 분기 무시)
 - `AGENT_CODEX_MODEL_FAST` (기본 `gpt-5.3-codex-spark`): 일반 개발 이슈 모델
 - `AGENT_CODEX_MODEL_COMPLEX` (기본 `gpt-5.3-codex`): 고위험/고우선 개발 이슈 모델
+- `AGENT_CODEX_COMPLEX_LABELS` (기본 `risk/high,priority/p0,sev0,sev1,decision/major,area/storage,type/bug`): complex 모델 라우팅 라벨(CSV)
 - `AGENT_CODEX_SANDBOX` (기본 `workspace-write`): codex sandbox 모드
 - `AGENT_CODEX_APPROVAL` (기본 `never`): codex 승인 정책
 - `AGENT_CODEX_SEARCH` (기본 `true`): codex 웹 검색 사용 여부
+- `OMX_SAFE_MODE` (기본 `true`): oh-my-codex/omx unsafe 모드 차단 활성화
+- `OMX_FORBIDDEN_FLAGS` (기본 `--madmax,--yolo,--dangerously-bypass-approvals-and-sandbox`): 차단 플래그 목록
+- `OMX_FORBIDDEN_SANDBOXES` (기본 `danger-full-access`): 차단 sandbox 목록
 - `AGENT_AUTO_MERGE_ENABLED` (기본 `true`): 에이전트 PR 자동 머지 활성화
 - `MANAGER_LOOP_ENABLED` (기본 `true`): manager loop 활성화
 - `MANAGER_MAX_SETS_PER_RUN` (기본 `1`): manager loop 1회 실행당 QA 셋 생성 수
