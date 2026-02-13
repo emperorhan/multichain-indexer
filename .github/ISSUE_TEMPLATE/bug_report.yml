@@ -1,0 +1,57 @@
+name: Bug Report
+description: Report incorrect behavior, regression, or production issue
+title: "[Bug] "
+labels:
+  - type/bug
+body:
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Who is impacted and how severe is it?
+      placeholder: User impact, data impact, SLA impact
+    validations:
+      required: true
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current Behavior
+      description: What is happening now?
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected Behavior
+      description: What should happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: Provide deterministic steps to reproduce
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Evidence (Logs / SQL / RPC Payload)
+      description: Paste relevant logs or payload samples
+      render: shell
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - sev0 - production outage / data corruption
+        - sev1 - critical functional failure
+        - sev2 - degraded behavior
+        - sev3 - minor issue
+    validations:
+      required: true
+

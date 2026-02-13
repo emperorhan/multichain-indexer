@@ -1,0 +1,10 @@
+# Default owner for all changes
+* @emperorhan
+
+# Infra and release gates
+.github/ @emperorhan
+deployments/ @emperorhan
+
+# Data and migrations
+internal/store/postgres/migrations/ @emperorhan
+

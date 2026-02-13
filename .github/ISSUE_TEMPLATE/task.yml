@@ -1,0 +1,57 @@
+name: Task
+description: Implementation task for feature, refactor, or operational improvement
+title: "[Task] "
+labels:
+  - type/task
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What needs to be done?
+      placeholder: Explain the task in 2-3 sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: Why is this task valuable?
+      placeholder: Business or technical objective
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In Scope
+      description: What is included in this task?
+      placeholder: |
+        - Item 1
+        - Item 2
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of Scope
+      description: What is explicitly excluded?
+      placeholder: |
+        - Item A
+        - Item B
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: How do we verify completion?
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks / Dependencies
+      description: Risks, blockers, or prerequisites
+      placeholder: RPC limits, migration ordering, compatibility concerns, etc.
+
