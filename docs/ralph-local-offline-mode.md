@@ -33,14 +33,14 @@ complexity: high
 ## 실행 순서
 1. 초기화:
    - `scripts/ralph_local_init.sh`
-2. ON:
-   - `scripts/ralph_local_control.sh on`
-3. 루프 실행:
-   - `MAX_LOOPS=0 scripts/ralph_local_run.sh`
+2. 백그라운드 시작:
+   - `scripts/ralph_local_daemon.sh start`
+3. 루프 실행(내부):
+   - `MAX_LOOPS=0 scripts/ralph_local_run.sh` (`daemon.sh start`가 내부에서 실행)
 4. 상태 확인:
-   - `scripts/ralph_local_status.sh`
+   - `scripts/ralph_local_daemon.sh status`
 5. OFF:
-   - `scripts/ralph_local_control.sh off`
+   - `scripts/ralph_local_daemon.sh stop`
 
 ## 모델 라우팅
 - Planner: `PLANNING_CODEX_MODEL` (기본 `gpt-5.3-codex`)
@@ -57,7 +57,8 @@ complexity: high
 
 ## 운영 팁
 - 서버에서 장시간 실행:
-  - `nohup MAX_LOOPS=0 scripts/ralph_local_run.sh > .ralph/logs/runner.out 2>&1 &`
+  - 권장: `scripts/ralph_local_daemon.sh start`
+  - 로그 tail: `scripts/ralph_local_daemon.sh tail`
 - task 분할:
   - Planner 이슈에서 후속 `I-xxxx` 이슈를 `.ralph/issues/`에 직접 추가
 - major decision:
