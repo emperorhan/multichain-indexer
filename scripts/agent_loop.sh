@@ -193,7 +193,7 @@ create_branch_for_issue() {
   fi
 
   git fetch origin "${BASE_BRANCH}"
-  git checkout -B "${branch}" "origin/${BASE_BRANCH}"
+  git checkout -B "${branch}" "origin/${BASE_BRANCH}" >/dev/null
   echo "${branch}"
 }
 
