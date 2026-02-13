@@ -10,22 +10,40 @@ Go 채널 기반의 4단계 파이프라인과 Node.js gRPC 사이드카로 구�
 
 ## Architecture Overview
 
-```
-                          ┌─────────────────────────────────────────────────────────┐
-                          │                   Go Indexer Process                     │
-                          │                                                         │
-┌──────────────┐    ┌─────┴──────┐   jobCh    ┌─────────┐  rawBatchCh  ┌──────────┐│  normalizedCh  ┌──────────┐    ┌──────────────┐
-│  Solana RPC  │◄───│ Coordinator│──(buffered)─│ Fetcher │──(buffered)──│Normalizer│├──(buffered)────│ Ingester │───►│  PostgreSQL   │
-│  (JSON-RPC)  │    │ 1 goroutine│            │ N workers│             │ N workers ││               │ 1 writer │    │  (atomic tx)  │
-└──────────────┘    └────────────┘            └─────────┘             └─────┬─────┘│               └──────────┘    └──────────────┘
-                                                                           │       │
-                                                                           │gRPC   │
-                                                                     ┌─────▼─────┐ │
-                                                                     │  Node.js   │ │
-                                                                     │  Sidecar   │ │
-                                                                     │  (Decoder) │ │
-                                                                     └───────────┘ │
-                          └─────────────────────────────────────────────────────────┘
+```mermaid
+graph LR
+    subgraph external_left [" "]
+        RPC["Solana RPC\n(JSON-RPC 2.0)"]
+    end
+
+    subgraph go_process ["Go Indexer Process"]
+        COORD["Coordinator\n1 goroutine"]
+        FETCH["Fetcher\nN workers"]
+        NORM["Normalizer\nN workers"]
+        INGEST["Ingester\n1 writer (atomic)"]
+
+        COORD -- "jobCh\n(buffered)" --> FETCH
+        FETCH -- "rawBatchCh\n(buffered)" --> NORM
+        NORM -- "normalizedCh\n(buffered)" --> INGEST
+    end
+
+    subgraph sidecar ["Node.js Sidecar"]
+        DECODER["PluginDispatcher"]
+        SPL["SPL Token\nPlugin"]
+        SYS["System\nPlugin"]
+        DECODER --> SPL
+        DECODER --> SYS
+    end
+
+    subgraph external_right [" "]
+        PG[("PostgreSQL 16\nbalance_events\n+ JSONB")]
+        REDIS[("Redis 7\n(future)")]
+    end
+
+    RPC -. "HTTPS" .-> FETCH
+    NORM -. "gRPC :50051" .-> DECODER
+    INGEST -- "sql.Tx upsert" --> PG
+    COORD -. "read config\n& cursors" .-> PG
 ```
 
 ### Pipeline Data Flow
