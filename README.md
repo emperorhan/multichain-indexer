@@ -434,23 +434,37 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
    - QA loop가 해당 이슈를 검증하고 실패 시 developer 버그 이슈 자동 생성
 7. Planner 협업:
    - `role/planner` 이슈는 `PROMPT_plan.md` 기반으로 `specs/*`, `IMPLEMENTATION_PLAN.md`를 갱신
+   - 범위가 크면 `.agent/planner-fanout-<issue>.json` 생성 후 child issue 자동 분할(fanout)
 8. 모델 배치:
    - Developer 기본: `gpt-5.3-codex-spark`
    - Developer 고위험/고우선: `gpt-5.3-codex`
    - QA 실패 triage: `gpt-5.3-codex`
-9. 전역 ON/OFF:
+9. 역할별 병렬 러너(선택):
+   - planner: `AGENT_RUNNER_PLANNER`
+   - developer: `AGENT_RUNNER_DEVELOPER`
+   - manager: `MANAGER_RUNNER`
+   - qa: `QA_RUNNER`
+   - scout: `SCOUT_RUNNER`
+   - 미설정 시 각각 `AGENT_RUNNER`로 fallback
+10. 전역 ON/OFF:
    - `RALPH_LOOP_ENABLED=true|false` 변수로 전체 자율 루프 토글
    - 수동 토글: `.github/workflows/ralph-loop-control.yml` 또는 `scripts/toggle_ralph_loop.sh on|off|status`
    - 터미널 단축: `scripts/install_ralph_aliases.sh` 후 `ron|roff|rstat|rkick|rscout`
    - 휴대폰 제어: GitHub App -> Actions -> `Ralph Loop Control` 실행 (on/off/status + optional kick)
    - 휴대폰 상태 확인: Actions -> `Ralph Status Board` 또는 이슈 `[Ops] Ralph Loop Status Board`
-10. 주요 의사결정:
+11. 주요 의사결정:
    - `Major Decision` 템플릿 사용 (`decision/major`)
    - 해당 이슈는 owner 입력 전 자동 실행이 진행되지 않음
-11. 로컬 반복 루프(Playbook 스타일):
+12. PR 자동 머지:
+   - `Agent Auto Merge` 워크플로가 agent PR을 조건부 자동 머지
+   - 15분 주기 스캔으로 미처리 agent PR을 재수집
+   - 차단 라벨(`decision-needed`, `needs-opinion`, `blocked`, `decision/major`, `risk/high`)이 있으면 머지 중단
+   - 토글 변수: `AGENT_AUTO_MERGE_ENABLED=true|false`
+   - 선택: `AGENT_GH_TOKEN` secret(repo+workflow scope) 설정 시 workflow 파일 변경 PR까지 자동 머지 가능
+13. 로컬 반복 루프(Playbook 스타일):
    - 작업 지시를 `.agent/ralph_task.md`에 작성
    - `MAX_LOOPS=6 scripts/ralph_loop_local.sh`
-12. 릴리즈 자동화:
+14. 릴리즈 자동화:
    - `main` 반영 시 `release.yml`이 `vX.Y.Z` 태그와 릴리즈 노트 자동 생성
    - PR 라벨 `release/major|minor|patch`로 버전 범위를 제어
 

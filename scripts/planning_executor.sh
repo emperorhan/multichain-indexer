@@ -20,6 +20,9 @@ PLANNING_CODEX_MODEL="${PLANNING_CODEX_MODEL:-gpt-5.3-codex}"
 PLANNING_CODEX_SANDBOX="${PLANNING_CODEX_SANDBOX:-workspace-write}"
 PLANNING_CODEX_APPROVAL="${PLANNING_CODEX_APPROVAL:-never}"
 PLANNING_CODEX_SEARCH="${PLANNING_CODEX_SEARCH:-true}"
+PLANNER_FANOUT_ENABLED="${PLANNER_FANOUT_ENABLED:-true}"
+PLANNER_FANOUT_CMD="${PLANNER_FANOUT_CMD:-scripts/planner_fanout.sh}"
+PLANNER_FANOUT_FILE="${PLANNER_FANOUT_FILE:-.agent/planner-fanout-${ISSUE_NUMBER}.json}"
 
 supports_codex_search() {
   codex --help 2>/dev/null | grep -q -- "--search"
@@ -40,7 +43,21 @@ Tasks:
 1. Update IMPLEMENTATION_PLAN.md with clear milestone-level plan.
 2. Update or create docs under specs/ as needed.
 3. If major owner decision is required, leave explicit decision placeholders for GitHub issue escalation.
-4. Do not implement production code in this run.
+4. If decomposition is useful, write JSON fanout tasks to ${PLANNER_FANOUT_FILE}.
+5. Fanout JSON schema:
+   {
+     "tasks": [
+       {
+         "title": "short task title",
+         "role": "developer|qa|planner",
+         "summary": "objective and expected output",
+         "labels": ["type/task", "area/pipeline", "priority/p1"],
+         "acceptance": ["criterion 1", "criterion 2"],
+         "chains": ["solana-devnet", "base-sepolia"]
+       }
+     ]
+   }
+6. Do not implement production code in this run.
 EOF
 )"
 
@@ -63,3 +80,11 @@ cmd+=(
 )
 
 "${cmd[@]}" "${PROMPT}"
+
+if [ "${PLANNER_FANOUT_ENABLED}" = "true" ]; then
+  export PLANNER_SOURCE_ISSUE_NUMBER="${ISSUE_NUMBER}"
+  export PLANNER_SOURCE_ISSUE_TITLE="${ISSUE_TITLE}"
+  export PLANNER_SOURCE_ISSUE_URL="${ISSUE_URL}"
+  export PLANNER_FANOUT_FILE
+  bash -lc "${PLANNER_FANOUT_CMD}"
+fi

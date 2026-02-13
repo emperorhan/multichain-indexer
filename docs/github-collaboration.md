@@ -14,7 +14,7 @@
 3. 브랜치 생성 후 Draft PR 오픈
 4. PR 본문에 변경 내용, 검증 결과, 리스크, 롤백 전략 누적
 5. CI 통과 후 `ready-for-review` 라벨 부여
-6. 보호 규칙 충족 후 merge (팀 운영 시 CODEOWNER 승인 권장)
+6. 에이전트 PR은 `Agent Auto Merge`가 조건 충족 시 자동 merge
 
 ## Autonomous Loop
 - 워크플로우: `.github/workflows/agent-loop.yml`
@@ -23,8 +23,29 @@
 - 결과 라벨: `ready-for-review` 또는 `blocked + decision-needed + needs-opinion`
 - 실행 명령은 repository variable `AGENT_EXEC_CMD`로 주입한다.
 - runner는 `AGENT_RUNNER` variable로 지정한다 (비어 있으면 `ubuntu-latest`).
+- planner/developer 큐는 분리되어 실행된다.
+  - planner runner: `AGENT_RUNNER_PLANNER` (fallback: `AGENT_RUNNER`)
+  - developer runner: `AGENT_RUNNER_DEVELOPER` (fallback: `AGENT_RUNNER`)
+- 라벨 필터:
+  - planner queue: `role/planner` 포함 이슈만 처리
+  - developer queue: `role/planner`, `role/qa`, `decision/major` 제외 이슈 처리 (기본)
 - `risk/high` 라벨 이슈는 사람 확인 전 자동 실행하지 않는다.
 - `AGENT_MAX_AUTO_RETRIES`를 넘겨 실패하면 사람 확인 상태로 자동 전환한다.
+
+## Autonomous Merge
+- 워크플로우: `.github/workflows/agent-auto-merge.yml`
+- 트리거: `pull_request_target` + 15분 주기 스캔 + 수동 `workflow_dispatch`
+- 대상 PR:
+  - head branch가 `agent-issue-*`
+  - 또는 제목이 `chore(agent):`로 시작
+- 블로킹 조건:
+  - 연동 이슈에 `blocked`, `decision-needed`, `needs-opinion`, `decision/major`, `risk/high` 라벨이 있으면 merge 중단
+- merge 방식:
+  - 우선 auto-merge(squash) 활성화
+  - `mergeable_state=behind`면 base 최신으로 branch update 시도 후 auto-merge 재시도
+  - 불가 시 체크가 이미 green이면 즉시 squash merge 시도
+- 선택 설정:
+  - secret `AGENT_GH_TOKEN`(classic PAT, `repo` + `workflow` scope)을 설정하면 workflow 파일을 수정한 PR도 자동 merge 가능
 
 ## Issue Discovery Loop
 - 워크플로우: `.github/workflows/issue-scout.yml`
@@ -41,6 +62,7 @@
 - `Planner`:
   - `role/planner` 이슈에서 spec/plan 문서 갱신
   - 산출물: `IMPLEMENTATION_PLAN.md`, `specs/*`
+  - 큰 이슈면 fanout 파일(`.agent/planner-fanout-<issue>.json`)을 통해 child issue 자동 생성
 - `Manager`:
   - 화이트리스트 주소셋에서 QA 검증 이슈 생성 (`qa-ready`)
 - `Developer`:
@@ -53,8 +75,9 @@
 권장 실행 순서:
 1. `Autonomous Task` 이슈 생성
 2. `autonomous`, `ready`, `priority/*`, `area/*` 라벨 설정
-3. 에이전트 루프가 브랜치/PR 생성 후 테스트
-4. CI 통과 확인 후 merge
+3. 기획이 큰 경우 `role/planner`로 시작하고 fanout child issue를 자동 생성
+4. 에이전트 루프가 브랜치/PR 생성 후 테스트
+5. CI 통과 확인 후 merge
 
 ## Decision Protocol
 - 선택지가 필요한 경우 `Decision Needed` 이슈를 사용한다.

@@ -47,6 +47,7 @@
 - Planner flow:
   - planner 이슈(`role/planner + autonomous + ready`)는 `scripts/planning_executor.sh`로 처리
   - 산출물: `IMPLEMENTATION_PLAN.md`, `specs/*`
+  - 큰 범위 작업이면 fanout 파일(`.agent/planner-fanout-<issue>.json`)을 통해 child issue 자동 생성
 - Manager loop: `.github/workflows/manager-loop.yml`
   - 화이트리스트 주소 셋(`SOLANA_WHITELIST_CSV` 또는 `configs/solana_whitelist_addresses.txt`)에서 QA용 샘플을 생성
   - 결과 이슈 라벨: `role/manager + qa-ready`
@@ -92,8 +93,11 @@
 
 ### 1-1) Optional Throughput/Safety Variables
 - `AGENT_MAX_ISSUES_PER_RUN` (기본 `2`): 한 번의 루프에서 처리할 최대 이슈 수
+- `AGENT_MAX_PLANNER_ISSUES_PER_RUN` (기본 `1`): planner queue 1회 실행당 처리 이슈 수
 - `AGENT_MAX_AUTO_RETRIES` (기본 `2`): 동일 이슈 자동 재시도 횟수
 - `DECISION_REMINDER_HOURS` (기본 `24`): `decision-needed` 리마인드 코멘트 간격(시간)
+- `AGENT_DEVELOPER_INCLUDE_LABELS` (기본 비어 있음): developer queue 포함 필터(CSV, 모든 라벨 일치)
+- `AGENT_DEVELOPER_EXCLUDE_LABELS` (기본 `role/planner,role/qa,decision/major`): developer queue 제외 필터(CSV)
 - `AGENT_SCOUT_ENABLED` (기본 `true`): issue scout 활성화
 - `SCOUT_MAX_ISSUES_PER_RUN` (기본 `2`): issue scout 1회 실행당 생성할 최대 이슈 수
 - `SCOUT_FAIL_WINDOW_HOURS` (기본 `24`): 실패 CI 발굴 시간창
@@ -105,6 +109,7 @@
 - `AGENT_CODEX_SANDBOX` (기본 `workspace-write`): codex sandbox 모드
 - `AGENT_CODEX_APPROVAL` (기본 `never`): codex 승인 정책
 - `AGENT_CODEX_SEARCH` (기본 `true`): codex 웹 검색 사용 여부
+- `AGENT_AUTO_MERGE_ENABLED` (기본 `true`): 에이전트 PR 자동 머지 활성화
 - `MANAGER_LOOP_ENABLED` (기본 `true`): manager loop 활성화
 - `MANAGER_MAX_SETS_PER_RUN` (기본 `1`): manager loop 1회 실행당 QA 셋 생성 수
 - `QA_ADDRESS_BATCH_SIZE` (기본 `5`): QA 검증용 주소 수
@@ -125,11 +130,20 @@
 - `PLANNING_CODEX_SANDBOX` (기본 `workspace-write`): planner sandbox 모드
 - `PLANNING_CODEX_APPROVAL` (기본 `never`): planner 승인 정책
 - `PLANNING_CODEX_SEARCH` (기본 `true`): planner 웹 검색 사용 여부
+- `PLANNER_FANOUT_ENABLED` (기본 `true`): planner child issue fanout 활성화
+- `PLANNER_FANOUT_CMD` (기본 `scripts/planner_fanout.sh`): planner fanout 실행 명령
+- `PLANNER_FANOUT_MAX_ISSUES` (기본 `8`): planner fanout으로 생성할 최대 child issue 수
 
 ### 2) Runner 선택 (권장)
 - 이름: `AGENT_RUNNER`
 - 기본값: 비어 있으면 `ubuntu-latest`
 - 권장값: `self-hosted`
+- 역할별 runner override:
+  - `AGENT_RUNNER_PLANNER` (planner queue)
+  - `AGENT_RUNNER_DEVELOPER` (developer queue)
+  - `MANAGER_RUNNER` (manager loop)
+  - `QA_RUNNER` (qa loop)
+  - `SCOUT_RUNNER` (issue scout)
 
 실제 코드 자동 구현까지 돌리려면 self-hosted runner에서 에이전트 CLI/자격증명을 준비하는 것이 안전하다.
 
@@ -137,6 +151,11 @@
 - 워크플로우: `.github/workflows/agent-loop.yml`
 - 주기: 15분
 - 수동 실행: `workflow_dispatch`
+- PR 자동 머지 워크플로우: `.github/workflows/agent-auto-merge.yml`
+  - 트리거: PR 이벤트 + 15분 주기 스캔 + 수동 실행
+  - 대상: agent가 생성한 PR(`agent-issue-*`, `chore(agent):*`)
+  - 조건: 차단 라벨(`decision-needed`, `needs-opinion`, `blocked`, `decision/major`, `risk/high`) 없음
+  - 선택: secret `AGENT_GH_TOKEN`(`repo` + `workflow` scope) 설정 시 workflow 파일 변경 PR까지 자동 머지 가능
 
 ## Operational Notes
 - 기본 실행자는 `ubuntu-latest`이다.
