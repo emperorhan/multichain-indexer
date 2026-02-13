@@ -129,10 +129,10 @@ pick_next_issue() {
         elif labels | index("priority/p1") then 1
         elif labels | index("priority/p2") then 2
         elif labels | index("priority/p3") then 3
-        else 9 end;
-      ($include | csv) as $required_labels
-      | ($exclude | csv) as $excluded_labels
-      map(select(
+      else 9 end;
+      (csv($include)) as $required_labels
+      | (csv($exclude)) as $excluded_labels
+      | map(select(
         (labels | index("blocked") | not) and
         (labels | index("decision-needed") | not) and
         (labels | index("decision/major") | not) and
