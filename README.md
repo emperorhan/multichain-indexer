@@ -432,14 +432,16 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 6. Manager/QA 협업을 켜면:
    - Manager loop가 whitelist 주소셋에서 `qa-ready` 이슈 생성
    - QA loop가 해당 이슈를 검증하고 실패 시 developer 버그 이슈 자동 생성
-7. 모델 배치:
+7. Planner 협업:
+   - `role/planner` 이슈는 `PROMPT_plan.md` 기반으로 `specs/*`, `IMPLEMENTATION_PLAN.md`를 갱신
+8. 모델 배치:
    - Developer 기본: `gpt-5.3-codex-spark`
    - Developer 고위험/고우선: `gpt-5.3-codex`
    - QA 실패 triage: `gpt-5.3-codex`
-8. 전역 ON/OFF:
+9. 전역 ON/OFF:
    - `RALPH_LOOP_ENABLED=true|false` 변수로 전체 자율 루프 토글
    - 수동 토글: `.github/workflows/ralph-loop-control.yml` 또는 `scripts/toggle_ralph_loop.sh on|off`
-9. 주요 의사결정:
+10. 주요 의사결정:
    - `Major Decision` 템플릿 사용 (`decision/major`)
    - 해당 이슈는 owner 입력 전 자동 실행이 진행되지 않음
 

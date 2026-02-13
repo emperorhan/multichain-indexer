@@ -1,0 +1,43 @@
+name: Planning Task
+description: Spec/plan-first work item for planner agent
+title: "[Plan] "
+labels:
+  - type/docs
+  - role/planner
+  - autonomous
+  - ready
+  - priority/p1
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What should be planned or specified?
+      placeholder: Define the feature/problem and expected outcomes.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In Scope
+      description: What should the planner produce?
+      placeholder: specs/*, IMPLEMENTATION_PLAN.md, rollout/testing strategy
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of Scope
+      description: What should not be implemented yet?
+      placeholder: No production code changes, no migrations, no deploy
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Completion criteria for planning PR
+      placeholder: |
+        - [ ] specs updated
+        - [ ] IMPLEMENTATION_PLAN.md updated
+        - [ ] major decisions captured as decision/major issues when needed
+    validations:
+      required: true

@@ -24,6 +24,7 @@ AGENT_MAX_ISSUES_PER_RUN="${AGENT_MAX_ISSUES_PER_RUN:-2}"
 AGENT_MAX_AUTO_RETRIES="${AGENT_MAX_AUTO_RETRIES:-2}"
 AUTONOMY_DRY_RUN="${AUTONOMY_DRY_RUN:-false}"
 AGENT_EXEC_CMD="${AGENT_EXEC_CMD:-}"
+PLANNING_EXEC_CMD="${PLANNING_EXEC_CMD:-scripts/planning_executor.sh}"
 
 log() {
   printf '[agent-loop] %s\n' "$*"
@@ -221,10 +222,15 @@ run_executor() {
   local issue_body="$3"
   local issue_url="$4"
   local issue_labels="$5"
+  local exec_cmd="${AGENT_EXEC_CMD}"
 
   if [ -z "${AGENT_EXEC_CMD}" ]; then
     handle_missing_executor "${issue_number}"
     return 90
+  fi
+
+  if [[ "${issue_labels}" == *"role/planner"* ]]; then
+    exec_cmd="${PLANNING_EXEC_CMD}"
   fi
 
   export AGENT_ISSUE_NUMBER="${issue_number}"
@@ -242,7 +248,7 @@ run_executor() {
   fi
 
   local exit_code=0
-  bash -lc "${AGENT_EXEC_CMD}" || exit_code=$?
+  bash -lc "${exec_cmd}" || exit_code=$?
   return "${exit_code}"
 }
 

@@ -38,6 +38,9 @@
   - 이슈 본문 fingerprint(`[agent-scout:*]`) 기준 dedup
 
 ## Multi-Agent Collaboration
+- `Planner`:
+  - `role/planner` 이슈에서 spec/plan 문서 갱신
+  - 산출물: `IMPLEMENTATION_PLAN.md`, `specs/*`
 - `Manager`:
   - 화이트리스트 주소셋에서 QA 검증 이슈 생성 (`qa-ready`)
 - `Developer`:
@@ -70,6 +73,7 @@
 - `decision/major`
 - `agent/discovered`
 - `role/manager`, `role/developer`, `role/qa`
+- `role/planner`
 - `qa-ready`, `qa-in-progress`, `qa/passed`, `qa/failed`
 
 ## Required Status Checks

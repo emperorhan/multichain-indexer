@@ -88,6 +88,9 @@
 - name: role/qa
   color: FBCA04
   description: Work item owned by QA agent
+- name: role/planner
+  color: 5319E7
+  description: Work item owned by planning agent
 - name: qa-ready
   color: C2E0C6
   description: Ready for QA agent validation
