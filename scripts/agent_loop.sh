@@ -25,6 +25,9 @@ AGENT_MAX_AUTO_RETRIES="${AGENT_MAX_AUTO_RETRIES:-2}"
 AUTONOMY_DRY_RUN="${AUTONOMY_DRY_RUN:-false}"
 AGENT_EXEC_CMD="${AGENT_EXEC_CMD:-}"
 PLANNING_EXEC_CMD="${PLANNING_EXEC_CMD:-scripts/planning_executor.sh}"
+AGENT_INCLUDE_LABELS="${AGENT_INCLUDE_LABELS:-}"
+AGENT_EXCLUDE_LABELS="${AGENT_EXCLUDE_LABELS:-}"
+AGENT_QUEUE_NAME="${AGENT_QUEUE_NAME:-default}"
 
 log() {
   printf '[agent-loop] %s\n' "$*" >&2
@@ -47,7 +50,14 @@ pick_next_issue() {
     --label autonomous \
     --label ready \
     --limit 200 \
-    --json number,title,body,url,createdAt,labels | jq -c '
+    --json number,title,body,url,createdAt,labels | jq -c \
+    --arg include "${AGENT_INCLUDE_LABELS}" \
+    --arg exclude "${AGENT_EXCLUDE_LABELS}" '
+      def csv($s):
+        ($s
+          | split(",")
+          | map(gsub("^\\s+|\\s+$"; ""))
+          | map(select(length > 0)));
       def labels: [.labels[].name];
       def prio:
         if labels | index("priority/p0") then 0
@@ -55,13 +65,23 @@ pick_next_issue() {
         elif labels | index("priority/p2") then 2
         elif labels | index("priority/p3") then 3
         else 9 end;
+      ($include | csv) as $required_labels
+      | ($exclude | csv) as $excluded_labels
       map(select(
         (labels | index("blocked") | not) and
         (labels | index("decision-needed") | not) and
         (labels | index("decision/major") | not) and
         (labels | index("needs-opinion") | not) and
         (labels | index("in-progress") | not) and
-        (labels | index("agent/needs-config") | not)
+        (labels | index("agent/needs-config") | not) and
+        (
+          ($required_labels | length) == 0 or
+          all($required_labels[]; labels | index(.) != null)
+        ) and
+        (
+          ($excluded_labels | length) == 0 or
+          all($excluded_labels[]; labels | index(.) == null)
+        )
       ))
       | sort_by(prio, .createdAt)
       | .[0]
@@ -407,7 +427,7 @@ process_issue() {
 main() {
   local issue_json processed=0
 
-  log "repo=${REPO} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} retries=${AGENT_MAX_AUTO_RETRIES} dry_run=${AUTONOMY_DRY_RUN}"
+  log "repo=${REPO} queue=${AGENT_QUEUE_NAME} include=${AGENT_INCLUDE_LABELS:-<none>} exclude=${AGENT_EXCLUDE_LABELS:-<none>} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} retries=${AGENT_MAX_AUTO_RETRIES} dry_run=${AUTONOMY_DRY_RUN}"
   comment_decision_reminders
 
   while [ "${processed}" -lt "${AGENT_MAX_ISSUES_PER_RUN}" ]; do
