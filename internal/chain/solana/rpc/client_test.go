@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,9 +21,10 @@ func newTestClient(handler http.HandlerFunc) (*Client, *httptest.Server) {
 
 func TestCall_Success(t *testing.T) {
 	client, server := newTestClient(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req Request
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 
 		assert.Equal(t, "2.0", req.JSONRPC)
 		assert.Equal(t, "testMethod", req.Method)
@@ -35,7 +35,7 @@ func TestCall_Success(t *testing.T) {
 			ID:      req.ID,
 			Result:  json.RawMessage(`42`),
 		}
-		json.NewEncoder(w).Encode(resp)
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	})
 	defer server.Close()
 
@@ -43,7 +43,7 @@ func TestCall_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	var val int
-	json.Unmarshal(result, &val)
+	require.NoError(t, json.Unmarshal(result, &val))
 	assert.Equal(t, 42, val)
 }
 
@@ -54,7 +54,7 @@ func TestCall_RPCError(t *testing.T) {
 			ID:      1,
 			Error:   &RPCError{Code: -32600, Message: "Invalid Request"},
 		}
-		json.NewEncoder(w).Encode(resp)
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	})
 	defer server.Close()
 
@@ -66,7 +66,8 @@ func TestCall_RPCError(t *testing.T) {
 func TestCall_HTTPError(t *testing.T) {
 	client, server := newTestClient(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal server error"))
+		_, err := w.Write([]byte("internal server error"))
+		require.NoError(t, err)
 	})
 	defer server.Close()
 
@@ -77,7 +78,8 @@ func TestCall_HTTPError(t *testing.T) {
 
 func TestCall_InvalidJSON(t *testing.T) {
 	client, server := newTestClient(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("not json"))
+		_, err := w.Write([]byte("not json"))
+		require.NoError(t, err)
 	})
 	defer server.Close()
 
@@ -102,13 +104,12 @@ func TestCall_ContextCanceled(t *testing.T) {
 
 func TestCall_RequestIDIncrement(t *testing.T) {
 	var receivedIDs []int
-	var mu atomic.Int64
-	_ = mu
 
 	client, server := newTestClient(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req Request
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 		receivedIDs = append(receivedIDs, req.ID)
 
 		resp := Response{
@@ -116,13 +117,16 @@ func TestCall_RequestIDIncrement(t *testing.T) {
 			ID:      req.ID,
 			Result:  json.RawMessage(`null`),
 		}
-		json.NewEncoder(w).Encode(resp)
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	})
 	defer server.Close()
 
-	client.call(context.Background(), "m1", nil)
-	client.call(context.Background(), "m2", nil)
-	client.call(context.Background(), "m3", nil)
+	_, err := client.call(context.Background(), "m1", nil)
+	require.NoError(t, err)
+	_, err = client.call(context.Background(), "m2", nil)
+	require.NoError(t, err)
+	_, err = client.call(context.Background(), "m3", nil)
+	require.NoError(t, err)
 
 	require.Len(t, receivedIDs, 3)
 	assert.Equal(t, 1, receivedIDs[0])

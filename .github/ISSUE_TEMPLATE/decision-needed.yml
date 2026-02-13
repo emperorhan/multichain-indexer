@@ -1,0 +1,46 @@
+name: Decision Needed
+description: Request explicit owner decision with options and deadline
+title: "[Decision] "
+labels:
+  - decision-needed
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What decision is needed and why now?
+      placeholder: Background and constraints
+    validations:
+      required: true
+  - type: textarea
+    id: option_a
+    attributes:
+      label: Option A (Recommended)
+      description: Describe the recommended option and tradeoffs
+      placeholder: Pros, cons, cost, risk
+    validations:
+      required: true
+  - type: textarea
+    id: option_b
+    attributes:
+      label: Option B
+      description: Describe an alternative option and tradeoffs
+      placeholder: Pros, cons, cost, risk
+    validations:
+      required: true
+  - type: textarea
+    id: deadline
+    attributes:
+      label: Decision Deadline
+      description: Date/time when a decision is needed
+      placeholder: "YYYY-MM-DD HH:mm (timezone)"
+    validations:
+      required: true
+  - type: checkboxes
+    id: defaults
+    attributes:
+      label: Default Rule
+      options:
+        - label: If there is no response by the deadline, proceed with Option A.
+          required: true
+

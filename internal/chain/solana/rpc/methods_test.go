@@ -21,9 +21,10 @@ func methodTestClient(handler http.HandlerFunc) (*Client, *httptest.Server) {
 
 func TestGetSlot_Success(t *testing.T) {
 	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req Request
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 
 		assert.Equal(t, "getSlot", req.Method)
 		assert.Len(t, req.Params, 1)
@@ -33,7 +34,7 @@ func TestGetSlot_Success(t *testing.T) {
 			ID:      req.ID,
 			Result:  json.RawMessage(`123456789`),
 		}
-		json.NewEncoder(w).Encode(resp)
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	})
 	defer server.Close()
 
@@ -49,7 +50,7 @@ func TestGetSlot_Error(t *testing.T) {
 			ID:      1,
 			Error:   &RPCError{Code: -32000, Message: "slot not available"},
 		}
-		json.NewEncoder(w).Encode(resp)
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	})
 	defer server.Close()
 
@@ -60,9 +61,10 @@ func TestGetSlot_Error(t *testing.T) {
 
 func TestGetSignaturesForAddress_Success(t *testing.T) {
 	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req Request
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 
 		assert.Equal(t, "getSignaturesForAddress", req.Method)
 		assert.Len(t, req.Params, 2)
@@ -72,13 +74,14 @@ func TestGetSignaturesForAddress_Success(t *testing.T) {
 			{Signature: "sig1", Slot: 100},
 			{Signature: "sig2", Slot: 101},
 		}
-		result, _ := json.Marshal(sigs)
+		result, err := json.Marshal(sigs)
+		require.NoError(t, err)
 		resp := Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result:  result,
 		}
-		json.NewEncoder(w).Encode(resp)
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	})
 	defer server.Close()
 
@@ -94,9 +97,10 @@ func TestGetSignaturesForAddress_Success(t *testing.T) {
 
 func TestGetSignaturesForAddress_OptsPassedCorrectly(t *testing.T) {
 	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req Request
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 
 		config := req.Params[1].(map[string]interface{})
 		assert.Equal(t, float64(50), config["limit"])
@@ -108,7 +112,7 @@ func TestGetSignaturesForAddress_OptsPassedCorrectly(t *testing.T) {
 			ID:      req.ID,
 			Result:  json.RawMessage(`[]`),
 		}
-		json.NewEncoder(w).Encode(resp)
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	})
 	defer server.Close()
 
@@ -124,9 +128,10 @@ func TestGetSignaturesForAddress_OptsPassedCorrectly(t *testing.T) {
 
 func TestGetSignaturesForAddress_NilOpts(t *testing.T) {
 	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req Request
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 
 		config := req.Params[1].(map[string]interface{})
 		assert.Equal(t, "confirmed", config["commitment"])
@@ -138,7 +143,7 @@ func TestGetSignaturesForAddress_NilOpts(t *testing.T) {
 			ID:      req.ID,
 			Result:  json.RawMessage(`[]`),
 		}
-		json.NewEncoder(w).Encode(resp)
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	})
 	defer server.Close()
 
@@ -151,9 +156,10 @@ func TestGetTransaction_Success(t *testing.T) {
 	expectedResult := json.RawMessage(`{"slot":100,"transaction":{"message":{}},"meta":{}}`)
 
 	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req Request
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 
 		assert.Equal(t, "getTransaction", req.Method)
 		assert.Equal(t, "testSig", req.Params[0])
@@ -163,7 +169,7 @@ func TestGetTransaction_Success(t *testing.T) {
 			ID:      req.ID,
 			Result:  expectedResult,
 		}
-		json.NewEncoder(w).Encode(resp)
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	})
 	defer server.Close()
 

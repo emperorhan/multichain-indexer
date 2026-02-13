@@ -1,0 +1,58 @@
+- name: type/task
+  color: 0E8A16
+  description: Planned implementation work
+- name: type/bug
+  color: D73A4A
+  description: Incorrect behavior or regression
+- name: type/docs
+  color: 0075CA
+  description: Documentation update
+- name: type/chore
+  color: C2E0C6
+  description: Build, tooling, or maintenance
+- name: area/pipeline
+  color: BFD4F2
+  description: Coordinator, fetcher, normalizer, ingester
+- name: area/sidecar
+  color: C5DEF5
+  description: gRPC sidecar and plugin system
+- name: area/storage
+  color: F9D0C4
+  description: PostgreSQL repositories and migrations
+- name: area/infra
+  color: D4C5F9
+  description: CI, Docker, deployment, runtime operations
+- name: priority/p0
+  color: B60205
+  description: Highest priority, immediate handling
+- name: priority/p1
+  color: D93F0B
+  description: High priority
+- name: priority/p2
+  color: FBCA04
+  description: Normal priority
+- name: priority/p3
+  color: 0E8A16
+  description: Low priority
+- name: sev0
+  color: B60205
+  description: Production outage or data corruption
+- name: sev1
+  color: D93F0B
+  description: Critical user impact
+- name: sev2
+  color: FBCA04
+  description: Moderate impact
+- name: sev3
+  color: 0E8A16
+  description: Minor impact
+- name: decision-needed
+  color: 5319E7
+  description: Owner decision is needed to proceed
+- name: blocked
+  color: 000000
+  description: Work cannot proceed due to external dependency
+- name: ready-for-review
+  color: 1D76DB
+  description: Implementation complete and ready for review
+

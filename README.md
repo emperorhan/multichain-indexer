@@ -423,6 +423,10 @@ DDL 변경 없음. 기존 8개 테이블이 모든 체인을 수용합니다.
 - [Architecture](docs/architecture.md) — 상세 아키텍처 명세서
 - [Testing](docs/testing.md) — 테스트 방법론 및 시나리오
 - [DB Migration Rationale](docs/db-migration-rationale.md) — AS-IS (JPA JOINED) → TO-BE (JSONB) 비교
+- [Roadmap](docs/roadmap.md) — 고도화 마일스톤과 우선순위
+- [Runbook](docs/runbook.md) — 장애 대응 및 복구 절차
+- [Definition Of Done](docs/definition-of-done.md) — 작업 완료 기준
+- [GitHub Collaboration](docs/github-collaboration.md) — 이슈/PR/라벨/승인 운영 규칙
 
 ## License
 
