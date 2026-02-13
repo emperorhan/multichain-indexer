@@ -1,0 +1,5 @@
+# One Solana address per line.
+# Manager loop reads this file when SOLANA_WHITELIST_CSV is not set.
+# Example:
+# 9xQeWvG816bUx9EPfYfK8f6Jr6fQ2qS2fF5Q4u4wF9mJ
+# 11111111111111111111111111111111

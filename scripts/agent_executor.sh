@@ -16,6 +16,11 @@ if [ -z "${ISSUE_NUMBER}" ] || [ -z "${ISSUE_BODY_FILE}" ] || [ ! -f "${ISSUE_BO
   exit 3
 fi
 
+AGENT_CODEX_MODEL="${AGENT_CODEX_MODEL:-gpt-5.3-codex-spark}"
+AGENT_CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-workspace-write}"
+AGENT_CODEX_APPROVAL="${AGENT_CODEX_APPROVAL:-never}"
+AGENT_CODEX_SEARCH="${AGENT_CODEX_SEARCH:-true}"
+
 PROMPT="$(cat <<EOF
 You are the autonomous implementation executor for this repository.
 
@@ -37,4 +42,16 @@ Instructions:
 EOF
 )"
 
-codex exec --full-auto --cd "$(pwd)" "${PROMPT}"
+cmd=(
+  codex exec
+  --model "${AGENT_CODEX_MODEL}"
+  --sandbox "${AGENT_CODEX_SANDBOX}"
+  --ask-for-approval "${AGENT_CODEX_APPROVAL}"
+  --cd "$(pwd)"
+)
+
+if [ "${AGENT_CODEX_SEARCH}" = "true" ]; then
+  cmd+=(--search)
+fi
+
+"${cmd[@]}" "${PROMPT}"
