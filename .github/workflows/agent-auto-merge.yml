@@ -99,7 +99,7 @@ jobs:
 
             if (pr.draft) {
               try {
-                await github.rest.pulls.readyForReview({
+                await github.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/ready_for_review", {
                   owner,
                   repo,
                   pull_number: prNumber,
