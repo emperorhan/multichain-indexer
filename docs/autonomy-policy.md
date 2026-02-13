@@ -95,6 +95,7 @@
 - `AGENT_MAX_ISSUES_PER_RUN` (기본 `2`): 한 번의 루프에서 처리할 최대 이슈 수
 - `AGENT_MAX_PLANNER_ISSUES_PER_RUN` (기본 `1`): planner queue 1회 실행당 처리 이슈 수
 - `AGENT_MAX_AUTO_RETRIES` (기본 `2`): 동일 이슈 자동 재시도 횟수
+- `RALPH_SELF_HEAL_ENABLED` (기본 `true`): 권한/운영 오류 자동 복구 시도 활성화
 - `DECISION_REMINDER_HOURS` (기본 `24`): `decision-needed` 리마인드 코멘트 간격(시간)
 - `AGENT_DEVELOPER_INCLUDE_LABELS` (기본 비어 있음): developer queue 포함 필터(CSV, 모든 라벨 일치)
 - `AGENT_DEVELOPER_EXCLUDE_LABELS` (기본 `role/planner,role/qa,decision/major`): developer queue 제외 필터(CSV)
@@ -156,6 +157,7 @@
   - 대상: agent가 생성한 PR(`agent-issue-*`, `chore(agent):*`)
   - 조건: 차단 라벨(`decision-needed`, `needs-opinion`, `blocked`, `decision/major`, `risk/high`) 없음
   - 선택: secret `AGENT_GH_TOKEN`(`repo` + `workflow` scope) 설정 시 workflow 파일 변경 PR까지 자동 머지 가능
+  - self-heal: workflow scope 부족으로 자동 머지가 막히면 PR에 안내 코멘트 자동 생성
 
 ## Operational Notes
 - 기본 실행자는 `ubuntu-latest`이다.

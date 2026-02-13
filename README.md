@@ -461,10 +461,14 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
    - 차단 라벨(`decision-needed`, `needs-opinion`, `blocked`, `decision/major`, `risk/high`)이 있으면 머지 중단
    - 토글 변수: `AGENT_AUTO_MERGE_ENABLED=true|false`
    - 선택: `AGENT_GH_TOKEN` secret(repo+workflow scope) 설정 시 workflow 파일 변경 PR까지 자동 머지 가능
-13. 로컬 반복 루프(Playbook 스타일):
+13. Self-heal(권장):
+   - `RALPH_SELF_HEAL_ENABLED=true|false` (기본 `true`)
+   - PR 생성 권한 오류를 감지하면 Actions workflow 권한(`write + can_approve_pull_request_reviews`) 자동 복구 시도
+   - auto-merge가 workflow scope 부족으로 막히면 PR에 자동 안내 코멘트 남김
+14. 로컬 반복 루프(Playbook 스타일):
    - 작업 지시를 `.agent/ralph_task.md`에 작성
    - `MAX_LOOPS=6 scripts/ralph_loop_local.sh`
-14. 릴리즈 자동화:
+15. 릴리즈 자동화:
    - `main` 반영 시 `release.yml`이 `vX.Y.Z` 태그와 릴리즈 노트 자동 생성
    - PR 라벨 `release/major|minor|patch`로 버전 범위를 제어
 

@@ -31,6 +31,7 @@
   - developer queue: `role/planner`, `role/qa`, `decision/major` 제외 이슈 처리 (기본)
 - `risk/high` 라벨 이슈는 사람 확인 전 자동 실행하지 않는다.
 - `AGENT_MAX_AUTO_RETRIES`를 넘겨 실패하면 사람 확인 상태로 자동 전환한다.
+- `RALPH_SELF_HEAL_ENABLED=true`면 PR 생성 권한 오류 시 Actions workflow 권한 자동 복구를 시도한다.
 
 ## Autonomous Merge
 - 워크플로우: `.github/workflows/agent-auto-merge.yml`
@@ -46,6 +47,7 @@
   - 불가 시 체크가 이미 green이면 즉시 squash merge 시도
 - 선택 설정:
   - secret `AGENT_GH_TOKEN`(classic PAT, `repo` + `workflow` scope)을 설정하면 workflow 파일을 수정한 PR도 자동 merge 가능
+  - workflow scope 부족으로 막히면 PR에 self-heal 안내 코멘트를 자동 남긴다.
 
 ## Issue Discovery Loop
 - 워크플로우: `.github/workflows/issue-scout.yml`
