@@ -21,6 +21,8 @@ This repository runs a multi-agent autonomous loop for a Solana on-chain indexer
 - Toggle via:
   - `.github/workflows/ralph-loop-control.yml`
   - `scripts/toggle_ralph_loop.sh on|off`
+- Local iterative mode (feature branch only):
+  - `scripts/ralph_loop_local.sh`
 
 ## Required Validation
 - `make test`

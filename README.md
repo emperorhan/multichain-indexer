@@ -444,6 +444,9 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 10. 주요 의사결정:
    - `Major Decision` 템플릿 사용 (`decision/major`)
    - 해당 이슈는 owner 입력 전 자동 실행이 진행되지 않음
+11. 로컬 반복 루프(Playbook 스타일):
+   - 작업 지시를 `.agent/ralph_task.md`에 작성
+   - `MAX_LOOPS=6 scripts/ralph_loop_local.sh`
 
 ## Docs
 
