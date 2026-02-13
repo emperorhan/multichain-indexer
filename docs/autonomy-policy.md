@@ -109,6 +109,7 @@
 - `AGENT_CODEX_SANDBOX` (기본 `workspace-write`): codex sandbox 모드
 - `AGENT_CODEX_APPROVAL` (기본 `never`): codex 승인 정책
 - `AGENT_CODEX_SEARCH` (기본 `true`): codex 웹 검색 사용 여부
+- `AGENT_AUTO_MERGE_ENABLED` (기본 `true`): 에이전트 PR 자동 머지 활성화
 - `MANAGER_LOOP_ENABLED` (기본 `true`): manager loop 활성화
 - `MANAGER_MAX_SETS_PER_RUN` (기본 `1`): manager loop 1회 실행당 QA 셋 생성 수
 - `QA_ADDRESS_BATCH_SIZE` (기본 `5`): QA 검증용 주소 수
@@ -150,6 +151,9 @@
 - 워크플로우: `.github/workflows/agent-loop.yml`
 - 주기: 15분
 - 수동 실행: `workflow_dispatch`
+- PR 자동 머지 워크플로우: `.github/workflows/agent-auto-merge.yml`
+  - 대상: agent가 생성한 PR(`agent-issue-*`, `chore(agent):*`)
+  - 조건: 차단 라벨(`decision-needed`, `needs-opinion`, `blocked`, `decision/major`, `risk/high`) 없음
 
 ## Operational Notes
 - 기본 실행자는 `ubuntu-latest`이다.

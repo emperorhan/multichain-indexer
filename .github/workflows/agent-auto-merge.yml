@@ -1,0 +1,154 @@
+name: Agent Auto Merge
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Optional PR number to process"
+        required: false
+        default: ""
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: agent-auto-merge-${{ github.event.pull_request.number || github.event.inputs.pr_number || 'manual' }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    if: ${{ vars.RALPH_LOOP_ENABLED != 'false' && vars.AGENT_AUTO_MERGE_ENABLED != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate and merge eligible agent PR
+        uses: actions/github-script@v7
+        env:
+          AGENT_AUTO_MERGE_ENABLED: ${{ vars.AGENT_AUTO_MERGE_ENABLED || 'true' }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const inputPr = `${{ toJSON(github.event.inputs.pr_number) }}`.replace(/^"+|"+$/g, "");
+            const eventPr = context.payload.pull_request?.number;
+            const prNumber = inputPr ? Number(inputPr) : eventPr;
+
+            if (!prNumber || Number.isNaN(prNumber)) {
+              core.notice("No pull request number provided; skipping.");
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            if (pr.state !== "open") {
+              core.notice(`PR #${prNumber} is not open; skipping.`);
+              return;
+            }
+
+            const isAgentPr =
+              pr.head.ref.startsWith("agent-issue-") ||
+              pr.title.startsWith("chore(agent):") ||
+              pr.user?.login === "github-actions[bot]";
+
+            if (!isAgentPr) {
+              core.notice(`PR #${prNumber} is not an agent PR; skipping.`);
+              return;
+            }
+
+            const body = pr.body || "";
+            const issueMatches = [...body.matchAll(/(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi)];
+            const issueNumbers = [...new Set(issueMatches.map((m) => Number(m[1])).filter((n) => !Number.isNaN(n)))];
+
+            const blockedLabels = new Set([
+              "blocked",
+              "decision-needed",
+              "needs-opinion",
+              "decision/major",
+              "risk/high",
+            ]);
+
+            for (const issueNumber of issueNumbers) {
+              const { data: issue } = await github.rest.issues.get({
+                owner,
+                repo,
+                issue_number: issueNumber,
+              });
+              const labels = issue.labels.map((l) => (typeof l === "string" ? l : l.name));
+              const blocking = labels.filter((l) => blockedLabels.has(l));
+              if (blocking.length > 0) {
+                core.notice(
+                  `PR #${prNumber} blocked by issue #${issueNumber} labels: ${blocking.join(", ")}`
+                );
+                return;
+              }
+            }
+
+            if (pr.draft) {
+              try {
+                await github.rest.pulls.readyForReview({
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                });
+                core.notice(`PR #${prNumber} converted to ready-for-review.`);
+              } catch (err) {
+                core.warning(`Unable to convert PR #${prNumber} from draft: ${err.message}`);
+              }
+            }
+
+            const { data: fresh } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            // Prefer GitHub auto-merge so pending checks can complete asynchronously.
+            try {
+              await github.graphql(
+                `mutation EnableAutoMerge($pullRequestId: ID!) {
+                  enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: SQUASH}) {
+                    pullRequest { number autoMergeRequest { enabledAt } }
+                  }
+                }`,
+                { pullRequestId: fresh.node_id }
+              );
+              core.notice(`Auto-merge enabled for PR #${prNumber}.`);
+              return;
+            } catch (err) {
+              const message = String(err.message || err);
+              if (
+                message.includes("already enabled") ||
+                message.includes("Pull request is in clean status")
+              ) {
+                core.notice(`Auto-merge already configured for PR #${prNumber}.`);
+                return;
+              }
+              core.warning(`enablePullRequestAutoMerge failed for #${prNumber}: ${message}`);
+            }
+
+            // Fallback: attempt immediate merge when checks are already green.
+            try {
+              await github.rest.pulls.merge({
+                owner,
+                repo,
+                pull_number: prNumber,
+                merge_method: "squash",
+              });
+              core.notice(`PR #${prNumber} merged immediately by fallback path.`);
+            } catch (err) {
+              core.warning(`Immediate merge skipped for #${prNumber}: ${err.message}`);
+            }
