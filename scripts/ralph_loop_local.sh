@@ -62,10 +62,11 @@ EOF
 )"
 
   cmd=(
-    codex exec
+    codex
+    --ask-for-approval "${CODEX_APPROVAL}"
+    exec
     --model "${CODEX_MODEL_FAST}"
     --sandbox "${CODEX_SANDBOX}"
-    --ask-for-approval "${CODEX_APPROVAL}"
     --cd "$(pwd)"
   )
 
