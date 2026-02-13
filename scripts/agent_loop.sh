@@ -23,6 +23,8 @@ DECISION_REMINDER_HOURS="${DECISION_REMINDER_HOURS:-24}"
 AGENT_MAX_ISSUES_PER_RUN="${AGENT_MAX_ISSUES_PER_RUN:-2}"
 AGENT_MAX_AUTO_RETRIES="${AGENT_MAX_AUTO_RETRIES:-2}"
 AGENT_IN_PROGRESS_TIMEOUT_HOURS="${AGENT_IN_PROGRESS_TIMEOUT_HOURS:-6}"
+AGENT_AUTO_CLEANUP_ENABLED="${AGENT_AUTO_CLEANUP_ENABLED:-true}"
+AGENT_DEPRECATE_DUPLICATES_ENABLED="${AGENT_DEPRECATE_DUPLICATES_ENABLED:-true}"
 AUTONOMY_DRY_RUN="${AUTONOMY_DRY_RUN:-false}"
 AGENT_EXEC_CMD="${AGENT_EXEC_CMD:-}"
 PLANNING_EXEC_CMD="${PLANNING_EXEC_CMD:-scripts/planning_executor.sh}"
@@ -294,6 +296,243 @@ requeue_stale_in_progress_issues() {
 
 This issue has been re-queued with label \`ready\`."
   done < <(jq -c '.[]' <<<"${issues}")
+}
+
+list_linked_pr_numbers() {
+  local issue_number="$1"
+  gh issue view "${issue_number}" \
+    --repo "${REPO}" \
+    --json closedByPullRequestsReferences \
+    --jq '.closedByPullRequestsReferences[].number' 2>/dev/null || true
+}
+
+find_merged_linked_pr_url() {
+  local issue_number="$1"
+  local pr_number pr_url
+
+  while IFS= read -r pr_number; do
+    [ -z "${pr_number}" ] && continue
+    pr_url="$(gh pr view "${pr_number}" \
+      --repo "${REPO}" \
+      --json mergedAt,url \
+      --jq 'if .mergedAt != null then .url else empty end' 2>/dev/null || true)"
+    if [ -n "${pr_url}" ]; then
+      echo "${pr_url}"
+      return 0
+    fi
+  done < <(list_linked_pr_numbers "${issue_number}")
+
+  return 1
+}
+
+issue_has_open_linked_pr() {
+  local issue_number="$1"
+  local pr_number pr_state
+
+  while IFS= read -r pr_number; do
+    [ -z "${pr_number}" ] && continue
+    pr_state="$(gh pr view "${pr_number}" \
+      --repo "${REPO}" \
+      --json state,mergedAt \
+      --jq 'if .state == "OPEN" then "open" elif .mergedAt != null then "merged" else "closed" end' 2>/dev/null || true)"
+    if [ "${pr_state}" = "open" ]; then
+      return 0
+    fi
+  done < <(list_linked_pr_numbers "${issue_number}")
+
+  return 1
+}
+
+auto_close_resolved_issues() {
+  local issues line issue_number issue_title issue_url merged_pr_url labels
+
+  issues="$(gh issue list \
+    --repo "${REPO}" \
+    --state open \
+    --label autonomous \
+    --limit 200 \
+    --json number,title,url,labels)"
+
+  while IFS= read -r line; do
+    [ -z "${line}" ] && continue
+
+    issue_number="$(jq -r '.number' <<<"${line}")"
+    issue_title="$(jq -r '.title' <<<"${line}")"
+    issue_url="$(jq -r '.url' <<<"${line}")"
+    labels="$(jq -r '[.labels[].name] | join(",")' <<<"${line}")"
+    if [[ "${labels}" == *"in-progress"* ]]; then
+      continue
+    fi
+    merged_pr_url="$(find_merged_linked_pr_url "${issue_number}" || true)"
+    if [ -z "${merged_pr_url}" ]; then
+      continue
+    fi
+
+    log "auto-closing resolved issue #${issue_number}: ${issue_title}"
+    if should_dry_run; then
+      continue
+    fi
+
+    gh issue close "${issue_number}" \
+      --repo "${REPO}" \
+      --comment "[agent-loop] Auto-closed as resolved because linked PR was merged.
+
+- issue: ${issue_url}
+- merged-pr: ${merged_pr_url}" >/dev/null
+  done < <(jq -c '.[]' <<<"${issues}")
+}
+
+auto_close_explicitly_deprecated_issues() {
+  local issues line issue_number issue_title issue_url labels
+
+  issues="$(gh issue list \
+    --repo "${REPO}" \
+    --state open \
+    --label autonomous \
+    --limit 200 \
+    --json number,title,url,labels)"
+
+  while IFS= read -r line; do
+    [ -z "${line}" ] && continue
+
+    if ! jq -e '[.labels[].name] | any(. == "deprecated" or . == "state/deprecated" or . == "status/deprecated")' >/dev/null <<<"${line}"; then
+      continue
+    fi
+
+    issue_number="$(jq -r '.number' <<<"${line}")"
+    issue_title="$(jq -r '.title' <<<"${line}")"
+    issue_url="$(jq -r '.url' <<<"${line}")"
+    labels="$(jq -r '[.labels[].name] | join(",")' <<<"${line}")"
+
+    if [[ "${labels}" == *"in-progress"* ]] || issue_has_open_linked_pr "${issue_number}"; then
+      continue
+    fi
+
+    log "auto-closing explicitly deprecated issue #${issue_number}: ${issue_title}"
+    if should_dry_run; then
+      continue
+    fi
+
+    gh issue close "${issue_number}" \
+      --repo "${REPO}" \
+      --comment "[agent-loop] Auto-closed because issue is explicitly marked deprecated.
+
+- issue: ${issue_url}" >/dev/null
+  done < <(jq -c '.[]' <<<"${issues}")
+}
+
+auto_deprecate_duplicate_discovered_issues() {
+  local groups group keep_number keep_created keep_priority
+  local line issue_number issue_title issue_url issue_created labels priority
+  local has_active_label has_open_pr
+
+  groups="$(gh issue list \
+    --repo "${REPO}" \
+    --state open \
+    --label autonomous \
+    --label agent/discovered \
+    --limit 200 \
+    --json number,title,url,createdAt,labels | jq -c '
+      def normalized_title:
+        .title
+        | ascii_downcase
+        | gsub("\\s+"; " ")
+        | gsub("^\\s+|\\s+$"; "");
+      map(. + {title_key: normalized_title})
+      | group_by(.title_key)
+      | map(select(length > 1))
+      | .[]
+    ')"
+
+  [ -n "${groups}" ] || return 0
+
+  while IFS= read -r group; do
+    [ -z "${group}" ] && continue
+
+    keep_number=""
+    keep_created=""
+    keep_priority=-1
+
+    while IFS= read -r line; do
+      [ -z "${line}" ] && continue
+
+      issue_number="$(jq -r '.number' <<<"${line}")"
+      issue_created="$(jq -r '.createdAt' <<<"${line}")"
+      labels="$(jq -r '[.labels[].name] | join(",")' <<<"${line}")"
+
+      has_active_label="false"
+      if [[ "${labels}" == *"in-progress"* ]] || [[ "${labels}" == *"decision-needed"* ]] || [[ "${labels}" == *"needs-opinion"* ]]; then
+        has_active_label="true"
+      fi
+
+      has_open_pr="false"
+      if issue_has_open_linked_pr "${issue_number}"; then
+        has_open_pr="true"
+      fi
+
+      priority=0
+      if [ "${has_active_label}" = "true" ] || [ "${has_open_pr}" = "true" ]; then
+        priority=1
+      fi
+
+      if [ -z "${keep_number}" ] || [ "${priority}" -gt "${keep_priority}" ] || { [ "${priority}" -eq "${keep_priority}" ] && [[ "${issue_created}" > "${keep_created}" ]]; }; then
+        keep_number="${issue_number}"
+        keep_created="${issue_created}"
+        keep_priority="${priority}"
+      fi
+    done < <(jq -c '.[]' <<<"${group}")
+
+    while IFS= read -r line; do
+      [ -z "${line}" ] && continue
+
+      issue_number="$(jq -r '.number' <<<"${line}")"
+      issue_title="$(jq -r '.title' <<<"${line}")"
+      issue_url="$(jq -r '.url' <<<"${line}")"
+      labels="$(jq -r '[.labels[].name] | join(",")' <<<"${line}")"
+
+      if [ "${issue_number}" = "${keep_number}" ]; then
+        continue
+      fi
+
+      has_active_label="false"
+      if [[ "${labels}" == *"in-progress"* ]] || [[ "${labels}" == *"decision-needed"* ]] || [[ "${labels}" == *"needs-opinion"* ]]; then
+        has_active_label="true"
+      fi
+      if [ "${has_active_label}" = "true" ]; then
+        continue
+      fi
+
+      if issue_has_open_linked_pr "${issue_number}"; then
+        continue
+      fi
+
+      log "auto-closing deprecated duplicate issue #${issue_number} -> keep #${keep_number}"
+      if should_dry_run; then
+        continue
+      fi
+
+      gh issue close "${issue_number}" \
+        --repo "${REPO}" \
+        --comment "[agent-loop] Auto-closed as deprecated duplicate.
+
+- duplicate-of: #${keep_number}
+- issue: ${issue_url}
+- title: ${issue_title}" >/dev/null
+    done < <(jq -c '.[]' <<<"${group}")
+  done <<<"${groups}"
+}
+
+run_issue_cleanup() {
+  if [ "${AGENT_AUTO_CLEANUP_ENABLED}" != "true" ]; then
+    return 0
+  fi
+
+  auto_close_resolved_issues
+  auto_close_explicitly_deprecated_issues
+
+  if [ "${AGENT_DEPRECATE_DUPLICATES_ENABLED}" = "true" ]; then
+    auto_deprecate_duplicate_discovered_issues
+  fi
 }
 
 claim_issue() {
@@ -662,10 +901,11 @@ process_issue() {
 main() {
   local issue_json processed=0
 
-  log "repo=${REPO} queue=${AGENT_QUEUE_NAME} include=${AGENT_INCLUDE_LABELS:-<none>} exclude=${AGENT_EXCLUDE_LABELS:-<none>} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} retries=${AGENT_MAX_AUTO_RETRIES} stale_timeout_h=${AGENT_IN_PROGRESS_TIMEOUT_HOURS} dry_run=${AUTONOMY_DRY_RUN} self_heal=${RALPH_SELF_HEAL_ENABLED}"
+  log "repo=${REPO} queue=${AGENT_QUEUE_NAME} include=${AGENT_INCLUDE_LABELS:-<none>} exclude=${AGENT_EXCLUDE_LABELS:-<none>} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} retries=${AGENT_MAX_AUTO_RETRIES} stale_timeout_h=${AGENT_IN_PROGRESS_TIMEOUT_HOURS} cleanup=${AGENT_AUTO_CLEANUP_ENABLED} dedupe=${AGENT_DEPRECATE_DUPLICATES_ENABLED} dry_run=${AUTONOMY_DRY_RUN} self_heal=${RALPH_SELF_HEAL_ENABLED}"
   if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "${RALPH_SELF_HEAL_ENABLED}" = "true" ]; then
     ensure_actions_pr_permissions || true
   fi
+  run_issue_cleanup
   requeue_stale_in_progress_issues
   comment_decision_reminders
 
