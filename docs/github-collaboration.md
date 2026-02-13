@@ -81,6 +81,15 @@
 - `Go Lint`
 - `Sidecar Test + Build`
 
+## Release Automation
+- 워크플로우: `.github/workflows/release.yml`
+- 트리거: `main` push 또는 수동 실행
+- 버전 규칙: `vX.Y.Z` (SemVer)
+  - `release/major` 또는 `decision/major` -> major bump
+  - `release/minor` 또는 `type/task` -> minor bump
+  - 그 외(`release/patch`, `type/bug`, `type/chore`, `type/docs`) -> patch bump
+- 릴리즈 노트: GitHub 자동 생성 노트 + `.github/release.yml` 카테고리 적용
+
 ## Branch Protection (GitHub Settings)
 기본 브랜치(`main`)에 아래 규칙 적용:
 1. Require a pull request before merging

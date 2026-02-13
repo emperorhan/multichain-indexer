@@ -103,3 +103,12 @@
 - name: qa/failed
   color: D73A4A
   description: QA validation failed
+- name: release/major
+  color: B60205
+  description: Next release should bump MAJOR
+- name: release/minor
+  color: FBCA04
+  description: Next release should bump MINOR
+- name: release/patch
+  color: 0E8A16
+  description: Next release should bump PATCH

@@ -447,6 +447,9 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 11. 로컬 반복 루프(Playbook 스타일):
    - 작업 지시를 `.agent/ralph_task.md`에 작성
    - `MAX_LOOPS=6 scripts/ralph_loop_local.sh`
+12. 릴리즈 자동화:
+   - `main` 반영 시 `release.yml`이 `vX.Y.Z` 태그와 릴리즈 노트 자동 생성
+   - PR 라벨 `release/major|minor|patch`로 버전 범위를 제어
 
 ## Docs
 
