@@ -17,6 +17,12 @@ require_cmd() {
 require_cmd codex
 require_cmd git
 
+CODEX_SAFETY_GUARD_CMD="${CODEX_SAFETY_GUARD_CMD:-scripts/codex_safety_guard.sh}"
+if [ ! -x "${CODEX_SAFETY_GUARD_CMD}" ]; then
+  echo "codex safety guard script is missing or not executable: ${CODEX_SAFETY_GUARD_CMD}" >&2
+  exit 2
+fi
+
 TASK_FILE="${RALPH_TASK_FILE:-.agent/ralph_task.md}"
 PROMPT_BUILD_FILE="${PROMPT_BUILD_FILE:-PROMPT_build.md}"
 MAX_LOOPS="${MAX_LOOPS:-6}"
@@ -83,6 +89,7 @@ EOF
     --cd "$(pwd)"
   )
 
+  "${CODEX_SAFETY_GUARD_CMD}" "${cmd[@]}"
   "${cmd[@]}" "${prompt}"
 
   if [ -z "$(git status --porcelain)" ]; then

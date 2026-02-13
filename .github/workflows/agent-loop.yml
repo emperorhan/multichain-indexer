@@ -66,9 +66,13 @@ jobs:
           AGENT_CODEX_MODEL: ${{ vars.AGENT_CODEX_MODEL || '' }}
           AGENT_CODEX_MODEL_FAST: ${{ vars.AGENT_CODEX_MODEL_FAST || 'gpt-5.3-codex-spark' }}
           AGENT_CODEX_MODEL_COMPLEX: ${{ vars.AGENT_CODEX_MODEL_COMPLEX || 'gpt-5.3-codex' }}
+          AGENT_CODEX_COMPLEX_LABELS: ${{ vars.AGENT_CODEX_COMPLEX_LABELS || 'risk/high,priority/p0,sev0,sev1,decision/major,area/storage,type/bug' }}
           AGENT_CODEX_SANDBOX: ${{ vars.AGENT_CODEX_SANDBOX || 'workspace-write' }}
           AGENT_CODEX_APPROVAL: ${{ vars.AGENT_CODEX_APPROVAL || 'never' }}
           AGENT_CODEX_SEARCH: ${{ vars.AGENT_CODEX_SEARCH || 'true' }}
+          OMX_SAFE_MODE: ${{ vars.OMX_SAFE_MODE || 'true' }}
+          OMX_FORBIDDEN_FLAGS: ${{ vars.OMX_FORBIDDEN_FLAGS || '--madmax,--yolo,--dangerously-bypass-approvals-and-sandbox' }}
+          OMX_FORBIDDEN_SANDBOXES: ${{ vars.OMX_FORBIDDEN_SANDBOXES || 'danger-full-access' }}
           PLANNING_CODEX_MODEL: ${{ vars.PLANNING_CODEX_MODEL || 'gpt-5.3-codex' }}
           PLANNING_CODEX_SANDBOX: ${{ vars.PLANNING_CODEX_SANDBOX || 'workspace-write' }}
           PLANNING_CODEX_APPROVAL: ${{ vars.PLANNING_CODEX_APPROVAL || 'never' }}
@@ -126,9 +130,13 @@ jobs:
           AGENT_CODEX_MODEL: ${{ vars.AGENT_CODEX_MODEL || '' }}
           AGENT_CODEX_MODEL_FAST: ${{ vars.AGENT_CODEX_MODEL_FAST || 'gpt-5.3-codex-spark' }}
           AGENT_CODEX_MODEL_COMPLEX: ${{ vars.AGENT_CODEX_MODEL_COMPLEX || 'gpt-5.3-codex' }}
+          AGENT_CODEX_COMPLEX_LABELS: ${{ vars.AGENT_CODEX_COMPLEX_LABELS || 'risk/high,priority/p0,sev0,sev1,decision/major,area/storage,type/bug' }}
           AGENT_CODEX_SANDBOX: ${{ vars.AGENT_CODEX_SANDBOX || 'workspace-write' }}
           AGENT_CODEX_APPROVAL: ${{ vars.AGENT_CODEX_APPROVAL || 'never' }}
           AGENT_CODEX_SEARCH: ${{ vars.AGENT_CODEX_SEARCH || 'true' }}
+          OMX_SAFE_MODE: ${{ vars.OMX_SAFE_MODE || 'true' }}
+          OMX_FORBIDDEN_FLAGS: ${{ vars.OMX_FORBIDDEN_FLAGS || '--madmax,--yolo,--dangerously-bypass-approvals-and-sandbox' }}
+          OMX_FORBIDDEN_SANDBOXES: ${{ vars.OMX_FORBIDDEN_SANDBOXES || 'danger-full-access' }}
           PLANNING_CODEX_MODEL: ${{ vars.PLANNING_CODEX_MODEL || 'gpt-5.3-codex' }}
           PLANNING_CODEX_SANDBOX: ${{ vars.PLANNING_CODEX_SANDBOX || 'workspace-write' }}
           PLANNING_CODEX_APPROVAL: ${{ vars.PLANNING_CODEX_APPROVAL || 'never' }}

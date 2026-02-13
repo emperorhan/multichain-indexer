@@ -52,4 +52,7 @@ jobs:
           QA_TRIAGE_CODEX_SANDBOX: ${{ vars.QA_TRIAGE_CODEX_SANDBOX || 'workspace-write' }}
           QA_TRIAGE_CODEX_APPROVAL: ${{ vars.QA_TRIAGE_CODEX_APPROVAL || 'never' }}
           QA_TRIAGE_CODEX_SEARCH: ${{ vars.QA_TRIAGE_CODEX_SEARCH || 'false' }}
+          OMX_SAFE_MODE: ${{ vars.OMX_SAFE_MODE || 'true' }}
+          OMX_FORBIDDEN_FLAGS: ${{ vars.OMX_FORBIDDEN_FLAGS || '--madmax,--yolo,--dangerously-bypass-approvals-and-sandbox' }}
+          OMX_FORBIDDEN_SANDBOXES: ${{ vars.OMX_FORBIDDEN_SANDBOXES || 'danger-full-access' }}
         run: scripts/qa_loop.sh

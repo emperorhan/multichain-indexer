@@ -73,7 +73,9 @@
   - 화이트리스트 주소셋에서 QA 검증 이슈 생성 (`qa-ready`)
 - `Developer`:
   - `autonomous + ready` 이슈 구현 및 PR 생성 (`agent-loop`)
-  - 기본 모델: `gpt-5.3-codex-spark`, 고위험/최고우선은 `gpt-5.3-codex`
+  - 기본 모델: `gpt-5.3-codex-spark`
+  - 라벨 기반 복잡도 라우팅(`scripts/codex_model_router.sh`)으로 complex 이슈는 `gpt-5.3-codex` 자동 선택
+  - `scripts/codex_safety_guard.sh`로 omx unsafe 플래그/샌드박스를 차단
 - `QA`:
   - `qa-ready` 이슈 검증
   - 실패 시 model triage 후 developer 큐로 bug 이슈 자동 생성
