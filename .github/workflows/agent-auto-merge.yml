@@ -99,11 +99,14 @@ jobs:
 
             if (pr.draft) {
               try {
-                await github.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/ready_for_review", {
-                  owner,
-                  repo,
-                  pull_number: prNumber,
-                });
+                await github.graphql(
+                  `mutation MarkReady($pullRequestId: ID!) {
+                    markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+                      pullRequest { number isDraft }
+                    }
+                  }`,
+                  { pullRequestId: pr.node_id }
+                );
                 core.notice(`PR #${prNumber} converted to ready-for-review.`);
               } catch (err) {
                 core.warning(`Unable to convert PR #${prNumber} from draft: ${err.message}`);
