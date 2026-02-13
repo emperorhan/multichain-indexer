@@ -35,8 +35,8 @@
 ## Branch Protection (GitHub Settings)
 기본 브랜치(`main`)에 아래 규칙 적용:
 1. Require a pull request before merging
-2. Require approvals (최소 1명)
-3. Require review from Code Owners
+2. Require approvals (solo 운영 기본 0, 팀 운영 권장 1+)
+3. Require review from Code Owners (팀 운영 시 권장)
 4. Require status checks to pass before merging
 5. Include administrators
 6. Block force pushes and branch deletion
