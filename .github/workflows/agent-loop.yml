@@ -53,7 +53,9 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           BASE_BRANCH: main
           AGENT_EXEC_CMD: ${{ vars.AGENT_EXEC_CMD }}
-          AGENT_CODEX_MODEL: ${{ vars.AGENT_CODEX_MODEL || 'gpt-5.3-codex-spark' }}
+          AGENT_CODEX_MODEL: ${{ vars.AGENT_CODEX_MODEL || '' }}
+          AGENT_CODEX_MODEL_FAST: ${{ vars.AGENT_CODEX_MODEL_FAST || 'gpt-5.3-codex-spark' }}
+          AGENT_CODEX_MODEL_COMPLEX: ${{ vars.AGENT_CODEX_MODEL_COMPLEX || 'gpt-5.3-codex' }}
           AGENT_CODEX_SANDBOX: ${{ vars.AGENT_CODEX_SANDBOX || 'workspace-write' }}
           AGENT_CODEX_APPROVAL: ${{ vars.AGENT_CODEX_APPROVAL || 'never' }}
           AGENT_CODEX_SEARCH: ${{ vars.AGENT_CODEX_SEARCH || 'true' }}

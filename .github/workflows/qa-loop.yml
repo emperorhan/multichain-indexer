@@ -46,4 +46,10 @@ jobs:
           AUTONOMY_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           QA_MAX_ISSUES_PER_RUN: ${{ github.event.inputs.max_issues || vars.QA_MAX_ISSUES_PER_RUN || '1' }}
           QA_EXEC_CMD: ${{ vars.QA_EXEC_CMD || 'scripts/qa_executor.sh' }}
+          QA_TRIAGE_ENABLED: ${{ vars.QA_TRIAGE_ENABLED || 'true' }}
+          QA_TRIAGE_EXEC_CMD: ${{ vars.QA_TRIAGE_EXEC_CMD || 'scripts/qa_triage_executor.sh' }}
+          QA_TRIAGE_CODEX_MODEL: ${{ vars.QA_TRIAGE_CODEX_MODEL || 'gpt-5.3-codex' }}
+          QA_TRIAGE_CODEX_SANDBOX: ${{ vars.QA_TRIAGE_CODEX_SANDBOX || 'workspace-write' }}
+          QA_TRIAGE_CODEX_APPROVAL: ${{ vars.QA_TRIAGE_CODEX_APPROVAL || 'never' }}
+          QA_TRIAGE_CODEX_SEARCH: ${{ vars.QA_TRIAGE_CODEX_SEARCH || 'false' }}
         run: scripts/qa_loop.sh

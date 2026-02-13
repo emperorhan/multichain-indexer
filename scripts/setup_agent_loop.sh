@@ -4,7 +4,9 @@ set -euo pipefail
 # Usage:
 #   AGENT_EXEC_CMD='your executor command' \
 #   AGENT_RUNNER='self-hosted' \
-#   AGENT_CODEX_MODEL='gpt-5.3-codex-spark' \
+#   AGENT_CODEX_MODEL='' \
+#   AGENT_CODEX_MODEL_FAST='gpt-5.3-codex-spark' \
+#   AGENT_CODEX_MODEL_COMPLEX='gpt-5.3-codex' \
 #   AGENT_CODEX_SANDBOX='workspace-write' \
 #   AGENT_CODEX_APPROVAL='never' \
 #   AGENT_CODEX_SEARCH='true' \
@@ -23,6 +25,12 @@ set -euo pipefail
 #   QA_LOOP_ENABLED='true' \
 #   QA_MAX_ISSUES_PER_RUN='1' \
 #   QA_EXEC_CMD='scripts/qa_executor.sh' \
+#   QA_TRIAGE_ENABLED='true' \
+#   QA_TRIAGE_EXEC_CMD='scripts/qa_triage_executor.sh' \
+#   QA_TRIAGE_CODEX_MODEL='gpt-5.3-codex' \
+#   QA_TRIAGE_CODEX_SANDBOX='workspace-write' \
+#   QA_TRIAGE_CODEX_APPROVAL='never' \
+#   QA_TRIAGE_CODEX_SEARCH='false' \
 #   scripts/setup_agent_loop.sh [owner/repo]
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -33,7 +41,9 @@ fi
 REPO="${1:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
 AGENT_EXEC_CMD_VALUE="${AGENT_EXEC_CMD:-}"
 AGENT_RUNNER_VALUE="${AGENT_RUNNER:-}"
-AGENT_CODEX_MODEL_VALUE="${AGENT_CODEX_MODEL:-gpt-5.3-codex-spark}"
+AGENT_CODEX_MODEL_VALUE="${AGENT_CODEX_MODEL:-}"
+AGENT_CODEX_MODEL_FAST_VALUE="${AGENT_CODEX_MODEL_FAST:-gpt-5.3-codex-spark}"
+AGENT_CODEX_MODEL_COMPLEX_VALUE="${AGENT_CODEX_MODEL_COMPLEX:-gpt-5.3-codex}"
 AGENT_CODEX_SANDBOX_VALUE="${AGENT_CODEX_SANDBOX:-workspace-write}"
 AGENT_CODEX_APPROVAL_VALUE="${AGENT_CODEX_APPROVAL:-never}"
 AGENT_CODEX_SEARCH_VALUE="${AGENT_CODEX_SEARCH:-true}"
@@ -52,6 +62,12 @@ SOLANA_WHITELIST_CSV_VALUE="${SOLANA_WHITELIST_CSV:-}"
 QA_LOOP_ENABLED_VALUE="${QA_LOOP_ENABLED:-true}"
 QA_MAX_ISSUES_PER_RUN_VALUE="${QA_MAX_ISSUES_PER_RUN:-1}"
 QA_EXEC_CMD_VALUE="${QA_EXEC_CMD:-scripts/qa_executor.sh}"
+QA_TRIAGE_ENABLED_VALUE="${QA_TRIAGE_ENABLED:-true}"
+QA_TRIAGE_EXEC_CMD_VALUE="${QA_TRIAGE_EXEC_CMD:-scripts/qa_triage_executor.sh}"
+QA_TRIAGE_CODEX_MODEL_VALUE="${QA_TRIAGE_CODEX_MODEL:-gpt-5.3-codex}"
+QA_TRIAGE_CODEX_SANDBOX_VALUE="${QA_TRIAGE_CODEX_SANDBOX:-workspace-write}"
+QA_TRIAGE_CODEX_APPROVAL_VALUE="${QA_TRIAGE_CODEX_APPROVAL:-never}"
+QA_TRIAGE_CODEX_SEARCH_VALUE="${QA_TRIAGE_CODEX_SEARCH:-false}"
 
 if [ -z "${AGENT_EXEC_CMD_VALUE}" ]; then
   echo "AGENT_EXEC_CMD is required." >&2
@@ -69,6 +85,8 @@ set_repo_var() {
 echo "Configuring agent loop variables on ${REPO}"
 set_repo_var "AGENT_EXEC_CMD" "${AGENT_EXEC_CMD_VALUE}"
 set_repo_var "AGENT_CODEX_MODEL" "${AGENT_CODEX_MODEL_VALUE}"
+set_repo_var "AGENT_CODEX_MODEL_FAST" "${AGENT_CODEX_MODEL_FAST_VALUE}"
+set_repo_var "AGENT_CODEX_MODEL_COMPLEX" "${AGENT_CODEX_MODEL_COMPLEX_VALUE}"
 set_repo_var "AGENT_CODEX_SANDBOX" "${AGENT_CODEX_SANDBOX_VALUE}"
 set_repo_var "AGENT_CODEX_APPROVAL" "${AGENT_CODEX_APPROVAL_VALUE}"
 set_repo_var "AGENT_CODEX_SEARCH" "${AGENT_CODEX_SEARCH_VALUE}"
@@ -86,6 +104,12 @@ set_repo_var "SOLANA_WHITELIST_FILE" "${SOLANA_WHITELIST_FILE_VALUE}"
 set_repo_var "QA_LOOP_ENABLED" "${QA_LOOP_ENABLED_VALUE}"
 set_repo_var "QA_MAX_ISSUES_PER_RUN" "${QA_MAX_ISSUES_PER_RUN_VALUE}"
 set_repo_var "QA_EXEC_CMD" "${QA_EXEC_CMD_VALUE}"
+set_repo_var "QA_TRIAGE_ENABLED" "${QA_TRIAGE_ENABLED_VALUE}"
+set_repo_var "QA_TRIAGE_EXEC_CMD" "${QA_TRIAGE_EXEC_CMD_VALUE}"
+set_repo_var "QA_TRIAGE_CODEX_MODEL" "${QA_TRIAGE_CODEX_MODEL_VALUE}"
+set_repo_var "QA_TRIAGE_CODEX_SANDBOX" "${QA_TRIAGE_CODEX_SANDBOX_VALUE}"
+set_repo_var "QA_TRIAGE_CODEX_APPROVAL" "${QA_TRIAGE_CODEX_APPROVAL_VALUE}"
+set_repo_var "QA_TRIAGE_CODEX_SEARCH" "${QA_TRIAGE_CODEX_SEARCH_VALUE}"
 
 if [ -n "${SOLANA_WHITELIST_CSV_VALUE}" ]; then
   set_repo_var "SOLANA_WHITELIST_CSV" "${SOLANA_WHITELIST_CSV_VALUE}"

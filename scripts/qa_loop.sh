@@ -19,6 +19,8 @@ fi
 AUTONOMY_DRY_RUN="${AUTONOMY_DRY_RUN:-false}"
 QA_MAX_ISSUES_PER_RUN="${QA_MAX_ISSUES_PER_RUN:-1}"
 QA_EXEC_CMD="${QA_EXEC_CMD:-scripts/qa_executor.sh}"
+QA_TRIAGE_ENABLED="${QA_TRIAGE_ENABLED:-true}"
+QA_TRIAGE_EXEC_CMD="${QA_TRIAGE_EXEC_CMD:-scripts/qa_triage_executor.sh}"
 
 processed=0
 
@@ -101,6 +103,7 @@ create_dev_bug_issue_once() {
   local source_issue_title="$2"
   local source_issue_url="$3"
   local report_file="$4"
+  local triage_file="${5:-}"
   local marker title body
 
   marker="qa-source-${source_issue_number}"
@@ -118,6 +121,16 @@ QA validation failed for manager-provided whitelist set.
 
 ### Failure Report
 $(cat "${report_file}")
+"
+
+  if [ -n "${triage_file}" ] && [ -f "${triage_file}" ]; then
+    body="${body}
+### Model Triage (QA Agent)
+$(cat "${triage_file}")
+"
+  fi
+
+  body="${body}
 
 ### Expected Outcome
 - fix root cause and make QA validation pass for the same address set
@@ -165,6 +178,7 @@ mark_failed() {
   local issue_title="$2"
   local issue_url="$3"
   local report_file="$4"
+  local triage_file="$5"
 
   if should_dry_run; then
     return 0
@@ -181,12 +195,39 @@ mark_failed() {
 
 $(cat "${report_file}")"
 
-  create_dev_bug_issue_once "${issue_number}" "${issue_title}" "${issue_url}" "${report_file}"
+  create_dev_bug_issue_once "${issue_number}" "${issue_title}" "${issue_url}" "${report_file}" "${triage_file}"
+}
+
+run_triage_executor() {
+  local issue_number="$1"
+  local issue_title="$2"
+  local issue_url="$3"
+  local report_file="$4"
+  local triage_file
+
+  [ "${QA_TRIAGE_ENABLED}" = "true" ] || return 0
+  [ -f "${report_file}" ] || return 0
+  if should_dry_run; then
+    return 0
+  fi
+
+  export AGENT_ISSUE_NUMBER="${issue_number}"
+  export AGENT_ISSUE_TITLE="${issue_title}"
+  export AGENT_ISSUE_URL="${issue_url}"
+  export QA_REPORT_FILE="${report_file}"
+
+  triage_file="$(bash -lc "${QA_TRIAGE_EXEC_CMD}" || true)"
+  if [ -n "${triage_file}" ] && [ -f "${triage_file}" ]; then
+    echo "${triage_file}"
+    return 0
+  fi
+
+  echo ""
 }
 
 process_issue() {
   local issue_json="$1"
-  local issue_number issue_title issue_body issue_url report_file
+  local issue_number issue_title issue_body issue_url report_file triage_file=""
 
   issue_number="$(jq -r '.number' <<<"${issue_json}")"
   issue_title="$(jq -r '.title' <<<"${issue_json}")"
@@ -206,7 +247,8 @@ process_issue() {
   fi
 
   [ -f "${report_file}" ] || printf 'QA failed (no report file generated).\n' > "${report_file}"
-  mark_failed "${issue_number}" "${issue_title}" "${issue_url}" "${report_file}"
+  triage_file="$(run_triage_executor "${issue_number}" "${issue_title}" "${issue_url}" "${report_file}")"
+  mark_failed "${issue_number}" "${issue_title}" "${issue_url}" "${report_file}" "${triage_file}"
 }
 
 main() {

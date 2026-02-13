@@ -218,6 +218,7 @@ run_executor() {
   local issue_title="$2"
   local issue_body="$3"
   local issue_url="$4"
+  local issue_labels="$5"
 
   if [ -z "${AGENT_EXEC_CMD}" ]; then
     handle_missing_executor "${issue_number}"
@@ -227,6 +228,7 @@ run_executor() {
   export AGENT_ISSUE_NUMBER="${issue_number}"
   export AGENT_ISSUE_TITLE="${issue_title}"
   export AGENT_ISSUE_URL="${issue_url}"
+  export AGENT_ISSUE_LABELS="${issue_labels}"
 
   mkdir -p .agent
   printf '%s\n' "${issue_body}" > ".agent/issue-${issue_number}.md"
@@ -345,12 +347,13 @@ handle_no_changes() {
 
 process_issue() {
   local issue_json="$1"
-  local issue_number issue_title issue_body issue_url branch pr_url commit_message
+  local issue_number issue_title issue_body issue_url issue_labels branch pr_url commit_message
 
   issue_number="$(jq -r '.number' <<<"${issue_json}")"
   issue_title="$(jq -r '.title' <<<"${issue_json}")"
   issue_body="$(jq -r '.body // ""' <<<"${issue_json}")"
   issue_url="$(jq -r '.url' <<<"${issue_json}")"
+  issue_labels="$(jq -r '[.labels[].name] | join(",")' <<<"${issue_json}")"
 
   if issue_has_label "${issue_json}" "risk/high"; then
     request_owner_decision "${issue_number}" "${issue_url}" \
@@ -362,7 +365,7 @@ process_issue() {
   branch="$(create_branch_for_issue "${issue_number}" "${issue_title}")"
 
   local executor_status=0
-  run_executor "${issue_number}" "${issue_title}" "${issue_body}" "${issue_url}" || executor_status=$?
+  run_executor "${issue_number}" "${issue_title}" "${issue_body}" "${issue_url}" "${issue_labels}" || executor_status=$?
 
   if [ "${executor_status}" -ne 0 ]; then
     if [ "${executor_status}" -eq 90 ]; then

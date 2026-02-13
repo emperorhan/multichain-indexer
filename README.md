@@ -432,6 +432,10 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 6. Manager/QA 협업을 켜면:
    - Manager loop가 whitelist 주소셋에서 `qa-ready` 이슈 생성
    - QA loop가 해당 이슈를 검증하고 실패 시 developer 버그 이슈 자동 생성
+7. 모델 배치:
+   - Developer 기본: `gpt-5.3-codex-spark`
+   - Developer 고위험/고우선: `gpt-5.3-codex`
+   - QA 실패 triage: `gpt-5.3-codex`
 
 ## Docs
 
