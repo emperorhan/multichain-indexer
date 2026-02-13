@@ -1,55 +1,80 @@
-# Multi-Chain Rollout Overview (Issue #17)
+# Canonical Normalizer Roadmap Overview (I-0101)
 
 ## Objective
-Roll out indexing for:
+Translate `PRD.md v2.0` into executable architecture boundaries for deterministic, duplicate-safe multi-chain normalization on:
 - `solana-devnet`
 - `base-sepolia`
 
-while preserving current Solana behavior and keeping RPC endpoints secret-driven.
+## Baseline Gaps to Close
+1. Normalizer path is Solana-first and not yet full canonical-envelope aligned.
+2. Dedup identity currently depends on instruction/address tuple behavior and must converge on canonical `event_id` semantics.
+3. PRD v2 canonical fields and fee categories need strict end-to-end enforcement.
 
-## Current Baseline Constraints
-- `cmd/indexer/main.go` bootstraps one Solana adapter/pipeline only.
-- `internal/config/config.go` currently models Solana-only RPC/network config.
-- `proto/sidecar/v1/decoder.proto` exposes Solana-specific decode RPC only.
-- Manager/QA scripts currently assume Solana address format and Solana whitelist source.
+## Canonical Contract (Target)
+Every normalized event must carry stable replay-safe identity:
+- `event_id`
+- `chain`, `network`
+- `block_cursor`, `block_hash`, `tx_hash`, `tx_index`
+- `event_path`
+- `actor_address`
+- `asset_type`, `asset_id`
+- `delta` (signed)
+- `event_category`
+- `finality_state`
+- `decoder_version`, `schema_version`
 
-## Target Architecture (M1 Design Contract)
-1. Runtime target model:
-   - `INDEXER_TARGET_CHAINS=solana-devnet,base-sepolia`
-   - each target maps to one adapter + one pipeline instance.
-2. Bootstrap behavior:
-   - for each configured target, initialize chain-specific adapter, watched-address sync, and pipeline config.
-   - pipeline lifecycle is managed under one process-level context and health server.
-3. Isolation:
-   - chain failures should surface clearly with chain/network labels.
-   - startup validation must fail fast when required target config is missing.
+## Deterministic Identity Rules
+`event_id` must be derived from stable fields only:
+- chain/network
+- tx identity (`tx_hash` or signature)
+- canonical `event_path`
+- `actor_address`
+- `asset_id`
+- `event_category`
 
-## Config Contract (Planned)
-- Required for this rollout:
-  - `INDEXER_TARGET_CHAINS`
-  - `SOLANA_DEVNET_RPC_URL`
-  - `BASE_SEPOLIA_RPC_URL`
-- Existing compatibility:
-  - keep current Solana env behavior backward-compatible during transition where feasible.
-- Secret handling rule:
-  - endpoint values are loaded from env/secrets only and must not be printed in clear text in logs/issues/PRs.
+Never include mutable runtime fields:
+- ingest timestamps
+- retries
+- host-local processing time
 
-## Runtime Behavior Requirements
-- Chain/network pairs remain explicit keys in DB writes and cursor updates.
-- Watchlist syncing must become chain-aware (not hardcoded to `ChainSolana`).
-- Sidecar decode path for Base Sepolia requires an approved API plan before implementation.
+## Milestones and Slice Boundaries
+1. `M1` foundation:
+- `I-0102`: canonical envelope/schema scaffolding.
+- `I-0103`: deterministic `event_id` and idempotent ingestion.
 
-## Assumptions
-- Existing `(chain, network)` schema constraints are sufficient for Base Sepolia onboarding.
-- Dual-chain rollout can be completed without destructive migration.
+2. `M2` Solana completeness:
+- `I-0104`: CPI ownership dedup + explicit fee debit coverage.
 
-## Unknowns
-- Whether Base address sourcing for manager/QA should use a dedicated var/file pair.
-- Whether sidecar should add Base-specific RPC methods or a generic decode contract.
+3. `M3` Base fee completeness:
+- `I-0105`: `fee_execution_l2` + `fee_data_l1` normalization.
 
-## Decision Placeholder: DP-17-01 (`decision/major`)
-- Topic: Runtime topology for dual-chain execution.
-- Option A (recommended): single process, multi-pipeline bootstrap from `INDEXER_TARGET_CHAINS`.
-- Option B: separate runtime process per chain.
-- Why this is major:
-  - affects failure domain, operational runbook complexity, and release strategy.
+4. `M4` deterministic recovery (split for slice size):
+- `I-0108`: reorg detection + rollback orchestration.
+- `I-0109`: replay determinism + cursor/watermark monotonicity.
+
+5. `M5` QA release gate:
+- `I-0107`: golden datasets + invariant report + release recommendation.
+
+Dependency order:
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107`
+
+## Milestone Metrics (Release-Relevant)
+1. Duplicate metric: `0` duplicate canonical IDs in replay suites.
+2. Determinism metric: `0` tuple diffs between independent runs on same range.
+3. Solana fee coverage: `100%` successful fixture tx include fee delta.
+4. Base fee coverage:
+- `100%` successful fixtures include execution fee delta.
+- `100%` fixtures with L1 fee fields include `fee_data_l1` delta.
+
+## Critical Decisions and Fallbacks
+1. `DP-0101-A` canonical `event_path` encoding.
+- Preferred: one canonical serialized key from structured chain-specific path.
+- Fallback: persist structured path plus derived key and enforce uniqueness on derived key.
+
+2. `DP-0101-B` Base L1 fee source reliability.
+- Preferred: receipt extension extraction from selected client/RPC.
+- Fallback: explicit unavailable marker metadata while preserving deterministic execution fee emission.
+
+3. `DP-0101-C` recovery mode while reorg hardening is in progress.
+- Preferred: pending/finalized lifecycle with rollback.
+- Fallback: finalized-only ingest mode with configurable confirmation lag.

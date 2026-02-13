@@ -1,73 +1,41 @@
-# Multi-Chain Rollout Sequence (Issue #17)
+# Canonical Normalizer Rollout Sequence (I-0101)
 
-## Milestone Strategy
-One focused milestone is active: `M1. Dual-Chain Runtime Bootstrap`.
+## Execution Order
+1. `I-0102` (`M1-S1`): canonical envelope/schema scaffolding.
+2. `I-0103` (`M1-S2/S3`): deterministic `event_id` + idempotent ingestion.
+3. `I-0104` (`M2`): Solana dedup + fee completeness.
+4. `I-0105` (`M3`): Base fee decomposition.
+5. `I-0108` (`M4-S1`): reorg detection + rollback orchestration.
+6. `I-0109` (`M4-S2`): replay determinism + cursor monotonicity.
+7. `I-0107` (`M5`): QA goldens + invariants + release recommendation.
 
-Implementation must proceed in small autonomous slices in this order.
+Dependency graph:
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107`
 
-## Slice Plan (Developer-Ready Backlog)
-1. Slice S1: Multi-target config scaffolding
-- Scope:
-  - define target-chain env contract (`INDEXER_TARGET_CHAINS`, per-chain RPC env keys).
-  - keep backward compatibility for current Solana-only startup path.
-- DoD:
-  - config unit tests cover valid/invalid target sets and missing RPC envs.
-  - no runtime behavior change yet beyond parsing/validation.
+## Slice Size Rule
+Each slice must be independently releasable:
+1. One milestone sub-goal only.
+2. Bounded code surface with no cross-milestone coupling.
+3. Tests fail before and pass after the slice.
+4. Revert of slice does not undo unrelated milestone progress.
 
-2. Slice S2: Runtime bootstrap fan-out
-- Scope:
-  - `cmd/indexer/main.go` startup wiring to instantiate per-target adapter + pipeline.
-  - watched-address sync path becomes chain-aware.
-- DoD:
-  - startup tests confirm both targets initialize.
-  - Solana-only mode remains functional.
+## Risk Gates By Stage
+1. Before `I-0103`: canonical key schema strategy reviewed, migration fallback documented.
+2. Before `I-0104`/`I-0105`: `I-0102` + `I-0103` acceptance green.
+3. Before `I-0108`: Solana and Base completeness slices green.
+4. Before `I-0109`: rollback simulation evidence from `I-0108` green.
+5. Before `I-0107`: replay determinism and cursor monotonicity evidence green.
 
-3. Slice S3: Base Sepolia adapter + decode integration
-- Scope:
-  - add Base chain adapter implementation and sidecar decode path based on approved decision.
-- DoD:
-  - adapter tests + decode integration tests for Base transactions.
-  - no regression in existing Solana decode tests.
+## Fallback Paths
+1. If canonical key migration is risky, keep temporary dual unique protections.
+2. If Base L1 data fee fields are unavailable, emit deterministic execution fee plus explicit unavailable marker metadata.
+3. If reorg path is unstable, run finalized-only ingest mode until rollback tests pass.
 
-4. Slice S4: Manager/QA chain-aware validation loop
-- Scope:
-  - manager set generation supports chain/network tagging.
-  - QA executor validates addresses by chain type instead of Solana-only regex.
-- DoD:
-  - QA issues can carry either Solana or Base address sets.
-  - failing validations produce developer bug issues with clear repro context.
+## Completion Evidence
+1. Developer slice output:
+- code + tests + docs updated in same issue scope.
+- measurable exit gate evidence attached in issue note.
 
-5. Slice S5: Documentation + rollout guardrails
-- Scope:
-  - update README/docs with multi-chain env and operational runbook deltas.
-  - finalize release guard checks for dual-chain startup.
-- DoD:
-  - docs reflect exact env contract and rollback behavior.
-  - required validation commands pass.
-
-## Risk Controls During Rollout
-- Do not merge a slice that changes behavior for both chains at once without tests.
-- Keep each PR small enough to be reverted independently.
-- Block slices touching major unknowns until owner input is captured via `decision/major`.
-
-## Decision Placeholders (Escalation Templates)
-1. `DP-17-01` Runtime topology (single process multi-pipeline vs per-chain process).
-- Suggested issue title:
-  - `[Major Decision] Runtime topology for solana-devnet + base-sepolia indexer`
-- Recommended deadline:
-  - `2026-02-20 18:00 UTC`
-
-2. `DP-17-02` Sidecar API contract for Base decoding.
-- Suggested issue title:
-  - `[Major Decision] Sidecar decode API contract for Base Sepolia`
-- Recommended deadline:
-  - `2026-02-20 18:00 UTC`
-
-3. `DP-17-03` Manager/QA source-of-truth for Base address sets.
-- Suggested issue title:
-  - `[Major Decision] Base Sepolia whitelist source for manager/qa loops`
-- Recommended deadline:
-  - `2026-02-21 18:00 UTC`
-
-## Escalation Rule
-If any `DP-17-*` issue remains unresolved, affected slices must not be labeled `ready` for autonomous execution.
+2. QA slice output:
+- `.ralph/reports/` artifact with per-invariant pass/fail and release recommendation.
+- follow-up developer issues created for each failing invariant.

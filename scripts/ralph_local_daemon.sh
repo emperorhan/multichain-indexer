@@ -52,6 +52,10 @@ is_running() {
   ps -p "${pid}" >/dev/null 2>&1
 }
 
+current_supervisor_pid() {
+  pgrep -f "${SUPERVISOR_SCRIPT}" | head -n1 || true
+}
+
 start_daemon() {
   ensure_layout
   scripts/ralph_local_control.sh on >/dev/null
@@ -78,44 +82,31 @@ start_daemon() {
     fi
   fi
 
-  if command -v setsid >/dev/null 2>&1; then
-    nohup setsid env \
-      -u OPENAI_API_KEY \
-      -u OPENAI_BASE_URL \
-      -u OPENAI_API_BASE \
-      -u OPENAI_ORGANIZATION \
-      -u OPENAI_ORG_ID \
-      MAX_LOOPS=0 \
-      RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" \
-      RALPH_RUN_SCRIPT="${RUN_SCRIPT}" \
-      RALPH_LOCAL_TRUST_MODE="${TRUST_MODE}" \
-      RALPH_REQUIRE_CHATGPT_AUTH="${REQUIRE_CHATGPT_AUTH}" \
-      AGENT_CODEX_SANDBOX="${LOCAL_SANDBOX}" \
-      AGENT_CODEX_APPROVAL="${LOCAL_APPROVAL}" \
-      OMX_SAFE_MODE="${omx_mode}" \
-      "${SUPERVISOR_SCRIPT}" >>"${LOG_FILE}" 2>&1 < /dev/null &
-  else
-    nohup env \
-      -u OPENAI_API_KEY \
-      -u OPENAI_BASE_URL \
-      -u OPENAI_API_BASE \
-      -u OPENAI_ORGANIZATION \
-      -u OPENAI_ORG_ID \
-      MAX_LOOPS=0 \
-      RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" \
-      RALPH_RUN_SCRIPT="${RUN_SCRIPT}" \
-      RALPH_LOCAL_TRUST_MODE="${TRUST_MODE}" \
-      RALPH_REQUIRE_CHATGPT_AUTH="${REQUIRE_CHATGPT_AUTH}" \
-      AGENT_CODEX_SANDBOX="${LOCAL_SANDBOX}" \
-      AGENT_CODEX_APPROVAL="${LOCAL_APPROVAL}" \
-      OMX_SAFE_MODE="${omx_mode}" \
-      "${SUPERVISOR_SCRIPT}" >>"${LOG_FILE}" 2>&1 < /dev/null &
-  fi
-  daemon_pid=$!
-  echo "${daemon_pid}" > "${PID_FILE}"
-  sleep 1
-
-  if ps -p "${daemon_pid}" >/dev/null 2>&1; then
+  nohup env \
+    -u OPENAI_API_KEY \
+    -u OPENAI_BASE_URL \
+    -u OPENAI_API_BASE \
+    -u OPENAI_ORGANIZATION \
+    -u OPENAI_ORG_ID \
+    MAX_LOOPS=0 \
+    RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" \
+    RALPH_RUN_SCRIPT="${RUN_SCRIPT}" \
+    RALPH_LOCAL_TRUST_MODE="${TRUST_MODE}" \
+    RALPH_REQUIRE_CHATGPT_AUTH="${REQUIRE_CHATGPT_AUTH}" \
+    AGENT_CODEX_SANDBOX="${LOCAL_SANDBOX}" \
+    AGENT_CODEX_APPROVAL="${LOCAL_APPROVAL}" \
+    OMX_SAFE_MODE="${omx_mode}" \
+    "${SUPERVISOR_SCRIPT}" >>"${LOG_FILE}" 2>&1 < /dev/null &
+  daemon_pid=""
+  for _ in 1 2 3 4 5; do
+    daemon_pid="$(current_supervisor_pid)"
+    if [ -n "${daemon_pid}" ] && ps -p "${daemon_pid}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  if [ -n "${daemon_pid}" ] && ps -p "${daemon_pid}" >/dev/null 2>&1; then
+    echo "${daemon_pid}" > "${PID_FILE}"
     echo "ralph-local started (pid=${daemon_pid})"
     return 0
   fi
