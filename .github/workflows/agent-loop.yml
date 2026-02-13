@@ -82,6 +82,7 @@ jobs:
           AUTONOMY_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           AGENT_MAX_ISSUES_PER_RUN: ${{ github.event.inputs.max_planner_issues || github.event.inputs.max_issues || vars.AGENT_MAX_PLANNER_ISSUES_PER_RUN || '1' }}
           AGENT_MAX_AUTO_RETRIES: ${{ vars.AGENT_MAX_AUTO_RETRIES || '2' }}
+          AGENT_IN_PROGRESS_TIMEOUT_HOURS: ${{ vars.AGENT_IN_PROGRESS_TIMEOUT_HOURS || '6' }}
           RALPH_SELF_HEAL_ENABLED: ${{ vars.RALPH_SELF_HEAL_ENABLED || 'true' }}
           DECISION_REMINDER_HOURS: ${{ vars.DECISION_REMINDER_HOURS || '24' }}
         run: scripts/agent_loop.sh
@@ -139,6 +140,7 @@ jobs:
           AUTONOMY_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           AGENT_MAX_ISSUES_PER_RUN: ${{ github.event.inputs.max_developer_issues || github.event.inputs.max_issues || vars.AGENT_MAX_ISSUES_PER_RUN || '2' }}
           AGENT_MAX_AUTO_RETRIES: ${{ vars.AGENT_MAX_AUTO_RETRIES || '2' }}
+          AGENT_IN_PROGRESS_TIMEOUT_HOURS: ${{ vars.AGENT_IN_PROGRESS_TIMEOUT_HOURS || '6' }}
           RALPH_SELF_HEAL_ENABLED: ${{ vars.RALPH_SELF_HEAL_ENABLED || 'true' }}
           DECISION_REMINDER_HOURS: ${{ vars.DECISION_REMINDER_HOURS || '24' }}
         run: scripts/agent_loop.sh

@@ -95,6 +95,7 @@
 - `AGENT_MAX_ISSUES_PER_RUN` (기본 `2`): 한 번의 루프에서 처리할 최대 이슈 수
 - `AGENT_MAX_PLANNER_ISSUES_PER_RUN` (기본 `1`): planner queue 1회 실행당 처리 이슈 수
 - `AGENT_MAX_AUTO_RETRIES` (기본 `2`): 동일 이슈 자동 재시도 횟수
+- `AGENT_IN_PROGRESS_TIMEOUT_HOURS` (기본 `6`): `in-progress` 정체 이슈 자동 복구 임계시간
 - `RALPH_SELF_HEAL_ENABLED` (기본 `true`): 권한/운영 오류 자동 복구 시도 활성화
 - `DECISION_REMINDER_HOURS` (기본 `24`): `decision-needed` 리마인드 코멘트 간격(시간)
 - `AGENT_DEVELOPER_INCLUDE_LABELS` (기본 비어 있음): developer queue 포함 필터(CSV, 모든 라벨 일치)
