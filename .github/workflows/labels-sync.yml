@@ -9,6 +9,7 @@ on:
       - .github/labels.yml
 
 permissions:
+  contents: read
   issues: write
 
 jobs:
@@ -24,4 +25,3 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           yaml-file: .github/labels.yml
           skip-delete: false
-
