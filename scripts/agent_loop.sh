@@ -34,6 +34,27 @@ should_dry_run() {
   [ "${AUTONOMY_DRY_RUN}" = "true" ]
 }
 
+parse_iso8601_epoch() {
+  local value="$1"
+  local epoch
+
+  epoch="$(date -d "${value}" +%s 2>/dev/null)" && {
+    echo "${epoch}"
+    return 0
+  }
+
+  # BSD/macOS compatibility fallback.
+  for fmt in "%Y-%m-%dT%H:%M:%SZ" "%Y-%m-%dT%H:%M:%S%z" "%Y-%m-%dT%H:%M:%S.%N%z"; do
+    epoch="$(date -u -j -f "${fmt}" "${value}" +%s 2>/dev/null || true)"
+    if [ -n "${epoch}" ]; then
+      echo "${epoch}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 issue_has_label() {
   local issue_json="$1"
   local label_name="$2"
@@ -128,7 +149,10 @@ comment_decision_reminders() {
     issue_title="$(jq -r '.title' <<<"${line}")"
     issue_updated="$(jq -r '.updatedAt' <<<"${line}")"
     issue_url="$(jq -r '.url' <<<"${line}")"
-    issue_epoch="$(date -d "${issue_updated}" +%s)"
+    if ! issue_epoch="$(parse_iso8601_epoch "${issue_updated}")"; then
+      log "skipping reminder for #${issue_number}: unable to parse updatedAt timestamp"
+      continue
+    fi
     age_hours="$(((now_epoch - issue_epoch) / 3600))"
 
     if [ $((now_epoch - issue_epoch)) -lt "${age_limit}" ]; then
