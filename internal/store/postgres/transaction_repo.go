@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 )
 
 type TransactionRepo struct {

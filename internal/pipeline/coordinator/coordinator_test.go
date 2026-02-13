@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kodax/koda-custody-indexer/internal/domain/event"
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
-	storemocks "github.com/kodax/koda-custody-indexer/internal/store/mocks"
+	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"

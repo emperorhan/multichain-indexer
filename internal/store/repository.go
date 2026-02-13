@@ -5,7 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/google/uuid"
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 )
 
 // TxBeginner abstracts the ability to begin a database transaction.

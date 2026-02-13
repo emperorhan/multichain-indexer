@@ -1,4 +1,4 @@
-# 아키텍처 명세서: koda-custody-indexer
+# 아키텍처 명세서: multichain-indexer
 
 > 멀티체인 커스터디 인덱서 — Go 파이프라인 + Node.js Sidecar (gRPC 디코더)
 
@@ -51,11 +51,11 @@
 
 ```mermaid
 C4Context
-    title System Context — koda-custody-indexer
+    title System Context — multichain-indexer
 
     Person(consumer, "외부 소비자", "대시보드, API 서버")
 
-    System(indexer, "koda-custody-indexer", "멀티체인 트랜잭션 인덱서")
+    System(indexer, "multichain-indexer", "멀티체인 트랜잭션 인덱서")
 
     System_Ext(solana_rpc, "Solana RPC", "JSON-RPC 2.0")
     SystemDb(postgres, "PostgreSQL 16", "트랜잭션, 잔액, 커서")
@@ -73,7 +73,7 @@ C4Context
 
 ```mermaid
 C4Container
-    title Container — koda-custody-indexer
+    title Container — multichain-indexer
 
     Container(go_binary, "Go Indexer", "Go 1.24", "4단계 파이프라인: Coordinator→Fetcher→Normalizer→Ingester")
     Container(sidecar, "Node.js Sidecar", "Node 22", "gRPC 트랜잭션 디코더")
@@ -1125,7 +1125,7 @@ service ChainDecoder {
 ### C. 프로젝트 디렉토리 구조
 
 ```
-koda-custody-indexer/
+multichain-indexer/
 ├── cmd/indexer/
 │   └── main.go                         # 엔트리포인트 (184줄)
 ├── internal/

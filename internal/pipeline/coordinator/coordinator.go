@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/kodax/koda-custody-indexer/internal/domain/event"
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
-	"github.com/kodax/koda-custody-indexer/internal/store"
+	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 )
 
 // Coordinator iterates over watched addresses and creates FetchJobs.

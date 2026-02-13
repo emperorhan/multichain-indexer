@@ -14,7 +14,7 @@ import (
 	json "encoding/json"
 	reflect "reflect"
 
-	rpc "github.com/kodax/koda-custody-indexer/internal/chain/solana/rpc"
+	rpc "github.com/emperorhan/multichain-indexer/internal/chain/solana/rpc"
 	gomock "go.uber.org/mock/gomock"
 )
 

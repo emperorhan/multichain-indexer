@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	sidecarv1 "github.com/kodax/koda-custody-indexer/pkg/generated/sidecar/v1"
+	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 
-	"github.com/kodax/koda-custody-indexer/internal/domain/event"
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

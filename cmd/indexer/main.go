@@ -10,12 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kodax/koda-custody-indexer/internal/chain/solana"
-	"github.com/kodax/koda-custody-indexer/internal/config"
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
-	"github.com/kodax/koda-custody-indexer/internal/pipeline"
-	"github.com/kodax/koda-custody-indexer/internal/store"
-	"github.com/kodax/koda-custody-indexer/internal/store/postgres"
+	"github.com/emperorhan/multichain-indexer/internal/chain/solana"
+	"github.com/emperorhan/multichain-indexer/internal/config"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline"
+	"github.com/emperorhan/multichain-indexer/internal/store"
+	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -40,7 +40,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	logger.Info("starting koda-custody-indexer",
+	logger.Info("starting multichain-indexer",
 		"solana_rpc", cfg.Solana.RPCURL,
 		"solana_network", cfg.Solana.Network,
 		"sidecar_addr", cfg.Sidecar.Addr,

@@ -3,8 +3,8 @@ package ingester
 import (
 	"testing"
 
-	"github.com/kodax/koda-custody-indexer/internal/domain/event"
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/stretchr/testify/assert"
 )
 

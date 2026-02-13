@@ -14,7 +14,7 @@ import (
 	json "encoding/json"
 	reflect "reflect"
 
-	chain "github.com/kodax/koda-custody-indexer/internal/chain"
+	chain "github.com/emperorhan/multichain-indexer/internal/chain"
 	gomock "go.uber.org/mock/gomock"
 )
 

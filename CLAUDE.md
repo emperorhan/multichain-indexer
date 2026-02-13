@@ -1,4 +1,4 @@
-# koda-custody-indexer
+# multichain-indexer
 
 Multi-chain custody indexer: Go pipeline + Node.js sidecar (gRPC decoder).
 

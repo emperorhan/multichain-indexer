@@ -1,6 +1,6 @@
 package event
 
-import "github.com/kodax/koda-custody-indexer/internal/domain/model"
+import "github.com/emperorhan/multichain-indexer/internal/domain/model"
 
 // FetchJob represents a unit of work for the fetcher to process.
 type FetchJob struct {

@@ -1,5 +1,5 @@
 {
-  "name": "koda-custody-sidecar",
+  "name": "multichain-indexer-sidecar",
   "version": "1.0.0",
   "description": "gRPC sidecar for chain-specific transaction decoding",
   "main": "dist/index.js",

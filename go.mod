@@ -1,4 +1,4 @@
-module github.com/kodax/koda-custody-indexer
+module github.com/emperorhan/multichain-indexer
 
 go 1.24.0
 

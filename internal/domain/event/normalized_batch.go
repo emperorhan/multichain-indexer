@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 )
 
 // NormalizedBatch contains decoded/normalized transaction data ready for DB ingestion.

@@ -15,7 +15,7 @@ import (
 	reflect "reflect"
 
 	uuid "github.com/google/uuid"
-	model "github.com/kodax/koda-custody-indexer/internal/domain/model"
+	model "github.com/emperorhan/multichain-indexer/internal/domain/model"
 	gomock "go.uber.org/mock/gomock"
 )
 

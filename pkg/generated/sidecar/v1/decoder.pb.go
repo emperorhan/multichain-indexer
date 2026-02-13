@@ -603,7 +603,7 @@ const file_sidecar_v1_decoder_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\tR\x06status2\xe2\x01\n" +
 	"\fChainDecoder\x12\x81\x01\n" +
 	"\x1cDecodeSolanaTransactionBatch\x12/.sidecar.v1.DecodeSolanaTransactionBatchRequest\x1a0.sidecar.v1.DecodeSolanaTransactionBatchResponse\x12N\n" +
-	"\vHealthCheck\x12\x1e.sidecar.v1.HealthCheckRequest\x1a\x1f.sidecar.v1.HealthCheckResponseBJZHgithub.com/kodax/koda-custody-indexer/pkg/generated/sidecar/v1;sidecarv1b\x06proto3"
+	"\vHealthCheck\x12\x1e.sidecar.v1.HealthCheckRequest\x1a\x1f.sidecar.v1.HealthCheckResponseBMZKgithub.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1;sidecarv1b\x06proto3"
 
 var (
 	file_sidecar_v1_decoder_proto_rawDescOnce sync.Once

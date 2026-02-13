@@ -5,14 +5,14 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/kodax/koda-custody-indexer/internal/chain"
-	"github.com/kodax/koda-custody-indexer/internal/domain/event"
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
-	"github.com/kodax/koda-custody-indexer/internal/pipeline/coordinator"
-	"github.com/kodax/koda-custody-indexer/internal/pipeline/fetcher"
-	"github.com/kodax/koda-custody-indexer/internal/pipeline/ingester"
-	"github.com/kodax/koda-custody-indexer/internal/pipeline/normalizer"
-	"github.com/kodax/koda-custody-indexer/internal/store"
+	"github.com/emperorhan/multichain-indexer/internal/chain"
+	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/fetcher"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/normalizer"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 	"golang.org/x/sync/errgroup"
 )
 

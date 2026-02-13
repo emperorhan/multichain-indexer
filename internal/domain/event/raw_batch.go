@@ -3,7 +3,7 @@ package event
 import (
 	"encoding/json"
 
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 )
 
 // RawBatch contains raw transaction data fetched from the chain.

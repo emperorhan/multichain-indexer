@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/kodax/koda-custody-indexer/internal/chain"
-	"github.com/kodax/koda-custody-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/chain"
+	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 )
 
 // Fetcher consumes FetchJobs, calls ChainAdapter, and produces RawBatches.

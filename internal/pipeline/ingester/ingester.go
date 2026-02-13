@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"math/big"
 
-	"github.com/kodax/koda-custody-indexer/internal/domain/event"
-	"github.com/kodax/koda-custody-indexer/internal/domain/model"
-	"github.com/kodax/koda-custody-indexer/internal/store"
+	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 )
 
 // Ingester is a single-writer that processes NormalizedBatches into the database.

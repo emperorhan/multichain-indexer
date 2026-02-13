@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package sidecar.v1;
 
-option go_package = "github.com/kodax/koda-custody-indexer/pkg/generated/sidecar/v1;sidecarv1";
+option go_package = "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1;sidecarv1";
 
 service ChainDecoder {
   rpc DecodeSolanaTransactionBatch(DecodeSolanaTransactionBatchRequest)

@@ -1,4 +1,4 @@
-# 테스트 방법론: koda-custody-indexer
+# 테스트 방법론: multichain-indexer
 
 > 금융급 정합성을 보장하기 위한 테스트 전략 및 구체적 시나리오
 
@@ -111,7 +111,7 @@ import (
     "context"
     "database/sql"
     "github.com/google/uuid"
-    "github.com/kodax/koda-custody-indexer/internal/domain/model"
+    "github.com/emperorhan/multichain-indexer/internal/domain/model"
 )
 
 type TransactionRepository interface {

@@ -1,12 +1,12 @@
 # DB 모델 변경 비교: AS-IS → TO-BE
 
-> koda-custody-server (Kotlin/JPA) → koda-custody-indexer (Go/SQL) 데이터 모델 전환 분석
+> koda-custody-server (Kotlin/JPA) → multichain-indexer (Go/SQL) 데이터 모델 전환 분석
 
 ---
 
 ## 1. 개요
 
-koda-custody-indexer는 기존 koda-custody-server의 JPA JOINED Inheritance 기반 데이터 모델을
+multichain-indexer는 기존 koda-custody-server의 JPA JOINED Inheritance 기반 데이터 모델을
 **통합 테이블 + JSONB** 모델로 재설계했다.
 이 문서는 AS-IS 모델의 비효율을 분석하고, TO-BE 모델의 설계 근거와 기대 효과를 정량적으로 비교한다.
 
