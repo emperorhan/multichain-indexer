@@ -38,6 +38,7 @@ requeue_in_progress() {
 }
 
 is_running() {
+  local pid
   [ -f "${PID_FILE}" ] || return 1
   pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
   [ -n "${pid}" ] || return 1
@@ -63,15 +64,27 @@ start_daemon() {
     fi
   fi
 
-  nohup env \
-    MAX_LOOPS=0 \
-    RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" \
-    RALPH_RUN_SCRIPT="${RUN_SCRIPT}" \
-    RALPH_LOCAL_TRUST_MODE="${TRUST_MODE}" \
-    AGENT_CODEX_SANDBOX="${LOCAL_SANDBOX}" \
-    AGENT_CODEX_APPROVAL="${LOCAL_APPROVAL}" \
-    OMX_SAFE_MODE="${omx_mode}" \
-    "${SUPERVISOR_SCRIPT}" >>"${LOG_FILE}" 2>&1 &
+  if command -v setsid >/dev/null 2>&1; then
+    nohup setsid env \
+      MAX_LOOPS=0 \
+      RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" \
+      RALPH_RUN_SCRIPT="${RUN_SCRIPT}" \
+      RALPH_LOCAL_TRUST_MODE="${TRUST_MODE}" \
+      AGENT_CODEX_SANDBOX="${LOCAL_SANDBOX}" \
+      AGENT_CODEX_APPROVAL="${LOCAL_APPROVAL}" \
+      OMX_SAFE_MODE="${omx_mode}" \
+      "${SUPERVISOR_SCRIPT}" >>"${LOG_FILE}" 2>&1 < /dev/null &
+  else
+    nohup env \
+      MAX_LOOPS=0 \
+      RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" \
+      RALPH_RUN_SCRIPT="${RUN_SCRIPT}" \
+      RALPH_LOCAL_TRUST_MODE="${TRUST_MODE}" \
+      AGENT_CODEX_SANDBOX="${LOCAL_SANDBOX}" \
+      AGENT_CODEX_APPROVAL="${LOCAL_APPROVAL}" \
+      OMX_SAFE_MODE="${omx_mode}" \
+      "${SUPERVISOR_SCRIPT}" >>"${LOG_FILE}" 2>&1 < /dev/null &
+  fi
   daemon_pid=$!
   echo "${daemon_pid}" > "${PID_FILE}"
   sleep 1
