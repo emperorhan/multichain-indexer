@@ -46,6 +46,8 @@ VALIDATE_CMD="${RALPH_VALIDATE_CMD:-make test && make test-sidecar && make lint}
 VALIDATE_ROLES="${RALPH_VALIDATE_ROLES:-developer,qa}"
 RECOVER_IN_PROGRESS="${RALPH_RECOVER_IN_PROGRESS:-true}"
 LOCAL_TRUST_MODE="${RALPH_LOCAL_TRUST_MODE:-false}"
+TRANSIENT_REQUEUE_ENABLED="${RALPH_TRANSIENT_REQUEUE_ENABLED:-true}"
+TRANSIENT_RETRY_SLEEP_SEC="${RALPH_TRANSIENT_RETRY_SLEEP_SEC:-20}"
 
 CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-workspace-write}"
 CODEX_APPROVAL="${AGENT_CODEX_APPROVAL:-never}"
@@ -219,6 +221,14 @@ append_result_block() {
 EOF
 }
 
+is_transient_model_error() {
+  local log_file="$1"
+  [ -f "${log_file}" ] || return 1
+  rg -q -i \
+    "stream disconnected before completion|error sending request for url|reconnecting\\.\\.\\.|timed out|timeout|temporar|connection reset|connection refused|service unavailable|too many requests|rate limit" \
+    "${log_file}"
+}
+
 run_codex_for_issue() {
   local issue_file="$1"
   local role="$2"
@@ -342,6 +352,18 @@ while true; do
   fi
   log_file="${RALPH_LAST_LOG_FILE:-}"
   if [ "${codex_rc}" -ne 0 ]; then
+    if [ "${TRANSIENT_REQUEUE_ENABLED}" = "true" ] && is_transient_model_error "${log_file}"; then
+      requeue_path="${QUEUE_DIR}/${issue_id}.md"
+      if [ -f "${requeue_path}" ]; then
+        requeue_path="${QUEUE_DIR}/retry-${issue_id}-$(date -u +%Y%m%dT%H%M%SZ).md"
+      fi
+      mv "${in_progress_path}" "${requeue_path}"
+      echo "[ralph-local] transient model error on ${issue_id}; requeued and sleeping ${TRANSIENT_RETRY_SLEEP_SEC}s"
+      sleep "${TRANSIENT_RETRY_SLEEP_SEC}"
+      loop_count=$((loop_count + 1))
+      continue
+    fi
+
     blocked_path="${BLOCKED_DIR}/${issue_id}.md"
     mv "${in_progress_path}" "${blocked_path}"
     append_result_block "${blocked_path}" "blocked" "${role}" "${model}" "${log_file}" "not-run" "codex exited with code ${codex_rc}" ""

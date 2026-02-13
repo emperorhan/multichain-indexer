@@ -58,6 +58,12 @@ complexity: high
 - Safe mode(`RALPH_LOCAL_TRUST_MODE=false`):
   - 기존 sandbox/guard 정책 유지
 
+## 자가 복구 동작
+- 모델 네트워크 오류(예: stream disconnect, rate-limit, timeout)는 기본적으로 `blocked` 처리하지 않고 자동 재큐잉한다.
+- 제어 변수:
+  - `RALPH_TRANSIENT_REQUEUE_ENABLED` (기본 `true`)
+  - `RALPH_TRANSIENT_RETRY_SLEEP_SEC` (기본 `20`)
+
 ## 검증/커밋 정책
 - role이 `developer`, `qa`면 `RALPH_VALIDATE_CMD`를 실행한다.
 - 기본값: `make test && make test-sidecar && make lint`
