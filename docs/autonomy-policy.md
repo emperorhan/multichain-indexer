@@ -37,7 +37,14 @@
 
 `AGENT_EXEC_CMD`가 비어 있으면 에이전트는 이슈를 `agent/needs-config`로 표시하고 중단한다.
 
-### 2) Scheduled Worker
+### 2) Runner 선택 (권장)
+- 이름: `AGENT_RUNNER`
+- 기본값: 비어 있으면 `ubuntu-latest`
+- 권장값: `self-hosted`
+
+실제 코드 자동 구현까지 돌리려면 self-hosted runner에서 에이전트 CLI/자격증명을 준비하는 것이 안전하다.
+
+### 3) Scheduled Worker
 - 워크플로우: `.github/workflows/agent-loop.yml`
 - 주기: 15분
 - 수동 실행: `workflow_dispatch`
@@ -46,4 +53,3 @@
 - 기본 실행자는 `ubuntu-latest`이다.
 - 진짜 상시 실행(긴 작업/대용량 작업)이 필요하면 self-hosted runner로 전환한다.
 - 브랜치 보호를 활성화해 직접 푸시를 금지하고 PR 경로만 허용한다.
-

@@ -22,6 +22,7 @@
 - 실행 중 라벨: `in-progress`
 - 결과 라벨: `ready-for-review` 또는 `blocked`
 - 실행 명령은 repository variable `AGENT_EXEC_CMD`로 주입한다.
+- runner는 `AGENT_RUNNER` variable로 지정한다 (비어 있으면 `ubuntu-latest`).
 
 권장 실행 순서:
 1. `Autonomous Task` 이슈 생성
