@@ -27,7 +27,7 @@ AGENT_EXEC_CMD="${AGENT_EXEC_CMD:-}"
 PLANNING_EXEC_CMD="${PLANNING_EXEC_CMD:-scripts/planning_executor.sh}"
 
 log() {
-  printf '[agent-loop] %s\n' "$*"
+  printf '[agent-loop] %s\n' "$*" >&2
 }
 
 should_dry_run() {
