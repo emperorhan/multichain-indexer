@@ -2,7 +2,7 @@
 
 ## Core Principle
 - 구현은 비동기로 진행하되, 의사결정과 품질 상태는 GitHub에서 추적 가능해야 한다.
-- 사람 개입은 최소화하고, 필요한 경우에만 `decision-needed`로 에스컬레이션한다.
+- 사람 개입은 최소화하고, 필요한 경우에만 `decision-needed + needs-opinion`으로 에스컬레이션한다.
 
 ## Work Item Lifecycle
 1. Issue 생성:
@@ -20,8 +20,11 @@
 - 워크플로우: `.github/workflows/agent-loop.yml`
 - 큐 입력 라벨: `autonomous + ready`
 - 실행 중 라벨: `in-progress`
-- 결과 라벨: `ready-for-review` 또는 `blocked`
+- 결과 라벨: `ready-for-review` 또는 `blocked + decision-needed + needs-opinion`
 - 실행 명령은 repository variable `AGENT_EXEC_CMD`로 주입한다.
+- runner는 `AGENT_RUNNER` variable로 지정한다 (비어 있으면 `ubuntu-latest`).
+- `risk/high` 라벨 이슈는 사람 확인 전 자동 실행하지 않는다.
+- `AGENT_MAX_AUTO_RETRIES`를 넘겨 실패하면 사람 확인 상태로 자동 전환한다.
 
 권장 실행 순서:
 1. `Autonomous Task` 이슈 생성
@@ -33,13 +36,14 @@
 - 선택지가 필요한 경우 `Decision Needed` 이슈를 사용한다.
 - Option A를 기본안으로 제시한다.
 - 마감 시간까지 응답이 없으면 기본안으로 진행한다.
+- 실행기는 결정 필요 시 원본 이슈 코멘트에서 1/2/3 옵션으로 응답을 요청한다.
 
 ## Label Taxonomy
 - `type/task`, `type/bug`, `type/docs`, `type/chore`
 - `area/pipeline`, `area/sidecar`, `area/storage`, `area/infra`
 - `priority/p0` ~ `priority/p3`
 - `sev0` ~ `sev3`
-- `decision-needed`, `blocked`, `ready-for-review`
+- `decision-needed`, `needs-opinion`, `blocked`, `ready-for-review`
 
 ## Required Status Checks
 - `Go Test + Build`

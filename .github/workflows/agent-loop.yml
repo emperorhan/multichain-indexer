@@ -10,7 +10,7 @@ on:
       max_issues:
         description: "Max issues to process in one run"
         required: false
-        default: "1"
+        default: "2"
   schedule:
     - cron: "*/15 * * * *"
 
@@ -26,12 +26,18 @@ concurrency:
 jobs:
   loop:
     name: Autonomous Queue Worker
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Tooling Check
+        run: |
+          gh --version
+          jq --version
+          git --version
 
       - name: Configure Git User
         run: |
@@ -48,6 +54,7 @@ jobs:
           BASE_BRANCH: main
           AGENT_EXEC_CMD: ${{ vars.AGENT_EXEC_CMD }}
           AUTONOMY_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-          AGENT_MAX_ISSUES_PER_RUN: ${{ github.event.inputs.max_issues || '1' }}
+          AGENT_MAX_ISSUES_PER_RUN: ${{ github.event.inputs.max_issues || vars.AGENT_MAX_ISSUES_PER_RUN || '2' }}
+          AGENT_MAX_AUTO_RETRIES: ${{ vars.AGENT_MAX_AUTO_RETRIES || '2' }}
+          DECISION_REMINDER_HOURS: ${{ vars.DECISION_REMINDER_HOURS || '24' }}
         run: scripts/agent_loop.sh
-

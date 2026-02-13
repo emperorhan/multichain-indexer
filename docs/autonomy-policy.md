@@ -10,6 +10,7 @@
 - 에이전트가 자동으로 제외하는 이슈:
   - `blocked`
   - `decision-needed`
+  - `needs-opinion`
   - `in-progress`
   - `agent/needs-config`
 
@@ -17,14 +18,19 @@
 1. 준비: `autonomous + ready`
 2. 실행 시작: `in-progress` (에이전트가 claim)
 3. 코드 제출: `ready-for-review` (Draft PR 링크 코멘트)
-4. 중단: `blocked` 또는 `decision-needed`
+4. 중단/승인대기: `blocked + decision-needed + needs-opinion`
+
+## Retry and Escalation
+- 실행기(`AGENT_EXEC_CMD`) 실패 시 자동 재시도한다.
+- 재시도 한도(`AGENT_MAX_AUTO_RETRIES`)를 초과하면 자동 실행을 멈추고 `decision-needed + needs-opinion`으로 전환한다.
+- 이슈에 `risk/high`가 붙으면 코드 변경 전에 즉시 사람 의사결정을 요청한다.
 
 ## Human Escalation Rules
 아래 조건이면 자동 진행 중지 후 사람 판단 요청:
 1. 스키마 파괴적 변경 또는 데이터 손실 위험
 2. 인프라 비용/권한/보안 정책 변경
 3. 고위험 변경 (`risk/high`)
-4. 반복 실패(동일 이슈 3회 이상)
+4. 반복 실패(동일 이슈에서 `AGENT_MAX_AUTO_RETRIES` 초과)
 
 ## Required Repository Settings
 
@@ -37,7 +43,19 @@
 
 `AGENT_EXEC_CMD`가 비어 있으면 에이전트는 이슈를 `agent/needs-config`로 표시하고 중단한다.
 
-### 2) Scheduled Worker
+### 1-1) Optional Throughput/Safety Variables
+- `AGENT_MAX_ISSUES_PER_RUN` (기본 `2`): 한 번의 루프에서 처리할 최대 이슈 수
+- `AGENT_MAX_AUTO_RETRIES` (기본 `2`): 동일 이슈 자동 재시도 횟수
+- `DECISION_REMINDER_HOURS` (기본 `24`): `decision-needed` 리마인드 코멘트 간격(시간)
+
+### 2) Runner 선택 (권장)
+- 이름: `AGENT_RUNNER`
+- 기본값: 비어 있으면 `ubuntu-latest`
+- 권장값: `self-hosted`
+
+실제 코드 자동 구현까지 돌리려면 self-hosted runner에서 에이전트 CLI/자격증명을 준비하는 것이 안전하다.
+
+### 3) Scheduled Worker
 - 워크플로우: `.github/workflows/agent-loop.yml`
 - 주기: 15분
 - 수동 실행: `workflow_dispatch`
@@ -46,4 +64,3 @@
 - 기본 실행자는 `ubuntu-latest`이다.
 - 진짜 상시 실행(긴 작업/대용량 작업)이 필요하면 self-hosted runner로 전환한다.
 - 브랜치 보호를 활성화해 직접 푸시를 금지하고 PR 경로만 허용한다.
-

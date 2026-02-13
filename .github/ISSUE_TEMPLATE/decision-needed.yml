@@ -3,6 +3,7 @@ description: Request explicit owner decision with options and deadline
 title: "[Decision] "
 labels:
   - decision-needed
+  - needs-opinion
 body:
   - type: textarea
     id: context
@@ -43,4 +44,3 @@ body:
       options:
         - label: If there is no response by the deadline, proceed with Option A.
           required: true
-

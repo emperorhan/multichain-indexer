@@ -49,6 +49,9 @@
 - name: decision-needed
   color: 5319E7
   description: Owner decision is needed to proceed
+- name: needs-opinion
+  color: 8A2BE2
+  description: Explicit owner opinion is required before continuing
 - name: blocked
   color: 000000
   description: Work cannot proceed due to external dependency

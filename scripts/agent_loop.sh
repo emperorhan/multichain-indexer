@@ -20,7 +20,8 @@ fi
 BASE_BRANCH="${BASE_BRANCH:-main}"
 WORK_BRANCH_PREFIX="${WORK_BRANCH_PREFIX:-agent-issue}"
 DECISION_REMINDER_HOURS="${DECISION_REMINDER_HOURS:-24}"
-AGENT_MAX_ISSUES_PER_RUN="${AGENT_MAX_ISSUES_PER_RUN:-1}"
+AGENT_MAX_ISSUES_PER_RUN="${AGENT_MAX_ISSUES_PER_RUN:-2}"
+AGENT_MAX_AUTO_RETRIES="${AGENT_MAX_AUTO_RETRIES:-2}"
 AUTONOMY_DRY_RUN="${AUTONOMY_DRY_RUN:-false}"
 AGENT_EXEC_CMD="${AGENT_EXEC_CMD:-}"
 
@@ -56,12 +57,52 @@ pick_next_issue() {
       map(select(
         (labels | index("blocked") | not) and
         (labels | index("decision-needed") | not) and
+        (labels | index("needs-opinion") | not) and
         (labels | index("in-progress") | not) and
         (labels | index("agent/needs-config") | not)
       ))
       | sort_by(prio, .createdAt)
       | .[0]
     '
+}
+
+count_failure_comments() {
+  local issue_number="$1"
+  gh issue view "${issue_number}" \
+    --repo "${REPO}" \
+    --json comments \
+    --jq '[.comments[] | select(.body | contains("[agent-loop] Executor failed"))] | length'
+}
+
+request_owner_decision() {
+  local issue_number="$1"
+  local issue_url="$2"
+  local reason="$3"
+
+  log "requesting owner decision for #${issue_number}: ${reason}"
+  if should_dry_run; then
+    return 0
+  fi
+
+  gh issue edit "${issue_number}" \
+    --repo "${REPO}" \
+    --remove-label in-progress \
+    --remove-label ready \
+    --add-label blocked \
+    --add-label decision-needed \
+    --add-label needs-opinion >/dev/null
+
+  gh issue comment "${issue_number}" \
+    --repo "${REPO}" \
+    --body "[agent-loop] Owner decision required before autonomous execution can continue.
+
+- issue: ${issue_url}
+- reason: ${reason}
+
+Reply on this issue with one option:
+1. Continue autonomously with current scope
+2. Continue autonomously with narrowed scope
+3. Stop autonomous execution for this issue"
 }
 
 comment_decision_reminders() {
@@ -119,6 +160,8 @@ claim_issue() {
     --add-label in-progress \
     --remove-label ready \
     --remove-label blocked \
+    --remove-label decision-needed \
+    --remove-label needs-opinion \
     --remove-label agent/needs-config >/dev/null
 
   gh issue comment "${issue_number}" \
@@ -178,7 +221,7 @@ run_executor() {
 
   if [ -z "${AGENT_EXEC_CMD}" ]; then
     handle_missing_executor "${issue_number}"
-    return 1
+    return 90
   fi
 
   export AGENT_ISSUE_NUMBER="${issue_number}"
@@ -194,7 +237,40 @@ run_executor() {
     return 0
   fi
 
-  bash -lc "${AGENT_EXEC_CMD}"
+  local exit_code=0
+  bash -lc "${AGENT_EXEC_CMD}" || exit_code=$?
+  return "${exit_code}"
+}
+
+handle_executor_failure() {
+  local issue_number="$1"
+  local issue_url="$2"
+  local exit_code="$3"
+  local failure_count next_attempt
+
+  if should_dry_run; then
+    return 0
+  fi
+
+  failure_count="$(count_failure_comments "${issue_number}")"
+  next_attempt=$((failure_count + 1))
+
+  if [ "${next_attempt}" -lt "${AGENT_MAX_AUTO_RETRIES}" ]; then
+    gh issue edit "${issue_number}" \
+      --repo "${REPO}" \
+      --remove-label in-progress \
+      --add-label ready >/dev/null
+
+    gh issue comment "${issue_number}" \
+      --repo "${REPO}" \
+      --body "[agent-loop] Executor failed (exit=${exit_code}) on attempt ${next_attempt}/${AGENT_MAX_AUTO_RETRIES}.
+
+The issue was re-queued automatically with label \`ready\`."
+    return 0
+  fi
+
+  request_owner_decision "${issue_number}" "${issue_url}" \
+    "Executor failed ${next_attempt} times (exit=${exit_code}). Auto-retry budget exhausted."
 }
 
 open_or_update_pr() {
@@ -276,10 +352,23 @@ process_issue() {
   issue_body="$(jq -r '.body // ""' <<<"${issue_json}")"
   issue_url="$(jq -r '.url' <<<"${issue_json}")"
 
+  if issue_has_label "${issue_json}" "risk/high"; then
+    request_owner_decision "${issue_number}" "${issue_url}" \
+      "Issue is marked \`risk/high\`, so autonomous execution is paused by policy."
+    return 0
+  fi
+
   claim_issue "${issue_number}" "${issue_url}"
   branch="$(create_branch_for_issue "${issue_number}" "${issue_title}")"
 
-  if ! run_executor "${issue_number}" "${issue_title}" "${issue_body}" "${issue_url}"; then
+  local executor_status=0
+  run_executor "${issue_number}" "${issue_title}" "${issue_body}" "${issue_url}" || executor_status=$?
+
+  if [ "${executor_status}" -ne 0 ]; then
+    if [ "${executor_status}" -eq 90 ]; then
+      return 0
+    fi
+    handle_executor_failure "${issue_number}" "${issue_url}" "${executor_status}"
     return 0
   fi
 
@@ -307,7 +396,7 @@ process_issue() {
 main() {
   local issue_json processed=0
 
-  log "repo=${REPO} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} dry_run=${AUTONOMY_DRY_RUN}"
+  log "repo=${REPO} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} retries=${AGENT_MAX_AUTO_RETRIES} dry_run=${AUTONOMY_DRY_RUN}"
   comment_decision_reminders
 
   while [ "${processed}" -lt "${AGENT_MAX_ISSUES_PER_RUN}" ]; do
@@ -324,4 +413,3 @@ main() {
 }
 
 main "$@"
-
