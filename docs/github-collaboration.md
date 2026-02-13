@@ -34,6 +34,7 @@
 
 ## Autonomous Merge
 - 워크플로우: `.github/workflows/agent-auto-merge.yml`
+- 트리거: `pull_request_target` + 15분 주기 스캔 + 수동 `workflow_dispatch`
 - 대상 PR:
   - head branch가 `agent-issue-*`
   - 또는 제목이 `chore(agent):`로 시작
@@ -41,7 +42,10 @@
   - 연동 이슈에 `blocked`, `decision-needed`, `needs-opinion`, `decision/major`, `risk/high` 라벨이 있으면 merge 중단
 - merge 방식:
   - 우선 auto-merge(squash) 활성화
+  - `mergeable_state=behind`면 base 최신으로 branch update 시도 후 auto-merge 재시도
   - 불가 시 체크가 이미 green이면 즉시 squash merge 시도
+- 선택 설정:
+  - secret `AGENT_GH_TOKEN`(classic PAT, `repo` + `workflow` scope)을 설정하면 workflow 파일을 수정한 PR도 자동 merge 가능
 
 ## Issue Discovery Loop
 - 워크플로우: `.github/workflows/issue-scout.yml`
