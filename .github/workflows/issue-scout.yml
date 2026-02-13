@@ -1,0 +1,51 @@
+name: Issue Scout
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without creating GitHub issues"
+        required: false
+        default: "false"
+      max_issues:
+        description: "Max discovered issues to create in one run"
+        required: false
+        default: "2"
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: issue-scout-main
+  cancel-in-progress: false
+
+jobs:
+  scout:
+    if: ${{ vars.AGENT_SCOUT_ENABLED != 'false' }}
+    runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Tooling Check
+        run: |
+          gh --version
+          jq --version
+          rg --version
+
+      - name: Run Issue Scout
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          AUTONOMY_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          SCOUT_MAX_ISSUES_PER_RUN: ${{ github.event.inputs.max_issues || vars.SCOUT_MAX_ISSUES_PER_RUN || '2' }}
+          SCOUT_FAIL_WINDOW_HOURS: ${{ vars.SCOUT_FAIL_WINDOW_HOURS || '24' }}
+          SCOUT_TODO_LIMIT: ${{ vars.SCOUT_TODO_LIMIT || '20' }}
+          SCOUT_INCLUDE_TODO: ${{ vars.SCOUT_INCLUDE_TODO || 'true' }}
+          SCOUT_INCLUDE_CI_FAILURES: ${{ vars.SCOUT_INCLUDE_CI_FAILURES || 'true' }}
+        run: scripts/issue_scout.sh

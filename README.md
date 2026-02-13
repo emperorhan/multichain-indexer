@@ -428,6 +428,7 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
    - `AGENT_EXEC_CMD='scripts/agent_executor.sh' AGENT_RUNNER='self-hosted' scripts/setup_agent_loop.sh emperorhan/multichain-indexer`
 3. 이슈는 `Autonomous Task` 템플릿으로 생성하고 `autonomous + ready` 라벨을 유지
 4. 의사결정이 필요하면 에이전트가 `decision-needed + needs-opinion` 라벨과 코멘트로 중단
+5. 자동 발굴을 켜면 `Issue Scout`가 TODO/FIXME와 최근 실패 CI를 이슈로 올림 (`agent/discovered`)
 
 ## Docs
 
