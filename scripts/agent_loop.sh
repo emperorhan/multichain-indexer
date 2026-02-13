@@ -223,6 +223,7 @@ run_executor() {
   local issue_url="$4"
   local issue_labels="$5"
   local exec_cmd="${AGENT_EXEC_CMD}"
+  local issue_body_file=""
 
   if [ -z "${AGENT_EXEC_CMD}" ]; then
     handle_missing_executor "${issue_number}"
@@ -238,17 +239,19 @@ run_executor() {
   export AGENT_ISSUE_URL="${issue_url}"
   export AGENT_ISSUE_LABELS="${issue_labels}"
 
-  mkdir -p .agent
-  printf '%s\n' "${issue_body}" > ".agent/issue-${issue_number}.md"
-  export AGENT_ISSUE_BODY_FILE=".agent/issue-${issue_number}.md"
+  issue_body_file="$(mktemp "/tmp/agent-issue-${issue_number}.XXXXXX.md")"
+  printf '%s\n' "${issue_body}" > "${issue_body_file}"
+  export AGENT_ISSUE_BODY_FILE="${issue_body_file}"
 
   log "running executor command for #${issue_number}"
   if should_dry_run; then
+    rm -f "${issue_body_file}"
     return 0
   fi
 
   local exit_code=0
   bash -lc "${exec_cmd}" || exit_code=$?
+  rm -f "${issue_body_file}"
   return "${exit_code}"
 }
 
