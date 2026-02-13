@@ -23,6 +23,12 @@
 - 결과 라벨: `ready-for-review` 또는 `blocked + decision-needed + needs-opinion`
 - 실행 명령은 repository variable `AGENT_EXEC_CMD`로 주입한다.
 - runner는 `AGENT_RUNNER` variable로 지정한다 (비어 있으면 `ubuntu-latest`).
+- planner/developer 큐는 분리되어 실행된다.
+  - planner runner: `AGENT_RUNNER_PLANNER` (fallback: `AGENT_RUNNER`)
+  - developer runner: `AGENT_RUNNER_DEVELOPER` (fallback: `AGENT_RUNNER`)
+- 라벨 필터:
+  - planner queue: `role/planner` 포함 이슈만 처리
+  - developer queue: `role/planner`, `role/qa`, `decision/major` 제외 이슈 처리 (기본)
 - `risk/high` 라벨 이슈는 사람 확인 전 자동 실행하지 않는다.
 - `AGENT_MAX_AUTO_RETRIES`를 넘겨 실패하면 사람 확인 상태로 자동 전환한다.
 
@@ -41,6 +47,7 @@
 - `Planner`:
   - `role/planner` 이슈에서 spec/plan 문서 갱신
   - 산출물: `IMPLEMENTATION_PLAN.md`, `specs/*`
+  - 큰 이슈면 fanout 파일(`.agent/planner-fanout-<issue>.json`)을 통해 child issue 자동 생성
 - `Manager`:
   - 화이트리스트 주소셋에서 QA 검증 이슈 생성 (`qa-ready`)
 - `Developer`:
@@ -53,8 +60,9 @@
 권장 실행 순서:
 1. `Autonomous Task` 이슈 생성
 2. `autonomous`, `ready`, `priority/*`, `area/*` 라벨 설정
-3. 에이전트 루프가 브랜치/PR 생성 후 테스트
-4. CI 통과 확인 후 merge
+3. 기획이 큰 경우 `role/planner`로 시작하고 fanout child issue를 자동 생성
+4. 에이전트 루프가 브랜치/PR 생성 후 테스트
+5. CI 통과 확인 후 merge
 
 ## Decision Protocol
 - 선택지가 필요한 경우 `Decision Needed` 이슈를 사용한다.

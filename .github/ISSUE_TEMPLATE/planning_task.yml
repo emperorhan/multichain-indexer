@@ -39,5 +39,13 @@ body:
         - [ ] specs updated
         - [ ] IMPLEMENTATION_PLAN.md updated
         - [ ] major decisions captured as decision/major issues when needed
+        - [ ] if scope is large, child issue fanout plan is provided
     validations:
       required: true
+  - type: textarea
+    id: fanout_expectation
+    attributes:
+      label: Fanout Expectation
+      description: Should planner split this into multiple child issues?
+      placeholder: |
+        yes/no and desired split axes (chain, stage, risk, owner role)

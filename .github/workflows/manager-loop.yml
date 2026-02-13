@@ -25,7 +25,7 @@ concurrency:
 jobs:
   manager:
     if: ${{ vars.RALPH_LOOP_ENABLED != 'false' && vars.MANAGER_LOOP_ENABLED != 'false' }}
-    runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.MANAGER_RUNNER != '' && vars.MANAGER_RUNNER || (vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

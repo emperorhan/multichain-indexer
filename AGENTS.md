@@ -6,6 +6,7 @@ This repository runs a multi-agent autonomous loop for a Solana on-chain indexer
 ## Agent Roles
 - Planner (`role/planner`):
   - Updates `specs/*` and `IMPLEMENTATION_PLAN.md`
+  - Optionally emits fanout task file for child issues (`.agent/planner-fanout-<issue>.json`)
   - Escalates major decisions via `decision/major`
 - Developer (`role/developer`):
   - Implements `autonomous + ready` issues
@@ -20,7 +21,7 @@ This repository runs a multi-agent autonomous loop for a Solana on-chain indexer
 - Global ON/OFF switch: repository variable `RALPH_LOOP_ENABLED`
 - Toggle via:
   - `.github/workflows/ralph-loop-control.yml`
-  - `scripts/toggle_ralph_loop.sh on|off`
+  - `scripts/toggle_ralph_loop.sh on|off|status`
 - Local iterative mode (feature branch only):
   - `scripts/ralph_loop_local.sh`
 
