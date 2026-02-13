@@ -25,7 +25,7 @@ concurrency:
 jobs:
   qa:
     if: ${{ vars.RALPH_LOOP_ENABLED != 'false' && vars.QA_LOOP_ENABLED != 'false' }}
-    runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.QA_RUNNER != '' && vars.QA_RUNNER || (vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
