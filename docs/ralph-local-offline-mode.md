@@ -73,6 +73,11 @@ complexity: high
 - 제어 변수:
   - `RALPH_TRANSIENT_REQUEUE_ENABLED` (기본 `true`)
   - `RALPH_TRANSIENT_RETRY_SLEEP_SEC` (기본 `20`)
+  - `RALPH_TRANSIENT_BACKOFF_MAX_SEC` (기본 `300`)
+  - `RALPH_TRANSIENT_HEALTHCHECK_AFTER_FAILS` (기본 `5`)
+  - `RALPH_TRANSIENT_HEALTHCHECK_TIMEOUT_SEC` (기본 `20`)
+- 연속 transient 실패 시 지수 백오프를 적용해 endpoint를 과도하게 재시도하지 않는다.
+- `scripts/ralph_local_supervisor.sh`는 runner lock-busy(`rc=75`)를 별도로 처리해 중복 재기동 루프를 줄인다.
 
 ## 자동 main 반영
 - 로컬 루프는 커밋 누적이 임계치를 넘으면 `main` 반영을 자동 시도한다.

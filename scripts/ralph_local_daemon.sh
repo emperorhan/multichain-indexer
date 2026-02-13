@@ -55,8 +55,6 @@ is_running() {
 start_daemon() {
   ensure_layout
   scripts/ralph_local_control.sh on >/dev/null
-  requeue_in_progress
-  cleanup_stray_local_processes
   if [ "${REQUIRE_CHATGPT_AUTH}" = "true" ] && ! scripts/codex_auth_status.sh --require-chatgpt >/dev/null; then
     echo "ralph-local start blocked: ChatGPT login mode check failed."
     echo "Run: scripts/codex_auth_status.sh"
@@ -67,6 +65,9 @@ start_daemon() {
     echo "ralph-local already running (pid=$(cat "${PID_FILE}"))"
     return 0
   fi
+
+  requeue_in_progress
+  cleanup_stray_local_processes
 
   omx_mode="${LOCAL_OMX_SAFE_MODE}"
   if [ -z "${omx_mode}" ]; then

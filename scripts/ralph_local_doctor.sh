@@ -7,6 +7,7 @@ set -euo pipefail
 
 RALPH_ROOT="${RALPH_ROOT:-.ralph}"
 RUNNER_LOG="${RALPH_ROOT}/logs/runner.out"
+TRANSIENT_STATE_FILE="${RALPH_ROOT}/state.transient_failures"
 
 echo "## Ralph Doctor"
 echo "- time_utc: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
@@ -31,6 +32,14 @@ for d in issues in-progress done blocked; do
   echo "- ${d}:"
   ls -1 "${RALPH_ROOT}/${d}" 2>/dev/null || true
 done
+
+echo
+echo "### Retry State"
+if [ -f "${TRANSIENT_STATE_FILE}" ]; then
+  echo "- transient_failures: $(awk 'NR==1 {print; exit}' "${TRANSIENT_STATE_FILE}" 2>/dev/null)"
+else
+  echo "- transient_failures: (missing)"
+fi
 
 echo
 echo "### Codex Smoke"

@@ -45,6 +45,7 @@ STATE_FILE="${RALPH_ROOT}/state.env"
 CONTEXT_FILE="${RALPH_ROOT}/context.md"
 PUBLISH_STATE_FILE="${RALPH_ROOT}/state.last_publish"
 RUN_LOCK_FILE="${RALPH_ROOT}/run.lock"
+TRANSIENT_STATE_FILE="${RALPH_ROOT}/state.transient_failures"
 
 MAX_LOOPS="${MAX_LOOPS:-0}" # 0 means infinite
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-20}"
@@ -58,6 +59,9 @@ REQUIRE_CHATGPT_AUTH="${RALPH_REQUIRE_CHATGPT_AUTH:-true}"
 STRIP_API_ENV="${RALPH_STRIP_API_ENV:-true}"
 TRANSIENT_REQUEUE_ENABLED="${RALPH_TRANSIENT_REQUEUE_ENABLED:-true}"
 TRANSIENT_RETRY_SLEEP_SEC="${RALPH_TRANSIENT_RETRY_SLEEP_SEC:-20}"
+TRANSIENT_BACKOFF_MAX_SEC="${RALPH_TRANSIENT_BACKOFF_MAX_SEC:-300}"
+TRANSIENT_HEALTHCHECK_AFTER_FAILS="${RALPH_TRANSIENT_HEALTHCHECK_AFTER_FAILS:-5}"
+TRANSIENT_HEALTHCHECK_TIMEOUT_SEC="${RALPH_TRANSIENT_HEALTHCHECK_TIMEOUT_SEC:-20}"
 AUTO_PUBLISH_ENABLED="${RALPH_AUTO_PUBLISH_ENABLED:-true}"
 AUTO_PUBLISH_MIN_COMMITS="${RALPH_AUTO_PUBLISH_MIN_COMMITS:-3}"
 AUTO_PUBLISH_TARGET_BRANCH="${RALPH_AUTO_PUBLISH_TARGET_BRANCH:-main}"
@@ -80,11 +84,12 @@ fi
 
 mkdir -p "${QUEUE_DIR}" "${IN_PROGRESS_DIR}" "${DONE_DIR}" "${BLOCKED_DIR}" "${REPORTS_DIR}" "${LOGS_DIR}"
 [ -f "${STATE_FILE}" ] || printf 'RALPH_LOCAL_ENABLED=true\n' > "${STATE_FILE}"
+[ -f "${TRANSIENT_STATE_FILE}" ] || printf '0\n' > "${TRANSIENT_STATE_FILE}"
 
 exec 9>"${RUN_LOCK_FILE}"
 if ! flock -n 9; then
-  echo "[ralph-local] another runner instance is active; exiting"
-  exit 0
+  echo "[ralph-local] another runner instance is active; exiting with lock-busy"
+  exit 75
 fi
 
 recover_in_progress_on_boot() {
@@ -118,6 +123,68 @@ enforce_chatgpt_auth_mode() {
 
 strip_api_auth_env
 enforce_chatgpt_auth_mode
+
+get_transient_failures() {
+  awk 'NR==1 { if ($1 ~ /^[0-9]+$/) print $1; else print 0; exit }' "${TRANSIENT_STATE_FILE}" 2>/dev/null || echo 0
+}
+
+set_transient_failures() {
+  local count="$1"
+  printf '%s\n' "${count}" > "${TRANSIENT_STATE_FILE}"
+}
+
+reset_transient_failures() {
+  set_transient_failures 0
+}
+
+increment_transient_failures() {
+  local current next
+  current="$(get_transient_failures)"
+  if ! [[ "${current}" =~ ^[0-9]+$ ]]; then
+    current=0
+  fi
+  next=$((current + 1))
+  set_transient_failures "${next}"
+  echo "${next}"
+}
+
+compute_transient_backoff() {
+  local fails="$1"
+  local base wait i max
+  base="${TRANSIENT_RETRY_SLEEP_SEC}"
+  max="${TRANSIENT_BACKOFF_MAX_SEC}"
+  wait="${base}"
+  i=1
+  while [ "${i}" -lt "${fails}" ]; do
+    wait=$((wait * 2))
+    if [ "${wait}" -ge "${max}" ]; then
+      wait="${max}"
+      break
+    fi
+    i=$((i + 1))
+  done
+  if [ "${wait}" -lt "${base}" ]; then
+    wait="${base}"
+  fi
+  echo "${wait}"
+}
+
+transient_connectivity_healthcheck() {
+  local check_log rc
+  check_log="${LOGS_DIR}/healthcheck-$(date -u +%Y%m%dT%H%M%SZ).log"
+  set +e
+  timeout "${TRANSIENT_HEALTHCHECK_TIMEOUT_SEC}" \
+    codex --ask-for-approval never exec --model "${MODEL_PLANNER}" --sandbox workspace-write --cd "$(pwd)" \
+    "Reply with: ok" >"${check_log}" 2>&1
+  rc=$?
+  set -e
+  if [ "${rc}" -eq 0 ]; then
+    echo "[ralph-local] healthcheck ok (${check_log})"
+    return 0
+  fi
+  echo "[ralph-local] healthcheck failed rc=${rc} (${check_log})"
+  return 1
+}
 
 ensure_branch_strategy() {
   local target current
@@ -530,17 +597,24 @@ while true; do
     fi
 
     if [ "${TRANSIENT_REQUEUE_ENABLED}" = "true" ] && is_transient_model_error "${log_file}"; then
+      transient_fails="$(increment_transient_failures)"
+      sleep_sec="$(compute_transient_backoff "${transient_fails}")"
       requeue_path="${QUEUE_DIR}/${issue_id}.md"
       if [ -f "${requeue_path}" ]; then
         requeue_path="${QUEUE_DIR}/retry-${issue_id}-$(date -u +%Y%m%dT%H%M%SZ).md"
       fi
       mv "${in_progress_path}" "${requeue_path}"
-      echo "[ralph-local] transient model error on ${issue_id}; requeued and sleeping ${TRANSIENT_RETRY_SLEEP_SEC}s"
-      sleep "${TRANSIENT_RETRY_SLEEP_SEC}"
+      echo "[ralph-local] transient model error on ${issue_id}; requeued (fails=${transient_fails})"
+      if [ "${transient_fails}" -ge "${TRANSIENT_HEALTHCHECK_AFTER_FAILS}" ]; then
+        transient_connectivity_healthcheck || true
+      fi
+      echo "[ralph-local] transient backoff sleep=${sleep_sec}s"
+      sleep "${sleep_sec}"
       loop_count=$((loop_count + 1))
       continue
     fi
 
+    reset_transient_failures
     blocked_path="${BLOCKED_DIR}/${issue_id}.md"
     mv "${in_progress_path}" "${blocked_path}"
     append_result_block "${blocked_path}" "blocked" "${role}" "${model}" "${log_file}" "not-run" "codex exited with code ${codex_rc}" ""
@@ -549,6 +623,7 @@ while true; do
     continue
   fi
 
+  reset_transient_failures
   validation_state="$(run_validation_if_needed "${role}" "${issue_id}" || true)"
   if [[ "${validation_state}" == failed:* ]]; then
     blocked_path="${BLOCKED_DIR}/${issue_id}.md"
