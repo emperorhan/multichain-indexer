@@ -123,32 +123,36 @@ pick_next_issue() {
           | split(",")
           | map(gsub("^\\s+|\\s+$"; ""))
           | map(select(length > 0)));
-      def labels: [.labels[].name];
-      def prio:
-        if labels | index("priority/p0") then 0
-        elif labels | index("priority/p1") then 1
-        elif labels | index("priority/p2") then 2
-        elif labels | index("priority/p3") then 3
-      else 9 end;
+      def label_names: [.labels[].name];
+      def priority_rank:
+        if label_names | index("priority/p0") then 0
+        elif label_names | index("priority/p1") then 1
+        elif label_names | index("priority/p2") then 2
+        elif label_names | index("priority/p3") then 3
+        else 9 end;
       (csv($include)) as $required_labels
       | (csv($exclude)) as $excluded_labels
-      | map(select(
-        (labels | index("blocked") | not) and
-        (labels | index("decision-needed") | not) and
-        (labels | index("decision/major") | not) and
-        (labels | index("needs-opinion") | not) and
-        (labels | index("in-progress") | not) and
-        (labels | index("agent/needs-config") | not) and
-        (
-          ($required_labels | length) == 0 or
-          all($required_labels[]; labels | index(.) != null)
-        ) and
-        (
-          ($excluded_labels | length) == 0 or
-          all($excluded_labels[]; labels | index(.) == null)
+      | map(
+          . as $issue
+          | ($issue | label_names) as $labels
+          | select(
+              ($labels | index("blocked") | not) and
+              ($labels | index("decision-needed") | not) and
+              ($labels | index("decision/major") | not) and
+              ($labels | index("needs-opinion") | not) and
+              ($labels | index("in-progress") | not) and
+              ($labels | index("agent/needs-config") | not) and
+              (
+                ($required_labels | length) == 0 or
+                all($required_labels[]; $labels | index(.) != null)
+              ) and
+              (
+                ($excluded_labels | length) == 0 or
+                all($excluded_labels[]; $labels | index(.) == null)
+              )
+            )
         )
-      ))
-      | sort_by(prio, .createdAt)
+      | sort_by(priority_rank, .createdAt)
       | .[0]
     '
 }
