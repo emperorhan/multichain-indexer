@@ -33,23 +33,24 @@ message TransactionResult {
   string fee_payer = 5;
   string status = 6;            // "SUCCESS" or "FAILED"
   optional string error = 7;
-  repeated TransferInfo transfers = 8;
+  repeated BalanceEventInfo balance_events = 8;
 }
 
-message TransferInfo {
-  int32 instruction_index = 1;
-  string program_id = 2;
-  string from_address = 3;      // owner address (not ATA)
-  string to_address = 4;        // owner address (not ATA)
-  string amount = 5;            // raw amount as string
-  string contract_address = 6;  // mint address
-  string transfer_type = 7;     // "transfer", "transferChecked", "systemTransfer"
-  string from_ata = 8;          // ATA if applicable
-  string to_ata = 9;            // ATA if applicable
+message BalanceEventInfo {
+  int32 outer_instruction_index = 1;
+  int32 inner_instruction_index = 2;   // -1 = outer ix itself
+  string event_category = 3;           // TRANSFER, STAKE, SWAP, MINT, BURN, REWARD, FEE
+  string event_action = 4;             // spl_transfer, system_transfer, stake_delegate, ...
+  string program_id = 5;
+  string address = 6;                  // account whose balance changed
+  string contract_address = 7;         // mint address
+  string delta = 8;                    // SIGNED amount string
+  string counterparty_address = 9;
   string token_symbol = 10;
   string token_name = 11;
   int32 token_decimals = 12;
-  string token_type = 13;       // "NATIVE", "FUNGIBLE", "NFT"
+  string token_type = 13;
+  map<string, string> metadata = 14;   // plugin-specific data (from_ata, to_ata, etc.)
 }
 
 message DecodeError {

@@ -63,13 +63,13 @@ func main() {
 
 	// Create repositories
 	repos := &pipeline.Repos{
-		WatchedAddr: postgres.NewWatchedAddressRepo(db),
-		Cursor:      postgres.NewCursorRepo(db),
-		Transaction: postgres.NewTransactionRepo(db),
-		Transfer:    postgres.NewTransferRepo(db),
-		Balance:     postgres.NewBalanceRepo(db),
-		Token:       postgres.NewTokenRepo(db),
-		Config:      postgres.NewIndexerConfigRepo(db),
+		WatchedAddr:  postgres.NewWatchedAddressRepo(db),
+		Cursor:       postgres.NewCursorRepo(db),
+		Transaction:  postgres.NewTransactionRepo(db),
+		BalanceEvent: postgres.NewBalanceEventRepo(db),
+		Balance:      postgres.NewBalanceRepo(db),
+		Token:        postgres.NewTokenRepo(db),
+		Config:       postgres.NewIndexerConfigRepo(db),
 	}
 
 	// Sync watched addresses from env to DB

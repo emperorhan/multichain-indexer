@@ -60,8 +60,8 @@ sequenceDiagram
     N->>I: NormalizedBatch via normalizedCh
 
     I->>DB: BEGIN tx
-    I->>DB: upsert transactions, tokens, transfers
-    I->>DB: adjust balances, deduct fees
+    I->>DB: upsert transactions, tokens, balance_events
+    I->>DB: adjust balances (signed delta accumulation)
     I->>DB: update cursor + watermark
     I->>DB: COMMIT
 ```
@@ -184,7 +184,7 @@ RPC에서 서명과 원본 트랜잭션 데이터를 병렬로 가져옵니다.
 
 - N workers, 단일 gRPC 연결 공유 (gRPC multiplexing)
 - `DecodeSolanaTransactionBatch` 호출 (배치별 timeout)
-- Response → `NormalizedTransaction` + `NormalizedTransfer` 변환
+- Response → `NormalizedTransaction` + `NormalizedBalanceEvent` 변환
 - `NormalizedBatch` 구성 → `normalizedCh`로 전송
 
 ### 4. Ingester
@@ -200,12 +200,10 @@ RPC에서 서명과 원본 트랜잭션 데이터를 병렬로 가져옵니다.
 BEGIN sql.Tx
   ├── FOR EACH transaction:
   │   ├── Upsert transaction (ON CONFLICT DO UPDATE → returns txID)
-  │   ├── FOR EACH transfer:
+  │   ├── FOR EACH balance_event:
   │   │   ├── Upsert token → returns tokenID
-  │   │   ├── Determine direction (DEPOSIT / WITHDRAWAL)
-  │   │   ├── Upsert transfer (ON CONFLICT DO NOTHING)
-  │   │   └── Adjust balance (amount + delta)
-  │   └── Deduct fee (if fee_payer == watched_address)
+  │   │   ├── Upsert balance_event (ON CONFLICT DO NOTHING)
+  │   │   └── Adjust balance (amount += signed delta)
   ├── Update cursor
   ├── Update watermark (GREATEST — non-regressing)
   └── COMMIT
@@ -220,8 +218,8 @@ PostgreSQL 16 — 통합 테이블 + JSONB 전략. 체인 추가 시 DDL 변경 
 ```mermaid
 erDiagram
     watched_addresses ||--o{ address_cursors : "FK (chain,network,address)"
-    transactions ||--o{ transfers : "transaction_id"
-    tokens ||--o{ transfers : "token_id"
+    transactions ||--o{ balance_events : "transaction_id"
+    tokens ||--o{ balance_events : "token_id"
     tokens ||--o{ balances : "token_id"
 
     watched_addresses {
@@ -248,14 +246,16 @@ erDiagram
         JSONB chain_data
     }
 
-    transfers {
+    balance_events {
         UUID id PK
         UUID transaction_id FK
         UUID token_id FK
-        VARCHAR from_address
-        VARCHAR to_address
-        NUMERIC amount
-        VARCHAR direction
+        VARCHAR event_category
+        VARCHAR event_action
+        VARCHAR program_id
+        VARCHAR address
+        VARCHAR counterparty_address
+        NUMERIC delta
         JSONB chain_data
     }
 
@@ -281,7 +281,7 @@ erDiagram
 
 ## Node.js Sidecar (gRPC Decoder)
 
-체인별 npm SDK 생태계(`@solana/web3.js` 등)를 활용한 트랜잭션 디코더.
+체인별 npm SDK 생태계(`@solana/web3.js` 등)를 활용한 플러그인 기반 balance event 디코더.
 
 ```protobuf
 service ChainDecoder {
@@ -291,9 +291,10 @@ service ChainDecoder {
 }
 ```
 
-- **Instruction 평탄화**: outer + inner instructions → global index 연속 배정
-- **Program 분기**: SPL Token, Token-2022, System Program 파싱
-- **ATA → Owner 해석**: `authority` 필드 우선, `preTokenBalances` fallback
+- **Plugin-based detection**: `EventPlugin` 인터페이스 → `PluginDispatcher`가 priority 순으로 라우팅
+- **Instruction ownership**: outer program이 inner instructions를 소유하여 CPI 이중 기록 방지
+- **Builtin plugins**: SPL Token/Token-2022 (`generic_spl_token`), System Program (`generic_system`)
+- **Signed delta**: positive = inflow, negative = outflow (direction 판단 불필요)
 - **Watched address 필터링**: `Set<string>` O(1) lookup
 
 ---
@@ -369,7 +370,7 @@ multichain-indexer/
 │       └── postgres/         # Repository implementations + migrations
 ├── proto/sidecar/v1/         # Protobuf definitions
 ├── pkg/generated/            # Generated Go protobuf code
-├── sidecar/                  # Node.js gRPC decoder service
+├── sidecar/                  # Node.js gRPC decoder (plugin-based balance events)
 ├── deployments/              # Docker Compose
 ├── docs/                     # Architecture, testing, DB rationale
 └── Makefile

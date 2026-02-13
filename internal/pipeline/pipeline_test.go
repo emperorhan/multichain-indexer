@@ -32,13 +32,13 @@ func TestNew_SmokeTest(t *testing.T) {
 	}
 
 	repos := &Repos{
-		WatchedAddr: storemocks.NewMockWatchedAddressRepository(ctrl),
-		Cursor:      storemocks.NewMockCursorRepository(ctrl),
-		Transaction: storemocks.NewMockTransactionRepository(ctrl),
-		Transfer:    storemocks.NewMockTransferRepository(ctrl),
-		Balance:     storemocks.NewMockBalanceRepository(ctrl),
-		Token:       storemocks.NewMockTokenRepository(ctrl),
-		Config:      storemocks.NewMockIndexerConfigRepository(ctrl),
+		WatchedAddr:  storemocks.NewMockWatchedAddressRepository(ctrl),
+		Cursor:       storemocks.NewMockCursorRepository(ctrl),
+		Transaction:  storemocks.NewMockTransactionRepository(ctrl),
+		BalanceEvent: storemocks.NewMockBalanceEventRepository(ctrl),
+		Balance:      storemocks.NewMockBalanceRepository(ctrl),
+		Token:        storemocks.NewMockTokenRepository(ctrl),
+		Config:       storemocks.NewMockIndexerConfigRepository(ctrl),
 	}
 
 	p := New(cfg, mockAdapter, mockDB, repos, slog.Default())
@@ -68,13 +68,13 @@ func TestPipeline_Run_ImmediateCancel(t *testing.T) {
 	}
 
 	repos := &Repos{
-		WatchedAddr: mockWatchedAddr,
-		Cursor:      storemocks.NewMockCursorRepository(ctrl),
-		Transaction: storemocks.NewMockTransactionRepository(ctrl),
-		Transfer:    storemocks.NewMockTransferRepository(ctrl),
-		Balance:     storemocks.NewMockBalanceRepository(ctrl),
-		Token:       storemocks.NewMockTokenRepository(ctrl),
-		Config:      storemocks.NewMockIndexerConfigRepository(ctrl),
+		WatchedAddr:  mockWatchedAddr,
+		Cursor:       storemocks.NewMockCursorRepository(ctrl),
+		Transaction:  storemocks.NewMockTransactionRepository(ctrl),
+		BalanceEvent: storemocks.NewMockBalanceEventRepository(ctrl),
+		Balance:      storemocks.NewMockBalanceRepository(ctrl),
+		Token:        storemocks.NewMockTokenRepository(ctrl),
+		Config:       storemocks.NewMockIndexerConfigRepository(ctrl),
 	}
 
 	p := New(cfg, mockAdapter, mockDB, repos, slog.Default())

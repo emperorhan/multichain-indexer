@@ -23,13 +23,6 @@ func (n Network) String() string {
 	return string(n)
 }
 
-type TransferDirection string
-
-const (
-	DirectionDeposit    TransferDirection = "DEPOSIT"
-	DirectionWithdrawal TransferDirection = "WITHDRAWAL"
-)
-
 type TxStatus string
 
 const (

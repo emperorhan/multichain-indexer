@@ -158,17 +158,30 @@ graph TB
         decoder_idx["index.ts<br/>배치 디스패치"]
 
         subgraph "src/decoder/solana/"
-            tx_decoder["transaction_decoder.ts<br/>메타데이터 추출, 인스트럭션 평탄화"]
-            spl_parser["spl_token_parser.ts<br/>SPL transfer/transferChecked"]
-            sys_parser["system_parser.ts<br/>SOL systemTransfer/createAccount"]
+            tx_decoder["transaction_decoder.ts<br/>메타데이터 추출, outer instruction 구성"]
+
+            subgraph "src/decoder/solana/plugin/"
+                plugin_if["interface.ts<br/>EventPlugin 인터페이스"]
+                dispatcher["dispatcher.ts<br/>PluginDispatcher<br/>(priority + ownership)"]
+                registry["registry.ts<br/>플러그인 등록"]
+                types["types.ts<br/>BalanceEvent, ParsedOuterInstruction"]
+
+                subgraph "builtin/"
+                    spl_plugin["generic_spl_token.ts<br/>SPL Token / Token-2022"]
+                    sys_plugin["generic_system.ts<br/>System Program (SOL)"]
+                end
+            end
         end
     end
 
     index --> server
     server --> decoder_idx
     decoder_idx --> tx_decoder
-    tx_decoder --> spl_parser
-    tx_decoder --> sys_parser
+    tx_decoder --> dispatcher
+    dispatcher --> plugin_if
+    dispatcher --> spl_plugin
+    dispatcher --> sys_plugin
+    registry --> dispatcher
 ```
 
 ---
@@ -213,9 +226,8 @@ sequenceDiagram
     I->>DB: BEGIN tx
     I->>DB: upsert transactions
     I->>DB: upsert tokens
-    I->>DB: upsert transfers
-    I->>DB: adjust balances
-    I->>DB: deduct fees
+    I->>DB: upsert balance_events (signed delta)
+    I->>DB: adjust balances (delta accumulation)
     I->>DB: update cursor
     I->>DB: update watermark
     I->>DB: COMMIT
@@ -322,11 +334,11 @@ client := sidecarv1.NewChainDecoderClient(conn)  // 모든 worker가 공유
 - 기본 2 workers (`NORMALIZER_WORKERS` 환경변수)
 - 배치별 timeout: `SIDECAR_TIMEOUT_SEC` (기본 30초, `normalizer.go:107`)
 
-**Response 변환 (`normalizer.go:134-176`):**
+**Response 변환:**
 - `TransactionResult` → `NormalizedTransaction`
-- `TransferInfo` → `NormalizedTransfer`
+- `BalanceEventInfo` → `NormalizedBalanceEvent`
 - `block_time` (unix timestamp) → `time.Time` 변환
-- `chain_data` JSONB 구성: `from_ata`, `to_ata`, `transfer_type`
+- `chain_data` JSONB 구성: plugin `metadata` 필드 (from_ata, to_ata 등)
 
 ### 3.6 Ingester
 
@@ -336,7 +348,7 @@ client := sidecarv1.NewChainDecoderClient(conn)  // 모든 worker가 공유
 
 > 다이어그램: `docs/diagrams/ingester-tx-boundary.drawio`
 
-**트랜잭션 경계 (`processBatch`, ingester.go:74-243):**
+**트랜잭션 경계 (`processBatch`, ingester.go):**
 
 ```
 BEGIN sql.Tx
@@ -346,30 +358,22 @@ BEGIN sql.Tx
   │   ├── Step 1: Upsert transaction (ON CONFLICT chain/network/tx_hash)
   │   │          → returns txID (UUID)
   │   │
-  │   ├── FOR EACH NormalizedTransfer:
+  │   ├── FOR EACH NormalizedBalanceEvent:
   │   │   ├── Step 2a: Upsert token (ON CONFLICT chain/network/contract_address)
   │   │   │           → returns tokenID (UUID)
-  │   │   ├── Step 2b: Determine direction
-  │   │   │           watched_address == to_address → DEPOSIT
-  │   │   │           watched_address == from_address → WITHDRAWAL
-  │   │   ├── Step 2c: Upsert transfer (ON CONFLICT DO NOTHING)
-  │   │   └── Step 2d: Adjust balance (amount + delta, GREATEST cursor)
+  │   │   ├── Step 2b: Upsert balance_event (ON CONFLICT DO NOTHING)
+  │   │   │           signed delta: positive = inflow, negative = outflow
+  │   │   └── Step 2c: Adjust balance (amount += delta)
   │   │
-  │   └── Step 3: Deduct fee
-  │              조건: fee_payer == watched_address
-  │                    AND fee_amount != "0"
-  │                    AND status == "SUCCESS"
-  │              → native token upsert + balance -= fee
-  │
-  ├── Step 4: Update cursor (cursor_value, cursor_sequence, items_processed += N)
-  ├── Step 5: Update watermark (GREATEST ingested_sequence)
+  ├── Step 3: Update cursor (cursor_value, cursor_sequence, items_processed += N)
+  ├── Step 4: Update watermark (GREATEST ingested_sequence)
   └── COMMIT
 ```
 
 **주요 설계 결정:**
 - 에러 시 전체 배치 롤백 (부분 커밋 없음)
-- 로그 후 다음 배치 처리 계속 (파이프라인 중단 없음, `ingester.go:64-69`)
-- `negateAmount()`: Go `math/big.Int`로 문자열 금액 부호 반전 (`ingester.go:245-250`)
+- 로그 후 다음 배치 처리 계속 (파이프라인 중단 없음)
+- Signed delta 모델: sidecar에서 부호가 결정되어 Ingester는 direction 판단 불필요
 
 ---
 
@@ -427,9 +431,12 @@ BEGIN sql.Tx
 - 유니크: `(chain, network, tx_hash)`
 - `chain_data JSONB`: 체인별 확장 데이터
 
-**`transfers`** — 개별 이체 내역:
-- 유니크: `(chain, network, tx_hash, instruction_index, watched_address)`
-- `direction`: `DEPOSIT` / `WITHDRAWAL` / `NULL`
+**`balance_events`** — 잔액 변동 이벤트:
+- 유니크: `(chain, network, tx_hash, outer_instruction_index, inner_instruction_index, address, watched_address)`
+- `delta NUMERIC(78,0)`: signed delta (+deposit, -withdrawal)
+- `event_category`: TRANSFER, STAKE, SWAP, MINT, BURN, REWARD, FEE
+- `event_action`: spl_transfer, system_transfer 등 (plugin이 결정)
+- `program_id`: 이벤트를 생성한 프로그램
 - FK: `transaction_id → transactions(id)`, `token_id → tokens(id)`
 
 **`balances`** — 주소/토큰별 현재 잔액:
@@ -448,13 +455,13 @@ CREATE INDEX idx_tx_chain_cursor ON transactions (chain, network, block_cursor);
 CREATE INDEX idx_tx_block_time ON transactions (block_time);
 CREATE INDEX idx_tx_fee_payer ON transactions (fee_payer);
 
--- Transfer 다차원 조회
-CREATE INDEX idx_transfers_watched ON transfers (chain, network, watched_address, block_time DESC);
-CREATE INDEX idx_transfers_cursor ON transfers (chain, network, block_cursor);
-CREATE INDEX idx_transfers_from ON transfers (from_address);
-CREATE INDEX idx_transfers_to ON transfers (to_address);
-CREATE INDEX idx_transfers_wallet ON transfers (wallet_id);
-CREATE INDEX idx_transfers_token ON transfers (token_id);
+-- Balance event 다차원 조회
+CREATE INDEX idx_balance_events_watched ON balance_events (chain, network, watched_address, block_time DESC);
+CREATE INDEX idx_balance_events_cursor ON balance_events (chain, network, block_cursor);
+CREATE INDEX idx_balance_events_address ON balance_events (address);
+CREATE INDEX idx_balance_events_wallet ON balance_events (wallet_id);
+CREATE INDEX idx_balance_events_token ON balance_events (token_id);
+CREATE INDEX idx_balance_events_category ON balance_events (event_category);
 
 -- 잔액 조회
 CREATE INDEX idx_balances_wallet ON balances (wallet_id);
@@ -468,7 +475,7 @@ CREATE INDEX idx_balances_address ON balances (chain, network, address);
 | 테이블 | ON CONFLICT 행동 | 근거 |
 |--------|-----------------|------|
 | transactions | DO UPDATE SET chain = transactions.chain (no-op) | ID 반환 필요 |
-| transfers | DO NOTHING | 완전 멱등 (중복 무시) |
+| balance_events | DO NOTHING | 완전 멱등 (3-layer dedup 최종 보루) |
 | tokens | DO UPDATE SET ... RETURNING id | ID 반환 + 메타데이터 갱신 |
 | balances | DO UPDATE SET amount = amount + delta | 누적 산술 연산 |
 | cursors | DO UPDATE SET cursor_value = EXCLUDED | 진행 상태 갱신 |
@@ -546,14 +553,18 @@ erDiagram
         JSONB chain_data
     }
 
-    transfers {
+    balance_events {
         UUID id PK
         UUID transaction_id FK
         UUID token_id FK
-        VARCHAR from_address
-        VARCHAR to_address
-        NUMERIC amount
-        VARCHAR direction
+        INT outer_instruction_index
+        INT inner_instruction_index
+        VARCHAR event_category
+        VARCHAR event_action
+        VARCHAR program_id
+        VARCHAR address
+        VARCHAR counterparty_address
+        NUMERIC delta
         VARCHAR watched_address
         JSONB chain_data
     }
@@ -567,8 +578,8 @@ erDiagram
     }
 
     watched_addresses ||--o{ address_cursors : "FK (chain,network,address)"
-    transactions ||--o{ transfers : "transaction_id"
-    tokens ||--o{ transfers : "token_id"
+    transactions ||--o{ balance_events : "transaction_id"
+    tokens ||--o{ balance_events : "token_id"
     tokens ||--o{ balances : "token_id"
 ```
 
@@ -721,8 +732,8 @@ service ChainDecoder {
 | 메시지 | 필드 | 설명 |
 |--------|------|------|
 | `RawTransaction` | signature, raw_json (bytes) | 원본 트랜잭션 JSON |
-| `TransactionResult` | tx_hash, block_cursor, fee_amount, status, transfers[] | 디코딩 결과 |
-| `TransferInfo` | from_address, to_address (owner), from_ata, to_ata, amount, contract_address | 이체 상세 |
+| `TransactionResult` | tx_hash, block_cursor, fee_amount, status, balance_events[] | 디코딩 결과 |
+| `BalanceEventInfo` | address, contract_address, delta (signed), event_category, event_action, program_id, counterparty_address, metadata | 잔액 변동 이벤트 |
 | `DecodeError` | signature, error | 디코딩 실패 건 |
 
 ### 6.2 전송 설정
@@ -741,36 +752,37 @@ conn, err := grpc.NewClient(
 
 ### 6.3 Sidecar 내부
 
-**Instruction 평탄화** (`transaction_decoder.ts:flattenInstructions`):
+**Plugin-Based Balance Event Detection:**
+
+Sidecar는 instruction ownership 기반의 플러그인 시스템으로 balance event를 탐지한다.
 
 ```
-Input:
-  outer instructions: [A, B, C]
-  inner instructions: [{index:0, instructions:[A1,A2]}, {index:2, instructions:[C1]}]
+Input: Parsed transaction with outer instructions + inner instructions
 
-Output (global index):
-  [{A, 0}, {A1, 1}, {A2, 2}, {B, 3}, {C, 4}, {C1, 5}]
+PluginDispatcher.dispatch(outerInstructions):
+  FOR EACH outer instruction:
+    1. programId로 플러그인 매칭 (priority DESC)
+    2. 매칭된 플러그인이 claim → inner instructions도 함께 소비 (CPI 이중 기록 방지)
+    3. 미매칭 → outer/inner 각각 개별 fallback 시도
+
+Output: BalanceEvent[] (signed delta, event_category, event_action)
 ```
 
-- outer instruction 순회 → 해당 inner instructions 삽입 → 다음 outer
-- global index 연속 증가 (transfers의 `instruction_index`로 사용)
+**3-Layer Dedup:**
+- **L1 — Instruction Ownership**: outer program이 inner instructions를 소유하여 CPI 이중 기록 방지
+- **L2 — Plugin Priority**: 여러 플러그인이 같은 programId를 처리할 때 priority 순으로 단일 선택
+- **L3 — DB Unique Constraint**: `(chain, network, tx_hash, outer_ix_idx, inner_ix_idx, address, watched_address)`
 
-**Program 분기** (`transaction_decoder.ts:decodeSolanaTransaction`):
+**Builtin Plugins:**
 
-| Program ID | 파서 | 처리 타입 |
-|-----------|------|----------|
-| `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA` (SPL Token) | `spl_token_parser.ts` | transfer, transferChecked |
-| `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb` (Token-2022) | `spl_token_parser.ts` | transfer, transferChecked |
-| `11111111111111111111111111111111` (System) | `system_parser.ts` | systemTransfer, createAccount |
-
-**ATA → Owner 해석:**
-1. `info.authority` 필드 (우선) → owner 주소
-2. `meta.preTokenBalances` / `meta.postTokenBalances` 조회 (fallback)
-3. ATA 주소 자체 (최종 fallback)
+| Plugin | Program ID | Event Actions |
+|--------|-----------|---------------|
+| `generic_spl_token` | SPL Token, Token-2022 | spl_transfer, spl_transfer_checked |
+| `generic_system` | System Program | system_transfer, create_account |
 
 **Watched Address 필터링:**
 - `Set<string>` 으로 O(1) lookup
-- `from_address` 또는 `to_address`가 watched set에 포함된 transfer만 반환
+- `address` 또는 `counterpartyAddress`가 watched set에 포함된 event만 반환
 
 ### 6.4 에러 핸들링
 
@@ -778,7 +790,7 @@ Output (global index):
 |------|------|------|
 | 배치 전체 | gRPC INTERNAL 에러 반환 | Normalizer가 에러 로그 후 드랍 |
 | 개별 트랜잭션 | `DecodeError[]`에 추가 | 나머지 트랜잭션 정상 처리 |
-| 실패 트랜잭션 (meta.err != null) | 조기 반환 (transfers 빈 배열) | fee 정보만 기록 |
+| 실패 트랜잭션 (meta.err != null) | 조기 반환 (balance_events 빈 배열) | fee 정보만 기록 |
 
 ---
 
@@ -935,7 +947,7 @@ case model.ChainEthereum:
 - **복구**: 커서 기반 at-least-once 재처리
   - 커서는 COMMIT 내에서만 전진 (`ingester.go:210-220`)
   - 크래시 시 마지막 커밋된 커서부터 재시작
-  - `ON CONFLICT DO NOTHING`으로 중복 transfer 무시
+  - `ON CONFLICT DO NOTHING`으로 중복 balance_event 무시
 
 ### 8.5 데이터 정합성 보장
 
@@ -1119,7 +1131,7 @@ service ChainDecoder {
 
 **Request/Response 크기:**
 - Request: N × (signature 88 bytes + raw_json ~2-10 KB) + watched_addresses
-- Response: N × TransactionResult (~500 bytes) + M × TransferInfo (~200 bytes)
+- Response: N × TransactionResult (~500 bytes) + M × BalanceEventInfo (~300 bytes)
 - 일반적 배치: 5-100 트랜잭션
 
 ### C. 프로젝트 디렉토리 구조
@@ -1139,7 +1151,7 @@ multichain-indexer/
 │   │   └── model/
 │   │       ├── chain.go                # 열거형 (Chain, Network, Status 등)
 │   │       ├── transaction.go          # Transaction 모델
-│   │       ├── transfer.go             # Transfer 모델
+│   │       ├── balance_event.go        # BalanceEvent 모델 (signed delta)
 │   │       ├── token.go                # Token 모델
 │   │       ├── cursor.go               # AddressCursor, IndexerConfig, Watermark
 │   │       ├── watched_address.go      # WatchedAddress 모델
@@ -1168,12 +1180,11 @@ multichain-indexer/
 │       └── postgres/
 │           ├── db.go                  # 연결 풀
 │           ├── migrations/
-│           │   ├── 001_create_pipeline_tables.up.sql
-│           │   ├── 001_create_pipeline_tables.down.sql
-│           │   ├── 002_create_serving_tables.up.sql
-│           │   └── 002_create_serving_tables.down.sql
+│           │   ├── 001_create_pipeline_tables.{up,down}.sql
+│           │   ├── 002_create_serving_tables.{up,down}.sql
+│           │   └── 003_balance_events.{up,down}.sql
 │           ├── transaction_repo.go
-│           ├── transfer_repo.go
+│           ├── balance_event_repo.go
 │           ├── token_repo.go
 │           ├── balance_repo.go
 │           ├── cursor_repo.go
@@ -1189,9 +1200,15 @@ multichain-indexer/
 │   │   └── decoder/
 │   │       ├── index.ts               # 배치 디스패치
 │   │       └── solana/
-│   │           ├── transaction_decoder.ts  # 메타데이터 + instruction 평탄화
-│   │           ├── spl_token_parser.ts     # SPL transfer 파싱
-│   │           └── system_parser.ts        # SOL system transfer 파싱
+│   │           ├── transaction_decoder.ts  # 메타데이터 추출, outer instruction 구성
+│   │           └── plugin/
+│   │               ├── interface.ts        # EventPlugin 인터페이스
+│   │               ├── dispatcher.ts       # PluginDispatcher (priority + ownership)
+│   │               ├── registry.ts         # 플러그인 등록
+│   │               ├── types.ts            # BalanceEvent, ParsedOuterInstruction
+│   │               └── builtin/
+│   │                   ├── generic_spl_token.ts  # SPL Token / Token-2022
+│   │                   └── generic_system.ts     # System Program (SOL)
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── Dockerfile

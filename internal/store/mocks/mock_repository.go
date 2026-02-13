@@ -14,8 +14,8 @@ import (
 	sql "database/sql"
 	reflect "reflect"
 
-	uuid "github.com/google/uuid"
 	model "github.com/emperorhan/multichain-indexer/internal/domain/model"
+	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -232,42 +232,42 @@ func (mr *MockTransactionRepositoryMockRecorder) UpsertTx(ctx, tx, t any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTx", reflect.TypeOf((*MockTransactionRepository)(nil).UpsertTx), ctx, tx, t)
 }
 
-// MockTransferRepository is a mock of TransferRepository interface.
-type MockTransferRepository struct {
+// MockBalanceEventRepository is a mock of BalanceEventRepository interface.
+type MockBalanceEventRepository struct {
 	ctrl     *gomock.Controller
-	recorder *MockTransferRepositoryMockRecorder
+	recorder *MockBalanceEventRepositoryMockRecorder
 	isgomock struct{}
 }
 
-// MockTransferRepositoryMockRecorder is the mock recorder for MockTransferRepository.
-type MockTransferRepositoryMockRecorder struct {
-	mock *MockTransferRepository
+// MockBalanceEventRepositoryMockRecorder is the mock recorder for MockBalanceEventRepository.
+type MockBalanceEventRepositoryMockRecorder struct {
+	mock *MockBalanceEventRepository
 }
 
-// NewMockTransferRepository creates a new mock instance.
-func NewMockTransferRepository(ctrl *gomock.Controller) *MockTransferRepository {
-	mock := &MockTransferRepository{ctrl: ctrl}
-	mock.recorder = &MockTransferRepositoryMockRecorder{mock}
+// NewMockBalanceEventRepository creates a new mock instance.
+func NewMockBalanceEventRepository(ctrl *gomock.Controller) *MockBalanceEventRepository {
+	mock := &MockBalanceEventRepository{ctrl: ctrl}
+	mock.recorder = &MockBalanceEventRepositoryMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockTransferRepository) EXPECT() *MockTransferRepositoryMockRecorder {
+func (m *MockBalanceEventRepository) EXPECT() *MockBalanceEventRepositoryMockRecorder {
 	return m.recorder
 }
 
 // UpsertTx mocks base method.
-func (m *MockTransferRepository) UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transfer) error {
+func (m *MockBalanceEventRepository) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpsertTx", ctx, tx, t)
+	ret := m.ctrl.Call(m, "UpsertTx", ctx, tx, be)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpsertTx indicates an expected call of UpsertTx.
-func (mr *MockTransferRepositoryMockRecorder) UpsertTx(ctx, tx, t any) *gomock.Call {
+func (mr *MockBalanceEventRepositoryMockRecorder) UpsertTx(ctx, tx, be any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTx", reflect.TypeOf((*MockTransferRepository)(nil).UpsertTx), ctx, tx, t)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTx", reflect.TypeOf((*MockBalanceEventRepository)(nil).UpsertTx), ctx, tx, be)
 }
 
 // MockBalanceRepository is a mock of BalanceRepository interface.

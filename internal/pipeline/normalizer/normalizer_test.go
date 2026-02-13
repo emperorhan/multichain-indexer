@@ -63,18 +63,22 @@ func TestProcessBatch_HappyPath(t *testing.T) {
 						FeeAmount:   "5000",
 						FeePayer:    "addr1",
 						Status:      "SUCCESS",
-						Transfers: []*sidecarv1.TransferInfo{
+						BalanceEvents: []*sidecarv1.BalanceEventInfo{
 							{
-								InstructionIndex: 0,
-								FromAddress:      "addr1",
-								ToAddress:        "addr2",
-								Amount:           "1000000",
-								ContractAddress:  "11111111111111111111111111111111",
-								TransferType:     "systemTransfer",
-								TokenSymbol:      "SOL",
-								TokenName:        "Solana",
-								TokenDecimals:    9,
-								TokenType:        "NATIVE",
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         "TRANSFER",
+								EventAction:           "system_transfer",
+								ProgramId:             "11111111111111111111111111111111",
+								Address:               "addr1",
+								ContractAddress:       "11111111111111111111111111111111",
+								Delta:                 "-1000000",
+								CounterpartyAddress:   "addr2",
+								TokenSymbol:           "SOL",
+								TokenName:             "Solana",
+								TokenDecimals:         9,
+								TokenType:             "NATIVE",
+								Metadata:              map[string]string{},
 							},
 						},
 					},
@@ -112,19 +116,22 @@ func TestProcessBatch_HappyPath(t *testing.T) {
 	assert.Equal(t, "5000", tx1.FeeAmount)
 	assert.Equal(t, "addr1", tx1.FeePayer)
 	assert.Equal(t, model.TxStatusSuccess, tx1.Status)
-	require.Len(t, tx1.Transfers, 1)
+	require.Len(t, tx1.BalanceEvents, 1)
 
-	transfer := tx1.Transfers[0]
-	assert.Equal(t, 0, transfer.InstructionIndex)
-	assert.Equal(t, "addr1", transfer.FromAddress)
-	assert.Equal(t, "addr2", transfer.ToAddress)
-	assert.Equal(t, "1000000", transfer.Amount)
-	assert.Equal(t, model.TokenTypeNative, transfer.TokenType)
+	be := tx1.BalanceEvents[0]
+	assert.Equal(t, 0, be.OuterInstructionIndex)
+	assert.Equal(t, -1, be.InnerInstructionIndex)
+	assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
+	assert.Equal(t, "system_transfer", be.EventAction)
+	assert.Equal(t, "addr1", be.Address)
+	assert.Equal(t, "addr2", be.CounterpartyAddress)
+	assert.Equal(t, "-1000000", be.Delta)
+	assert.Equal(t, model.TokenTypeNative, be.TokenType)
 
 	// Second tx - no block time
 	tx2 := result.Transactions[1]
 	assert.Nil(t, tx2.BlockTime)
-	assert.Empty(t, tx2.Transfers)
+	assert.Empty(t, tx2.BalanceEvents)
 }
 
 func TestProcessBatch_DecodeErrors(t *testing.T) {

@@ -32,9 +32,9 @@ type TransactionRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transaction) (uuid.UUID, error)
 }
 
-// TransferRepository provides access to transfer data.
-type TransferRepository interface {
-	UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transfer) error
+// BalanceEventRepository provides access to balance event data.
+type BalanceEventRepository interface {
+	UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) error
 }
 
 // BalanceRepository provides access to balance data.

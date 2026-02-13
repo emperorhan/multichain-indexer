@@ -47,7 +47,7 @@ func newIngesterMocks(t *testing.T) (
 	*gomock.Controller,
 	*storemocks.MockTxBeginner,
 	*storemocks.MockTransactionRepository,
-	*storemocks.MockTransferRepository,
+	*storemocks.MockBalanceEventRepository,
 	*storemocks.MockBalanceRepository,
 	*storemocks.MockTokenRepository,
 	*storemocks.MockCursorRepository,
@@ -57,7 +57,7 @@ func newIngesterMocks(t *testing.T) (
 	return ctrl,
 		storemocks.NewMockTxBeginner(ctrl),
 		storemocks.NewMockTransactionRepository(ctrl),
-		storemocks.NewMockTransferRepository(ctrl),
+		storemocks.NewMockBalanceEventRepository(ctrl),
 		storemocks.NewMockBalanceRepository(ctrl),
 		storemocks.NewMockTokenRepository(ctrl),
 		storemocks.NewMockCursorRepository(ctrl),
@@ -73,11 +73,11 @@ func setupBeginTx(mockDB *storemocks.MockTxBeginner) {
 }
 
 func TestProcessBatch_Deposit(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	tokenID := uuid.New()
@@ -101,17 +101,21 @@ func TestProcessBatch_Deposit(t *testing.T) {
 				FeePayer:    "otherAddr",
 				Status:      model.TxStatusSuccess,
 				ChainData:   json.RawMessage("{}"),
-				Transfers: []event.NormalizedTransfer{
+				BalanceEvents: []event.NormalizedBalanceEvent{
 					{
-						InstructionIndex: 0,
-						ContractAddress:  "11111111111111111111111111111111",
-						FromAddress:      "otherAddr",
-						ToAddress:        "addr1", // deposit
-						Amount:           "1000000",
-						TokenSymbol:      "SOL",
-						TokenName:        "Solana",
-						TokenDecimals:    9,
-						TokenType:        model.TokenTypeNative,
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         model.EventCategoryTransfer,
+						EventAction:           "system_transfer",
+						ProgramID:             "11111111111111111111111111111111",
+						ContractAddress:       "11111111111111111111111111111111",
+						Address:               "addr1",
+						CounterpartyAddress:   "otherAddr",
+						Delta:                 "1000000",
+						TokenSymbol:           "SOL",
+						TokenName:             "Solana",
+						TokenDecimals:         9,
+						TokenType:             model.TokenTypeNative,
 					},
 				},
 			},
@@ -128,13 +132,13 @@ func TestProcessBatch_Deposit(t *testing.T) {
 	mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(tokenID, nil)
 
-	mockTransferRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, tf *model.Transfer) error {
-			assert.Equal(t, model.ChainSolana, tf.Chain)
-			assert.Equal(t, "otherAddr", tf.FromAddress)
-			assert.Equal(t, "addr1", tf.ToAddress)
-			require.NotNil(t, tf.Direction)
-			assert.Equal(t, model.DirectionDeposit, *tf.Direction)
+	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) error {
+			assert.Equal(t, model.ChainSolana, be.Chain)
+			assert.Equal(t, "addr1", be.Address)
+			assert.Equal(t, "otherAddr", be.CounterpartyAddress)
+			assert.Equal(t, "1000000", be.Delta)
+			assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
 			return nil
 		})
 
@@ -145,8 +149,6 @@ func TestProcessBatch_Deposit(t *testing.T) {
 		tokenID, &walletID, &orgID,
 		"1000000", int64(100), "sig1",
 	).Return(nil)
-
-	// No fee deduction (feePayer != watched address)
 
 	mockCursorRepo.EXPECT().UpsertTx(
 		gomock.Any(), gomock.Any(),
@@ -164,15 +166,15 @@ func TestProcessBatch_Deposit(t *testing.T) {
 }
 
 func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	tokenID := uuid.New()
-	nativeTokenID := uuid.New()
+	feeTokenID := uuid.New()
 	cursorVal := "sig1"
 	walletID := "wallet-1"
 	orgID := "org-1"
@@ -188,17 +190,36 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 				TxHash:      "sig1",
 				BlockCursor: 100,
 				FeeAmount:   "5000",
-				FeePayer:    "addr1", // watched address is fee payer
+				FeePayer:    "addr1",
 				Status:      model.TxStatusSuccess,
 				ChainData:   json.RawMessage("{}"),
-				Transfers: []event.NormalizedTransfer{
+				BalanceEvents: []event.NormalizedBalanceEvent{
 					{
-						InstructionIndex: 0,
-						ContractAddress:  "11111111111111111111111111111111",
-						FromAddress:      "addr1", // withdrawal
-						ToAddress:        "otherAddr",
-						Amount:           "2000000",
-						TokenType:        model.TokenTypeNative,
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         model.EventCategoryTransfer,
+						EventAction:           "system_transfer",
+						ProgramID:             "11111111111111111111111111111111",
+						ContractAddress:       "11111111111111111111111111111111",
+						Address:               "addr1",
+						CounterpartyAddress:   "otherAddr",
+						Delta:                 "-2000000",
+						TokenType:             model.TokenTypeNative,
+					},
+					{
+						OuterInstructionIndex: -1,
+						InnerInstructionIndex: -1,
+						EventCategory:         model.EventCategoryFee,
+						EventAction:           "transaction_fee",
+						ProgramID:             "11111111111111111111111111111111",
+						ContractAddress:       "11111111111111111111111111111111",
+						Address:               "addr1",
+						CounterpartyAddress:   "",
+						Delta:                 "-5000",
+						TokenSymbol:           "SOL",
+						TokenName:             "Solana",
+						TokenDecimals:         9,
+						TokenType:             model.TokenTypeNative,
 					},
 				},
 			},
@@ -212,34 +233,38 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(txID, nil)
 
-	// First token upsert: for the transfer
-	mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(tokenID, nil)
+	// Two token upserts: one for transfer, one for fee
+	gomock.InOrder(
+		mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(tokenID, nil),
+		mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(feeTokenID, nil),
+	)
 
-	mockTransferRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, tf *model.Transfer) error {
-			require.NotNil(t, tf.Direction)
-			assert.Equal(t, model.DirectionWithdrawal, *tf.Direction)
+	// Two balance event upserts
+	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) error {
+			assert.Equal(t, "-2000000", be.Delta)
+			return nil
+		})
+	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) error {
+			assert.Equal(t, "-5000", be.Delta)
+			assert.Equal(t, model.EventCategoryFee, be.EventCategory)
 			return nil
 		})
 
-	// Negated amount for withdrawal
+	// Two balance adjustments
 	mockBalanceRepo.EXPECT().AdjustBalanceTx(
 		gomock.Any(), gomock.Any(),
 		model.ChainSolana, model.NetworkDevnet, "addr1",
 		tokenID, &walletID, &orgID,
 		"-2000000", int64(100), "sig1",
 	).Return(nil)
-
-	// Fee deduction: native token upsert
-	mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nativeTokenID, nil)
-
-	// Fee deduction: negative fee balance
 	mockBalanceRepo.EXPECT().AdjustBalanceTx(
 		gomock.Any(), gomock.Any(),
 		model.ChainSolana, model.NetworkDevnet, "addr1",
-		nativeTokenID, &walletID, &orgID,
+		feeTokenID, &walletID, &orgID,
 		"-5000", int64(100), "sig1",
 	).Return(nil)
 
@@ -253,15 +278,14 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestProcessBatch_NoDirection(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockTransferRepo, _, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+func TestProcessBatch_NoEvents(t *testing.T) {
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
-	ing := New(mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
-	tokenID := uuid.New()
 
 	batch := event.NormalizedBatch{
 		Chain:   model.ChainSolana,
@@ -269,22 +293,13 @@ func TestProcessBatch_NoDirection(t *testing.T) {
 		Address: "addr1",
 		Transactions: []event.NormalizedTransaction{
 			{
-				TxHash:      "sig1",
-				BlockCursor: 100,
-				FeeAmount:   "0",
-				FeePayer:    "otherAddr",
-				Status:      model.TxStatusSuccess,
-				ChainData:   json.RawMessage("{}"),
-				Transfers: []event.NormalizedTransfer{
-					{
-						InstructionIndex: 0,
-						ContractAddress:  "mint1",
-						FromAddress:      "neither1",
-						ToAddress:        "neither2", // not watched
-						Amount:           "1000",
-						TokenType:        model.TokenTypeFungible,
-					},
-				},
+				TxHash:        "sig1",
+				BlockCursor:   100,
+				FeeAmount:     "0",
+				FeePayer:      "otherAddr",
+				Status:        model.TxStatusSuccess,
+				ChainData:     json.RawMessage("{}"),
+				BalanceEvents: []event.NormalizedBalanceEvent{},
 			},
 		},
 		NewCursorSequence: 100,
@@ -295,18 +310,7 @@ func TestProcessBatch_NoDirection(t *testing.T) {
 	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(txID, nil)
 
-	mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(tokenID, nil)
-
-	mockTransferRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, tf *model.Transfer) error {
-			assert.Nil(t, tf.Direction)
-			return nil
-		})
-
-	// No AdjustBalanceTx call (direction is nil)
-	// No fee deduction (fee is "0")
-	// No cursor update (NewCursorValue is nil)
+	// No balance event, token, or balance calls
 
 	mockConfigRepo.EXPECT().UpdateWatermarkTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
@@ -316,11 +320,11 @@ func TestProcessBatch_NoDirection(t *testing.T) {
 }
 
 func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	cursorVal := "sig1"
@@ -331,12 +335,13 @@ func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
 		Address: "addr1",
 		Transactions: []event.NormalizedTransaction{
 			{
-				TxHash:      "sig1",
-				BlockCursor: 100,
-				FeeAmount:   "5000",
-				FeePayer:    "addr1",              // watched address is fee payer
-				Status:      model.TxStatusFailed, // BUT tx is failed
-				ChainData:   json.RawMessage("{}"),
+				TxHash:        "sig1",
+				BlockCursor:   100,
+				FeeAmount:     "5000",
+				FeePayer:      "addr1",
+				Status:        model.TxStatusFailed,
+				ChainData:     json.RawMessage("{}"),
+				BalanceEvents: []event.NormalizedBalanceEvent{}, // no events for failed tx
 			},
 		},
 		NewCursorValue:    &cursorVal,
@@ -347,9 +352,6 @@ func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
 
 	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(txID, nil)
-
-	// No fee deduction for failed tx
-	// No token/transfer/balance calls
 
 	mockCursorRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
@@ -362,10 +364,10 @@ func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
 }
 
 func TestProcessBatch_BeginTxError(t *testing.T) {
-	_, mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	batch := event.NormalizedBatch{
 		Chain:   model.ChainSolana,
@@ -382,10 +384,10 @@ func TestProcessBatch_BeginTxError(t *testing.T) {
 }
 
 func TestProcessBatch_UpsertTxError(t *testing.T) {
-	_, mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	batch := event.NormalizedBatch{
 		Chain:   model.ChainSolana,
@@ -413,10 +415,10 @@ func TestProcessBatch_UpsertTxError(t *testing.T) {
 }
 
 func TestIngester_Run_ContextCancel(t *testing.T) {
-	_, mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch)
-	ing := New(mockDB, mockTxRepo, mockTransferRepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

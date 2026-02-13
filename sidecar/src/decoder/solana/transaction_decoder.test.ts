@@ -15,7 +15,7 @@ import {
 describe('decodeSolanaTransaction', () => {
   const watchedSet = new Set([WATCHED_ADDRESS]);
 
-  it('decodes a SOL transfer successfully', () => {
+  it('decodes a SOL transfer with signed delta events', () => {
     const result = decodeSolanaTransaction(solTransferTx, 'sig1', watchedSet);
 
     expect(result.txHash).toBe('sig1');
@@ -25,16 +25,27 @@ describe('decodeSolanaTransaction', () => {
     expect(result.feePayer).toBe(WATCHED_ADDRESS);
     expect(result.status).toBe('SUCCESS');
     expect(result.error).toBeUndefined();
-    expect(result.transfers).toHaveLength(1);
 
-    const transfer = result.transfers[0];
-    expect(transfer.fromAddress).toBe(WATCHED_ADDRESS);
-    expect(transfer.toAddress).toBe(OTHER_ADDRESS);
-    expect(transfer.amount).toBe('1000000000');
-    expect(transfer.contractAddress).toBe('11111111111111111111111111111111');
-    expect(transfer.tokenType).toBe('NATIVE');
-    expect(transfer.tokenSymbol).toBe('SOL');
-    expect(transfer.transferType).toBe('systemTransfer');
+    // Should have: 1 transfer event (sender) + 1 fee event
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+    const feeEvents = result.balanceEvents.filter((e) => e.eventCategory === 'FEE');
+
+    expect(transferEvents).toHaveLength(1);
+    expect(feeEvents).toHaveLength(1);
+
+    const transferEvent = transferEvents[0];
+    expect(transferEvent.address).toBe(WATCHED_ADDRESS);
+    expect(transferEvent.counterpartyAddress).toBe(OTHER_ADDRESS);
+    expect(transferEvent.delta).toBe('-1000000000');
+    expect(transferEvent.contractAddress).toBe('11111111111111111111111111111111');
+    expect(transferEvent.tokenType).toBe('NATIVE');
+    expect(transferEvent.eventAction).toBe('system_transfer');
+
+    const feeEvent = feeEvents[0];
+    expect(feeEvent.address).toBe(WATCHED_ADDRESS);
+    expect(feeEvent.delta).toBe('-5000');
+    expect(feeEvent.eventCategory).toBe('FEE');
+    expect(feeEvent.outerInstructionIndex).toBe(-1);
   });
 
   it('returns FAILED status with error for failed tx', () => {
@@ -42,7 +53,7 @@ describe('decodeSolanaTransaction', () => {
 
     expect(result.status).toBe('FAILED');
     expect(result.error).toBeDefined();
-    expect(result.transfers).toHaveLength(0);
+    expect(result.balanceEvents).toHaveLength(0);
     expect(result.feeAmount).toBe('5000');
     expect(result.feePayer).toBe(WATCHED_ADDRESS);
   });
@@ -88,51 +99,58 @@ describe('decodeSolanaTransaction', () => {
     const result = decodeSolanaTransaction(txNoMeta, 'sig5', watchedSet);
     expect(result.status).toBe('SUCCESS');
     expect(result.feeAmount).toBe('0');
-    expect(result.transfers).toHaveLength(0);
+    expect(result.balanceEvents).toHaveLength(0);
   });
 
-  it('filters transfers by watched addresses', () => {
+  it('filters events by watched addresses', () => {
     const nonWatchedSet = new Set(['differentAddr']);
     const result = decodeSolanaTransaction(solTransferTx, 'sig6', nonWatchedSet);
-    // Transfer involves WATCHED_ADDRESS, not 'differentAddr'
-    expect(result.transfers).toHaveLength(0);
+    // No events since neither from/to is watched
+    expect(result.balanceEvents).toHaveLength(0);
   });
 
-  it('includes inner instructions', () => {
+  it('includes inner instructions via fallback', () => {
     const result = decodeSolanaTransaction(innerInstructionsTx, 'sig7', watchedSet);
-    expect(result.transfers).toHaveLength(1);
-    expect(result.transfers[0].fromAddress).toBe(WATCHED_ADDRESS);
-    expect(result.transfers[0].amount).toBe('500000000');
-    expect(result.transfers[0].transferType).toBe('systemTransfer');
+    // Inner system transfer + fee event
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(transferEvents[0].delta).toBe('-500000000');
+    expect(transferEvents[0].eventAction).toBe('system_transfer');
   });
 
-  it('assigns correct instruction index order', () => {
+  it('assigns correct instruction indices for inner instructions', () => {
     const result = decodeSolanaTransaction(innerInstructionsTx, 'sig8', watchedSet);
-    // Outer instruction at index 0 (unparsed), inner at index 1
-    expect(result.transfers[0].instructionIndex).toBe(1);
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+    expect(transferEvents[0].outerInstructionIndex).toBe(0);
+    expect(transferEvents[0].innerInstructionIndex).toBe(0);
   });
 
   it('handles createAccount instruction', () => {
     const result = decodeSolanaTransaction(createAccountTx, 'sig9', watchedSet);
-    expect(result.transfers).toHaveLength(1);
-    expect(result.transfers[0].transferType).toBe('createAccount');
-    expect(result.transfers[0].fromAddress).toBe(WATCHED_ADDRESS);
-    expect(result.transfers[0].toAddress).toBe('newAccount111');
-    expect(result.transfers[0].amount).toBe('2039280');
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].eventAction).toBe('system_create_account');
+    expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(transferEvents[0].counterpartyAddress).toBe('newAccount111');
+    expect(transferEvents[0].delta).toBe('-2039280');
   });
 
-  it('returns no transfers for tx with no transfer instructions', () => {
+  it('returns no events for tx with no transfer instructions', () => {
     const result = decodeSolanaTransaction(noTransferTx, 'sig10', watchedSet);
-    expect(result.transfers).toHaveLength(0);
+    // Only a fee event (fee payer is watched)
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+    expect(transferEvents).toHaveLength(0);
     expect(result.status).toBe('SUCCESS');
   });
 
-  it('parses SPL transferChecked', () => {
+  it('parses SPL transferChecked as signed delta events', () => {
     const result = decodeSolanaTransaction(splTransferCheckedTx, 'sig11', watchedSet);
-    expect(result.transfers).toHaveLength(1);
-    expect(result.transfers[0].transferType).toBe('transferChecked');
-    expect(result.transfers[0].amount).toBe('1000000');
-    expect(result.transfers[0].fromAddress).toBe(WATCHED_ADDRESS);
-    expect(result.transfers[0].contractAddress).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].eventAction).toBe('spl_transfer_checked');
+    expect(transferEvents[0].delta).toBe('-1000000');
+    expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(transferEvents[0].contractAddress).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
   });
 });

@@ -1,35 +1,8 @@
-import { decodeSolanaTransaction } from './solana/transaction_decoder';
+import { decodeSolanaTransaction, BalanceEventInfo, TransactionResult } from './solana/transaction_decoder';
 
 interface RawTxInput {
   signature: string;
   rawJson: Buffer;
-}
-
-interface TransferInfo {
-  instructionIndex: number;
-  programId: string;
-  fromAddress: string;
-  toAddress: string;
-  amount: string;
-  contractAddress: string;
-  transferType: string;
-  fromAta: string;
-  toAta: string;
-  tokenSymbol: string;
-  tokenName: string;
-  tokenDecimals: number;
-  tokenType: string;
-}
-
-interface TransactionResult {
-  txHash: string;
-  blockCursor: number;
-  blockTime: number;
-  feeAmount: string;
-  feePayer: string;
-  status: string;
-  error?: string;
-  transfers: TransferInfo[];
 }
 
 interface DecodeError {
@@ -41,6 +14,8 @@ interface DecodeBatchResponse {
   results: TransactionResult[];
   errors: DecodeError[];
 }
+
+export type { BalanceEventInfo, TransactionResult };
 
 export function decodeSolanaTransactionBatch(
   transactions: RawTxInput[],

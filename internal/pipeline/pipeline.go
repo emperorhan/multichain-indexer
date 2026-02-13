@@ -37,13 +37,13 @@ type Pipeline struct {
 }
 
 type Repos struct {
-	WatchedAddr store.WatchedAddressRepository
-	Cursor      store.CursorRepository
-	Transaction store.TransactionRepository
-	Transfer    store.TransferRepository
-	Balance     store.BalanceRepository
-	Token       store.TokenRepository
-	Config      store.IndexerConfigRepository
+	WatchedAddr  store.WatchedAddressRepository
+	Cursor       store.CursorRepository
+	Transaction  store.TransactionRepository
+	BalanceEvent store.BalanceEventRepository
+	Balance      store.BalanceRepository
+	Token        store.TokenRepository
+	Config       store.IndexerConfigRepository
 }
 
 func New(
@@ -91,7 +91,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 
 	ingest := ingester.New(
 		p.db,
-		p.repos.Transaction, p.repos.Transfer,
+		p.repos.Transaction, p.repos.BalanceEvent,
 		p.repos.Balance, p.repos.Token,
 		p.repos.Cursor, p.repos.Config,
 		normalizedCh, p.logger,

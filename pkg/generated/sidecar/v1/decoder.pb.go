@@ -186,7 +186,7 @@ type TransactionResult struct {
 	FeePayer      string                 `protobuf:"bytes,5,opt,name=fee_payer,json=feePayer,proto3" json:"fee_payer,omitempty"`
 	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"` // "SUCCESS" or "FAILED"
 	Error         *string                `protobuf:"bytes,7,opt,name=error,proto3,oneof" json:"error,omitempty"`
-	Transfers     []*TransferInfo        `protobuf:"bytes,8,rep,name=transfers,proto3" json:"transfers,omitempty"`
+	BalanceEvents []*BalanceEventInfo    `protobuf:"bytes,8,rep,name=balance_events,json=balanceEvents,proto3" json:"balance_events,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -270,46 +270,47 @@ func (x *TransactionResult) GetError() string {
 	return ""
 }
 
-func (x *TransactionResult) GetTransfers() []*TransferInfo {
+func (x *TransactionResult) GetBalanceEvents() []*BalanceEventInfo {
 	if x != nil {
-		return x.Transfers
+		return x.BalanceEvents
 	}
 	return nil
 }
 
-type TransferInfo struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	InstructionIndex int32                  `protobuf:"varint,1,opt,name=instruction_index,json=instructionIndex,proto3" json:"instruction_index,omitempty"`
-	ProgramId        string                 `protobuf:"bytes,2,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
-	FromAddress      string                 `protobuf:"bytes,3,opt,name=from_address,json=fromAddress,proto3" json:"from_address,omitempty"`             // owner address (not ATA)
-	ToAddress        string                 `protobuf:"bytes,4,opt,name=to_address,json=toAddress,proto3" json:"to_address,omitempty"`                   // owner address (not ATA)
-	Amount           string                 `protobuf:"bytes,5,opt,name=amount,proto3" json:"amount,omitempty"`                                          // raw amount as string
-	ContractAddress  string                 `protobuf:"bytes,6,opt,name=contract_address,json=contractAddress,proto3" json:"contract_address,omitempty"` // mint address
-	TransferType     string                 `protobuf:"bytes,7,opt,name=transfer_type,json=transferType,proto3" json:"transfer_type,omitempty"`          // "transfer", "transferChecked", "systemTransfer"
-	FromAta          string                 `protobuf:"bytes,8,opt,name=from_ata,json=fromAta,proto3" json:"from_ata,omitempty"`                         // ATA if applicable
-	ToAta            string                 `protobuf:"bytes,9,opt,name=to_ata,json=toAta,proto3" json:"to_ata,omitempty"`                               // ATA if applicable
-	TokenSymbol      string                 `protobuf:"bytes,10,opt,name=token_symbol,json=tokenSymbol,proto3" json:"token_symbol,omitempty"`
-	TokenName        string                 `protobuf:"bytes,11,opt,name=token_name,json=tokenName,proto3" json:"token_name,omitempty"`
-	TokenDecimals    int32                  `protobuf:"varint,12,opt,name=token_decimals,json=tokenDecimals,proto3" json:"token_decimals,omitempty"`
-	TokenType        string                 `protobuf:"bytes,13,opt,name=token_type,json=tokenType,proto3" json:"token_type,omitempty"` // "NATIVE", "FUNGIBLE", "NFT"
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+type BalanceEventInfo struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	OuterInstructionIndex int32                  `protobuf:"varint,1,opt,name=outer_instruction_index,json=outerInstructionIndex,proto3" json:"outer_instruction_index,omitempty"`
+	InnerInstructionIndex int32                  `protobuf:"varint,2,opt,name=inner_instruction_index,json=innerInstructionIndex,proto3" json:"inner_instruction_index,omitempty"` // -1 = outer ix itself
+	EventCategory         string                 `protobuf:"bytes,3,opt,name=event_category,json=eventCategory,proto3" json:"event_category,omitempty"`                            // TRANSFER, STAKE, SWAP, MINT, BURN, REWARD, FEE
+	EventAction           string                 `protobuf:"bytes,4,opt,name=event_action,json=eventAction,proto3" json:"event_action,omitempty"`                                  // spl_transfer, system_transfer, stake_delegate, ...
+	ProgramId             string                 `protobuf:"bytes,5,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
+	Address               string                 `protobuf:"bytes,6,opt,name=address,proto3" json:"address,omitempty"`                                        // account whose balance changed
+	ContractAddress       string                 `protobuf:"bytes,7,opt,name=contract_address,json=contractAddress,proto3" json:"contract_address,omitempty"` // mint address
+	Delta                 string                 `protobuf:"bytes,8,opt,name=delta,proto3" json:"delta,omitempty"`                                            // SIGNED amount string
+	CounterpartyAddress   string                 `protobuf:"bytes,9,opt,name=counterparty_address,json=counterpartyAddress,proto3" json:"counterparty_address,omitempty"`
+	TokenSymbol           string                 `protobuf:"bytes,10,opt,name=token_symbol,json=tokenSymbol,proto3" json:"token_symbol,omitempty"`
+	TokenName             string                 `protobuf:"bytes,11,opt,name=token_name,json=tokenName,proto3" json:"token_name,omitempty"`
+	TokenDecimals         int32                  `protobuf:"varint,12,opt,name=token_decimals,json=tokenDecimals,proto3" json:"token_decimals,omitempty"`
+	TokenType             string                 `protobuf:"bytes,13,opt,name=token_type,json=tokenType,proto3" json:"token_type,omitempty"`
+	Metadata              map[string]string      `protobuf:"bytes,14,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // plugin-specific data (from_ata, to_ata, etc.)
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
-func (x *TransferInfo) Reset() {
-	*x = TransferInfo{}
+func (x *BalanceEventInfo) Reset() {
+	*x = BalanceEventInfo{}
 	mi := &file_sidecar_v1_decoder_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TransferInfo) String() string {
+func (x *BalanceEventInfo) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TransferInfo) ProtoMessage() {}
+func (*BalanceEventInfo) ProtoMessage() {}
 
-func (x *TransferInfo) ProtoReflect() protoreflect.Message {
+func (x *BalanceEventInfo) ProtoReflect() protoreflect.Message {
 	mi := &file_sidecar_v1_decoder_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -321,100 +322,107 @@ func (x *TransferInfo) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TransferInfo.ProtoReflect.Descriptor instead.
-func (*TransferInfo) Descriptor() ([]byte, []int) {
+// Deprecated: Use BalanceEventInfo.ProtoReflect.Descriptor instead.
+func (*BalanceEventInfo) Descriptor() ([]byte, []int) {
 	return file_sidecar_v1_decoder_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *TransferInfo) GetInstructionIndex() int32 {
+func (x *BalanceEventInfo) GetOuterInstructionIndex() int32 {
 	if x != nil {
-		return x.InstructionIndex
+		return x.OuterInstructionIndex
 	}
 	return 0
 }
 
-func (x *TransferInfo) GetProgramId() string {
+func (x *BalanceEventInfo) GetInnerInstructionIndex() int32 {
+	if x != nil {
+		return x.InnerInstructionIndex
+	}
+	return 0
+}
+
+func (x *BalanceEventInfo) GetEventCategory() string {
+	if x != nil {
+		return x.EventCategory
+	}
+	return ""
+}
+
+func (x *BalanceEventInfo) GetEventAction() string {
+	if x != nil {
+		return x.EventAction
+	}
+	return ""
+}
+
+func (x *BalanceEventInfo) GetProgramId() string {
 	if x != nil {
 		return x.ProgramId
 	}
 	return ""
 }
 
-func (x *TransferInfo) GetFromAddress() string {
+func (x *BalanceEventInfo) GetAddress() string {
 	if x != nil {
-		return x.FromAddress
+		return x.Address
 	}
 	return ""
 }
 
-func (x *TransferInfo) GetToAddress() string {
-	if x != nil {
-		return x.ToAddress
-	}
-	return ""
-}
-
-func (x *TransferInfo) GetAmount() string {
-	if x != nil {
-		return x.Amount
-	}
-	return ""
-}
-
-func (x *TransferInfo) GetContractAddress() string {
+func (x *BalanceEventInfo) GetContractAddress() string {
 	if x != nil {
 		return x.ContractAddress
 	}
 	return ""
 }
 
-func (x *TransferInfo) GetTransferType() string {
+func (x *BalanceEventInfo) GetDelta() string {
 	if x != nil {
-		return x.TransferType
+		return x.Delta
 	}
 	return ""
 }
 
-func (x *TransferInfo) GetFromAta() string {
+func (x *BalanceEventInfo) GetCounterpartyAddress() string {
 	if x != nil {
-		return x.FromAta
+		return x.CounterpartyAddress
 	}
 	return ""
 }
 
-func (x *TransferInfo) GetToAta() string {
-	if x != nil {
-		return x.ToAta
-	}
-	return ""
-}
-
-func (x *TransferInfo) GetTokenSymbol() string {
+func (x *BalanceEventInfo) GetTokenSymbol() string {
 	if x != nil {
 		return x.TokenSymbol
 	}
 	return ""
 }
 
-func (x *TransferInfo) GetTokenName() string {
+func (x *BalanceEventInfo) GetTokenName() string {
 	if x != nil {
 		return x.TokenName
 	}
 	return ""
 }
 
-func (x *TransferInfo) GetTokenDecimals() int32 {
+func (x *BalanceEventInfo) GetTokenDecimals() int32 {
 	if x != nil {
 		return x.TokenDecimals
 	}
 	return 0
 }
 
-func (x *TransferInfo) GetTokenType() string {
+func (x *BalanceEventInfo) GetTokenType() string {
 	if x != nil {
 		return x.TokenType
 	}
 	return ""
+}
+
+func (x *BalanceEventInfo) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
 }
 
 type DecodeError struct {
@@ -563,7 +571,7 @@ const file_sidecar_v1_decoder_proto_rawDesc = "" +
 	"\braw_json\x18\x02 \x01(\fR\arawJson\"\x90\x01\n" +
 	"$DecodeSolanaTransactionBatchResponse\x127\n" +
 	"\aresults\x18\x01 \x03(\v2\x1d.sidecar.v1.TransactionResultR\aresults\x12/\n" +
-	"\x06errors\x18\x02 \x03(\v2\x17.sidecar.v1.DecodeErrorR\x06errors\"\x9f\x02\n" +
+	"\x06errors\x18\x02 \x03(\v2\x17.sidecar.v1.DecodeErrorR\x06errors\"\xac\x02\n" +
 	"\x11TransactionResult\x12\x17\n" +
 	"\atx_hash\x18\x01 \x01(\tR\x06txHash\x12!\n" +
 	"\fblock_cursor\x18\x02 \x01(\x03R\vblockCursor\x12\x1d\n" +
@@ -573,28 +581,31 @@ const file_sidecar_v1_decoder_proto_rawDesc = "" +
 	"fee_amount\x18\x04 \x01(\tR\tfeeAmount\x12\x1b\n" +
 	"\tfee_payer\x18\x05 \x01(\tR\bfeePayer\x12\x16\n" +
 	"\x06status\x18\x06 \x01(\tR\x06status\x12\x19\n" +
-	"\x05error\x18\a \x01(\tH\x00R\x05error\x88\x01\x01\x126\n" +
-	"\ttransfers\x18\b \x03(\v2\x18.sidecar.v1.TransferInfoR\ttransfersB\b\n" +
-	"\x06_error\"\xbe\x03\n" +
-	"\fTransferInfo\x12+\n" +
-	"\x11instruction_index\x18\x01 \x01(\x05R\x10instructionIndex\x12\x1d\n" +
+	"\x05error\x18\a \x01(\tH\x00R\x05error\x88\x01\x01\x12C\n" +
+	"\x0ebalance_events\x18\b \x03(\v2\x1c.sidecar.v1.BalanceEventInfoR\rbalanceEventsB\b\n" +
+	"\x06_error\"\x86\x05\n" +
+	"\x10BalanceEventInfo\x126\n" +
+	"\x17outer_instruction_index\x18\x01 \x01(\x05R\x15outerInstructionIndex\x126\n" +
+	"\x17inner_instruction_index\x18\x02 \x01(\x05R\x15innerInstructionIndex\x12%\n" +
+	"\x0eevent_category\x18\x03 \x01(\tR\reventCategory\x12!\n" +
+	"\fevent_action\x18\x04 \x01(\tR\veventAction\x12\x1d\n" +
 	"\n" +
-	"program_id\x18\x02 \x01(\tR\tprogramId\x12!\n" +
-	"\ffrom_address\x18\x03 \x01(\tR\vfromAddress\x12\x1d\n" +
-	"\n" +
-	"to_address\x18\x04 \x01(\tR\ttoAddress\x12\x16\n" +
-	"\x06amount\x18\x05 \x01(\tR\x06amount\x12)\n" +
-	"\x10contract_address\x18\x06 \x01(\tR\x0fcontractAddress\x12#\n" +
-	"\rtransfer_type\x18\a \x01(\tR\ftransferType\x12\x19\n" +
-	"\bfrom_ata\x18\b \x01(\tR\afromAta\x12\x15\n" +
-	"\x06to_ata\x18\t \x01(\tR\x05toAta\x12!\n" +
+	"program_id\x18\x05 \x01(\tR\tprogramId\x12\x18\n" +
+	"\aaddress\x18\x06 \x01(\tR\aaddress\x12)\n" +
+	"\x10contract_address\x18\a \x01(\tR\x0fcontractAddress\x12\x14\n" +
+	"\x05delta\x18\b \x01(\tR\x05delta\x121\n" +
+	"\x14counterparty_address\x18\t \x01(\tR\x13counterpartyAddress\x12!\n" +
 	"\ftoken_symbol\x18\n" +
 	" \x01(\tR\vtokenSymbol\x12\x1d\n" +
 	"\n" +
 	"token_name\x18\v \x01(\tR\ttokenName\x12%\n" +
 	"\x0etoken_decimals\x18\f \x01(\x05R\rtokenDecimals\x12\x1d\n" +
 	"\n" +
-	"token_type\x18\r \x01(\tR\ttokenType\"A\n" +
+	"token_type\x18\r \x01(\tR\ttokenType\x12F\n" +
+	"\bmetadata\x18\x0e \x03(\v2*.sidecar.v1.BalanceEventInfo.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"A\n" +
 	"\vDecodeError\x12\x1c\n" +
 	"\tsignature\x18\x01 \x01(\tR\tsignature\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"\x14\n" +
@@ -617,31 +628,33 @@ func file_sidecar_v1_decoder_proto_rawDescGZIP() []byte {
 	return file_sidecar_v1_decoder_proto_rawDescData
 }
 
-var file_sidecar_v1_decoder_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_sidecar_v1_decoder_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_sidecar_v1_decoder_proto_goTypes = []any{
 	(*DecodeSolanaTransactionBatchRequest)(nil),  // 0: sidecar.v1.DecodeSolanaTransactionBatchRequest
 	(*RawTransaction)(nil),                       // 1: sidecar.v1.RawTransaction
 	(*DecodeSolanaTransactionBatchResponse)(nil), // 2: sidecar.v1.DecodeSolanaTransactionBatchResponse
 	(*TransactionResult)(nil),                    // 3: sidecar.v1.TransactionResult
-	(*TransferInfo)(nil),                         // 4: sidecar.v1.TransferInfo
+	(*BalanceEventInfo)(nil),                     // 4: sidecar.v1.BalanceEventInfo
 	(*DecodeError)(nil),                          // 5: sidecar.v1.DecodeError
 	(*HealthCheckRequest)(nil),                   // 6: sidecar.v1.HealthCheckRequest
 	(*HealthCheckResponse)(nil),                  // 7: sidecar.v1.HealthCheckResponse
+	nil,                                          // 8: sidecar.v1.BalanceEventInfo.MetadataEntry
 }
 var file_sidecar_v1_decoder_proto_depIdxs = []int32{
 	1, // 0: sidecar.v1.DecodeSolanaTransactionBatchRequest.transactions:type_name -> sidecar.v1.RawTransaction
 	3, // 1: sidecar.v1.DecodeSolanaTransactionBatchResponse.results:type_name -> sidecar.v1.TransactionResult
 	5, // 2: sidecar.v1.DecodeSolanaTransactionBatchResponse.errors:type_name -> sidecar.v1.DecodeError
-	4, // 3: sidecar.v1.TransactionResult.transfers:type_name -> sidecar.v1.TransferInfo
-	0, // 4: sidecar.v1.ChainDecoder.DecodeSolanaTransactionBatch:input_type -> sidecar.v1.DecodeSolanaTransactionBatchRequest
-	6, // 5: sidecar.v1.ChainDecoder.HealthCheck:input_type -> sidecar.v1.HealthCheckRequest
-	2, // 6: sidecar.v1.ChainDecoder.DecodeSolanaTransactionBatch:output_type -> sidecar.v1.DecodeSolanaTransactionBatchResponse
-	7, // 7: sidecar.v1.ChainDecoder.HealthCheck:output_type -> sidecar.v1.HealthCheckResponse
-	6, // [6:8] is the sub-list for method output_type
-	4, // [4:6] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	4, // 3: sidecar.v1.TransactionResult.balance_events:type_name -> sidecar.v1.BalanceEventInfo
+	8, // 4: sidecar.v1.BalanceEventInfo.metadata:type_name -> sidecar.v1.BalanceEventInfo.MetadataEntry
+	0, // 5: sidecar.v1.ChainDecoder.DecodeSolanaTransactionBatch:input_type -> sidecar.v1.DecodeSolanaTransactionBatchRequest
+	6, // 6: sidecar.v1.ChainDecoder.HealthCheck:input_type -> sidecar.v1.HealthCheckRequest
+	2, // 7: sidecar.v1.ChainDecoder.DecodeSolanaTransactionBatch:output_type -> sidecar.v1.DecodeSolanaTransactionBatchResponse
+	7, // 8: sidecar.v1.ChainDecoder.HealthCheck:output_type -> sidecar.v1.HealthCheckResponse
+	7, // [7:9] is the sub-list for method output_type
+	5, // [5:7] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_sidecar_v1_decoder_proto_init() }
@@ -656,7 +669,7 @@ func file_sidecar_v1_decoder_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sidecar_v1_decoder_proto_rawDesc), len(file_sidecar_v1_decoder_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

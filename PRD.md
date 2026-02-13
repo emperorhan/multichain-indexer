@@ -78,6 +78,8 @@
 - **Node SDK Sidecar (Node)**
   - 체인별 디코더/시리얼라이저(가장 유지보수 잘 되는 npm 라이브러리 사용)
   - gRPC server
+  - Plugin-based balance event detection: EventPlugin 인터페이스 → PluginDispatcher가 instruction ownership 기반으로 플러그인 라우팅
+  - Instruction ownership 모델로 CPI 이중 기록 방지 (outer program이 inner instruction도 소유)
 - **Ingester (Go, Single Writer per chain)**
   - normalized batch 및 finalize 이벤트를 단일 루프로 소비
   - batch compute + batch write로 DB 반영
@@ -146,9 +148,11 @@
 
 ### 5.3 Serving DB (Final)
 
-- 트랜잭션/이벤트/잔고/상태 테이블
+- Core tables: `transactions`, `balance_events`, `balances`, `tokens`
+- `balance_events`: signed delta 모델 (+deposit, -withdrawal), `event_category`/`event_action` 컬럼으로 이벤트 유형 구분
+- `balances`: 주소별 토큰 잔고 aggregate
 - 읽기 성능을 위해 read replica 활용(서빙/감사/리포트)
-- reorg 체인은 “pending/unavailable vs confirmed/available” 상태 머신 포함
+- reorg 체인은 "pending/unavailable vs confirmed/available" 상태 머신 포함
 
 ---
 
@@ -191,7 +195,10 @@
 - Ingester는 **체인별 single-writer**로 DB write 시퀀스를 단일화
 - 큐는 at-least-once를 전제로 하되, DB 반영은:
   - 기본적으로 single-writer + cursor 워터마크로 순서 수렴
-  - 필요 시 DB 유니크 키(tx_id+idx 등)로 중복 방지
+  - 3-layer dedup 모델:
+    - **L1 — Instruction Ownership**: outer program이 CPI inner instruction을 소유하여 이중 기록 방지
+    - **L2 — Plugin Priority**: PluginDispatcher가 우선순위 기반으로 단일 플러그인만 이벤트 생성
+    - **L3 — DB Unique Constraint**: `(chain, network, tx_hash, outer_instruction_index, inner_instruction_index, address, watched_address)` 유니크 제약
 
 ### 7.2 Backpressure
 

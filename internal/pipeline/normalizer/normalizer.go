@@ -149,27 +149,27 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 			tx.Err = result.Error
 		}
 
-		for _, t := range result.Transfers {
-			chainData, _ := json.Marshal(map[string]string{
-				"from_ata":      t.FromAta,
-				"to_ata":        t.ToAta,
-				"transfer_type": t.TransferType,
-			})
+		for _, be := range result.BalanceEvents {
+			// Convert metadata map to JSON for chain_data
+			chainData, _ := json.Marshal(be.Metadata)
 
-			transfer := event.NormalizedTransfer{
-				InstructionIndex: int(t.InstructionIndex),
-				ContractAddress:  t.ContractAddress,
-				FromAddress:      t.FromAddress,
-				ToAddress:        t.ToAddress,
-				Amount:           t.Amount,
-				TransferType:     t.TransferType,
-				ChainData:        chainData,
-				TokenSymbol:      t.TokenSymbol,
-				TokenName:        t.TokenName,
-				TokenDecimals:    int(t.TokenDecimals),
-				TokenType:        model.TokenType(t.TokenType),
+			balanceEvent := event.NormalizedBalanceEvent{
+				OuterInstructionIndex: int(be.OuterInstructionIndex),
+				InnerInstructionIndex: int(be.InnerInstructionIndex),
+				EventCategory:         model.EventCategory(be.EventCategory),
+				EventAction:           be.EventAction,
+				ProgramID:             be.ProgramId,
+				ContractAddress:       be.ContractAddress,
+				Address:               be.Address,
+				CounterpartyAddress:   be.CounterpartyAddress,
+				Delta:                 be.Delta,
+				ChainData:             chainData,
+				TokenSymbol:           be.TokenSymbol,
+				TokenName:             be.TokenName,
+				TokenDecimals:         int(be.TokenDecimals),
+				TokenType:             model.TokenType(be.TokenType),
 			}
-			tx.Transfers = append(tx.Transfers, transfer)
+			tx.BalanceEvents = append(tx.BalanceEvents, balanceEvent)
 		}
 
 		normalized.Transactions = append(normalized.Transactions, tx)

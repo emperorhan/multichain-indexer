@@ -33,9 +33,11 @@ func TestTxStatusConstants(t *testing.T) {
 	assert.Equal(t, TxStatus("FAILED"), TxStatusFailed)
 }
 
-func TestTransferDirectionConstants(t *testing.T) {
-	assert.Equal(t, TransferDirection("DEPOSIT"), DirectionDeposit)
-	assert.Equal(t, TransferDirection("WITHDRAWAL"), DirectionWithdrawal)
+func TestEventCategoryConstants(t *testing.T) {
+	assert.Equal(t, EventCategory("TRANSFER"), EventCategoryTransfer)
+	assert.Equal(t, EventCategory("STAKE"), EventCategoryStake)
+	assert.Equal(t, EventCategory("SWAP"), EventCategorySwap)
+	assert.Equal(t, EventCategory("FEE"), EventCategoryFee)
 }
 
 func TestTokenTypeConstants(t *testing.T) {

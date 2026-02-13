@@ -37,7 +37,35 @@ function handleDecodeSolanaTransactionBatch(
     const watchedAddresses: string[] = request.watchedAddresses || [];
 
     const result = decodeSolanaTransactionBatch(transactions, watchedAddresses);
-    callback(null, result);
+
+    // Map balanceEvents to proto BalanceEventInfo format
+    const mappedResults = result.results.map((r) => ({
+      txHash: r.txHash,
+      blockCursor: r.blockCursor,
+      blockTime: r.blockTime,
+      feeAmount: r.feeAmount,
+      feePayer: r.feePayer,
+      status: r.status,
+      error: r.error,
+      balanceEvents: r.balanceEvents.map((ev) => ({
+        outerInstructionIndex: ev.outerInstructionIndex,
+        innerInstructionIndex: ev.innerInstructionIndex,
+        eventCategory: ev.eventCategory,
+        eventAction: ev.eventAction,
+        programId: ev.programId,
+        address: ev.address,
+        contractAddress: ev.contractAddress,
+        delta: ev.delta,
+        counterpartyAddress: ev.counterpartyAddress,
+        tokenSymbol: ev.tokenSymbol,
+        tokenName: ev.tokenName,
+        tokenDecimals: ev.tokenDecimals,
+        tokenType: ev.tokenType,
+        metadata: ev.metadata,
+      })),
+    }));
+
+    callback(null, { results: mappedResults, errors: result.errors });
   } catch (err: any) {
     console.error('Error decoding batch:', err);
     callback({

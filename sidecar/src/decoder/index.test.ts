@@ -25,8 +25,10 @@ describe('decodeSolanaTransactionBatch', () => {
     expect(result.errors).toHaveLength(0);
     expect(result.results[0].txHash).toBe('sig1');
     expect(result.results[0].status).toBe('SUCCESS');
+    expect(result.results[0].balanceEvents.length).toBeGreaterThan(0);
     expect(result.results[1].txHash).toBe('sig2');
     expect(result.results[1].status).toBe('FAILED');
+    expect(result.results[1].balanceEvents).toHaveLength(0);
   });
 
   it('collects invalid JSON in errors array', () => {

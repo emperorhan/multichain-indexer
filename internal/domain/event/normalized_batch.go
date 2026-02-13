@@ -20,27 +20,30 @@ type NormalizedBatch struct {
 }
 
 type NormalizedTransaction struct {
-	TxHash      string
-	BlockCursor int64
-	BlockTime   *time.Time
-	FeeAmount   string
-	FeePayer    string
-	Status      model.TxStatus
-	Err         *string
-	ChainData   json.RawMessage
-	Transfers   []NormalizedTransfer
+	TxHash        string
+	BlockCursor   int64
+	BlockTime     *time.Time
+	FeeAmount     string
+	FeePayer      string
+	Status        model.TxStatus
+	Err           *string
+	ChainData     json.RawMessage
+	BalanceEvents []NormalizedBalanceEvent
 }
 
-type NormalizedTransfer struct {
-	InstructionIndex int
-	ContractAddress  string // mint address or contract address
-	FromAddress      string
-	ToAddress        string
-	Amount           string
-	TransferType     string // "transfer", "transferChecked", etc.
-	ChainData        json.RawMessage
-	TokenSymbol      string
-	TokenName        string
-	TokenDecimals    int
-	TokenType        model.TokenType
+type NormalizedBalanceEvent struct {
+	OuterInstructionIndex int
+	InnerInstructionIndex int
+	EventCategory         model.EventCategory
+	EventAction           string
+	ProgramID             string
+	ContractAddress       string // mint address or contract address
+	Address               string // account whose balance changed
+	CounterpartyAddress   string
+	Delta                 string // SIGNED: positive = inflow, negative = outflow
+	ChainData             json.RawMessage
+	TokenSymbol           string
+	TokenName             string
+	TokenDecimals         int
+	TokenType             model.TokenType
 }

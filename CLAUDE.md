@@ -5,8 +5,8 @@ Multi-chain custody indexer: Go pipeline + Node.js sidecar (gRPC decoder).
 ## Architecture
 
 - **Go pipeline**: Coordinator → Fetcher → Normalizer → Ingester
-- **Node.js sidecar**: gRPC service for chain-specific transaction decoding
-- **Storage**: PostgreSQL (unified tables + JSONB), Redis (future process separation)
+- **Node.js sidecar**: gRPC decoder with plugin-based balance event detection
+- **Storage**: PostgreSQL (balance_events + JSONB), Redis (future process separation)
 - **MVP target**: Solana devnet (SOL + SPL Token)
 
 ## Quick Start
@@ -36,6 +36,7 @@ make run
 - `internal/store/` — repository implementations (PostgreSQL, Redis)
 - `proto/` — protobuf definitions
 - `sidecar/` — Node.js gRPC decoder service
+- `sidecar/src/decoder/solana/plugin/` — plugin system (EventPlugin interface, PluginDispatcher, builtin plugins)
 
 ## Key Commands
 
@@ -54,7 +55,8 @@ make lint           # Run linter
 
 - PostgreSQL 16 on port 5433
 - Migrations in `internal/store/postgres/migrations/`
-- Unified table strategy: common columns + `chain_data JSONB`
+- Core tables: `transactions`, `balance_events`, `balances`, `tokens`, `cursors`, `watched_addresses`, `indexer_configs`
+- `balance_events` uses signed delta model (+deposit, -withdrawal) with 3-layer dedup
 
 ## Environment Variables
 
