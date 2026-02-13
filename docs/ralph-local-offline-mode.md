@@ -71,9 +71,15 @@ complexity: high
   - `RALPH_AUTO_PUBLISH_MIN_COMMITS` (기본 `3`)
   - `RALPH_AUTO_PUBLISH_TARGET_BRANCH` (기본 `main`)
   - `RALPH_AUTO_PUBLISH_REMOTE` (기본 `origin`)
+  - `RALPH_BRANCH_STRATEGY` (기본 `main`; `main|current|feature`)
 - 동작:
   - 작업 브랜치 커밋이 임계치 이상 누적되면 `main`으로 merge 후 push 시도
   - 네트워크/권한/충돌 실패 시 루프는 중단되지 않고 다음 사이클에서 재시도
+
+### Direct Main Push
+- 브랜치 보호가 direct push를 막으면 자동 publish는 계속 실패한다.
+- trusted solo 환경에서만 아래를 사용:
+  - `scripts/enable_direct_main_push.sh <owner/repo> main`
 
 ## 검증/커밋 정책
 - role이 `developer`, `qa`면 `RALPH_VALIDATE_CMD`를 실행한다.
