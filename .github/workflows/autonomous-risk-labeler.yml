@@ -1,0 +1,36 @@
+name: Autonomous Risk Labeler
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - reopened
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync-risk-label:
+    if: contains(github.event.issue.labels.*.name, 'autonomous')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync risk/high from issue form
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const body = (issue.body || "").toLowerCase();
+            const hasHighRisk = /#+\s*risk level[\s\S]{0,160}\bhigh\b/.test(body);
+            const labels = issue.labels.map((label) => label.name);
+            const hasRiskLabel = labels.includes("risk/high");
+
+            if (hasHighRisk && !hasRiskLabel) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: ["risk/high"],
+              });
+            }
