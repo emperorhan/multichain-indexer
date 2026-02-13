@@ -1,6 +1,8 @@
 name: Agent Auto Merge
 
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       pr_number:
@@ -20,6 +22,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: read
+  workflows: write
 
 concurrency:
   group: agent-auto-merge-${{ github.event.pull_request.number || github.event.inputs.pr_number || 'manual' }}
@@ -38,41 +41,6 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-
-            const inputPr = `${{ toJSON(github.event.inputs.pr_number) }}`.replace(/^"+|"+$/g, "");
-            const eventPr = context.payload.pull_request?.number;
-            const prNumber = inputPr ? Number(inputPr) : eventPr;
-
-            if (!prNumber || Number.isNaN(prNumber)) {
-              core.notice("No pull request number provided; skipping.");
-              return;
-            }
-
-            const { data: pr } = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: prNumber,
-            });
-
-            if (pr.state !== "open") {
-              core.notice(`PR #${prNumber} is not open; skipping.`);
-              return;
-            }
-
-            const isAgentPr =
-              pr.head.ref.startsWith("agent-issue-") ||
-              pr.title.startsWith("chore(agent):") ||
-              pr.user?.login === "github-actions[bot]";
-
-            if (!isAgentPr) {
-              core.notice(`PR #${prNumber} is not an agent PR; skipping.`);
-              return;
-            }
-
-            const body = pr.body || "";
-            const issueMatches = [...body.matchAll(/(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi)];
-            const issueNumbers = [...new Set(issueMatches.map((m) => Number(m[1])).filter((n) => !Number.isNaN(n)))];
-
             const blockedLabels = new Set([
               "blocked",
               "decision-needed",
@@ -80,78 +48,147 @@ jobs:
               "decision/major",
               "risk/high",
             ]);
+            const inputPr = `${{ toJSON(github.event.inputs.pr_number) }}`.replace(/^"+|"+$/g, "");
+            const eventPr = context.payload.pull_request?.number;
+            const requestedPrNumber = inputPr ? Number(inputPr) : eventPr;
+            const isAgentPr = (pr) =>
+              pr.head.ref.startsWith("agent-issue-") ||
+              pr.title.startsWith("chore(agent):") ||
+              pr.user?.login === "github-actions[bot]";
 
-            for (const issueNumber of issueNumbers) {
-              const { data: issue } = await github.rest.issues.get({
-                owner,
-                repo,
-                issue_number: issueNumber,
-              });
-              const labels = issue.labels.map((l) => (typeof l === "string" ? l : l.name));
-              const blocking = labels.filter((l) => blockedLabels.has(l));
-              if (blocking.length > 0) {
-                core.notice(
-                  `PR #${prNumber} blocked by issue #${issueNumber} labels: ${blocking.join(", ")}`
-                );
-                return;
-              }
-            }
-
-            if (pr.draft) {
-              try {
-                await github.graphql(
-                  `mutation MarkReady($pullRequestId: ID!) {
-                    markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
-                      pullRequest { number isDraft }
-                    }
-                  }`,
-                  { pullRequestId: pr.node_id }
-                );
-                core.notice(`PR #${prNumber} converted to ready-for-review.`);
-              } catch (err) {
-                core.warning(`Unable to convert PR #${prNumber} from draft: ${err.message}`);
-              }
-            }
-
-            const { data: fresh } = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: prNumber,
-            });
-
-            // Prefer GitHub auto-merge so pending checks can complete asynchronously.
-            try {
-              await github.graphql(
-                `mutation EnableAutoMerge($pullRequestId: ID!) {
-                  enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: SQUASH}) {
-                    pullRequest { number autoMergeRequest { enabledAt } }
-                  }
-                }`,
-                { pullRequestId: fresh.node_id }
-              );
-              core.notice(`Auto-merge enabled for PR #${prNumber}.`);
-              return;
-            } catch (err) {
-              const message = String(err.message || err);
-              if (
-                message.includes("already enabled") ||
-                message.includes("Pull request is in clean status")
-              ) {
-                core.notice(`Auto-merge already configured for PR #${prNumber}.`);
-                return;
-              }
-              core.warning(`enablePullRequestAutoMerge failed for #${prNumber}: ${message}`);
-            }
-
-            // Fallback: attempt immediate merge when checks are already green.
-            try {
-              await github.rest.pulls.merge({
+            async function processPr(prNumber) {
+              const { data: pr } = await github.rest.pulls.get({
                 owner,
                 repo,
                 pull_number: prNumber,
-                merge_method: "squash",
               });
-              core.notice(`PR #${prNumber} merged immediately by fallback path.`);
-            } catch (err) {
-              core.warning(`Immediate merge skipped for #${prNumber}: ${err.message}`);
+
+              if (pr.state !== "open") {
+                core.notice(`PR #${prNumber} is not open; skipping.`);
+                return;
+              }
+
+              if (!isAgentPr(pr)) {
+                core.notice(`PR #${prNumber} is not an agent PR; skipping.`);
+                return;
+              }
+
+              const body = pr.body || "";
+              const issueMatches = [...body.matchAll(/(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi)];
+              const issueNumbers = [...new Set(issueMatches.map((m) => Number(m[1])).filter((n) => !Number.isNaN(n)))];
+
+              for (const issueNumber of issueNumbers) {
+                const { data: issue } = await github.rest.issues.get({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                });
+                const labels = issue.labels.map((l) => (typeof l === "string" ? l : l.name));
+                const blocking = labels.filter((l) => blockedLabels.has(l));
+                if (blocking.length > 0) {
+                  core.notice(
+                    `PR #${prNumber} blocked by issue #${issueNumber} labels: ${blocking.join(", ")}`
+                  );
+                  return;
+                }
+              }
+
+              if (pr.draft) {
+                try {
+                  await github.graphql(
+                    `mutation MarkReady($pullRequestId: ID!) {
+                      markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+                        pullRequest { number isDraft }
+                      }
+                    }`,
+                    { pullRequestId: pr.node_id }
+                  );
+                  core.notice(`PR #${prNumber} converted to ready-for-review.`);
+                } catch (err) {
+                  core.warning(`Unable to convert PR #${prNumber} from draft: ${err.message}`);
+                }
+              }
+
+              let { data: fresh } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber,
+              });
+
+              if (fresh.mergeable_state === "behind") {
+                try {
+                  await github.rest.pulls.updateBranch({
+                    owner,
+                    repo,
+                    pull_number: prNumber,
+                  });
+                  core.notice(`PR #${prNumber} branch updated to latest base.`);
+                  ({ data: fresh } = await github.rest.pulls.get({
+                    owner,
+                    repo,
+                    pull_number: prNumber,
+                  }));
+                } catch (err) {
+                  core.warning(`Unable to update behind PR #${prNumber}: ${err.message}`);
+                }
+              }
+
+              // Prefer GitHub auto-merge so pending checks can complete asynchronously.
+              try {
+                await github.graphql(
+                  `mutation EnableAutoMerge($pullRequestId: ID!) {
+                    enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: SQUASH}) {
+                      pullRequest { number autoMergeRequest { enabledAt } }
+                    }
+                  }`,
+                  { pullRequestId: fresh.node_id }
+                );
+                core.notice(`Auto-merge enabled for PR #${prNumber}.`);
+                return;
+              } catch (err) {
+                const message = String(err.message || err);
+                if (
+                  message.includes("already enabled") ||
+                  message.includes("Pull request is in clean status")
+                ) {
+                  core.notice(`Auto-merge already configured for PR #${prNumber}.`);
+                  return;
+                }
+                core.warning(`enablePullRequestAutoMerge failed for #${prNumber}: ${message}`);
+              }
+
+              // Fallback: attempt immediate merge when checks are already green.
+              try {
+                await github.rest.pulls.merge({
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                  merge_method: "squash",
+                });
+                core.notice(`PR #${prNumber} merged immediately by fallback path.`);
+              } catch (err) {
+                core.warning(`Immediate merge skipped for #${prNumber}: ${err.message}`);
+              }
+            }
+
+            let prNumbers = [];
+            if (requestedPrNumber && !Number.isNaN(requestedPrNumber)) {
+              prNumbers = [requestedPrNumber];
+            } else {
+              const { data: openPrs } = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: "open",
+                per_page: 100,
+              });
+              prNumbers = openPrs.filter((pr) => isAgentPr(pr)).map((pr) => pr.number);
+              if (prNumbers.length === 0) {
+                core.notice("No open agent PRs found; skipping.");
+                return;
+              }
+              core.notice(`No specific PR provided; scanning ${prNumbers.length} open agent PR(s).`);
+            }
+
+            for (const prNumber of prNumbers) {
+              await processPr(prNumber);
             }
