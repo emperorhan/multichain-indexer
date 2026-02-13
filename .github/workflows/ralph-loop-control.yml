@@ -1,0 +1,51 @@
+name: Ralph Loop Control
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Toggle mode"
+        required: true
+        type: choice
+        options:
+          - "on"
+          - "off"
+      note:
+        description: "Optional operator note"
+        required: false
+        default: ""
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  toggle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Toggle RALPH loop variable
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const mode = '${{ github.event.inputs.mode }}';
+            const value = mode === 'on' ? 'true' : 'false';
+            const note = '${{ github.event.inputs.note }}';
+
+            const payload = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'RALPH_LOOP_ENABLED',
+              value,
+            };
+
+            try {
+              await github.rest.actions.updateRepoVariable(payload);
+            } catch (err) {
+              if (err.status !== 404) throw err;
+              await github.rest.actions.createRepoVariable(payload);
+            }
+
+            core.notice(`RALPH_LOOP_ENABLED=${value}`);
+            if (note) {
+              core.notice(`note=${note}`);
+            }

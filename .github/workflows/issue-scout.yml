@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   scout:
-    if: ${{ vars.AGENT_SCOUT_ENABLED != 'false' }}
+    if: ${{ vars.RALPH_LOOP_ENABLED != 'false' && vars.AGENT_SCOUT_ENABLED != 'false' }}
     runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout

@@ -4,6 +4,7 @@ set -euo pipefail
 # Usage:
 #   AGENT_EXEC_CMD='your executor command' \
 #   AGENT_RUNNER='self-hosted' \
+#   RALPH_LOOP_ENABLED='true' \
 #   AGENT_CODEX_MODEL='' \
 #   AGENT_CODEX_MODEL_FAST='gpt-5.3-codex-spark' \
 #   AGENT_CODEX_MODEL_COMPLEX='gpt-5.3-codex' \
@@ -41,6 +42,7 @@ fi
 REPO="${1:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
 AGENT_EXEC_CMD_VALUE="${AGENT_EXEC_CMD:-}"
 AGENT_RUNNER_VALUE="${AGENT_RUNNER:-}"
+RALPH_LOOP_ENABLED_VALUE="${RALPH_LOOP_ENABLED:-true}"
 AGENT_CODEX_MODEL_VALUE="${AGENT_CODEX_MODEL:-}"
 AGENT_CODEX_MODEL_FAST_VALUE="${AGENT_CODEX_MODEL_FAST:-gpt-5.3-codex-spark}"
 AGENT_CODEX_MODEL_COMPLEX_VALUE="${AGENT_CODEX_MODEL_COMPLEX:-gpt-5.3-codex}"
@@ -84,7 +86,13 @@ set_repo_var() {
 
 echo "Configuring agent loop variables on ${REPO}"
 set_repo_var "AGENT_EXEC_CMD" "${AGENT_EXEC_CMD_VALUE}"
-set_repo_var "AGENT_CODEX_MODEL" "${AGENT_CODEX_MODEL_VALUE}"
+set_repo_var "RALPH_LOOP_ENABLED" "${RALPH_LOOP_ENABLED_VALUE}"
+if [ -n "${AGENT_CODEX_MODEL_VALUE}" ]; then
+  set_repo_var "AGENT_CODEX_MODEL" "${AGENT_CODEX_MODEL_VALUE}"
+else
+  gh variable delete "AGENT_CODEX_MODEL" --repo "${REPO}" >/dev/null 2>&1 || true
+  echo "unset AGENT_CODEX_MODEL"
+fi
 set_repo_var "AGENT_CODEX_MODEL_FAST" "${AGENT_CODEX_MODEL_FAST_VALUE}"
 set_repo_var "AGENT_CODEX_MODEL_COMPLEX" "${AGENT_CODEX_MODEL_COMPLEX_VALUE}"
 set_repo_var "AGENT_CODEX_SANDBOX" "${AGENT_CODEX_SANDBOX_VALUE}"

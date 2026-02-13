@@ -3,6 +3,14 @@
 ## Goal
 - 사람 개입을 최소화하고, 필요할 때만 의사결정을 요청하는 자율 개발 루프를 운영한다.
 
+## Ralph Loop Switch
+- 전역 토글 변수: `RALPH_LOOP_ENABLED`
+  - `true`: 모든 자율 루프 활성화
+  - `false`: `agent-loop`, `issue-scout`, `manager-loop`, `qa-loop` 모두 정지
+- 운영 토글 수단:
+  - workflow: `.github/workflows/ralph-loop-control.yml`
+  - CLI: `scripts/toggle_ralph_loop.sh on|off`
+
 ## Queue Contract
 - 에이전트가 집는 이슈 조건:
   - `autonomous`
@@ -61,6 +69,7 @@
 2. 인프라 비용/권한/보안 정책 변경
 3. 고위험 변경 (`risk/high`)
 4. 반복 실패(동일 이슈에서 `AGENT_MAX_AUTO_RETRIES` 초과)
+5. `decision/major` 라벨이 붙은 주요 의사결정
 
 ## Required Repository Settings
 
@@ -102,6 +111,7 @@
 - `QA_TRIAGE_CODEX_SANDBOX` (기본 `workspace-write`): QA triage sandbox 모드
 - `QA_TRIAGE_CODEX_APPROVAL` (기본 `never`): QA triage 승인 정책
 - `QA_TRIAGE_CODEX_SEARCH` (기본 `false`): QA triage 웹 검색 사용 여부
+- `RALPH_LOOP_ENABLED` (기본 `true`): 자율 루프 전역 ON/OFF
 
 ### 2) Runner 선택 (권장)
 - 이름: `AGENT_RUNNER`

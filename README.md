@@ -436,6 +436,12 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
    - Developer 기본: `gpt-5.3-codex-spark`
    - Developer 고위험/고우선: `gpt-5.3-codex`
    - QA 실패 triage: `gpt-5.3-codex`
+8. 전역 ON/OFF:
+   - `RALPH_LOOP_ENABLED=true|false` 변수로 전체 자율 루프 토글
+   - 수동 토글: `.github/workflows/ralph-loop-control.yml` 또는 `scripts/toggle_ralph_loop.sh on|off`
+9. 주요 의사결정:
+   - `Major Decision` 템플릿 사용 (`decision/major`)
+   - 해당 이슈는 owner 입력 전 자동 실행이 진행되지 않음
 
 ## Docs
 

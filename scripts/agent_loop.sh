@@ -57,6 +57,7 @@ pick_next_issue() {
       map(select(
         (labels | index("blocked") | not) and
         (labels | index("decision-needed") | not) and
+        (labels | index("decision/major") | not) and
         (labels | index("needs-opinion") | not) and
         (labels | index("in-progress") | not) and
         (labels | index("agent/needs-config") | not)
@@ -90,6 +91,7 @@ request_owner_decision() {
     --remove-label ready \
     --add-label blocked \
     --add-label decision-needed \
+    --add-label decision/major \
     --add-label needs-opinion >/dev/null
 
   gh issue comment "${issue_number}" \

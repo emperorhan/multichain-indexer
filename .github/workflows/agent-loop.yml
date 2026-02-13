@@ -26,6 +26,7 @@ concurrency:
 jobs:
   loop:
     name: Autonomous Queue Worker
+    if: ${{ vars.RALPH_LOOP_ENABLED != 'false' }}
     runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Checkout

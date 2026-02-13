@@ -1,0 +1,56 @@
+name: Major Decision
+description: High-impact decision that must be approved by owner in GitHub
+title: "[Major Decision] "
+labels:
+  - decision-needed
+  - needs-opinion
+  - decision/major
+  - role/manager
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What changed, and why this decision is now required?
+      placeholder: Current state, constraints, and urgency
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What is the impact scope if the wrong decision is made?
+      placeholder: Data integrity, security, cost, SLA, customer impact
+    validations:
+      required: true
+  - type: textarea
+    id: option_a
+    attributes:
+      label: Option A (Recommended)
+      description: Recommended path with tradeoffs
+      placeholder: Pros, cons, cost, risk
+    validations:
+      required: true
+  - type: textarea
+    id: option_b
+    attributes:
+      label: Option B
+      description: Alternative path with tradeoffs
+      placeholder: Pros, cons, cost, risk
+    validations:
+      required: true
+  - type: textarea
+    id: decision_deadline
+    attributes:
+      label: Decision Deadline
+      description: Hard deadline for owner input
+      placeholder: "YYYY-MM-DD HH:mm (timezone)"
+    validations:
+      required: true
+  - type: checkboxes
+    id: guardrail
+    attributes:
+      label: Guardrail
+      options:
+        - label: No autonomous execution should continue until owner responds.
+          required: true
