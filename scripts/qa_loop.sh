@@ -44,6 +44,7 @@ pick_next_issue() {
         (labels | index("qa-in-progress") | not) and
         (labels | index("blocked") | not) and
         (labels | index("decision-needed") | not) and
+        (labels | index("decision/major") | not) and
         (labels | index("needs-opinion") | not)
       ))
       | sort_by(.createdAt)

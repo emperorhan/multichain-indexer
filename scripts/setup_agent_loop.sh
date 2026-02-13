@@ -3,7 +3,9 @@ set -euo pipefail
 
 # Usage:
 #   AGENT_EXEC_CMD='your executor command' \
+#   PLANNING_EXEC_CMD='scripts/planning_executor.sh' \
 #   AGENT_RUNNER='self-hosted' \
+#   RALPH_LOOP_ENABLED='true' \
 #   AGENT_CODEX_MODEL='' \
 #   AGENT_CODEX_MODEL_FAST='gpt-5.3-codex-spark' \
 #   AGENT_CODEX_MODEL_COMPLEX='gpt-5.3-codex' \
@@ -31,6 +33,10 @@ set -euo pipefail
 #   QA_TRIAGE_CODEX_SANDBOX='workspace-write' \
 #   QA_TRIAGE_CODEX_APPROVAL='never' \
 #   QA_TRIAGE_CODEX_SEARCH='false' \
+#   PLANNING_CODEX_MODEL='gpt-5.3-codex' \
+#   PLANNING_CODEX_SANDBOX='workspace-write' \
+#   PLANNING_CODEX_APPROVAL='never' \
+#   PLANNING_CODEX_SEARCH='true' \
 #   scripts/setup_agent_loop.sh [owner/repo]
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -40,7 +46,9 @@ fi
 
 REPO="${1:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
 AGENT_EXEC_CMD_VALUE="${AGENT_EXEC_CMD:-}"
+PLANNING_EXEC_CMD_VALUE="${PLANNING_EXEC_CMD:-scripts/planning_executor.sh}"
 AGENT_RUNNER_VALUE="${AGENT_RUNNER:-}"
+RALPH_LOOP_ENABLED_VALUE="${RALPH_LOOP_ENABLED:-true}"
 AGENT_CODEX_MODEL_VALUE="${AGENT_CODEX_MODEL:-}"
 AGENT_CODEX_MODEL_FAST_VALUE="${AGENT_CODEX_MODEL_FAST:-gpt-5.3-codex-spark}"
 AGENT_CODEX_MODEL_COMPLEX_VALUE="${AGENT_CODEX_MODEL_COMPLEX:-gpt-5.3-codex}"
@@ -68,6 +76,10 @@ QA_TRIAGE_CODEX_MODEL_VALUE="${QA_TRIAGE_CODEX_MODEL:-gpt-5.3-codex}"
 QA_TRIAGE_CODEX_SANDBOX_VALUE="${QA_TRIAGE_CODEX_SANDBOX:-workspace-write}"
 QA_TRIAGE_CODEX_APPROVAL_VALUE="${QA_TRIAGE_CODEX_APPROVAL:-never}"
 QA_TRIAGE_CODEX_SEARCH_VALUE="${QA_TRIAGE_CODEX_SEARCH:-false}"
+PLANNING_CODEX_MODEL_VALUE="${PLANNING_CODEX_MODEL:-gpt-5.3-codex}"
+PLANNING_CODEX_SANDBOX_VALUE="${PLANNING_CODEX_SANDBOX:-workspace-write}"
+PLANNING_CODEX_APPROVAL_VALUE="${PLANNING_CODEX_APPROVAL:-never}"
+PLANNING_CODEX_SEARCH_VALUE="${PLANNING_CODEX_SEARCH:-true}"
 
 if [ -z "${AGENT_EXEC_CMD_VALUE}" ]; then
   echo "AGENT_EXEC_CMD is required." >&2
@@ -84,7 +96,14 @@ set_repo_var() {
 
 echo "Configuring agent loop variables on ${REPO}"
 set_repo_var "AGENT_EXEC_CMD" "${AGENT_EXEC_CMD_VALUE}"
-set_repo_var "AGENT_CODEX_MODEL" "${AGENT_CODEX_MODEL_VALUE}"
+set_repo_var "PLANNING_EXEC_CMD" "${PLANNING_EXEC_CMD_VALUE}"
+set_repo_var "RALPH_LOOP_ENABLED" "${RALPH_LOOP_ENABLED_VALUE}"
+if [ -n "${AGENT_CODEX_MODEL_VALUE}" ]; then
+  set_repo_var "AGENT_CODEX_MODEL" "${AGENT_CODEX_MODEL_VALUE}"
+else
+  gh variable delete "AGENT_CODEX_MODEL" --repo "${REPO}" >/dev/null 2>&1 || true
+  echo "unset AGENT_CODEX_MODEL"
+fi
 set_repo_var "AGENT_CODEX_MODEL_FAST" "${AGENT_CODEX_MODEL_FAST_VALUE}"
 set_repo_var "AGENT_CODEX_MODEL_COMPLEX" "${AGENT_CODEX_MODEL_COMPLEX_VALUE}"
 set_repo_var "AGENT_CODEX_SANDBOX" "${AGENT_CODEX_SANDBOX_VALUE}"
@@ -110,6 +129,10 @@ set_repo_var "QA_TRIAGE_CODEX_MODEL" "${QA_TRIAGE_CODEX_MODEL_VALUE}"
 set_repo_var "QA_TRIAGE_CODEX_SANDBOX" "${QA_TRIAGE_CODEX_SANDBOX_VALUE}"
 set_repo_var "QA_TRIAGE_CODEX_APPROVAL" "${QA_TRIAGE_CODEX_APPROVAL_VALUE}"
 set_repo_var "QA_TRIAGE_CODEX_SEARCH" "${QA_TRIAGE_CODEX_SEARCH_VALUE}"
+set_repo_var "PLANNING_CODEX_MODEL" "${PLANNING_CODEX_MODEL_VALUE}"
+set_repo_var "PLANNING_CODEX_SANDBOX" "${PLANNING_CODEX_SANDBOX_VALUE}"
+set_repo_var "PLANNING_CODEX_APPROVAL" "${PLANNING_CODEX_APPROVAL_VALUE}"
+set_repo_var "PLANNING_CODEX_SEARCH" "${PLANNING_CODEX_SEARCH_VALUE}"
 
 if [ -n "${SOLANA_WHITELIST_CSV_VALUE}" ]; then
   set_repo_var "SOLANA_WHITELIST_CSV" "${SOLANA_WHITELIST_CSV_VALUE}"

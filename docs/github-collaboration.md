@@ -38,6 +38,9 @@
   - 이슈 본문 fingerprint(`[agent-scout:*]`) 기준 dedup
 
 ## Multi-Agent Collaboration
+- `Planner`:
+  - `role/planner` 이슈에서 spec/plan 문서 갱신
+  - 산출물: `IMPLEMENTATION_PLAN.md`, `specs/*`
 - `Manager`:
   - 화이트리스트 주소셋에서 QA 검증 이슈 생성 (`qa-ready`)
 - `Developer`:
@@ -55,9 +58,11 @@
 
 ## Decision Protocol
 - 선택지가 필요한 경우 `Decision Needed` 이슈를 사용한다.
+- 영향이 큰 결정은 `Major Decision` 이슈 템플릿(`decision/major`)을 사용한다.
 - Option A를 기본안으로 제시한다.
 - 마감 시간까지 응답이 없으면 기본안으로 진행한다.
 - 실행기는 결정 필요 시 원본 이슈 코멘트에서 1/2/3 옵션으로 응답을 요청한다.
+- `decision/major` 이슈는 owner 입력 전 실행 큐(`ready`, `qa-ready`)로 진행되지 않는다.
 
 ## Label Taxonomy
 - `type/task`, `type/bug`, `type/docs`, `type/chore`
@@ -65,8 +70,10 @@
 - `priority/p0` ~ `priority/p3`
 - `sev0` ~ `sev3`
 - `decision-needed`, `needs-opinion`, `blocked`, `ready-for-review`
+- `decision/major`
 - `agent/discovered`
 - `role/manager`, `role/developer`, `role/qa`
+- `role/planner`
 - `qa-ready`, `qa-in-progress`, `qa/passed`, `qa/failed`
 
 ## Required Status Checks

@@ -3,6 +3,14 @@
 ## Goal
 - 사람 개입을 최소화하고, 필요할 때만 의사결정을 요청하는 자율 개발 루프를 운영한다.
 
+## Ralph Loop Switch
+- 전역 토글 변수: `RALPH_LOOP_ENABLED`
+  - `true`: 모든 자율 루프 활성화
+  - `false`: `agent-loop`, `issue-scout`, `manager-loop`, `qa-loop` 모두 정지
+- 운영 토글 수단:
+  - workflow: `.github/workflows/ralph-loop-control.yml`
+  - CLI: `scripts/toggle_ralph_loop.sh on|off`
+
 ## Queue Contract
 - 에이전트가 집는 이슈 조건:
   - `autonomous`
@@ -33,6 +41,9 @@
   - 이슈 본문의 `[agent-scout:<fingerprint>]` 지문으로 dedup
 
 ## Role Collaboration Loops
+- Planner flow:
+  - planner 이슈(`role/planner + autonomous + ready`)는 `scripts/planning_executor.sh`로 처리
+  - 산출물: `IMPLEMENTATION_PLAN.md`, `specs/*`
 - Manager loop: `.github/workflows/manager-loop.yml`
   - 화이트리스트 주소 셋(`SOLANA_WHITELIST_CSV` 또는 `configs/solana_whitelist_addresses.txt`)에서 QA용 샘플을 생성
   - 결과 이슈 라벨: `role/manager + qa-ready`
@@ -42,6 +53,8 @@
   - 실패: `qa/failed` + model triage + 개발자용 버그 이슈(`autonomous + ready`) 자동 생성
 
 ## Model Allocation
+- Planner agent:
+  - `PLANNING_CODEX_MODEL` (`gpt-5.3-codex`)
 - Manager agent: deterministic rules 기반(모델 비의존)으로 whitelist 셋 생성
 - Developer agent:
   - 기본: `AGENT_CODEX_MODEL_FAST` (`gpt-5.3-codex-spark`)
@@ -61,6 +74,7 @@
 2. 인프라 비용/권한/보안 정책 변경
 3. 고위험 변경 (`risk/high`)
 4. 반복 실패(동일 이슈에서 `AGENT_MAX_AUTO_RETRIES` 초과)
+5. `decision/major` 라벨이 붙은 주요 의사결정
 
 ## Required Repository Settings
 
@@ -102,6 +116,12 @@
 - `QA_TRIAGE_CODEX_SANDBOX` (기본 `workspace-write`): QA triage sandbox 모드
 - `QA_TRIAGE_CODEX_APPROVAL` (기본 `never`): QA triage 승인 정책
 - `QA_TRIAGE_CODEX_SEARCH` (기본 `false`): QA triage 웹 검색 사용 여부
+- `RALPH_LOOP_ENABLED` (기본 `true`): 자율 루프 전역 ON/OFF
+- `PLANNING_EXEC_CMD` (기본 `scripts/planning_executor.sh`): planner 실행 명령
+- `PLANNING_CODEX_MODEL` (기본 `gpt-5.3-codex`): planner 모델
+- `PLANNING_CODEX_SANDBOX` (기본 `workspace-write`): planner sandbox 모드
+- `PLANNING_CODEX_APPROVAL` (기본 `never`): planner 승인 정책
+- `PLANNING_CODEX_SEARCH` (기본 `true`): planner 웹 검색 사용 여부
 
 ### 2) Runner 선택 (권장)
 - 이름: `AGENT_RUNNER`

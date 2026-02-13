@@ -105,6 +105,7 @@ After configuration, remove \`decision-needed\` and add \`ready\` if needed.
     --title "${title}" \
     --body "${body}" \
     --label "decision-needed" \
+    --label "decision/major" \
     --label "needs-opinion" \
     --label "agent/needs-config" \
     --label "role/manager" >/dev/null
