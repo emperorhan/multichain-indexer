@@ -568,6 +568,36 @@ handle_pr_creation_failure() {
 Please check workflow logs for the PR creation error details."
 }
 
+handle_push_failure() {
+  local issue_number="$1"
+  local issue_url="$2"
+  local branch="$3"
+  local operation="$4"
+  local push_error="$5"
+  local error_line
+
+  error_line="$(printf '%s' "${push_error}" | head -n1)"
+
+  if should_dry_run; then
+    return 0
+  fi
+
+  gh issue edit "${issue_number}" \
+    --repo "${REPO}" \
+    --remove-label in-progress \
+    --add-label ready >/dev/null
+
+  gh issue comment "${issue_number}" \
+    --repo "${REPO}" \
+    --body "[agent-loop] Git ${operation} failed and issue was re-queued.
+
+- issue: ${issue_url}
+- branch: ${branch}
+- error: \`${error_line}\`
+
+Please check workflow logs for the git operation error details."
+}
+
 process_issue() {
   local issue_json="$1"
   local issue_number issue_title issue_body issue_url issue_labels branch pr_url commit_message
@@ -611,8 +641,15 @@ process_issue() {
 
   git add -A
   commit_message="chore(agent): implement #${issue_number} ${issue_title}"
-  git commit -m "${commit_message}" >/dev/null
-  git push -u origin "${branch}" >/dev/null
+  if ! git_commit_output="$(git commit -m "${commit_message}" 2>&1)"; then
+    handle_push_failure "${issue_number}" "${issue_url}" "${branch}" "commit" "${git_commit_output}"
+    return 0
+  fi
+
+  if ! git_push_output="$(git push -u origin "${branch}" 2>&1)"; then
+    handle_push_failure "${issue_number}" "${issue_url}" "${branch}" "push" "${git_push_output}"
+    return 0
+  fi
 
   if ! pr_url="$(open_or_update_pr "${issue_number}" "${issue_title}" "${branch}")"; then
     handle_pr_creation_failure "${issue_number}" "${issue_url}" "${branch}"
