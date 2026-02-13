@@ -425,7 +425,7 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 1. 브랜치 보호 적용:
    - `scripts/setup_branch_protection.sh emperorhan/multichain-indexer main`
 2. 에이전트 변수 설정:
-   - `AGENT_EXEC_CMD='make test && make test-sidecar && make lint' AGENT_RUNNER='self-hosted' scripts/setup_agent_loop.sh emperorhan/multichain-indexer`
+   - `AGENT_EXEC_CMD='scripts/agent_executor.sh' AGENT_RUNNER='self-hosted' scripts/setup_agent_loop.sh emperorhan/multichain-indexer`
 3. 이슈는 `Autonomous Task` 템플릿으로 생성하고 `autonomous + ready` 라벨을 유지
 4. 의사결정이 필요하면 에이전트가 `decision-needed + needs-opinion` 라벨과 코멘트로 중단
 
