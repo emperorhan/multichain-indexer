@@ -427,6 +427,7 @@ DDL 변경 없음. 기존 8개 테이블이 모든 체인을 수용합니다.
 - [Runbook](docs/runbook.md) — 장애 대응 및 복구 절차
 - [Definition Of Done](docs/definition-of-done.md) — 작업 완료 기준
 - [GitHub Collaboration](docs/github-collaboration.md) — 이슈/PR/라벨/승인 운영 규칙
+- [Autonomy Policy](docs/autonomy-policy.md) — 에이전트 자율 실행 정책 및 큐 규칙
 
 ## License
 

@@ -1,0 +1,53 @@
+name: Agent Loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without mutating GitHub state"
+        required: false
+        default: "false"
+      max_issues:
+        description: "Max issues to process in one run"
+        required: false
+        default: "1"
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: agent-loop-main
+  cancel-in-progress: false
+
+jobs:
+  loop:
+    name: Autonomous Queue Worker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git User
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run Agent Loop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          BASE_BRANCH: main
+          AGENT_EXEC_CMD: ${{ vars.AGENT_EXEC_CMD }}
+          AUTONOMY_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          AGENT_MAX_ISSUES_PER_RUN: ${{ github.event.inputs.max_issues || '1' }}
+        run: scripts/agent_loop.sh
+

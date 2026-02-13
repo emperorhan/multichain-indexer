@@ -1,0 +1,55 @@
+name: Autonomous Task
+description: Task that agent loop should execute without human intervention
+title: "[Auto] "
+labels:
+  - type/task
+  - autonomous
+  - ready
+  - priority/p2
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What should be achieved?
+      placeholder: e.g. improve retry logic, add regression tests, reduce RPC failures
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In Scope
+      description: What can the agent change?
+      placeholder: |
+        - file/path/a
+        - file/path/b
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of Scope
+      description: What must not be changed?
+      placeholder: e.g. no schema changes, no new external service
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk Level
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Completion criteria for autonomous merge
+      placeholder: |
+        - [ ] tests added or updated
+        - [ ] make test / make test-sidecar / make lint pass
+        - [ ] docs updated when behavior changed
+    validations:
+      required: true
+
