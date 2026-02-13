@@ -455,10 +455,14 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 11. 주요 의사결정:
    - `Major Decision` 템플릿 사용 (`decision/major`)
    - 해당 이슈는 owner 입력 전 자동 실행이 진행되지 않음
-12. 로컬 반복 루프(Playbook 스타일):
+12. PR 자동 머지:
+   - `Agent Auto Merge` 워크플로가 agent PR을 조건부 자동 머지
+   - 차단 라벨(`decision-needed`, `needs-opinion`, `blocked`, `decision/major`, `risk/high`)이 있으면 머지 중단
+   - 토글 변수: `AGENT_AUTO_MERGE_ENABLED=true|false`
+13. 로컬 반복 루프(Playbook 스타일):
    - 작업 지시를 `.agent/ralph_task.md`에 작성
    - `MAX_LOOPS=6 scripts/ralph_loop_local.sh`
-13. 릴리즈 자동화:
+14. 릴리즈 자동화:
    - `main` 반영 시 `release.yml`이 `vX.Y.Z` 태그와 릴리즈 노트 자동 생성
    - PR 라벨 `release/major|minor|patch`로 버전 범위를 제어
 

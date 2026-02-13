@@ -14,7 +14,7 @@
 3. 브랜치 생성 후 Draft PR 오픈
 4. PR 본문에 변경 내용, 검증 결과, 리스크, 롤백 전략 누적
 5. CI 통과 후 `ready-for-review` 라벨 부여
-6. 보호 규칙 충족 후 merge (팀 운영 시 CODEOWNER 승인 권장)
+6. 에이전트 PR은 `Agent Auto Merge`가 조건 충족 시 자동 merge
 
 ## Autonomous Loop
 - 워크플로우: `.github/workflows/agent-loop.yml`
@@ -31,6 +31,17 @@
   - developer queue: `role/planner`, `role/qa`, `decision/major` 제외 이슈 처리 (기본)
 - `risk/high` 라벨 이슈는 사람 확인 전 자동 실행하지 않는다.
 - `AGENT_MAX_AUTO_RETRIES`를 넘겨 실패하면 사람 확인 상태로 자동 전환한다.
+
+## Autonomous Merge
+- 워크플로우: `.github/workflows/agent-auto-merge.yml`
+- 대상 PR:
+  - head branch가 `agent-issue-*`
+  - 또는 제목이 `chore(agent):`로 시작
+- 블로킹 조건:
+  - 연동 이슈에 `blocked`, `decision-needed`, `needs-opinion`, `decision/major`, `risk/high` 라벨이 있으면 merge 중단
+- merge 방식:
+  - 우선 auto-merge(squash) 활성화
+  - 불가 시 체크가 이미 green이면 즉시 squash merge 시도
 
 ## Issue Discovery Loop
 - 워크플로우: `.github/workflows/issue-scout.yml`
