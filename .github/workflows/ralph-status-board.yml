@@ -1,0 +1,58 @@
+name: Ralph Status Board
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: ralph-status-board
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'self-hosted' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate Snapshot
+        env:
+          GH_TOKEN: ${{ secrets.RALPH_ADMIN_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::RALPH_ADMIN_TOKEN is not set. Falling back to runner gh auth."
+          fi
+          scripts/ralph_status_snapshot.sh "${REPO}" > /tmp/ralph-status.md
+          cat /tmp/ralph-status.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upsert Board Issue
+        env:
+          GH_TOKEN: ${{ secrets.RALPH_ADMIN_TOKEN }}
+          REPO: ${{ github.repository }}
+          TITLE: "[Ops] Ralph Loop Status Board"
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::RALPH_ADMIN_TOKEN is not set. Falling back to runner gh auth."
+          fi
+          issue_number="$(gh issue list --repo "${REPO}" --state open --search "${TITLE} in:title" --json number,title --jq '.[] | select(.title == "'"${TITLE}"'") | .number' | head -n1 || true)"
+          if [ -z "${issue_number}" ]; then
+            gh issue create \
+              --repo "${REPO}" \
+              --title "${TITLE}" \
+              --label "type/chore" \
+              --label "area/infra" \
+              --body-file /tmp/ralph-status.md >/dev/null
+            echo "::notice::created status board issue"
+            exit 0
+          fi
+          gh issue edit "${issue_number}" --repo "${REPO}" --body-file /tmp/ralph-status.md >/dev/null
+          echo "::notice::updated status board issue #${issue_number}"

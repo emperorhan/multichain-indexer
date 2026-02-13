@@ -4,48 +4,63 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Toggle mode"
+        description: "Control mode"
         required: true
         type: choice
         options:
           - "on"
           - "off"
+          - "status"
       note:
         description: "Optional operator note"
         required: false
         default: ""
+      kick_agent_loop:
+        description: "Run Agent Loop once after mode change"
+        required: false
+        type: choice
+        options:
+          - "no"
+          - "yes"
+        default: "no"
+      kick_max_issues:
+        description: "Max issues for one-time Agent Loop kick"
+        required: false
+        default: "1"
 
 permissions:
-  actions: write
   contents: read
 
 jobs:
   toggle:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'self-hosted' }}
     steps:
-      - name: Toggle RALPH loop variable
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const mode = ${{ toJSON(github.event.inputs.mode) }};
-            const value = mode === 'on' ? 'true' : 'false';
-            const note = ${{ toJSON(github.event.inputs.note) }};
+      - name: Checkout
+        uses: actions/checkout@v4
 
-            const payload = {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              name: 'RALPH_LOOP_ENABLED',
-              value,
-            };
+      - name: Control Ralph Loop
+        env:
+          GH_TOKEN: ${{ secrets.RALPH_ADMIN_TOKEN }}
+          MODE: ${{ github.event.inputs.mode }}
+          NOTE: ${{ github.event.inputs.note }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::RALPH_ADMIN_TOKEN is not set. Falling back to runner gh auth."
+          fi
+          scripts/toggle_ralph_loop.sh "${MODE}" "${REPO}"
+          if [ -n "${NOTE}" ]; then
+            echo "::notice::note=${NOTE}"
+          fi
 
-            try {
-              await github.rest.actions.updateRepoVariable(payload);
-            } catch (err) {
-              if (err.status !== 404) throw err;
-              await github.rest.actions.createRepoVariable(payload);
-            }
-
-            core.notice(`RALPH_LOOP_ENABLED=${value}`);
-            if (note) {
-              core.notice(`note=${note}`);
-            }
+      - name: Kick Agent Loop (optional)
+        if: ${{ github.event.inputs.kick_agent_loop == 'yes' && github.event.inputs.mode != 'off' }}
+        env:
+          GH_TOKEN: ${{ secrets.RALPH_ADMIN_TOKEN }}
+          REPO: ${{ github.repository }}
+          MAX_ISSUES: ${{ github.event.inputs.kick_max_issues }}
+        run: |
+          set -euo pipefail
+          gh workflow run "Agent Loop" --repo "${REPO}" -f dry_run=false -f max_issues="${MAX_ISSUES}"
+          echo "::notice::Agent Loop kick requested (max_issues=${MAX_ISSUES})"

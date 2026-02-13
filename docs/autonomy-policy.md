@@ -9,7 +9,10 @@
   - `false`: `agent-loop`, `issue-scout`, `manager-loop`, `qa-loop` 모두 정지
 - 운영 토글 수단:
   - workflow: `.github/workflows/ralph-loop-control.yml`
-  - CLI: `scripts/toggle_ralph_loop.sh on|off`
+  - CLI: `scripts/toggle_ralph_loop.sh on|off|status`
+  - short alias: `scripts/install_ralph_aliases.sh` 후 `ron|roff|rstat|rkick|rscout`
+  - mobile: GitHub App > Actions > `Ralph Loop Control` (on/off/status + optional kick)
+  - quick view: Actions > `Ralph Status Board` 또는 이슈 `[Ops] Ralph Loop Status Board`
 
 ## Queue Contract
 - 에이전트가 집는 이슈 조건:
