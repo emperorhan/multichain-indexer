@@ -2,6 +2,7 @@ package ingester
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -75,7 +76,15 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer dbTx.Rollback()
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if rbErr := dbTx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+			ing.logger.Warn("rollback failed", "error", rbErr)
+		}
+	}()
 
 	var totalEvents int
 
@@ -188,6 +197,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	if err := dbTx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
+	committed = true
 
 	ing.logger.Info("batch ingested",
 		"address", batch.Address,

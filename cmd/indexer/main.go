@@ -161,7 +161,9 @@ func runHealthServer(ctx context.Context, port int, logger *slog.Logger) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			logger.Warn("failed to write health response", "error", err)
+		}
 	})
 
 	server := &http.Server{
@@ -173,7 +175,9 @@ func runHealthServer(ctx context.Context, port int, logger *slog.Logger) error {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(shutdownCtx)
+		if err := server.Shutdown(shutdownCtx); err != nil && err != http.ErrServerClosed {
+			logger.Warn("health server shutdown error", "error", err)
+		}
 	}()
 
 	logger.Info("health server started", "port", port)
