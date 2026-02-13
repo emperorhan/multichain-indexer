@@ -3,6 +3,7 @@
 ## Core Principle
 - 구현은 비동기로 진행하되, 의사결정과 품질 상태는 GitHub에서 추적 가능해야 한다.
 - 사람 개입은 최소화하고, 필요한 경우에만 `decision-needed + needs-opinion`으로 에스컬레이션한다.
+- GitHub API/Actions 장애 시에는 `.ralph/*.md` 큐를 사용하는 로컬 오프라인 루프(`docs/ralph-local-offline-mode.md`)로 즉시 전환한다.
 
 ## Work Item Lifecycle
 1. Issue 생성:

@@ -471,6 +471,13 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 14. 로컬 반복 루프(Playbook 스타일):
    - 작업 지시를 `.agent/ralph_task.md`에 작성
    - `MAX_LOOPS=6 scripts/ralph_loop_local.sh`
+15. GitHub-free 로컬 루프(권장 fallback):
+   - `scripts/ralph_local_init.sh`
+   - `scripts/ralph_local_control.sh on`
+   - 로컬 md 이슈 추가: `scripts/ralph_local_new_issue.sh planner "..."` (또는 `.ralph/issues/*.md` 직접 작성)
+   - 실행: `MAX_LOOPS=0 scripts/ralph_local_run.sh` (`0`은 중단 전까지 계속)
+   - 상태 확인: `scripts/ralph_local_status.sh`
+   - 중단: `scripts/ralph_local_control.sh off`
 15. 릴리즈 자동화:
    - `main` 반영 시 `release.yml`이 `vX.Y.Z` 태그와 릴리즈 노트 자동 생성
    - PR 라벨 `release/major|minor|patch`로 버전 범위를 제어
@@ -485,6 +492,7 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 - [Definition Of Done](docs/definition-of-done.md) — 작업 완료 기준
 - [GitHub Collaboration](docs/github-collaboration.md) — 이슈/PR/라벨/승인 운영 규칙
 - [Autonomy Policy](docs/autonomy-policy.md) — 에이전트 자율 실행 정책 및 큐 규칙
+- [Ralph Local Offline Mode](docs/ralph-local-offline-mode.md) — GitHub 없이 md+commit 기반 운영 가이드
 
 ## License
 

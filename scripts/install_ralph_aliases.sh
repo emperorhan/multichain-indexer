@@ -30,6 +30,13 @@ alias roff='ralph off'
 alias rstat='ralph status'
 alias rkick='ralph kick'
 alias rscout='ralph scout'
+alias lralph='bash ${ROOT_DIR}/scripts/ralph_local_control.sh'
+alias lron='lralph on'
+alias lroff='lralph off'
+alias lrstat='bash ${ROOT_DIR}/scripts/ralph_local_status.sh'
+alias lrrun='bash ${ROOT_DIR}/scripts/ralph_local_run.sh'
+alias lrinit='bash ${ROOT_DIR}/scripts/ralph_local_init.sh'
+alias lrnew='bash ${ROOT_DIR}/scripts/ralph_local_new_issue.sh'
 ${END_MARK}
 EOF
 

@@ -2,6 +2,7 @@
 
 ## Goal
 - 사람 개입을 최소화하고, 필요할 때만 의사결정을 요청하는 자율 개발 루프를 운영한다.
+- GitHub API가 불안정할 때는 로컬 오프라인 모드(`scripts/ralph_local_*`)로 동일한 목적을 유지한다.
 
 ## Ralph Loop Switch
 - 전역 토글 변수: `RALPH_LOOP_ENABLED`
@@ -186,3 +187,4 @@
 - 기본 실행자는 `ubuntu-latest`이다.
 - 진짜 상시 실행(긴 작업/대용량 작업)이 필요하면 self-hosted runner로 전환한다.
 - 브랜치 보호를 활성화해 직접 푸시를 금지하고 PR 경로만 허용한다.
+- GitHub 외부 의존 없이 운영하려면 `docs/ralph-local-offline-mode.md`를 따른다.
