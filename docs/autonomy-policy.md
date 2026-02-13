@@ -42,6 +42,9 @@
   - `autonomous + ready` (즉시 실행 가능한 큐 입력)
 - 중복 방지:
   - 이슈 본문의 `[agent-scout:<fingerprint>]` 지문으로 dedup
+- 정리 정책:
+  - `agent-loop`가 실행될 때 `ready-for-review` 이슈 중 merge 완료 PR이 연결된 항목은 자동 close
+  - `agent/discovered` 중복 이슈(동일 제목)는 활성 항목 1건을 남기고 나머지를 deprecated duplicate로 자동 close
 
 ## Role Collaboration Loops
 - Planner flow:
@@ -96,6 +99,8 @@
 - `AGENT_MAX_PLANNER_ISSUES_PER_RUN` (기본 `1`): planner queue 1회 실행당 처리 이슈 수
 - `AGENT_MAX_AUTO_RETRIES` (기본 `2`): 동일 이슈 자동 재시도 횟수
 - `AGENT_IN_PROGRESS_TIMEOUT_HOURS` (기본 `6`): `in-progress` 정체 이슈 자동 복구 임계시간
+- `AGENT_AUTO_CLEANUP_ENABLED` (기본 `true`): 해결/폐기 이슈 자동 정리 단계 활성화
+- `AGENT_DEPRECATE_DUPLICATES_ENABLED` (기본 `true`): `agent/discovered` 중복 이슈 deprecated 자동 정리 활성화
 - `RALPH_SELF_HEAL_ENABLED` (기본 `true`): 권한/운영 오류 자동 복구 시도 활성화
 - `DECISION_REMINDER_HOURS` (기본 `24`): `decision-needed` 리마인드 코멘트 간격(시간)
 - `AGENT_DEVELOPER_INCLUDE_LABELS` (기본 비어 있음): developer queue 포함 필터(CSV, 모든 라벨 일치)
