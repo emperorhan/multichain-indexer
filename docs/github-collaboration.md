@@ -2,6 +2,7 @@
 
 ## Core Principle
 - 구현은 비동기로 진행하되, 의사결정과 품질 상태는 GitHub에서 추적 가능해야 한다.
+- 사람 개입은 최소화하고, 필요한 경우에만 `decision-needed`로 에스컬레이션한다.
 
 ## Work Item Lifecycle
 1. Issue 생성:
@@ -13,7 +14,20 @@
 3. 브랜치 생성 후 Draft PR 오픈
 4. PR 본문에 변경 내용, 검증 결과, 리스크, 롤백 전략 누적
 5. CI 통과 후 `ready-for-review` 라벨 부여
-6. CODEOWNER 승인 후 merge
+6. 보호 규칙 충족 후 merge (팀 운영 시 CODEOWNER 승인 권장)
+
+## Autonomous Loop
+- 워크플로우: `.github/workflows/agent-loop.yml`
+- 큐 입력 라벨: `autonomous + ready`
+- 실행 중 라벨: `in-progress`
+- 결과 라벨: `ready-for-review` 또는 `blocked`
+- 실행 명령은 repository variable `AGENT_EXEC_CMD`로 주입한다.
+
+권장 실행 순서:
+1. `Autonomous Task` 이슈 생성
+2. `autonomous`, `ready`, `priority/*`, `area/*` 라벨 설정
+3. 에이전트 루프가 브랜치/PR 생성 후 테스트
+4. CI 통과 확인 후 merge
 
 ## Decision Protocol
 - 선택지가 필요한 경우 `Decision Needed` 이슈를 사용한다.

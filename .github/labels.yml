@@ -55,4 +55,18 @@
 - name: ready-for-review
   color: 1D76DB
   description: Implementation complete and ready for review
-
+- name: autonomous
+  color: 0052CC
+  description: Eligible for autonomous agent execution
+- name: ready
+  color: 0E8A16
+  description: Ready to be picked from autonomous queue
+- name: in-progress
+  color: FBCA04
+  description: Currently being processed by agent loop
+- name: risk/high
+  color: B60205
+  description: High-risk change requiring explicit human confirmation
+- name: agent/needs-config
+  color: CFD3D7
+  description: Agent loop could not run because executor is not configured
