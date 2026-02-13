@@ -1,0 +1,292 @@
+<mxfile host="app.diagrams.net" version="29.3.8">
+  <diagram name="Custody Indexer Architecture" id="arch">
+    <mxGraphModel dx="1633" dy="1051" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Blockchain RPC (External) -->
+        <mxCell id="rpc" parent="1" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontSize=12;verticalAlign=middle;spacingTop=0;" value="&lt;b&gt;Blockchain RPC&lt;/b&gt;&lt;br&gt;Solana Devnet" vertex="1">
+          <mxGeometry height="100" width="170" x="40" y="340" as="geometry" />
+        </mxCell>
+
+        <!-- Go Pipeline Container -->
+        <mxCell id="go_lane" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#4D9900;strokeWidth=2;dashed=1;arcSize=8;" value="" vertex="1">
+          <mxGeometry height="540" width="880" x="270" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="go_label" parent="1" style="text;html=1;align=left;verticalAlign=top;fillColor=#d5e8d4;strokeColor=#82b366;rounded=1;fontSize=13;fontColor=#2D7600;spacingLeft=6;spacingTop=2;spacingRight=6;spacingBottom=2;" value="&lt;b&gt;Go Pipeline&lt;/b&gt;" vertex="1">
+          <mxGeometry height="26" width="100" x="280" y="38" as="geometry" />
+        </mxCell>
+
+        <!-- Coordinator -->
+        <mxCell id="coord" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;verticalAlign=top;spacingTop=2;align=center;" value="&lt;b&gt;Coordinator&lt;/b&gt;&lt;hr size=&#39;1&#39;/&gt;Config sync&lt;br&gt;Head control&lt;br&gt;Cursor watermark&lt;br&gt;Reorg detect / rollback" vertex="1">
+          <mxGeometry height="120" width="180" x="310" y="90" as="geometry" />
+        </mxCell>
+
+        <!-- Fetcher Pool -->
+        <mxCell id="fetch" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;verticalAlign=top;spacingTop=2;align=center;" value="&lt;b&gt;Fetcher Pool&lt;/b&gt;&lt;hr size=&#39;1&#39;/&gt;Cursor range fetch&lt;br&gt;Provider failover&lt;br&gt;Retry / backoff&lt;br&gt;Adaptive batch sizing" vertex="1">
+          <mxGeometry height="120" width="180" x="310" y="280" as="geometry" />
+        </mxCell>
+
+        <!-- Normalizer -->
+        <mxCell id="norm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;verticalAlign=top;spacingTop=2;align=center;" value="&lt;b&gt;Normalizer&lt;/b&gt;&lt;hr size=&#39;1&#39;/&gt;Raw → NormalizedBatch&lt;br&gt;gRPC decode call&lt;br&gt;BalanceEventInfo → model" vertex="1">
+          <mxGeometry height="120" width="180" x="600" y="280" as="geometry" />
+        </mxCell>
+
+        <!-- Ingester -->
+        <mxCell id="ingest" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;verticalAlign=top;spacingTop=2;align=center;" value="&lt;b&gt;Ingester&lt;/b&gt;&lt;hr size=&#39;1&#39;/&gt;Single writer / chain&lt;br&gt;Upsert balance_events&lt;br&gt;Signed delta → balance&lt;br&gt;Atomic sql.Tx" vertex="1">
+          <mxGeometry height="120" width="180" x="890" y="280" as="geometry" />
+        </mxCell>
+
+        <!-- Finalizer -->
+        <mxCell id="final" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;verticalAlign=top;spacingTop=2;align=center;" value="&lt;b&gt;Finalizer&lt;/b&gt;&lt;br&gt;&lt;font style=&#39;font-size:10px;color:#666;&#39;&gt;(reorg chain only)&lt;/font&gt;&lt;hr size=&#39;1&#39;/&gt;Confirmations 조회&lt;br&gt;Receipt / status 확인&lt;br&gt;FinalizeTx 발행" vertex="1">
+          <mxGeometry height="120" width="180" x="890" y="440" as="geometry" />
+        </mxCell>
+
+        <!-- Node.js Sidecar Container (expanded for plugins) -->
+        <mxCell id="sc_box" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#AE4132;strokeWidth=2;dashed=1;arcSize=8;" value="" vertex="1">
+          <mxGeometry height="230" width="460" x="370" y="620" as="geometry" />
+        </mxCell>
+        <mxCell id="sc_label" parent="1" style="text;html=1;align=left;verticalAlign=top;fillColor=#f8cecc;strokeColor=#b85450;rounded=1;fontSize=13;fontColor=#AE4132;spacingLeft=6;spacingTop=2;spacingRight=6;spacingBottom=2;" value="&lt;b&gt;Node.js Sidecar&lt;/b&gt; &amp;nbsp;gRPC :50051" vertex="1">
+          <mxGeometry height="26" width="220" x="380" y="628" as="geometry" />
+        </mxCell>
+
+        <!-- Transaction Decoder -->
+        <mxCell id="tx_decoder" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;verticalAlign=middle;align=center;" value="&lt;b&gt;Transaction Decoder&lt;/b&gt;&lt;br&gt;outer instruction 구성" vertex="1">
+          <mxGeometry height="50" width="160" x="390" y="665" as="geometry" />
+        </mxCell>
+
+        <!-- Plugin Dispatcher -->
+        <mxCell id="dispatcher" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;verticalAlign=middle;align=center;fontStyle=1;" value="&lt;b&gt;PluginDispatcher&lt;/b&gt;&lt;br&gt;&lt;font style=&#39;font-weight:normal;font-size:9px;color:#666;&#39;&gt;priority routing&lt;br&gt;instruction ownership&lt;/font&gt;" vertex="1">
+          <mxGeometry height="60" width="160" x="390" y="730" as="geometry" />
+        </mxCell>
+
+        <!-- SPL Token Plugin -->
+        <mxCell id="spl_plugin" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;verticalAlign=middle;align=center;" value="&lt;b&gt;generic_spl_token&lt;/b&gt;&lt;br&gt;&lt;font style=&#39;font-size:9px;color:#666;&#39;&gt;SPL Token / Token-2022&lt;br&gt;spl_transfer&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="150" x="580" y="665" as="geometry" />
+        </mxCell>
+
+        <!-- System Plugin -->
+        <mxCell id="sys_plugin" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;verticalAlign=middle;align=center;" value="&lt;b&gt;generic_system&lt;/b&gt;&lt;br&gt;&lt;font style=&#39;font-size:9px;color:#666;&#39;&gt;System Program&lt;br&gt;system_transfer&lt;/font&gt;" vertex="1">
+          <mxGeometry height="55" width="150" x="580" y="735" as="geometry" />
+        </mxCell>
+
+        <!-- Future plugin placeholder -->
+        <mxCell id="future_plugin" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#CCCCCC;fontSize=10;verticalAlign=middle;align=center;fontColor=#999999;dashed=1;" value="&lt;i&gt;future plugins...&lt;/i&gt;&lt;br&gt;&lt;font style=&#39;font-size:9px;&#39;&gt;Stake / DEX / etc.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="40" width="150" x="580" y="800" as="geometry" />
+        </mxCell>
+
+        <!-- Redis -->
+        <mxCell id="redis" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=8;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;verticalAlign=middle;" value="&lt;b&gt;Redis&lt;/b&gt;&lt;br&gt;&lt;font style=&#39;font-size:10px;&#39;&gt;Streams + Keys&lt;br&gt;TTL 누수방지&lt;/font&gt;" vertex="1">
+          <mxGeometry height="80" width="120" x="640" y="100" as="geometry" />
+        </mxCell>
+
+        <!-- PostgreSQL -->
+        <mxCell id="pg" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=8;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;verticalAlign=middle;" value="&lt;b&gt;PostgreSQL 16&lt;/b&gt;&lt;br&gt;&lt;font style=&#39;font-size:10px;&#39;&gt;balance_events (signed delta)&lt;br&gt;balances + JSONB&lt;/font&gt;" vertex="1">
+          <mxGeometry height="80" width="160" x="1220" y="300" as="geometry" />
+        </mxCell>
+
+        <!-- Durable Store -->
+        <mxCell id="durable" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=8;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;verticalAlign=middle;" value="&lt;b&gt;Durable Store&lt;/b&gt;&lt;br&gt;&lt;font style=&#39;font-size:10px;&#39;&gt;Normalized Backup&lt;br&gt;DB / Object Storage&lt;/font&gt;" vertex="1">
+          <mxGeometry height="80" width="130" x="1230" y="440" as="geometry" />
+        </mxCell>
+
+        <!-- 3-Layer Dedup Annotation -->
+        <mxCell id="dedup_note" parent="1" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=12;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;align=left;spacingLeft=6;spacingTop=4;verticalAlign=top;" value="&lt;b&gt;3-Layer Dedup&lt;/b&gt;&lt;hr size=&#39;1&#39;/&gt;&lt;font style=&#39;font-size:9px;&#39;&gt;L1: Instruction Ownership&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;(CPI 이중 기록 방지)&lt;br&gt;L2: Plugin Priority&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;(단일 플러그인 선택)&lt;br&gt;L3: DB Unique Constraint&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;(최종 멱등 보장)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="130" width="190" x="40" y="510" as="geometry" />
+        </mxCell>
+
+        <!-- ===== EDGES ===== -->
+
+        <!-- RPC -> Fetcher -->
+        <mxCell id="e_rpc_fetch" edge="1" parent="1" source="rpc" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="fetch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_rpc_fetch_lbl" connectable="0" parent="e_rpc_fetch" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#666666;" value="Raw TX" vertex="1">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Fetcher -> Normalizer -->
+        <mxCell id="e_fetch_norm" edge="1" parent="1" source="fetch" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2D7600;strokeWidth=2;entryX=0;entryY=0.5;entryDx=0;entryDy=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" target="norm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_fetch_norm_lbl" connectable="0" parent="e_fetch_norm" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#2D7600;" value="RawBatch" vertex="1">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Normalizer -> Ingester -->
+        <mxCell id="e_norm_ingest" edge="1" parent="1" source="norm" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2D7600;strokeWidth=2;entryX=0;entryY=0.5;entryDx=0;entryDy=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" target="ingest">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_norm_ingest_lbl" connectable="0" parent="e_norm_ingest" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#2D7600;" value="NormalizedBatch&lt;br&gt;&lt;font style=&#39;font-size:9px;&#39;&gt;(BalanceEvents)&lt;/font&gt;" vertex="1">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Ingester -> PostgreSQL -->
+        <mxCell id="e_ingest_pg" edge="1" parent="1" source="ingest" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;strokeWidth=2;entryX=0;entryY=0.5;entryDx=0;entryDy=0;exitX=1;exitY=0.35;exitDx=0;exitDy=0;" target="pg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ingest_pg_lbl" connectable="0" parent="e_ingest_pg" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#9673a6;" value="Batch Write" vertex="1">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Normalizer -> Durable Store -->
+        <mxCell id="e_norm_durable" edge="1" parent="1" source="norm" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;strokeWidth=1;dashed=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;exitX=1;exitY=0.8;exitDx=0;exitDy=0;" target="durable">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="820" y="376" />
+              <mxPoint x="820" y="480" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_norm_durable_lbl" connectable="0" parent="e_norm_durable" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#9673a6;" value="Backup" vertex="1">
+          <mxGeometry relative="1" x="-0.2" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Coordinator -> Redis -->
+        <mxCell id="e_coord_redis" edge="1" parent="1" source="coord" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d6b656;strokeWidth=1;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="redis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_coord_redis_lbl" connectable="0" parent="e_coord_redis" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#d6b656;" value="Lag / Enqueue" vertex="1">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Coordinator -> Fetcher -->
+        <mxCell id="e_coord_fetch" edge="1" parent="1" source="coord" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="fetch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_coord_fetch_lbl" connectable="0" parent="e_coord_fetch" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#6c8ebf;" value="FetchJob" vertex="1">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Finalizer -> PostgreSQL -->
+        <mxCell id="e_final_pg" edge="1" parent="1" source="final" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;strokeWidth=1;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.8;entryDx=0;entryDy=0;" target="pg">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1190" y="500" />
+              <mxPoint x="1190" y="364" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_final_pg_lbl" connectable="0" parent="e_final_pg" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#9673a6;" value="Read confirm" vertex="1">
+          <mxGeometry relative="1" x="0.3" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Finalizer -> Ingester -->
+        <mxCell id="e_final_ingest" edge="1" parent="1" source="final" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d6b656;strokeWidth=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="ingest">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_final_ingest_lbl" connectable="0" parent="e_final_ingest" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#d6b656;" value="FinalizeTx&lt;br&gt;(via Redis)" vertex="1">
+          <mxGeometry relative="1" x="0.1" as="geometry">
+            <mxPoint x="18" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Normalizer -> Transaction Decoder (gRPC) -->
+        <mxCell id="e_norm_sc" edge="1" parent="1" source="norm" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="tx_decoder">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_norm_sc_lbl" connectable="0" parent="e_norm_sc" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=10;fontColor=#b85450;fontStyle=1;" value="gRPC" vertex="1">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <mxPoint x="16" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Tx Decoder -> Dispatcher -->
+        <mxCell id="e_decoder_dispatch" edge="1" parent="1" source="tx_decoder" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;strokeWidth=1.5;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="dispatcher">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Dispatcher -> SPL Plugin -->
+        <mxCell id="e_disp_spl" edge="1" parent="1" source="dispatcher" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d6b656;strokeWidth=1.5;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="spl_plugin">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_disp_spl_lbl" connectable="0" parent="e_disp_spl" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fontColor=#d6b656;" value="priority 100" vertex="1">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <mxPoint y="-10" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Dispatcher -> System Plugin -->
+        <mxCell id="e_disp_sys" edge="1" parent="1" source="dispatcher" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d6b656;strokeWidth=1.5;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="sys_plugin">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_disp_sys_lbl" connectable="0" parent="e_disp_sys" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fontColor=#d6b656;" value="priority 100" vertex="1">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <mxPoint y="-10" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== LEGEND ===== -->
+        <mxCell id="legend_box" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#CCCCCC;strokeWidth=1;" value="" vertex="1">
+          <mxGeometry height="140" width="200" x="40" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" value="&lt;b&gt;Legend&lt;/b&gt;" vertex="1">
+          <mxGeometry height="20" width="60" x="55" y="135" as="geometry" />
+        </mxCell>
+        <mxCell id="leg1" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#2D7600;" value="&amp;nbsp;Main data flow" vertex="1">
+          <mxGeometry height="16" width="120" x="80" y="158" as="geometry" />
+        </mxCell>
+        <mxCell id="leg1_line" edge="1" parent="1" style="endArrow=classic;html=1;strokeColor=#2D7600;strokeWidth=2;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="55" y="166" as="sourcePoint" />
+            <mxPoint x="80" y="166" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg2" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#6c8ebf;" value="&amp;nbsp;Control / config" vertex="1">
+          <mxGeometry height="16" width="120" x="80" y="178" as="geometry" />
+        </mxCell>
+        <mxCell id="leg2_line" edge="1" parent="1" style="endArrow=classic;html=1;strokeColor=#6c8ebf;strokeWidth=2;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="55" y="186" as="sourcePoint" />
+            <mxPoint x="80" y="186" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg3" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#9673a6;" value="&amp;nbsp;Storage I/O" vertex="1">
+          <mxGeometry height="16" width="120" x="80" y="198" as="geometry" />
+        </mxCell>
+        <mxCell id="leg3_line" edge="1" parent="1" style="endArrow=classic;html=1;strokeColor=#9673a6;strokeWidth=1;dashed=1;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="55" y="206" as="sourcePoint" />
+            <mxPoint x="80" y="206" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg4" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#d6b656;" value="&amp;nbsp;Redis queue / plugin" vertex="1">
+          <mxGeometry height="16" width="140" x="80" y="218" as="geometry" />
+        </mxCell>
+        <mxCell id="leg4_line" edge="1" parent="1" style="endArrow=classic;html=1;strokeColor=#d6b656;strokeWidth=1;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="55" y="226" as="sourcePoint" />
+            <mxPoint x="80" y="226" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg5" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#b85450;" value="&amp;nbsp;gRPC (sidecar)" vertex="1">
+          <mxGeometry height="16" width="120" x="80" y="238" as="geometry" />
+        </mxCell>
+        <mxCell id="leg5_line" edge="1" parent="1" style="endArrow=classic;html=1;strokeColor=#b85450;strokeWidth=2;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="55" y="246" as="sourcePoint" />
+            <mxPoint x="80" y="246" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
