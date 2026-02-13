@@ -10,8 +10,13 @@ RALPH_ROOT="${RALPH_ROOT:-.ralph}"
 PID_FILE="${RALPH_ROOT}/runner.pid"
 LOG_FILE="${RALPH_ROOT}/logs/runner.out"
 RUN_SCRIPT="${RALPH_RUN_SCRIPT:-scripts/ralph_local_run.sh}"
+SUPERVISOR_SCRIPT="${RALPH_SUPERVISOR_SCRIPT:-scripts/ralph_local_supervisor.sh}"
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-15}"
 TAIL_LINES="${TAIL_LINES:-120}"
+TRUST_MODE="${RALPH_LOCAL_TRUST_MODE:-true}"
+LOCAL_SANDBOX="${RALPH_LOCAL_SANDBOX:-danger-full-access}"
+LOCAL_APPROVAL="${RALPH_LOCAL_APPROVAL:-never}"
+LOCAL_OMX_SAFE_MODE="${RALPH_LOCAL_OMX_SAFE_MODE:-}"
 
 ensure_layout() {
   scripts/ralph_local_init.sh >/dev/null
@@ -49,7 +54,24 @@ start_daemon() {
     return 0
   fi
 
-  nohup env MAX_LOOPS=0 RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" "${RUN_SCRIPT}" >>"${LOG_FILE}" 2>&1 &
+  omx_mode="${LOCAL_OMX_SAFE_MODE}"
+  if [ -z "${omx_mode}" ]; then
+    if [ "${TRUST_MODE}" = "true" ]; then
+      omx_mode="false"
+    else
+      omx_mode="true"
+    fi
+  fi
+
+  nohup env \
+    MAX_LOOPS=0 \
+    RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" \
+    RALPH_RUN_SCRIPT="${RUN_SCRIPT}" \
+    RALPH_LOCAL_TRUST_MODE="${TRUST_MODE}" \
+    AGENT_CODEX_SANDBOX="${LOCAL_SANDBOX}" \
+    AGENT_CODEX_APPROVAL="${LOCAL_APPROVAL}" \
+    OMX_SAFE_MODE="${omx_mode}" \
+    "${SUPERVISOR_SCRIPT}" >>"${LOG_FILE}" 2>&1 &
   daemon_pid=$!
   echo "${daemon_pid}" > "${PID_FILE}"
   sleep 1

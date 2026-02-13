@@ -35,6 +35,8 @@ complexity: high
    - `scripts/ralph_local_init.sh`
 2. 백그라운드 시작:
    - `scripts/ralph_local_daemon.sh start`
+   - 기본값: `RALPH_LOCAL_TRUST_MODE=true` (approval 대기 없음, `danger-full-access`)
+   - 보수 모드: `RALPH_LOCAL_TRUST_MODE=false scripts/ralph_local_daemon.sh start`
 3. 루프 실행(내부):
    - `MAX_LOOPS=0 scripts/ralph_local_run.sh` (`daemon.sh start`가 내부에서 실행)
 4. 상태 확인:
@@ -47,6 +49,14 @@ complexity: high
 - Developer: `AGENT_CODEX_MODEL_FAST`/`AGENT_CODEX_MODEL_COMPLEX`
   - `complexity: high|critical` -> complex 모델
 - QA: `QA_TRIAGE_CODEX_MODEL` (기본 `gpt-5.3-codex`)
+
+## 권한 모드
+- Trust mode(`RALPH_LOCAL_TRUST_MODE=true`, 기본):
+  - `AGENT_CODEX_APPROVAL=never`
+  - `AGENT_CODEX_SANDBOX=danger-full-access`
+  - `OMX_SAFE_MODE=false`로 safety guard sandbox 차단 해제
+- Safe mode(`RALPH_LOCAL_TRUST_MODE=false`):
+  - 기존 sandbox/guard 정책 유지
 
 ## 검증/커밋 정책
 - role이 `developer`, `qa`면 `RALPH_VALIDATE_CMD`를 실행한다.

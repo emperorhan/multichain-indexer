@@ -44,6 +44,8 @@ EXIT_ON_IDLE="${RALPH_EXIT_ON_IDLE:-false}"
 NOOP_LIMIT="${RALPH_NOOP_LIMIT:-3}"
 VALIDATE_CMD="${RALPH_VALIDATE_CMD:-make test && make test-sidecar && make lint}"
 VALIDATE_ROLES="${RALPH_VALIDATE_ROLES:-developer,qa}"
+RECOVER_IN_PROGRESS="${RALPH_RECOVER_IN_PROGRESS:-true}"
+LOCAL_TRUST_MODE="${RALPH_LOCAL_TRUST_MODE:-false}"
 
 CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-workspace-write}"
 CODEX_APPROVAL="${AGENT_CODEX_APPROVAL:-never}"
@@ -54,8 +56,29 @@ MODEL_DEVELOPER_COMPLEX="${AGENT_CODEX_MODEL_COMPLEX:-gpt-5.3-codex}"
 MODEL_QA="${QA_TRIAGE_CODEX_MODEL:-gpt-5.3-codex}"
 RALPH_LAST_LOG_FILE=""
 
+if [ "${LOCAL_TRUST_MODE}" = "true" ]; then
+  CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-danger-full-access}"
+  CODEX_APPROVAL="never"
+fi
+
 mkdir -p "${QUEUE_DIR}" "${IN_PROGRESS_DIR}" "${DONE_DIR}" "${BLOCKED_DIR}" "${REPORTS_DIR}" "${LOGS_DIR}"
 [ -f "${STATE_FILE}" ] || printf 'RALPH_LOCAL_ENABLED=true\n' > "${STATE_FILE}"
+
+recover_in_progress_on_boot() {
+  local src id dst
+  [ "${RECOVER_IN_PROGRESS}" = "true" ] || return 0
+  for src in "${IN_PROGRESS_DIR}"/I-*.md; do
+    [ -f "${src}" ] || continue
+    id="$(basename "${src}")"
+    dst="${QUEUE_DIR}/${id}"
+    if [ -f "${dst}" ]; then
+      dst="${QUEUE_DIR}/recovered-${id}"
+    fi
+    mv "${src}" "${dst}"
+  done
+}
+
+recover_in_progress_on_boot
 
 supports_codex_search() {
   codex --help 2>/dev/null | grep -q -- "--search"
@@ -236,7 +259,11 @@ EOF
     --cd "$(pwd)"
   )
 
-  "${CODEX_SAFETY_GUARD_CMD}" "${cmd[@]}"
+  if [ "${LOCAL_TRUST_MODE}" = "true" ]; then
+    OMX_SAFE_MODE=false "${CODEX_SAFETY_GUARD_CMD}" "${cmd[@]}"
+  else
+    "${CODEX_SAFETY_GUARD_CMD}" "${cmd[@]}"
+  fi
   set +e
   "${cmd[@]}" "${prompt}" >"${log_file}" 2>&1
   rc=$?
