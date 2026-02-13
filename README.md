@@ -465,6 +465,7 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
    - `RALPH_SELF_HEAL_ENABLED=true|false` (기본 `true`)
    - PR 생성 권한 오류를 감지하면 Actions workflow 권한(`write + can_approve_pull_request_reviews`) 자동 복구 시도
    - auto-merge가 workflow scope 부족으로 막히면 PR에 자동 안내 코멘트 남김
+   - `AGENT_IN_PROGRESS_TIMEOUT_HOURS`(기본 `6`)를 넘긴 `in-progress` 이슈는 자동으로 `ready`로 복구
 14. 로컬 반복 루프(Playbook 스타일):
    - 작업 지시를 `.agent/ralph_task.md`에 작성
    - `MAX_LOOPS=6 scripts/ralph_loop_local.sh`

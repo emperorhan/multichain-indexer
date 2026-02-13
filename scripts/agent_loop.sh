@@ -22,6 +22,7 @@ WORK_BRANCH_PREFIX="${WORK_BRANCH_PREFIX:-agent-issue}"
 DECISION_REMINDER_HOURS="${DECISION_REMINDER_HOURS:-24}"
 AGENT_MAX_ISSUES_PER_RUN="${AGENT_MAX_ISSUES_PER_RUN:-2}"
 AGENT_MAX_AUTO_RETRIES="${AGENT_MAX_AUTO_RETRIES:-2}"
+AGENT_IN_PROGRESS_TIMEOUT_HOURS="${AGENT_IN_PROGRESS_TIMEOUT_HOURS:-6}"
 AUTONOMY_DRY_RUN="${AUTONOMY_DRY_RUN:-false}"
 AGENT_EXEC_CMD="${AGENT_EXEC_CMD:-}"
 PLANNING_EXEC_CMD="${PLANNING_EXEC_CMD:-scripts/planning_executor.sh}"
@@ -237,6 +238,61 @@ comment_decision_reminders() {
       --body "[agent-reminder] This decision has been waiting for ${age_hours}h: ${issue_url}
 
 Please choose an option so autonomous execution can continue."
+  done < <(jq -c '.[]' <<<"${issues}")
+}
+
+requeue_stale_in_progress_issues() {
+  local issues now_epoch stale_limit issue_number issue_updated issue_url issue_epoch age_hours labels
+
+  issues="$(gh issue list \
+    --repo "${REPO}" \
+    --state open \
+    --label autonomous \
+    --label in-progress \
+    --limit 200 \
+    --json number,title,updatedAt,url,labels)"
+
+  now_epoch="$(date +%s)"
+  stale_limit="$((AGENT_IN_PROGRESS_TIMEOUT_HOURS * 3600))"
+
+  while IFS= read -r line; do
+    [ -z "${line}" ] && continue
+
+    issue_number="$(jq -r '.number' <<<"${line}")"
+    issue_updated="$(jq -r '.updatedAt' <<<"${line}")"
+    issue_url="$(jq -r '.url' <<<"${line}")"
+    labels="$(jq -r '[.labels[].name] | join(",")' <<<"${line}")"
+
+    if [[ "${labels}" == *"decision-needed"* ]] || [[ "${labels}" == *"needs-opinion"* ]]; then
+      continue
+    fi
+
+    if ! issue_epoch="$(parse_iso8601_epoch "${issue_updated}")"; then
+      log "stale-claim check skip #${issue_number}: cannot parse updatedAt"
+      continue
+    fi
+
+    if [ $((now_epoch - issue_epoch)) -lt "${stale_limit}" ]; then
+      continue
+    fi
+
+    age_hours="$(((now_epoch - issue_epoch) / 3600))"
+    log "recovering stale in-progress issue #${issue_number} (${age_hours}h): ${issue_url}"
+
+    if should_dry_run; then
+      continue
+    fi
+
+    gh issue edit "${issue_number}" \
+      --repo "${REPO}" \
+      --remove-label in-progress \
+      --add-label ready >/dev/null
+
+    gh issue comment "${issue_number}" \
+      --repo "${REPO}" \
+      --body "[agent-loop] Recovered stale in-progress claim after ${age_hours}h without updates.
+
+This issue has been re-queued with label \`ready\`."
   done < <(jq -c '.[]' <<<"${issues}")
 }
 
@@ -569,10 +625,11 @@ process_issue() {
 main() {
   local issue_json processed=0
 
-  log "repo=${REPO} queue=${AGENT_QUEUE_NAME} include=${AGENT_INCLUDE_LABELS:-<none>} exclude=${AGENT_EXCLUDE_LABELS:-<none>} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} retries=${AGENT_MAX_AUTO_RETRIES} dry_run=${AUTONOMY_DRY_RUN} self_heal=${RALPH_SELF_HEAL_ENABLED}"
+  log "repo=${REPO} queue=${AGENT_QUEUE_NAME} include=${AGENT_INCLUDE_LABELS:-<none>} exclude=${AGENT_EXCLUDE_LABELS:-<none>} base=${BASE_BRANCH} max=${AGENT_MAX_ISSUES_PER_RUN} retries=${AGENT_MAX_AUTO_RETRIES} stale_timeout_h=${AGENT_IN_PROGRESS_TIMEOUT_HOURS} dry_run=${AUTONOMY_DRY_RUN} self_heal=${RALPH_SELF_HEAL_ENABLED}"
   if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "${RALPH_SELF_HEAL_ENABLED}" = "true" ]; then
     ensure_actions_pr_permissions || true
   fi
+  requeue_stale_in_progress_issues
   comment_decision_reminders
 
   while [ "${processed}" -lt "${AGENT_MAX_ISSUES_PER_RUN}" ]; do
