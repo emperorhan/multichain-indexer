@@ -60,6 +60,9 @@
   - `autonomous + ready`
 - 중복 생성 방지:
   - 이슈 본문 fingerprint(`[agent-scout:*]`) 기준 dedup
+- 자동 정리:
+  - `agent-loop` 실행 시 merge 완료 PR이 연결된 `ready-for-review` 이슈는 자동 close
+  - 같은 제목의 `agent/discovered` 중복 이슈는 활성 건 1개를 남기고 deprecated duplicate로 자동 close
 
 ## Multi-Agent Collaboration
 - `Planner`:
