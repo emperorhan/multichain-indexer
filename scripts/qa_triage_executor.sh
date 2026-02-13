@@ -21,6 +21,10 @@ QA_TRIAGE_CODEX_SANDBOX="${QA_TRIAGE_CODEX_SANDBOX:-workspace-write}"
 QA_TRIAGE_CODEX_APPROVAL="${QA_TRIAGE_CODEX_APPROVAL:-never}"
 QA_TRIAGE_CODEX_SEARCH="${QA_TRIAGE_CODEX_SEARCH:-false}"
 
+supports_codex_search() {
+  codex --help 2>/dev/null | grep -q -- "--search"
+}
+
 TRIAGE_FILE=".agent/qa-triage-${ISSUE_NUMBER}.md"
 PROMPT="$(cat <<EOF
 You are a QA triage assistant for a Solana on-chain indexer repository.
@@ -49,15 +53,20 @@ EOF
 cmd=(
   codex
   --ask-for-approval "${QA_TRIAGE_CODEX_APPROVAL}"
+)
+
+if [ "${QA_TRIAGE_CODEX_SEARCH}" = "true" ] && supports_codex_search; then
+  cmd+=(--search)
+elif [ "${QA_TRIAGE_CODEX_SEARCH}" = "true" ]; then
+  echo "[qa-triage] codex --search unsupported on this runner; continuing without search." >&2
+fi
+
+cmd+=(
   exec
   --model "${QA_TRIAGE_CODEX_MODEL}"
   --sandbox "${QA_TRIAGE_CODEX_SANDBOX}"
   --cd "$(pwd)"
 )
-
-if [ "${QA_TRIAGE_CODEX_SEARCH}" = "true" ]; then
-  cmd+=(--search)
-fi
 
 "${cmd[@]}" "${PROMPT}" > "${TRIAGE_FILE}"
 echo "${TRIAGE_FILE}"
