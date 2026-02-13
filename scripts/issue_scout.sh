@@ -182,7 +182,7 @@ low
 [${SCOUT_MARKER}:${fingerprint}]"
 
     create_issue "${title}" "${body}" \
-      "type/task" "autonomous" "ready" "priority/p2" "${area}" "agent/discovered"
+      "type/task" "autonomous" "ready" "priority/p2" "${area}" "agent/discovered" "role/developer"
   done < <(printf '%s\n' "${findings}" | head -n "${SCOUT_TODO_LIMIT}")
 }
 
@@ -256,7 +256,7 @@ medium
 [${SCOUT_MARKER}:${fingerprint}]"
 
     create_issue "${title}" "${body}" \
-      "type/chore" "autonomous" "ready" "priority/p1" "area/infra" "agent/discovered"
+      "type/chore" "autonomous" "ready" "priority/p1" "area/infra" "agent/discovered" "role/developer"
   done < <(jq -c '.[]' <<<"${runs_json}")
 }
 

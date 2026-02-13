@@ -37,6 +37,16 @@
 - 중복 생성 방지:
   - 이슈 본문 fingerprint(`[agent-scout:*]`) 기준 dedup
 
+## Multi-Agent Collaboration
+- `Manager`:
+  - 화이트리스트 주소셋에서 QA 검증 이슈 생성 (`qa-ready`)
+- `Developer`:
+  - `autonomous + ready` 이슈 구현 및 PR 생성 (`agent-loop`)
+  - 기본 모델: `gpt-5.3-codex-spark`, 고위험/최고우선은 `gpt-5.3-codex`
+- `QA`:
+  - `qa-ready` 이슈 검증
+  - 실패 시 model triage 후 developer 큐로 bug 이슈 자동 생성
+
 권장 실행 순서:
 1. `Autonomous Task` 이슈 생성
 2. `autonomous`, `ready`, `priority/*`, `area/*` 라벨 설정
@@ -56,6 +66,8 @@
 - `sev0` ~ `sev3`
 - `decision-needed`, `needs-opinion`, `blocked`, `ready-for-review`
 - `agent/discovered`
+- `role/manager`, `role/developer`, `role/qa`
+- `qa-ready`, `qa-in-progress`, `qa/passed`, `qa/failed`
 
 ## Required Status Checks
 - `Go Test + Build`

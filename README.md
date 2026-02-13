@@ -429,6 +429,13 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 3. 이슈는 `Autonomous Task` 템플릿으로 생성하고 `autonomous + ready` 라벨을 유지
 4. 의사결정이 필요하면 에이전트가 `decision-needed + needs-opinion` 라벨과 코멘트로 중단
 5. 자동 발굴을 켜면 `Issue Scout`가 TODO/FIXME와 최근 실패 CI를 이슈로 올림 (`agent/discovered`)
+6. Manager/QA 협업을 켜면:
+   - Manager loop가 whitelist 주소셋에서 `qa-ready` 이슈 생성
+   - QA loop가 해당 이슈를 검증하고 실패 시 developer 버그 이슈 자동 생성
+7. 모델 배치:
+   - Developer 기본: `gpt-5.3-codex-spark`
+   - Developer 고위험/고우선: `gpt-5.3-codex`
+   - QA 실패 triage: `gpt-5.3-codex`
 
 ## Docs
 

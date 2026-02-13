@@ -1,0 +1,48 @@
+name: Manager Loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without creating GitHub issues"
+        required: false
+        default: "false"
+      max_sets:
+        description: "Max QA sets to create in one run"
+        required: false
+        default: "1"
+  schedule:
+    - cron: "0 */2 * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: manager-loop-main
+  cancel-in-progress: false
+
+jobs:
+  manager:
+    if: ${{ vars.MANAGER_LOOP_ENABLED != 'false' }}
+    runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Tooling Check
+        run: |
+          gh --version
+          jq --version
+
+      - name: Prepare QA Address Set
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          AUTONOMY_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          MANAGER_MAX_SETS_PER_RUN: ${{ github.event.inputs.max_sets || vars.MANAGER_MAX_SETS_PER_RUN || '1' }}
+          QA_ADDRESS_BATCH_SIZE: ${{ vars.QA_ADDRESS_BATCH_SIZE || '5' }}
+          SOLANA_WHITELIST_FILE: ${{ vars.SOLANA_WHITELIST_FILE || 'configs/solana_whitelist_addresses.txt' }}
+          SOLANA_WHITELIST_CSV: ${{ vars.SOLANA_WHITELIST_CSV || '' }}
+        run: scripts/manager_prepare_qa_set.sh

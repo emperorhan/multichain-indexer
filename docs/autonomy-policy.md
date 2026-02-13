@@ -32,6 +32,24 @@
 - 중복 방지:
   - 이슈 본문의 `[agent-scout:<fingerprint>]` 지문으로 dedup
 
+## Role Collaboration Loops
+- Manager loop: `.github/workflows/manager-loop.yml`
+  - 화이트리스트 주소 셋(`SOLANA_WHITELIST_CSV` 또는 `configs/solana_whitelist_addresses.txt`)에서 QA용 샘플을 생성
+  - 결과 이슈 라벨: `role/manager + qa-ready`
+- QA loop: `.github/workflows/qa-loop.yml`
+  - `qa-ready` 이슈를 집어 검증 실행(`scripts/qa_executor.sh`)
+  - 성공: `qa/passed` 후 이슈 종료
+  - 실패: `qa/failed` + model triage + 개발자용 버그 이슈(`autonomous + ready`) 자동 생성
+
+## Model Allocation
+- Manager agent: deterministic rules 기반(모델 비의존)으로 whitelist 셋 생성
+- Developer agent:
+  - 기본: `AGENT_CODEX_MODEL_FAST` (`gpt-5.3-codex-spark`)
+  - 고위험/최고우선(`risk/high` 또는 `priority/p0`): `AGENT_CODEX_MODEL_COMPLEX` (`gpt-5.3-codex`)
+- QA agent:
+  - 검증 실행: deterministic 테스트 러너
+  - 실패 triage 요약: `QA_TRIAGE_CODEX_MODEL` (`gpt-5.3-codex`)
+
 ## Retry and Escalation
 - 실행기(`AGENT_EXEC_CMD`) 실패 시 자동 재시도한다.
 - 재시도 한도(`AGENT_MAX_AUTO_RETRIES`)를 초과하면 자동 실행을 멈추고 `decision-needed + needs-opinion`으로 전환한다.
@@ -63,6 +81,27 @@
 - `SCOUT_MAX_ISSUES_PER_RUN` (기본 `2`): issue scout 1회 실행당 생성할 최대 이슈 수
 - `SCOUT_FAIL_WINDOW_HOURS` (기본 `24`): 실패 CI 발굴 시간창
 - `SCOUT_TODO_LIMIT` (기본 `20`): TODO/FIXME 스캔 상한
+- `AGENT_CODEX_MODEL` (기본 `gpt-5.3-codex-spark`): developer executor 모델
+- `AGENT_CODEX_MODEL` (기본 빈값): developer 모델 강제 오버라이드(설정 시 fast/complex 분기 무시)
+- `AGENT_CODEX_MODEL_FAST` (기본 `gpt-5.3-codex-spark`): 일반 개발 이슈 모델
+- `AGENT_CODEX_MODEL_COMPLEX` (기본 `gpt-5.3-codex`): 고위험/고우선 개발 이슈 모델
+- `AGENT_CODEX_SANDBOX` (기본 `workspace-write`): codex sandbox 모드
+- `AGENT_CODEX_APPROVAL` (기본 `never`): codex 승인 정책
+- `AGENT_CODEX_SEARCH` (기본 `true`): codex 웹 검색 사용 여부
+- `MANAGER_LOOP_ENABLED` (기본 `true`): manager loop 활성화
+- `MANAGER_MAX_SETS_PER_RUN` (기본 `1`): manager loop 1회 실행당 QA 셋 생성 수
+- `QA_ADDRESS_BATCH_SIZE` (기본 `5`): QA 검증용 주소 수
+- `SOLANA_WHITELIST_FILE` (기본 `configs/solana_whitelist_addresses.txt`): whitelist 파일 경로
+- `SOLANA_WHITELIST_CSV` (선택): whitelist를 CSV 변수로 직접 주입
+- `QA_LOOP_ENABLED` (기본 `true`): qa loop 활성화
+- `QA_MAX_ISSUES_PER_RUN` (기본 `1`): qa loop 1회 실행당 처리 이슈 수
+- `QA_EXEC_CMD` (기본 `scripts/qa_executor.sh`): QA 실행 명령
+- `QA_TRIAGE_ENABLED` (기본 `true`): QA 실패 triage 활성화
+- `QA_TRIAGE_EXEC_CMD` (기본 `scripts/qa_triage_executor.sh`): QA triage 실행 명령
+- `QA_TRIAGE_CODEX_MODEL` (기본 `gpt-5.3-codex`): QA triage 모델
+- `QA_TRIAGE_CODEX_SANDBOX` (기본 `workspace-write`): QA triage sandbox 모드
+- `QA_TRIAGE_CODEX_APPROVAL` (기본 `never`): QA triage 승인 정책
+- `QA_TRIAGE_CODEX_SEARCH` (기본 `false`): QA triage 웹 검색 사용 여부
 
 ### 2) Runner 선택 (권장)
 - 이름: `AGENT_RUNNER`
