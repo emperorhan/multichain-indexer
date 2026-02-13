@@ -168,7 +168,7 @@
   - 대상: agent가 생성한 PR(`agent-issue-*`, `chore(agent):*`)
   - 조건: 차단 라벨(`decision-needed`, `needs-opinion`, `blocked`, `decision/major`, `risk/high`) 없음
   - 선택: secret `AGENT_GH_TOKEN`(`repo` + `workflow` scope) 설정 시 workflow 파일 변경 PR까지 자동 머지 가능
-  - self-heal: workflow scope 부족으로 자동 머지가 막히면 PR에 안내 코멘트 자동 생성
+  - workflow scope 부족으로 자동 머지가 막히면 워크플로우 로그에 경고를 남긴다(PR 코멘트 자동 생성 없음)
 
 ## Operational Notes
 - 기본 실행자는 `ubuntu-latest`이다.

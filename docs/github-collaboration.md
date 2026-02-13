@@ -48,7 +48,7 @@
   - 불가 시 체크가 이미 green이면 즉시 squash merge 시도
 - 선택 설정:
   - secret `AGENT_GH_TOKEN`(classic PAT, `repo` + `workflow` scope)을 설정하면 workflow 파일을 수정한 PR도 자동 merge 가능
-  - workflow scope 부족으로 막히면 PR에 self-heal 안내 코멘트를 자동 남긴다.
+  - workflow scope 부족으로 막히면 워크플로우 로그에 경고를 남긴다(PR 코멘트 자동 작성 없음).
 
 ## Issue Discovery Loop
 - 워크플로우: `.github/workflows/issue-scout.yml`
