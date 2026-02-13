@@ -145,11 +145,11 @@ pick_next_issue() {
               ($labels | index("agent/needs-config") | not) and
               (
                 ($required_labels | length) == 0 or
-                all($required_labels[]; $labels | index(.) != null)
+                all($required_labels[]; . as $req | $labels | index($req) != null)
               ) and
               (
                 ($excluded_labels | length) == 0 or
-                all($excluded_labels[]; $labels | index(.) == null)
+                all($excluded_labels[]; . as $excluded | $labels | index($excluded) == null)
               )
             )
         )
