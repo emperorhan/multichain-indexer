@@ -26,6 +26,11 @@ Thumbs.db
 
 # Build
 tmp/
+.cache/
+
+# Ralph local runtime
+.agent/
+.ralph/
 
 # Qodo
 .qodo/

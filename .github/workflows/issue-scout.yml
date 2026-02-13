@@ -11,8 +11,6 @@ on:
         description: "Max discovered issues to create in one run"
         required: false
         default: "2"
-  schedule:
-    - cron: "*/30 * * * *"
 
 permissions:
   contents: read

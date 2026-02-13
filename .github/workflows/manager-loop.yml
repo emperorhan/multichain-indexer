@@ -10,9 +10,7 @@ on:
       max_sets:
         description: "Max QA sets to create in one run"
         required: false
-        default: "1"
-  schedule:
-    - cron: "0 */2 * * *"
+        default: "2"
 
 permissions:
   contents: read
@@ -41,8 +39,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           AUTONOMY_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-          MANAGER_MAX_SETS_PER_RUN: ${{ github.event.inputs.max_sets || vars.MANAGER_MAX_SETS_PER_RUN || '1' }}
+          MANAGER_MAX_SETS_PER_RUN: ${{ github.event.inputs.max_sets || vars.MANAGER_MAX_SETS_PER_RUN || '2' }}
           QA_ADDRESS_BATCH_SIZE: ${{ vars.QA_ADDRESS_BATCH_SIZE || '5' }}
+          QA_CHAIN_TARGETS: ${{ vars.QA_CHAIN_TARGETS || 'solana-devnet,base-sepolia' }}
           SOLANA_WHITELIST_FILE: ${{ vars.SOLANA_WHITELIST_FILE || 'configs/solana_whitelist_addresses.txt' }}
           SOLANA_WHITELIST_CSV: ${{ vars.SOLANA_WHITELIST_CSV || '' }}
+          BASE_WHITELIST_FILE: ${{ vars.BASE_WHITELIST_FILE || 'configs/base_whitelist_addresses.txt' }}
+          BASE_WHITELIST_CSV: ${{ vars.BASE_WHITELIST_CSV || '' }}
         run: scripts/manager_prepare_qa_set.sh

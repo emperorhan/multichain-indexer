@@ -19,6 +19,10 @@ NOW_UTC="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
 
 ralph_enabled="$(gh variable get RALPH_LOOP_ENABLED --repo "${REPO}" 2>/dev/null || true)"
 [ -z "${ralph_enabled}" ] && ralph_enabled="unset"
+autopilot_enabled="$(gh variable get RALPH_AUTOPILOT_ENABLED --repo "${REPO}" 2>/dev/null || true)"
+[ -z "${autopilot_enabled}" ] && autopilot_enabled="unset"
+qa_chain_targets="$(gh variable get QA_CHAIN_TARGETS --repo "${REPO}" 2>/dev/null || true)"
+[ -z "${qa_chain_targets}" ] && qa_chain_targets="unset"
 
 runner_line="$(gh api "repos/${REPO}/actions/runners" \
   --jq '.runners[]? | select((.labels | map(.name) | index("multichain-indexer")) != null) | "\(.name) | \(.status) | busy=\(.busy)"' \
@@ -52,6 +56,7 @@ last_run() {
 }
 
 agent_run="$(last_run "Agent Loop")"
+autopilot_run="$(last_run "Agent Loop Autopilot")"
 scout_run="$(last_run "Issue Scout")"
 manager_run="$(last_run "Manager Loop")"
 qa_run="$(last_run "QA Loop")"
@@ -66,6 +71,8 @@ cat <<EOF
 - updated: ${NOW_UTC}
 - repo: ${REPO}
 - ralph_loop_enabled: ${ralph_enabled}
+- ralph_autopilot_enabled: ${autopilot_enabled}
+- qa_chain_targets: ${qa_chain_targets}
 - runner: ${runner_line}
 - latest_release: ${latest_release}
 
@@ -77,6 +84,7 @@ cat <<EOF
 
 ### Recent Workflow Runs
 - Agent Loop: ${agent_run}
+- Agent Loop Autopilot: ${autopilot_run}
 - Issue Scout: ${scout_run}
 - Manager Loop: ${manager_run}
 - QA Loop: ${qa_run}

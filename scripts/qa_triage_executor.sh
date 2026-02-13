@@ -26,6 +26,8 @@ QA_TRIAGE_CODEX_MODEL="${QA_TRIAGE_CODEX_MODEL:-gpt-5.3-codex}"
 QA_TRIAGE_CODEX_SANDBOX="${QA_TRIAGE_CODEX_SANDBOX:-workspace-write}"
 QA_TRIAGE_CODEX_APPROVAL="${QA_TRIAGE_CODEX_APPROVAL:-never}"
 QA_TRIAGE_CODEX_SEARCH="${QA_TRIAGE_CODEX_SEARCH:-false}"
+QA_CHAIN="$(awk -F': ' '/^- chain:/{print $2; exit}' "${REPORT_FILE}" | tr -d '[:space:]')"
+[ -n "${QA_CHAIN}" ] || QA_CHAIN="unknown"
 
 supports_codex_search() {
   codex --help 2>/dev/null | grep -q -- "--search"
@@ -33,12 +35,13 @@ supports_codex_search() {
 
 TRIAGE_FILE=".agent/qa-triage-${ISSUE_NUMBER}.md"
 PROMPT="$(cat <<EOF
-You are a QA triage assistant for a Solana on-chain indexer repository.
+You are a QA triage assistant for a multi-chain on-chain indexer repository.
 
 Source QA issue:
 - number: #${ISSUE_NUMBER}
 - title: ${ISSUE_TITLE}
 - url: ${ISSUE_URL}
+- chain: ${QA_CHAIN}
 
 Failure report file:
 - path: ${REPORT_FILE}

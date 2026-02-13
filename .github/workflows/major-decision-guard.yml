@@ -1,12 +1,7 @@
 name: Major Decision Guard
 
 on:
-  issues:
-    types:
-      - opened
-      - edited
-      - labeled
-      - reopened
+  workflow_dispatch:
 
 permissions:
   contents: read

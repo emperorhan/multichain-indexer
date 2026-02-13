@@ -2,8 +2,6 @@ name: Ralph Status Board
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/30 * * * *"
 
 permissions:
   actions: read
