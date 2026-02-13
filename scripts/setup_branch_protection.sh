@@ -20,19 +20,30 @@ gh api \
   --method PUT \
   "repos/${REPO}/branches/${BRANCH}/protection" \
   -H "Accept: application/vnd.github+json" \
-  -F required_status_checks.strict=true \
-  -F required_status_checks.contexts[]="Go Test + Build" \
-  -F required_status_checks.contexts[]="Go Lint" \
-  -F required_status_checks.contexts[]="Sidecar Test + Build" \
-  -F enforce_admins=true \
-  -F required_pull_request_reviews.dismiss_stale_reviews=true \
-  -F required_pull_request_reviews.require_code_owner_reviews=true \
-  -F required_pull_request_reviews.required_approving_review_count=1 \
-  -F restrictions= \
-  -F allow_force_pushes=false \
-  -F allow_deletions=false \
-  -F block_creations=false \
-  -F required_linear_history=true
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  --input - <<'JSON'
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "Go Test + Build",
+      "Go Lint",
+      "Sidecar Test + Build"
+    ]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": true,
+    "required_approving_review_count": 1
+  },
+  "restrictions": null,
+  "required_linear_history": true,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "block_creations": false,
+  "required_conversation_resolution": true
+}
+JSON
 
 echo "Done."
-
