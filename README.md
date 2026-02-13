@@ -430,7 +430,8 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 4. 의사결정이 필요하면 에이전트가 `decision-needed + needs-opinion` 라벨과 코멘트로 중단
 5. 자동 발굴을 켜면 `Issue Scout`가 TODO/FIXME와 최근 실패 CI를 이슈로 올림 (`agent/discovered`)
 6. Manager/QA 협업을 켜면:
-   - Manager loop가 whitelist 주소셋에서 `qa-ready` 이슈 생성
+   - Manager loop가 `solana-devnet`, `base-sepolia` whitelist 주소셋에서 `qa-ready` 이슈 생성
+   - QA 입력은 이슈 본문 `QA_CHAIN`, `QA_WATCHED_ADDRESSES`로 전달
    - QA loop가 해당 이슈를 검증하고 실패 시 developer 버그 이슈 자동 생성
 7. Planner 협업:
    - `role/planner` 이슈는 `PROMPT_plan.md` 기반으로 `specs/*`, `IMPLEMENTATION_PLAN.md`를 갱신
@@ -448,6 +449,7 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
    - 미설정 시 각각 `AGENT_RUNNER`로 fallback
 10. 전역 ON/OFF:
    - `RALPH_LOOP_ENABLED=true|false` 변수로 전체 자율 루프 토글
+   - `RALPH_AUTOPILOT_ENABLED=true|false` 변수로 Agent Loop 연속 재기동 토글
    - 수동 토글: `.github/workflows/ralph-loop-control.yml` 또는 `scripts/toggle_ralph_loop.sh on|off|status`
    - 터미널 단축: `scripts/install_ralph_aliases.sh` 후 `ron|roff|rstat|rkick|rscout`
    - 휴대폰 제어: GitHub App -> Actions -> `Ralph Loop Control` 실행 (on/off/status + optional kick)

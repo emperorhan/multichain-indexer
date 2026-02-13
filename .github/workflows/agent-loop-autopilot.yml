@@ -1,0 +1,72 @@
+name: Agent Loop Autopilot
+
+on:
+  workflow_run:
+    workflows:
+      - Agent Loop
+    types:
+      - completed
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+
+concurrency:
+  group: agent-loop-autopilot-main
+  cancel-in-progress: true
+
+jobs:
+  continue-loop:
+    if: ${{ vars.RALPH_LOOP_ENABLED != 'false' && vars.RALPH_AUTOPILOT_ENABLED != 'false' }}
+    runs-on: ${{ vars.AGENT_RUNNER != '' && vars.AGENT_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Evaluate Queue And Continue
+        env:
+          GH_TOKEN: ${{ secrets.RALPH_ADMIN_TOKEN != '' && secrets.RALPH_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          AUTOPILOT_MAX_ISSUES: ${{ vars.RALPH_AUTOPILOT_MAX_ISSUES || '2' }}
+        run: |
+          set -euo pipefail
+
+          ready_count="$(gh issue list \
+            --repo "${REPO}" \
+            --state open \
+            --limit 200 \
+            --json labels | jq -r '
+              def has_label($x): ((.labels // []) | map(.name) | index($x)) != null;
+              [.[] | select(has_label("autonomous") and has_label("ready"))] | length
+            ')"
+
+          if [ "${ready_count}" -le 0 ]; then
+            echo "::notice::Autopilot: no autonomous+ready issues."
+            exit 0
+          fi
+
+          active_runs="$(gh run list \
+            --repo "${REPO}" \
+            --workflow "Agent Loop" \
+            --status in_progress \
+            --limit 20 \
+            --json databaseId | jq 'length')"
+          queued_runs="$(gh run list \
+            --repo "${REPO}" \
+            --workflow "Agent Loop" \
+            --status queued \
+            --limit 20 \
+            --json databaseId | jq 'length')"
+
+          if [ "${active_runs}" -gt 0 ] || [ "${queued_runs}" -gt 0 ]; then
+            echo "::notice::Autopilot: Agent Loop already active (in_progress=${active_runs}, queued=${queued_runs})."
+            exit 0
+          fi
+
+          gh workflow run "Agent Loop" \
+            --repo "${REPO}" \
+            -f dry_run=false \
+            -f max_issues="${AUTOPILOT_MAX_ISSUES}"
+          echo "::notice::Autopilot: triggered Agent Loop (ready=${ready_count}, max_issues=${AUTOPILOT_MAX_ISSUES})."

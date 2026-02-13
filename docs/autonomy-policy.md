@@ -7,6 +7,9 @@
 - 전역 토글 변수: `RALPH_LOOP_ENABLED`
   - `true`: 모든 자율 루프 활성화
   - `false`: `agent-loop`, `issue-scout`, `manager-loop`, `qa-loop` 모두 정지
+- 연속 실행 변수: `RALPH_AUTOPILOT_ENABLED`
+  - `true`: Agent Loop 완료 후 큐가 남아 있으면 다음 run 자동 시작
+  - `false`: 스케줄/수동 kick만 동작
 - 운영 토글 수단:
   - workflow: `.github/workflows/ralph-loop-control.yml`
   - CLI: `scripts/toggle_ralph_loop.sh on|off|status`
@@ -52,7 +55,8 @@
   - 산출물: `IMPLEMENTATION_PLAN.md`, `specs/*`
   - 큰 범위 작업이면 fanout 파일(`.agent/planner-fanout-<issue>.json`)을 통해 child issue 자동 생성
 - Manager loop: `.github/workflows/manager-loop.yml`
-  - 화이트리스트 주소 셋(`SOLANA_WHITELIST_CSV` 또는 `configs/solana_whitelist_addresses.txt`)에서 QA용 샘플을 생성
+  - 멀티체인 화이트리스트 주소 셋(`QA_CHAIN_TARGETS`)에서 QA용 샘플을 생성
+  - 기본 타겟: `solana-devnet`, `base-sepolia`
   - 결과 이슈 라벨: `role/manager + qa-ready`
 - QA loop: `.github/workflows/qa-loop.yml`
   - `qa-ready` 이슈를 집어 검증 실행(`scripts/qa_executor.sh`)
@@ -123,10 +127,13 @@
 - `OMX_FORBIDDEN_SANDBOXES` (기본 `danger-full-access`): 차단 sandbox 목록
 - `AGENT_AUTO_MERGE_ENABLED` (기본 `true`): 에이전트 PR 자동 머지 활성화
 - `MANAGER_LOOP_ENABLED` (기본 `true`): manager loop 활성화
-- `MANAGER_MAX_SETS_PER_RUN` (기본 `1`): manager loop 1회 실행당 QA 셋 생성 수
+- `MANAGER_MAX_SETS_PER_RUN` (기본 `2`): manager loop 1회 실행당 QA 셋 생성 수
 - `QA_ADDRESS_BATCH_SIZE` (기본 `5`): QA 검증용 주소 수
+- `QA_CHAIN_TARGETS` (기본 `solana-devnet,base-sepolia`): manager가 QA 셋을 만들 체인 목록(CSV)
 - `SOLANA_WHITELIST_FILE` (기본 `configs/solana_whitelist_addresses.txt`): whitelist 파일 경로
 - `SOLANA_WHITELIST_CSV` (선택): whitelist를 CSV 변수로 직접 주입
+- `BASE_WHITELIST_FILE` (기본 `configs/base_whitelist_addresses.txt`): base sepolia whitelist 파일 경로
+- `BASE_WHITELIST_CSV` (선택): base sepolia whitelist를 CSV 변수로 직접 주입
 - `QA_LOOP_ENABLED` (기본 `true`): qa loop 활성화
 - `QA_MAX_ISSUES_PER_RUN` (기본 `1`): qa loop 1회 실행당 처리 이슈 수
 - `QA_EXEC_CMD` (기본 `scripts/qa_executor.sh`): QA 실행 명령
@@ -137,6 +144,8 @@
 - `QA_TRIAGE_CODEX_APPROVAL` (기본 `never`): QA triage 승인 정책
 - `QA_TRIAGE_CODEX_SEARCH` (기본 `false`): QA triage 웹 검색 사용 여부
 - `RALPH_LOOP_ENABLED` (기본 `true`): 자율 루프 전역 ON/OFF
+- `RALPH_AUTOPILOT_ENABLED` (기본 `true`): Agent Loop 자동 연속 재기동 ON/OFF
+- `RALPH_AUTOPILOT_MAX_ISSUES` (기본 `2`): autopilot이 시작하는 run의 `max_issues`
 - `PLANNING_EXEC_CMD` (기본 `scripts/planning_executor.sh`): planner 실행 명령
 - `PLANNING_CODEX_MODEL` (기본 `gpt-5.3-codex`): planner 모델
 - `PLANNING_CODEX_SANDBOX` (기본 `workspace-write`): planner sandbox 모드
@@ -163,6 +172,9 @@
 - 워크플로우: `.github/workflows/agent-loop.yml`
 - 주기: 15분
 - 수동 실행: `workflow_dispatch`
+- 워크플로우: `.github/workflows/agent-loop-autopilot.yml`
+  - 트리거: Agent Loop 완료 + 5분 주기 + 수동 실행
+  - 조건: `autonomous + ready` 큐가 남아 있고 Agent Loop active run이 없을 때 다음 run 자동 시작
 - PR 자동 머지 워크플로우: `.github/workflows/agent-auto-merge.yml`
   - 트리거: PR 이벤트 + 15분 주기 스캔 + 수동 실행
   - 대상: agent가 생성한 PR(`agent-issue-*`, `chore(agent):*`)

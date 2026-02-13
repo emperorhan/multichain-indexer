@@ -24,6 +24,9 @@
 - 결과 라벨: `ready-for-review` 또는 `blocked + decision-needed + needs-opinion`
 - 실행 명령은 repository variable `AGENT_EXEC_CMD`로 주입한다.
 - runner는 `AGENT_RUNNER` variable로 지정한다 (비어 있으면 `ubuntu-latest`).
+- 연속 실행 워크플로우: `.github/workflows/agent-loop-autopilot.yml`
+  - Agent Loop 완료 후 큐에 `autonomous + ready`가 남아 있으면 다음 run 자동 시작
+  - 변수: `RALPH_AUTOPILOT_ENABLED`, `RALPH_AUTOPILOT_MAX_ISSUES`
 - planner/developer 큐는 분리되어 실행된다.
   - planner runner: `AGENT_RUNNER_PLANNER` (fallback: `AGENT_RUNNER`)
   - developer runner: `AGENT_RUNNER_DEVELOPER` (fallback: `AGENT_RUNNER`)
@@ -70,7 +73,8 @@
   - 산출물: `IMPLEMENTATION_PLAN.md`, `specs/*`
   - 큰 이슈면 fanout 파일(`.agent/planner-fanout-<issue>.json`)을 통해 child issue 자동 생성
 - `Manager`:
-  - 화이트리스트 주소셋에서 QA 검증 이슈 생성 (`qa-ready`)
+  - `solana-devnet` + `base-sepolia` 화이트리스트 주소셋에서 QA 검증 이슈 생성 (`qa-ready`)
+  - 이슈 본문에 `QA_CHAIN`, `QA_WATCHED_ADDRESSES`를 포함해 QA 실행기를 체인별로 구동
 - `Developer`:
   - `autonomous + ready` 이슈 구현 및 PR 생성 (`agent-loop`)
   - 기본 모델: `gpt-5.3-codex-spark`

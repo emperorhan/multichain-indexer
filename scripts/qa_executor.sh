@@ -14,6 +14,12 @@ fi
 mkdir -p .agent
 REPORT_FILE=".agent/qa-report-${ISSUE_NUMBER}.md"
 
+QA_CHAIN="$(awk -F= '/^QA_CHAIN=/{print $2; exit}' "${ISSUE_BODY_FILE}" | tr -d '[:space:]')"
+if [ -z "${QA_CHAIN}" ]; then
+  QA_CHAIN="solana-devnet"
+fi
+QA_CHAIN="$(tr '[:upper:]' '[:lower:]' <<<"${QA_CHAIN}")"
+
 QA_WATCHED_ADDRESSES="$(awk -F= '/^QA_WATCHED_ADDRESSES=/{print $2; exit}' "${ISSUE_BODY_FILE}" | tr -d '[:space:]')"
 if [ -z "${QA_WATCHED_ADDRESSES}" ]; then
   cat >"${REPORT_FILE}" <<EOF
@@ -21,24 +27,69 @@ if [ -z "${QA_WATCHED_ADDRESSES}" ]; then
 
 - title: ${ISSUE_TITLE}
 - issue: ${ISSUE_URL}
+- chain: ${QA_CHAIN}
 - result: failed
 - reason: QA_WATCHED_ADDRESSES not found in issue body
 EOF
   exit 4
 fi
 
-address_is_valid() {
+address_is_valid_solana() {
   local addr="$1"
   [[ "${addr}" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]
 }
 
+address_is_valid_evm() {
+  local addr="$1"
+  [[ "${addr}" =~ ^0x[0-9a-fA-F]{40}$ ]]
+}
+
+validate_address_for_chain() {
+  local chain="$1"
+  local addr="$2"
+  case "${chain}" in
+    solana|solana-devnet)
+      address_is_valid_solana "${addr}"
+      ;;
+    base|base-sepolia|evm)
+      address_is_valid_evm "${addr}"
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
 invalid_count=0
+unsupported_chain=false
 IFS=',' read -r -a QA_ADDRS <<<"${QA_WATCHED_ADDRESSES}"
 for addr in "${QA_ADDRS[@]}"; do
-  if ! address_is_valid "${addr}"; then
+  if validate_address_for_chain "${QA_CHAIN}" "${addr}"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if [ "${rc}" -eq 2 ]; then
+    unsupported_chain=true
+    break
+  fi
+  if [ "${rc}" -ne 0 ]; then
     invalid_count=$((invalid_count + 1))
   fi
 done
+
+if [ "${unsupported_chain}" = "true" ]; then
+  cat >"${REPORT_FILE}" <<EOF
+## QA Report (Issue #${ISSUE_NUMBER})
+
+- title: ${ISSUE_TITLE}
+- issue: ${ISSUE_URL}
+- chain: ${QA_CHAIN}
+- result: failed
+- reason: unsupported QA_CHAIN value (expected solana-devnet or base-sepolia)
+EOF
+  exit 5
+fi
 
 if [ "${invalid_count}" -gt 0 ]; then
   cat >"${REPORT_FILE}" <<EOF
@@ -46,14 +97,16 @@ if [ "${invalid_count}" -gt 0 ]; then
 
 - title: ${ISSUE_TITLE}
 - issue: ${ISSUE_URL}
+- chain: ${QA_CHAIN}
 - result: failed
-- reason: found ${invalid_count} invalid Solana address(es) in QA_WATCHED_ADDRESSES
+- reason: found ${invalid_count} invalid address(es) for chain ${QA_CHAIN} in QA_WATCHED_ADDRESSES
 - addresses: ${QA_WATCHED_ADDRESSES}
 EOF
-  exit 5
+  exit 6
 fi
 
 export WATCHED_ADDRESSES="${QA_WATCHED_ADDRESSES}"
+export QA_CHAIN="${QA_CHAIN}"
 
 run_step() {
   local step_name="$1"
@@ -80,6 +133,7 @@ cat >"${REPORT_FILE}" <<EOF
 
 - title: ${ISSUE_TITLE}
 - issue: ${ISSUE_URL}
+- chain: ${QA_CHAIN}
 - addresses: ${QA_WATCHED_ADDRESSES}
 - result: running
 
