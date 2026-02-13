@@ -455,6 +455,12 @@ while true; do
   fi
   log_file="${RALPH_LAST_LOG_FILE:-}"
   if [ "${codex_rc}" -ne 0 ]; then
+    if [ ! -f "${in_progress_path}" ]; then
+      echo "[ralph-local] warning: missing in-progress file for ${issue_id}; skipping recovery path"
+      loop_count=$((loop_count + 1))
+      continue
+    fi
+
     if [ "${TRANSIENT_REQUEUE_ENABLED}" = "true" ] && is_transient_model_error "${log_file}"; then
       requeue_path="${QUEUE_DIR}/${issue_id}.md"
       if [ -f "${requeue_path}" ]; then
@@ -498,6 +504,11 @@ while true; do
   fi
 
   done_path="${DONE_DIR}/${issue_id}.md"
+  if [ ! -f "${in_progress_path}" ]; then
+    echo "[ralph-local] warning: missing in-progress file before completion for ${issue_id}; skipping completion move"
+    loop_count=$((loop_count + 1))
+    continue
+  fi
   mv "${in_progress_path}" "${done_path}"
   append_result_block "${done_path}" "done" "${role}" "${model}" "${log_file}" "${validation_state}" "completed" "${commit_sha}"
   echo "[ralph-local] completed ${issue_id} commit=${commit_sha:-none}"
