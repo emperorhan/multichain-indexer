@@ -152,8 +152,10 @@
 - 주기: 15분
 - 수동 실행: `workflow_dispatch`
 - PR 자동 머지 워크플로우: `.github/workflows/agent-auto-merge.yml`
+  - 트리거: PR 이벤트 + 15분 주기 스캔 + 수동 실행
   - 대상: agent가 생성한 PR(`agent-issue-*`, `chore(agent):*`)
   - 조건: 차단 라벨(`decision-needed`, `needs-opinion`, `blocked`, `decision/major`, `risk/high`) 없음
+  - 선택: secret `AGENT_GH_TOKEN`(`repo` + `workflow` scope) 설정 시 workflow 파일 변경 PR까지 자동 머지 가능
 
 ## Operational Notes
 - 기본 실행자는 `ubuntu-latest`이다.

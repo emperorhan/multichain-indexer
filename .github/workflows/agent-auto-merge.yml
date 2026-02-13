@@ -22,7 +22,6 @@ permissions:
   contents: write
   pull-requests: write
   issues: read
-  workflows: write
 
 concurrency:
   group: agent-auto-merge-${{ github.event.pull_request.number || github.event.inputs.pr_number || 'manual' }}
@@ -38,6 +37,7 @@ jobs:
         env:
           AGENT_AUTO_MERGE_ENABLED: ${{ vars.AGENT_AUTO_MERGE_ENABLED || 'true' }}
         with:
+          github-token: ${{ secrets.AGENT_GH_TOKEN || github.token }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
@@ -48,7 +48,8 @@ jobs:
               "decision/major",
               "risk/high",
             ]);
-            const inputPr = `${{ toJSON(github.event.inputs.pr_number) }}`.replace(/^"+|"+$/g, "");
+            const rawInputPr = `${{ toJSON(github.event.inputs.pr_number) }}`.replace(/^"+|"+$/g, "");
+            const inputPr = rawInputPr === "null" ? "" : rawInputPr.trim();
             const eventPr = context.payload.pull_request?.number;
             const requestedPrNumber = inputPr ? Number(inputPr) : eventPr;
             const isAgentPr = (pr) =>
@@ -153,6 +154,11 @@ jobs:
                 ) {
                   core.notice(`Auto-merge already configured for PR #${prNumber}.`);
                   return;
+                }
+                if (message.includes("without `workflows` permission") || message.includes("without workflows permission")) {
+                  core.warning(
+                    "Workflow-file PR auto-merge needs secret AGENT_GH_TOKEN (classic PAT with repo+workflow scopes)."
+                  );
                 }
                 core.warning(`enablePullRequestAutoMerge failed for #${prNumber}: ${message}`);
               }
