@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS balances;
+DROP TABLE IF EXISTS transfers;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS tokens;

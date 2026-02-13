@@ -1,0 +1,24 @@
+{
+  "name": "koda-custody-sidecar",
+  "version": "1.0.0",
+  "description": "gRPC sidecar for chain-specific transaction decoding",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "proto": "grpc_tools_node_protoc --proto_path=../proto --js_out=import_style=commonjs,binary:./src/generated --grpc_out=grpc_js:./src/generated --ts_out=grpc_js:./src/generated ../proto/sidecar/v1/decoder.proto"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.6",
+    "@grpc/proto-loader": "^0.7.13",
+    "@solana/web3.js": "^1.98.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.18"
+  }
+}

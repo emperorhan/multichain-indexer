@@ -1,0 +1,72 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: custody-indexer-pg
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: indexer
+      POSTGRES_PASSWORD: indexer
+      POSTGRES_DB: custody_indexer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U indexer -d custody_indexer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: custody-indexer-redis
+    ports:
+      - "6380:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: migrate/migrate:v4.17.0
+    container_name: custody-indexer-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../internal/store/postgres/migrations:/migrations
+    command: >
+      -path=/migrations
+      -database=postgres://indexer:indexer@postgres:5432/custody_indexer?sslmode=disable
+      up
+    restart: on-failure
+
+  sidecar:
+    build:
+      context: ../sidecar
+      dockerfile: Dockerfile
+    container_name: custody-indexer-sidecar
+    ports:
+      - "50051:50051"
+    environment:
+      PORT: 50051
+      NODE_ENV: development
+    healthcheck:
+      test: ["CMD", "node", "-e", "const g=require('@grpc/grpc-js');const c=new g.Client('localhost:50051',g.credentials.createInsecure());c.waitForReady(Date.now()+2000,e=>{process.exit(e?1:0)})"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:
+  redisdata:

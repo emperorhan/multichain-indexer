@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package sidecar.v1;
+
+option go_package = "github.com/kodax/koda-custody-indexer/pkg/generated/sidecar/v1;sidecarv1";
+
+service ChainDecoder {
+  rpc DecodeSolanaTransactionBatch(DecodeSolanaTransactionBatchRequest)
+      returns (DecodeSolanaTransactionBatchResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message DecodeSolanaTransactionBatchRequest {
+  repeated RawTransaction transactions = 1;
+  repeated string watched_addresses = 2;
+}
+
+message RawTransaction {
+  string signature = 1;
+  bytes raw_json = 2;  // raw JSON from getTransaction RPC call
+}
+
+message DecodeSolanaTransactionBatchResponse {
+  repeated TransactionResult results = 1;
+  repeated DecodeError errors = 2;
+}
+
+message TransactionResult {
+  string tx_hash = 1;
+  int64 block_cursor = 2;       // slot
+  int64 block_time = 3;         // unix timestamp, 0 if unavailable
+  string fee_amount = 4;        // lamports as string
+  string fee_payer = 5;
+  string status = 6;            // "SUCCESS" or "FAILED"
+  optional string error = 7;
+  repeated TransferInfo transfers = 8;
+}
+
+message TransferInfo {
+  int32 instruction_index = 1;
+  string program_id = 2;
+  string from_address = 3;      // owner address (not ATA)
+  string to_address = 4;        // owner address (not ATA)
+  string amount = 5;            // raw amount as string
+  string contract_address = 6;  // mint address
+  string transfer_type = 7;     // "transfer", "transferChecked", "systemTransfer"
+  string from_ata = 8;          // ATA if applicable
+  string to_ata = 9;            // ATA if applicable
+  string token_symbol = 10;
+  string token_name = 11;
+  int32 token_decimals = 12;
+  string token_type = 13;       // "NATIVE", "FUNGIBLE", "NFT"
+}
+
+message DecodeError {
+  string signature = 1;
+  string error = 2;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string status = 1;
+}
