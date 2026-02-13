@@ -21,6 +21,10 @@ PLANNING_CODEX_SANDBOX="${PLANNING_CODEX_SANDBOX:-workspace-write}"
 PLANNING_CODEX_APPROVAL="${PLANNING_CODEX_APPROVAL:-never}"
 PLANNING_CODEX_SEARCH="${PLANNING_CODEX_SEARCH:-true}"
 
+supports_codex_search() {
+  codex --help 2>/dev/null | grep -q -- "--search"
+}
+
 PLAN_GUIDE="$(cat PROMPT_plan.md 2>/dev/null || true)"
 
 PROMPT="$(cat <<EOF
@@ -43,14 +47,19 @@ EOF
 cmd=(
   codex
   --ask-for-approval "${PLANNING_CODEX_APPROVAL}"
+)
+
+if [ "${PLANNING_CODEX_SEARCH}" = "true" ] && supports_codex_search; then
+  cmd+=(--search)
+elif [ "${PLANNING_CODEX_SEARCH}" = "true" ]; then
+  echo "[planning-executor] codex --search unsupported on this runner; continuing without search." >&2
+fi
+
+cmd+=(
   exec
   --model "${PLANNING_CODEX_MODEL}"
   --sandbox "${PLANNING_CODEX_SANDBOX}"
   --cd "$(pwd)"
 )
-
-if [ "${PLANNING_CODEX_SEARCH}" = "true" ]; then
-  cmd+=(--search)
-fi
 
 "${cmd[@]}" "${PROMPT}"

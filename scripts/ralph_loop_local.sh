@@ -30,6 +30,10 @@ CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-workspace-write}"
 CODEX_APPROVAL="${AGENT_CODEX_APPROVAL:-never}"
 CODEX_SEARCH="${AGENT_CODEX_SEARCH:-true}"
 
+supports_codex_search() {
+  codex --help 2>/dev/null | grep -q -- "--search"
+}
+
 if [ ! -f "${TASK_FILE}" ]; then
   echo "task file not found: ${TASK_FILE}" >&2
   exit 2
@@ -64,15 +68,20 @@ EOF
   cmd=(
     codex
     --ask-for-approval "${CODEX_APPROVAL}"
+  )
+
+  if [ "${CODEX_SEARCH}" = "true" ] && supports_codex_search; then
+    cmd+=(--search)
+  elif [ "${CODEX_SEARCH}" = "true" ]; then
+    echo "[ralph-loop] codex --search unsupported on this runner; continuing without search."
+  fi
+
+  cmd+=(
     exec
     --model "${CODEX_MODEL_FAST}"
     --sandbox "${CODEX_SANDBOX}"
     --cd "$(pwd)"
   )
-
-  if [ "${CODEX_SEARCH}" = "true" ]; then
-    cmd+=(--search)
-  fi
 
   "${cmd[@]}" "${prompt}"
 

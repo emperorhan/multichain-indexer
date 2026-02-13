@@ -24,6 +24,10 @@ AGENT_CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-workspace-write}"
 AGENT_CODEX_APPROVAL="${AGENT_CODEX_APPROVAL:-never}"
 AGENT_CODEX_SEARCH="${AGENT_CODEX_SEARCH:-true}"
 
+supports_codex_search() {
+  codex --help 2>/dev/null | grep -q -- "--search"
+}
+
 select_model() {
   if [ -n "${AGENT_CODEX_MODEL_OVERRIDE}" ]; then
     echo "${AGENT_CODEX_MODEL_OVERRIDE}"
@@ -66,14 +70,19 @@ EOF
 cmd=(
   codex
   --ask-for-approval "${AGENT_CODEX_APPROVAL}"
+)
+
+if [ "${AGENT_CODEX_SEARCH}" = "true" ] && supports_codex_search; then
+  cmd+=(--search)
+elif [ "${AGENT_CODEX_SEARCH}" = "true" ]; then
+  echo "[agent-executor] codex --search unsupported on this runner; continuing without search." >&2
+fi
+
+cmd+=(
   exec
   --model "${SELECTED_MODEL}"
   --sandbox "${AGENT_CODEX_SANDBOX}"
   --cd "$(pwd)"
 )
-
-if [ "${AGENT_CODEX_SEARCH}" = "true" ]; then
-  cmd+=(--search)
-fi
 
 "${cmd[@]}" "${PROMPT}"
