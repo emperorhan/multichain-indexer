@@ -19,8 +19,6 @@ on:
         description: "Max developer issues to process in one run"
         required: false
         default: "2"
-  schedule:
-    - cron: "*/15 * * * *"
 
 permissions:
   actions: write

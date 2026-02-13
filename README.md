@@ -478,6 +478,10 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
    - 로컬 md 이슈 추가: `scripts/ralph_local_new_issue.sh planner "..."` (또는 `.ralph/issues/*.md` 직접 작성)
    - 상태 확인: `scripts/ralph_local_daemon.sh status`
    - 로그 보기: `scripts/ralph_local_daemon.sh tail`
+   - 의미 있는 단위 자동 main 반영:
+     - 기본 ON: `RALPH_AUTO_PUBLISH_ENABLED=true`
+     - 임계 커밋 수: `RALPH_AUTO_PUBLISH_MIN_COMMITS=3` (기본)
+     - 대상 브랜치/리모트: `RALPH_AUTO_PUBLISH_TARGET_BRANCH=main`, `RALPH_AUTO_PUBLISH_REMOTE=origin`
    - 중단: `scripts/ralph_local_daemon.sh stop`
 15. 릴리즈 자동화:
    - `main` 반영 시 `release.yml`이 `vX.Y.Z` 태그와 릴리즈 노트 자동 생성

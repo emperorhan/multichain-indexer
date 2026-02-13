@@ -1,22 +1,12 @@
 name: Agent Auto Merge
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       pr_number:
         description: "Optional PR number to process"
         required: false
         default: ""
-  pull_request_target:
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - ready_for_review
-      - labeled
-      - unlabeled
 
 permissions:
   contents: write

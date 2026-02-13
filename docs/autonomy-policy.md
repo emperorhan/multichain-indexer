@@ -188,3 +188,4 @@
 - 진짜 상시 실행(긴 작업/대용량 작업)이 필요하면 self-hosted runner로 전환한다.
 - 브랜치 보호를 활성화해 직접 푸시를 금지하고 PR 경로만 허용한다.
 - GitHub 외부 의존 없이 운영하려면 `docs/ralph-local-offline-mode.md`를 따른다.
+- 현재 기본 운영 모드는 로컬 우선이며, `.github/workflows/*` 자동 트리거는 비활성화(수동 `workflow_dispatch` 전용)로 유지한다.

@@ -1,14 +1,7 @@
 name: Agent Loop Autopilot
 
 on:
-  workflow_run:
-    workflows:
-      - Agent Loop
-    types:
-      - completed
   workflow_dispatch:
-  schedule:
-    - cron: "*/5 * * * *"
 
 permissions:
   actions: write

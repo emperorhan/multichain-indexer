@@ -37,6 +37,7 @@ REPORTS_DIR="${RALPH_ROOT}/reports"
 LOGS_DIR="${RALPH_ROOT}/logs"
 STATE_FILE="${RALPH_ROOT}/state.env"
 CONTEXT_FILE="${RALPH_ROOT}/context.md"
+PUBLISH_STATE_FILE="${RALPH_ROOT}/state.last_publish"
 
 MAX_LOOPS="${MAX_LOOPS:-0}" # 0 means infinite
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-20}"
@@ -48,6 +49,10 @@ RECOVER_IN_PROGRESS="${RALPH_RECOVER_IN_PROGRESS:-true}"
 LOCAL_TRUST_MODE="${RALPH_LOCAL_TRUST_MODE:-false}"
 TRANSIENT_REQUEUE_ENABLED="${RALPH_TRANSIENT_REQUEUE_ENABLED:-true}"
 TRANSIENT_RETRY_SLEEP_SEC="${RALPH_TRANSIENT_RETRY_SLEEP_SEC:-20}"
+AUTO_PUBLISH_ENABLED="${RALPH_AUTO_PUBLISH_ENABLED:-true}"
+AUTO_PUBLISH_MIN_COMMITS="${RALPH_AUTO_PUBLISH_MIN_COMMITS:-3}"
+AUTO_PUBLISH_TARGET_BRANCH="${RALPH_AUTO_PUBLISH_TARGET_BRANCH:-main}"
+AUTO_PUBLISH_REMOTE="${RALPH_AUTO_PUBLISH_REMOTE:-origin}"
 
 CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-workspace-write}"
 CODEX_APPROVAL="${AGENT_CODEX_APPROVAL:-never}"
@@ -81,6 +86,104 @@ recover_in_progress_on_boot() {
 }
 
 recover_in_progress_on_boot
+
+record_last_publish_sha() {
+  local sha="$1"
+  printf '%s\n' "${sha}" > "${PUBLISH_STATE_FILE}"
+}
+
+get_last_publish_sha() {
+  if [ -f "${PUBLISH_STATE_FILE}" ]; then
+    awk 'NR==1 {print; exit}' "${PUBLISH_STATE_FILE}"
+    return 0
+  fi
+  echo ""
+}
+
+is_worktree_clean() {
+  [ -z "$(git status --porcelain)" ]
+}
+
+publish_to_main_if_ready() {
+  local current_branch ahead target remote publish_base pre_head
+  local new_sha merge_msg
+
+  [ "${AUTO_PUBLISH_ENABLED}" = "true" ] || return 0
+  target="${AUTO_PUBLISH_TARGET_BRANCH}"
+  remote="${AUTO_PUBLISH_REMOTE}"
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+
+  is_worktree_clean || return 0
+
+  if [ "${current_branch}" = "${target}" ]; then
+    ahead="$(git rev-list --count "${remote}/${target}..${target}" 2>/dev/null || echo 0)"
+    if [ "${ahead}" -lt 1 ]; then
+      return 0
+    fi
+    if git push "${remote}" "${target}" >/dev/null 2>&1; then
+      new_sha="$(git rev-parse HEAD)"
+      record_last_publish_sha "${new_sha}"
+      echo "[ralph-local] auto-publish: pushed ${target} (ahead=${ahead})"
+    else
+      echo "[ralph-local] auto-publish: push failed for ${target}; will retry later"
+    fi
+    return 0
+  fi
+
+  ahead="$(git rev-list --count "${target}..${current_branch}" 2>/dev/null || echo 0)"
+  if [ "${ahead}" -lt "${AUTO_PUBLISH_MIN_COMMITS}" ]; then
+    return 0
+  fi
+
+  publish_base="$(get_last_publish_sha)"
+  if [ -n "${publish_base}" ]; then
+    ahead="$(git rev-list --count "${publish_base}..${current_branch}" 2>/dev/null || echo "${ahead}")"
+    if [ "${ahead}" -lt "${AUTO_PUBLISH_MIN_COMMITS}" ]; then
+      return 0
+    fi
+  fi
+
+  pre_head="$(git rev-parse HEAD)"
+  if ! git fetch "${remote}" "${target}" >/dev/null 2>&1; then
+    echo "[ralph-local] auto-publish: fetch failed (${remote}/${target}); will retry later"
+    return 0
+  fi
+
+  if ! git checkout "${target}" >/dev/null 2>&1; then
+    echo "[ralph-local] auto-publish: cannot checkout ${target}; will retry later"
+    git checkout "${current_branch}" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  if ! git pull --ff-only "${remote}" "${target}" >/dev/null 2>&1; then
+    echo "[ralph-local] auto-publish: ff-only pull failed on ${target}; aborting publish cycle"
+    git checkout "${current_branch}" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  merge_msg="ralph(publish): merge ${current_branch} into ${target}"
+  if ! git merge --no-ff -m "${merge_msg}" "${current_branch}" >/dev/null 2>&1; then
+    echo "[ralph-local] auto-publish: merge conflict (${current_branch} -> ${target}); aborting publish cycle"
+    git merge --abort >/dev/null 2>&1 || true
+    git checkout "${current_branch}" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  if git push "${remote}" "${target}" >/dev/null 2>&1; then
+    new_sha="$(git rev-parse HEAD)"
+    record_last_publish_sha "${new_sha}"
+    echo "[ralph-local] auto-publish: pushed ${target} from ${current_branch} (commits=${ahead})"
+  else
+    echo "[ralph-local] auto-publish: push failed after merge; keeping local merge commit on ${target}"
+  fi
+
+  git checkout "${current_branch}" >/dev/null 2>&1 || true
+  if ! git merge --ff-only "${target}" >/dev/null 2>&1; then
+    echo "[ralph-local] auto-publish: could not fast-forward ${current_branch} from ${target}"
+    git checkout "${pre_head}" >/dev/null 2>&1 || true
+    git checkout "${current_branch}" >/dev/null 2>&1 || true
+  fi
+}
 
 supports_codex_search() {
   codex --help 2>/dev/null | grep -q -- "--search"
@@ -388,6 +491,7 @@ while true; do
     git add -A
     git commit -m "ralph(local): ${issue_id} ${safe_title}" >/dev/null || true
     commit_sha="$(git rev-parse --short HEAD 2>/dev/null || true)"
+    publish_to_main_if_ready || true
     noop_count=0
   else
     noop_count=$((noop_count + 1))

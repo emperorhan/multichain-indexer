@@ -11,8 +11,6 @@ on:
         description: "Max QA issues to process in one run"
         required: false
         default: "1"
-  schedule:
-    - cron: "*/10 * * * *"
 
 permissions:
   contents: read

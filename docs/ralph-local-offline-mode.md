@@ -64,6 +64,17 @@ complexity: high
   - `RALPH_TRANSIENT_REQUEUE_ENABLED` (기본 `true`)
   - `RALPH_TRANSIENT_RETRY_SLEEP_SEC` (기본 `20`)
 
+## 자동 main 반영
+- 로컬 루프는 커밋 누적이 임계치를 넘으면 `main` 반영을 자동 시도한다.
+- 제어 변수:
+  - `RALPH_AUTO_PUBLISH_ENABLED` (기본 `true`)
+  - `RALPH_AUTO_PUBLISH_MIN_COMMITS` (기본 `3`)
+  - `RALPH_AUTO_PUBLISH_TARGET_BRANCH` (기본 `main`)
+  - `RALPH_AUTO_PUBLISH_REMOTE` (기본 `origin`)
+- 동작:
+  - 작업 브랜치 커밋이 임계치 이상 누적되면 `main`으로 merge 후 push 시도
+  - 네트워크/권한/충돌 실패 시 루프는 중단되지 않고 다음 사이클에서 재시도
+
 ## 검증/커밋 정책
 - role이 `developer`, `qa`면 `RALPH_VALIDATE_CMD`를 실행한다.
 - 기본값: `make test && make test-sidecar && make lint`
