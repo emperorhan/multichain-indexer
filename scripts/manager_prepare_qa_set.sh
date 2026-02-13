@@ -202,6 +202,7 @@ low
 
 main() {
   local addresses_csv selected_count set_index=0
+  local max_attempts attempts=0 before_created=0
   local -a addresses
 
   log "repo=${REPO} dry_run=${AUTONOMY_DRY_RUN} max_sets=${MANAGER_MAX_SETS_PER_RUN}"
@@ -213,14 +214,26 @@ main() {
     return 0
   fi
 
-  while ! limit_reached; do
+  max_attempts="${#addresses[@]}"
+  while ! limit_reached && [ "${attempts}" -lt "${max_attempts}" ]; do
     addresses_csv="$(select_batch_csv addresses "${QA_ADDRESS_BATCH_SIZE}" "${set_index}")"
     [ -n "${addresses_csv}" ] || break
     selected_count="$(awk -F, '{print NF}' <<<"${addresses_csv}")"
 
+    before_created="${created_count}"
     create_qa_issue_for_batch "${addresses_csv}" "${selected_count}"
+
+    attempts=$((attempts + 1))
     set_index=$((set_index + QA_ADDRESS_BATCH_SIZE))
+
+    if [ "${created_count}" -gt "${before_created}" ]; then
+      break
+    fi
   done
+
+  if [ "${created_count}" -eq 0 ]; then
+    log "no new QA set issue created (all candidate sets already open)"
+  fi
 
   log "created=${created_count}"
 }
