@@ -22,7 +22,7 @@ on:
         options:
           - "no"
           - "yes"
-        default: "no"
+        default: "yes"
       kick_max_issues:
         description: "Max issues for one-time Agent Loop kick"
         required: false
@@ -40,7 +40,8 @@ jobs:
 
       - name: Control Ralph Loop
         env:
-          GH_TOKEN: ${{ secrets.RALPH_ADMIN_TOKEN }}
+          GH_TOKEN: ${{ secrets.RALPH_ADMIN_TOKEN != '' && secrets.RALPH_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MODE: ${{ github.event.inputs.mode }}
           NOTE: ${{ github.event.inputs.note }}
           REPO: ${{ github.repository }}
@@ -57,7 +58,8 @@ jobs:
       - name: Kick Agent Loop (optional)
         if: ${{ github.event.inputs.kick_agent_loop == 'yes' && github.event.inputs.mode != 'off' }}
         env:
-          GH_TOKEN: ${{ secrets.RALPH_ADMIN_TOKEN }}
+          GH_TOKEN: ${{ secrets.RALPH_ADMIN_TOKEN != '' && secrets.RALPH_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           MAX_ISSUES: ${{ github.event.inputs.kick_max_issues }}
         run: |
