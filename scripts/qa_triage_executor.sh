@@ -47,10 +47,11 @@ EOF
 )"
 
 cmd=(
-  codex exec
+  codex
+  --ask-for-approval "${QA_TRIAGE_CODEX_APPROVAL}"
+  exec
   --model "${QA_TRIAGE_CODEX_MODEL}"
   --sandbox "${QA_TRIAGE_CODEX_SANDBOX}"
-  --ask-for-approval "${QA_TRIAGE_CODEX_APPROVAL}"
   --cd "$(pwd)"
 )
 
