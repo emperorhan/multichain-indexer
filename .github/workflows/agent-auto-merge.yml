@@ -21,7 +21,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  issues: write
+  issues: read
 
 concurrency:
   group: agent-auto-merge-${{ github.event.pull_request.number || github.event.inputs.pr_number || 'manual' }}
@@ -56,35 +56,6 @@ jobs:
               pr.head.ref.startsWith("agent-issue-") ||
               pr.title.startsWith("chore(agent):") ||
               pr.user?.login === "github-actions[bot]";
-            const workflowScopeMarker = "[agent-auto-merge/workflow-scope]";
-
-            async function ensureWorkflowScopeComment(prNumber, message) {
-              const comments = await github.paginate(github.rest.issues.listComments, {
-                owner,
-                repo,
-                issue_number: prNumber,
-                per_page: 100,
-              });
-              if (comments.some((c) => (c.body || "").includes(workflowScopeMarker))) {
-                return;
-              }
-
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: prNumber,
-                body: `${workflowScopeMarker}
-Auto-merge is blocked by workflow-file permission policy.
-
-- reason: ${message}
-- status: confirm AGENT_GH_TOKEN is configured with scopes \`repo\`, \`workflow\`
-
-Fix:
-1. Create a classic PAT with scopes: \`repo\`, \`workflow\`
-2. Save as repository secret \`AGENT_GH_TOKEN\`
-3. Re-run workflow \`Agent Auto Merge\``,
-              });
-            }
 
             async function processPr(prNumber) {
               const { data: pr } = await github.rest.pulls.get({
@@ -188,7 +159,6 @@ Fix:
                   core.warning(
                     "Workflow-file PR auto-merge needs secret AGENT_GH_TOKEN (classic PAT with repo+workflow scopes)."
                   );
-                  await ensureWorkflowScopeComment(prNumber, message);
                 }
                 core.warning(`enablePullRequestAutoMerge failed for #${prNumber}: ${message}`);
               }
