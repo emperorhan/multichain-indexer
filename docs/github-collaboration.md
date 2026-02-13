@@ -15,6 +15,7 @@
 4. PR 본문에 변경 내용, 검증 결과, 리스크, 롤백 전략 누적
 5. CI 통과 후 `ready-for-review` 라벨 부여
 6. 에이전트 PR은 `Agent Auto Merge`가 조건 충족 시 자동 merge
+7. 브랜치 푸시 실패(예: 기존 브랜치 충돌/권한 문제) 시 이슈는 `ready`로 되돌려 재시도 및 실패 사유 코멘트
 
 ## Autonomous Loop
 - 워크플로우: `.github/workflows/agent-loop.yml`

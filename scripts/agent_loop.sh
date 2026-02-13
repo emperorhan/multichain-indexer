@@ -34,6 +34,7 @@ AGENT_QUEUE_NAME="${AGENT_QUEUE_NAME:-default}"
 RALPH_SELF_HEAL_ENABLED="${RALPH_SELF_HEAL_ENABLED:-true}"
 ACTIONS_PERMISSION_HEAL_ATTEMPTED="false"
 LAST_PR_CREATE_ERROR=""
+LAST_PUSH_ERROR=""
 
 log() {
   printf '[agent-loop] %s\n' "$*" >&2
@@ -807,6 +808,62 @@ handle_pr_creation_failure() {
 Please check workflow logs for the PR creation error details."
 }
 
+push_issue_branch() {
+  local issue_number="$1"
+  local issue_url="$2"
+  local branch="$3"
+  local push_output
+
+  if should_dry_run; then
+    return 0
+  fi
+
+  LAST_PUSH_ERROR=""
+
+  if push_output="$(git push -u origin "${branch}" 2>&1)"; then
+    return 0
+  fi
+
+  LAST_PUSH_ERROR="${push_output}"
+  log "push failed for #${issue_number} (${branch}); retrying with --force-with-lease"
+
+  if push_output="$(git push -u origin "${branch}" --force-with-lease 2>&1)"; then
+    LAST_PUSH_ERROR=""
+    return 0
+  fi
+
+  LAST_PUSH_ERROR="${push_output}"
+  return 1
+}
+
+handle_push_failure() {
+  local issue_number="$1"
+  local issue_url="$2"
+  local branch="$3"
+  local error_line
+
+  error_line="$(printf '%s' "${LAST_PUSH_ERROR:-unknown}" | head -n1)"
+
+  if should_dry_run; then
+    return 0
+  fi
+
+  gh issue edit "${issue_number}" \
+    --repo "${REPO}" \
+    --remove-label in-progress \
+    --add-label ready >/dev/null
+
+  gh issue comment "${issue_number}" \
+    --repo "${REPO}" \
+    --body "[agent-loop] Branch push failed and issue was re-queued.
+
+- issue: ${issue_url}
+- branch: ${branch}
+- error: \`${error_line}\`
+
+Please review the error and retry once the workspace is healthy."
+}
+
 process_issue() {
   local issue_json="$1"
   local issue_number issue_title issue_body issue_url issue_labels branch pr_url commit_message
@@ -851,7 +908,10 @@ process_issue() {
   git add -A
   commit_message="chore(agent): implement #${issue_number} ${issue_title}"
   git commit -m "${commit_message}" >/dev/null
-  git push -u origin "${branch}" >/dev/null
+  if ! push_issue_branch "${issue_number}" "${issue_url}" "${branch}"; then
+    handle_push_failure "${issue_number}" "${issue_url}" "${branch}"
+    return 0
+  fi
 
   if ! pr_url="$(open_or_update_pr "${issue_number}" "${issue_title}" "${branch}")"; then
     handle_pr_creation_failure "${issue_number}" "${issue_url}" "${branch}"
