@@ -17,10 +17,17 @@ TRUST_MODE="${RALPH_LOCAL_TRUST_MODE:-true}"
 LOCAL_SANDBOX="${RALPH_LOCAL_SANDBOX:-danger-full-access}"
 LOCAL_APPROVAL="${RALPH_LOCAL_APPROVAL:-never}"
 LOCAL_OMX_SAFE_MODE="${RALPH_LOCAL_OMX_SAFE_MODE:-}"
+REQUIRE_CHATGPT_AUTH="${RALPH_REQUIRE_CHATGPT_AUTH:-true}"
 
 ensure_layout() {
   scripts/ralph_local_init.sh >/dev/null
   mkdir -p "${RALPH_ROOT}/logs"
+}
+
+cleanup_stray_local_processes() {
+  pkill -f "${SUPERVISOR_SCRIPT}" >/dev/null 2>&1 || true
+  pkill -f "${RUN_SCRIPT}" >/dev/null 2>&1 || true
+  pkill -f "You are executing a local Ralph loop task with no GitHub dependency." >/dev/null 2>&1 || true
 }
 
 requeue_in_progress() {
@@ -49,6 +56,12 @@ start_daemon() {
   ensure_layout
   scripts/ralph_local_control.sh on >/dev/null
   requeue_in_progress
+  cleanup_stray_local_processes
+  if [ "${REQUIRE_CHATGPT_AUTH}" = "true" ] && ! scripts/codex_auth_status.sh --require-chatgpt >/dev/null; then
+    echo "ralph-local start blocked: ChatGPT login mode check failed."
+    echo "Run: scripts/codex_auth_status.sh"
+    return 1
+  fi
 
   if is_running; then
     echo "ralph-local already running (pid=$(cat "${PID_FILE}"))"
@@ -66,20 +79,32 @@ start_daemon() {
 
   if command -v setsid >/dev/null 2>&1; then
     nohup setsid env \
+      -u OPENAI_API_KEY \
+      -u OPENAI_BASE_URL \
+      -u OPENAI_API_BASE \
+      -u OPENAI_ORGANIZATION \
+      -u OPENAI_ORG_ID \
       MAX_LOOPS=0 \
       RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" \
       RALPH_RUN_SCRIPT="${RUN_SCRIPT}" \
       RALPH_LOCAL_TRUST_MODE="${TRUST_MODE}" \
+      RALPH_REQUIRE_CHATGPT_AUTH="${REQUIRE_CHATGPT_AUTH}" \
       AGENT_CODEX_SANDBOX="${LOCAL_SANDBOX}" \
       AGENT_CODEX_APPROVAL="${LOCAL_APPROVAL}" \
       OMX_SAFE_MODE="${omx_mode}" \
       "${SUPERVISOR_SCRIPT}" >>"${LOG_FILE}" 2>&1 < /dev/null &
   else
     nohup env \
+      -u OPENAI_API_KEY \
+      -u OPENAI_BASE_URL \
+      -u OPENAI_API_BASE \
+      -u OPENAI_ORGANIZATION \
+      -u OPENAI_ORG_ID \
       MAX_LOOPS=0 \
       RALPH_IDLE_SLEEP_SEC="${IDLE_SLEEP_SEC}" \
       RALPH_RUN_SCRIPT="${RUN_SCRIPT}" \
       RALPH_LOCAL_TRUST_MODE="${TRUST_MODE}" \
+      RALPH_REQUIRE_CHATGPT_AUTH="${REQUIRE_CHATGPT_AUTH}" \
       AGENT_CODEX_SANDBOX="${LOCAL_SANDBOX}" \
       AGENT_CODEX_APPROVAL="${LOCAL_APPROVAL}" \
       OMX_SAFE_MODE="${omx_mode}" \
@@ -104,6 +129,7 @@ stop_daemon() {
 
   if ! is_running; then
     requeue_in_progress
+    cleanup_stray_local_processes
     rm -f "${PID_FILE}"
     echo "ralph-local is already stopped"
     return 0
@@ -117,6 +143,7 @@ stop_daemon() {
   fi
   rm -f "${PID_FILE}"
   requeue_in_progress
+  cleanup_stray_local_processes
   echo "ralph-local stopped"
 }
 

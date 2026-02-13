@@ -21,10 +21,16 @@ require_cmd() {
 require_cmd codex
 require_cmd git
 require_cmd awk
+require_cmd flock
 
 CODEX_SAFETY_GUARD_CMD="${CODEX_SAFETY_GUARD_CMD:-scripts/codex_safety_guard.sh}"
 if [ ! -x "${CODEX_SAFETY_GUARD_CMD}" ]; then
   echo "codex safety guard script is missing or not executable: ${CODEX_SAFETY_GUARD_CMD}" >&2
+  exit 2
+fi
+CODEX_AUTH_STATUS_CMD="${CODEX_AUTH_STATUS_CMD:-scripts/codex_auth_status.sh}"
+if [ ! -x "${CODEX_AUTH_STATUS_CMD}" ]; then
+  echo "codex auth status script is missing or not executable: ${CODEX_AUTH_STATUS_CMD}" >&2
   exit 2
 fi
 
@@ -38,6 +44,7 @@ LOGS_DIR="${RALPH_ROOT}/logs"
 STATE_FILE="${RALPH_ROOT}/state.env"
 CONTEXT_FILE="${RALPH_ROOT}/context.md"
 PUBLISH_STATE_FILE="${RALPH_ROOT}/state.last_publish"
+RUN_LOCK_FILE="${RALPH_ROOT}/run.lock"
 
 MAX_LOOPS="${MAX_LOOPS:-0}" # 0 means infinite
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-20}"
@@ -47,6 +54,8 @@ VALIDATE_CMD="${RALPH_VALIDATE_CMD:-make test && make test-sidecar && make lint}
 VALIDATE_ROLES="${RALPH_VALIDATE_ROLES:-developer,qa}"
 RECOVER_IN_PROGRESS="${RALPH_RECOVER_IN_PROGRESS:-true}"
 LOCAL_TRUST_MODE="${RALPH_LOCAL_TRUST_MODE:-false}"
+REQUIRE_CHATGPT_AUTH="${RALPH_REQUIRE_CHATGPT_AUTH:-true}"
+STRIP_API_ENV="${RALPH_STRIP_API_ENV:-true}"
 TRANSIENT_REQUEUE_ENABLED="${RALPH_TRANSIENT_REQUEUE_ENABLED:-true}"
 TRANSIENT_RETRY_SLEEP_SEC="${RALPH_TRANSIENT_RETRY_SLEEP_SEC:-20}"
 AUTO_PUBLISH_ENABLED="${RALPH_AUTO_PUBLISH_ENABLED:-true}"
@@ -72,6 +81,12 @@ fi
 mkdir -p "${QUEUE_DIR}" "${IN_PROGRESS_DIR}" "${DONE_DIR}" "${BLOCKED_DIR}" "${REPORTS_DIR}" "${LOGS_DIR}"
 [ -f "${STATE_FILE}" ] || printf 'RALPH_LOCAL_ENABLED=true\n' > "${STATE_FILE}"
 
+exec 9>"${RUN_LOCK_FILE}"
+if ! flock -n 9; then
+  echo "[ralph-local] another runner instance is active; exiting"
+  exit 0
+fi
+
 recover_in_progress_on_boot() {
   local src id dst
   [ "${RECOVER_IN_PROGRESS}" = "true" ] || return 0
@@ -87,6 +102,22 @@ recover_in_progress_on_boot() {
 }
 
 recover_in_progress_on_boot
+
+strip_api_auth_env() {
+  [ "${STRIP_API_ENV}" = "true" ] || return 0
+  unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE OPENAI_ORGANIZATION OPENAI_ORG_ID
+}
+
+enforce_chatgpt_auth_mode() {
+  [ "${REQUIRE_CHATGPT_AUTH}" = "true" ] || return 0
+  if ! "${CODEX_AUTH_STATUS_CMD}" --require-chatgpt >/dev/null; then
+    echo "[ralph-local] auth preflight failed (ChatGPT Pro mode required)."
+    return 1
+  fi
+}
+
+strip_api_auth_env
+enforce_chatgpt_auth_mode
 
 ensure_branch_strategy() {
   local target current

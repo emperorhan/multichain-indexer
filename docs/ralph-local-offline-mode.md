@@ -37,6 +37,7 @@ complexity: high
    - `scripts/ralph_local_daemon.sh start`
    - 기본값: `RALPH_LOCAL_TRUST_MODE=true` (approval 대기 없음, `danger-full-access`)
    - 보수 모드: `RALPH_LOCAL_TRUST_MODE=false scripts/ralph_local_daemon.sh start`
+   - 인증 점검: `scripts/codex_auth_status.sh` (별칭: `lrauth`)
 3. 루프 실행(내부):
    - `MAX_LOOPS=0 scripts/ralph_local_run.sh` (`daemon.sh start`가 내부에서 실행)
 4. 상태 확인:
@@ -57,6 +58,15 @@ complexity: high
   - `OMX_SAFE_MODE=false`로 safety guard sandbox 차단 해제
 - Safe mode(`RALPH_LOCAL_TRUST_MODE=false`):
   - 기존 sandbox/guard 정책 유지
+
+## 인증 모드 (Pro 사용량 기반)
+- 로컬 Ralph는 기본적으로 `ChatGPT 로그인` 모드만 허용한다.
+  - 강제 변수: `RALPH_REQUIRE_CHATGPT_AUTH=true` (기본)
+  - 시작 전 점검: `scripts/codex_auth_status.sh --require-chatgpt`
+- 데몬 시작 시 `OPENAI_API_KEY` 등 API 키 관련 환경변수는 자동으로 제거되어 자식 프로세스에 전달되지 않는다.
+- `codex_auth_status.sh` 출력이 아래와 같아야 정상:
+  - `codex_auth_mode=chatgpt`
+  - `openai_api_key_env=unset`
 
 ## 자가 복구 동작
 - 모델 네트워크 오류(예: stream disconnect, rate-limit, timeout)는 기본적으로 `blocked` 처리하지 않고 자동 재큐잉한다.
