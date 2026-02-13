@@ -20,6 +20,18 @@
 3. 코드 제출: `ready-for-review` (Draft PR 링크 코멘트)
 4. 중단/승인대기: `blocked + decision-needed + needs-opinion`
 
+## Discovery Loop (Issue Scout)
+- 워크플로우: `.github/workflows/issue-scout.yml`
+- 주기: 30분
+- 발굴 소스:
+  - 최근 실패한 GitHub Actions run
+  - 코드의 `TODO|FIXME|HACK|XXX` 마커
+- 생성 라벨:
+  - `agent/discovered`
+  - `autonomous + ready` (즉시 실행 가능한 큐 입력)
+- 중복 방지:
+  - 이슈 본문의 `[agent-scout:<fingerprint>]` 지문으로 dedup
+
 ## Retry and Escalation
 - 실행기(`AGENT_EXEC_CMD`) 실패 시 자동 재시도한다.
 - 재시도 한도(`AGENT_MAX_AUTO_RETRIES`)를 초과하면 자동 실행을 멈추고 `decision-needed + needs-opinion`으로 전환한다.
@@ -47,6 +59,10 @@
 - `AGENT_MAX_ISSUES_PER_RUN` (기본 `2`): 한 번의 루프에서 처리할 최대 이슈 수
 - `AGENT_MAX_AUTO_RETRIES` (기본 `2`): 동일 이슈 자동 재시도 횟수
 - `DECISION_REMINDER_HOURS` (기본 `24`): `decision-needed` 리마인드 코멘트 간격(시간)
+- `AGENT_SCOUT_ENABLED` (기본 `true`): issue scout 활성화
+- `SCOUT_MAX_ISSUES_PER_RUN` (기본 `2`): issue scout 1회 실행당 생성할 최대 이슈 수
+- `SCOUT_FAIL_WINDOW_HOURS` (기본 `24`): 실패 CI 발굴 시간창
+- `SCOUT_TODO_LIMIT` (기본 `20`): TODO/FIXME 스캔 상한
 
 ### 2) Runner 선택 (권장)
 - 이름: `AGENT_RUNNER`

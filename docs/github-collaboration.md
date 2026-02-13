@@ -26,6 +26,17 @@
 - `risk/high` 라벨 이슈는 사람 확인 전 자동 실행하지 않는다.
 - `AGENT_MAX_AUTO_RETRIES`를 넘겨 실패하면 사람 확인 상태로 자동 전환한다.
 
+## Issue Discovery Loop
+- 워크플로우: `.github/workflows/issue-scout.yml`
+- 발굴 대상:
+  - 최근 실패한 CI 실행
+  - 코드 내 `TODO|FIXME|HACK|XXX`
+- 생성 이슈 라벨:
+  - `agent/discovered`
+  - `autonomous + ready`
+- 중복 생성 방지:
+  - 이슈 본문 fingerprint(`[agent-scout:*]`) 기준 dedup
+
 권장 실행 순서:
 1. `Autonomous Task` 이슈 생성
 2. `autonomous`, `ready`, `priority/*`, `area/*` 라벨 설정
@@ -44,6 +55,7 @@
 - `priority/p0` ~ `priority/p3`
 - `sev0` ~ `sev3`
 - `decision-needed`, `needs-opinion`, `blocked`, `ready-for-review`
+- `agent/discovered`
 
 ## Required Status Checks
 - `Go Test + Build`
