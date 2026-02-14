@@ -72,6 +72,68 @@ func setupBeginTx(mockDB *storemocks.MockTxBeginner) {
 		})
 }
 
+type testCursorStateRepo struct {
+	LastValue    *string
+	LastSequence int64
+	Upserts      []int64
+}
+
+func (r *testCursorStateRepo) Get(_ context.Context, _ model.Chain, _ model.Network, _ string) (*model.AddressCursor, error) {
+	return nil, nil
+}
+
+func (r *testCursorStateRepo) UpsertTx(
+	_ context.Context,
+	_ *sql.Tx,
+	_ model.Chain,
+	_ model.Network,
+	_ string,
+	cursorValue *string,
+	cursorSequence int64,
+	_ int64,
+) error {
+	if cursorValue != nil {
+		v := *cursorValue
+		r.LastValue = &v
+	}
+	r.LastSequence = cursorSequence
+	r.Upserts = append(r.Upserts, cursorSequence)
+	return nil
+}
+
+func (r *testCursorStateRepo) EnsureExists(_ context.Context, _ model.Chain, _ model.Network, _ string) error {
+	return nil
+}
+
+type testIndexerConfigStateRepo struct {
+	HighestWatermark int64
+	Requested       []int64
+	Applied        []int64
+}
+
+func (r *testIndexerConfigStateRepo) Get(_ context.Context, _ model.Chain, _ model.Network) (*model.IndexerConfig, error) {
+	return nil, nil
+}
+
+func (r *testIndexerConfigStateRepo) Upsert(_ context.Context, _ *model.IndexerConfig) error {
+	return nil
+}
+
+func (r *testIndexerConfigStateRepo) UpdateWatermarkTx(
+	_ context.Context,
+	_ *sql.Tx,
+	_ model.Chain,
+	_ model.Network,
+	ingestedSequence int64,
+) error {
+	r.Requested = append(r.Requested, ingestedSequence)
+	if ingestedSequence > r.HighestWatermark {
+		r.HighestWatermark = ingestedSequence
+	}
+	r.Applied = append(r.Applied, r.HighestWatermark)
+	return nil
+}
+
 func Test_isCanonicalityDrift(t *testing.T) {
 	oldSig := "old_sig"
 	newSig := "new_sig"
@@ -139,6 +201,126 @@ func TestProcessBatch_ReorgDrift_TriggersDeterministicRollbackPath(t *testing.T)
 	err = ing.processBatch(context.Background(), batch)
 	require.NoError(t, err)
 	assert.Equal(t, 2, rollbackCalls)
+}
+
+func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := storemocks.NewMockTxBeginner(ctrl)
+	mockTxRepo := storemocks.NewMockTransactionRepository(ctrl)
+	mockBERepo := storemocks.NewMockBalanceEventRepository(ctrl)
+	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
+	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
+
+	cursorRepo := &testCursorStateRepo{}
+	configRepo := &testIndexerConfigStateRepo{}
+	// Seed a high-watermark state to emulate previously observed progress.
+	configRepo.HighestWatermark = 300
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, cursorRepo, configRepo, normalizedCh, slog.Default())
+
+	seedCursor := "seed_sig"
+	seedCursorSeq := int64(300)
+	seedBatch := event.NormalizedBatch{
+		Chain:           model.ChainSolana,
+		Network:         model.NetworkDevnet,
+		Address:         "addr1",
+		NewCursorValue:  &seedCursor,
+		NewCursorSequence: seedCursorSeq,
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:      "seed_tx",
+				BlockCursor: 300,
+				FeeAmount:   "0",
+				FeePayer:    "other",
+				Status:      model.TxStatusSuccess,
+				ChainData:   json.RawMessage("{}"),
+			},
+		},
+	}
+	seedTxID := uuid.New()
+	setupBeginTx(mockDB)
+	mockTxRepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(seedTxID, nil)
+
+	require.NoError(t, ing.processBatch(context.Background(), seedBatch))
+	assert.Equal(t, int64(300), cursorRepo.LastSequence)
+	assert.Equal(t, []int64{300}, cursorRepo.Upserts)
+	assert.Equal(t, int64(300), configRepo.HighestWatermark)
+	assert.Equal(t, []int64{300}, configRepo.Requested)
+	assert.Equal(t, []int64{300}, configRepo.Applied)
+
+	// Recovery rollback should not regress watermark sequence (GREATEST semantics),
+	// while cursor is allowed to rewind for replay.
+	rewindSig := "rewind_sig"
+	rewindSigSeq := int64(100)
+	ing.reorgHandler = func(ctx context.Context, tx *sql.Tx, got event.NormalizedBatch) error {
+		if err := configRepo.UpdateWatermarkTx(ctx, tx, got.Chain, got.Network, rewindSigSeq); err != nil {
+			return err
+		}
+		return cursorRepo.UpsertTx(ctx, tx, got.Chain, got.Network, got.Address, &rewindSig, rewindSigSeq, 0)
+	}
+
+	newSig := "post_recovery_sig"
+	recoveryBatch := event.NormalizedBatch{
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		Address:                "addr1",
+		PreviousCursorValue:    &seedCursor,
+		PreviousCursorSequence:  seedCursorSeq,
+		NewCursorValue:         &newSig,
+		NewCursorSequence:      seedCursorSeq,
+	}
+	setupBeginTx(mockDB)
+	require.NoError(t, ing.processBatch(context.Background(), recoveryBatch))
+	assert.Equal(t, int64(100), cursorRepo.LastSequence)
+	assert.Equal(t, int64(300), configRepo.HighestWatermark)
+	assert.Equal(t, []int64{300, 100}, cursorRepo.Upserts)
+	assert.Equal(t, []int64{300, 100}, configRepo.Requested)
+	assert.Equal(t, []int64{300, 300}, configRepo.Applied)
+
+	replaySig := "replay_sig"
+	replayBatch := event.NormalizedBatch{
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		Address:                "addr1",
+		PreviousCursorValue:    &rewindSig,
+		PreviousCursorSequence:  rewindSigSeq,
+		NewCursorValue:         &replaySig,
+		NewCursorSequence:      seedCursorSeq,
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:      "seed_tx",
+				BlockCursor: 300,
+				FeeAmount:   "0",
+				FeePayer:    "other",
+				Status:      model.TxStatusSuccess,
+				ChainData:   json.RawMessage("{}"),
+			},
+		},
+	}
+	setupBeginTx(mockDB)
+	mockTxRepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(seedTxID, nil)
+
+	require.NoError(t, ing.processBatch(context.Background(), replayBatch))
+	assert.Equal(t, int64(300), cursorRepo.LastSequence)
+	assert.Equal(t, []int64{300, 100, 300}, cursorRepo.Upserts)
+	assert.Equal(t, int64(300), configRepo.HighestWatermark)
+	assert.Equal(t, []int64{300, 100, 300}, configRepo.Requested)
+	assert.Equal(t, []int64{300, 300, 300}, configRepo.Applied)
+	assert.Equal(t, int64(300), configRepo.Applied[len(configRepo.Applied)-1])
+
+	// Watermark application must remain monotonic even when a rollback
+	// path requests a rewind.
+	for i := 1; i < len(configRepo.Applied); i++ {
+		assert.GreaterOrEqual(t, configRepo.Applied[i], configRepo.Applied[i-1])
+	}
+
+	assert.Greater(t, cursorRepo.Upserts[2], cursorRepo.Upserts[1])
+	assert.GreaterOrEqual(t, configRepo.HighestWatermark, cursorRepo.Upserts[2])
 }
 
 func TestProcessBatch_Deposit(t *testing.T) {

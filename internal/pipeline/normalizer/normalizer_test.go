@@ -91,6 +91,28 @@ func loadSolanaFixture(t *testing.T, fixture string) *sidecarv1.TransactionResul
 	return loadBaseFeeFixture(t, fixture)
 }
 
+type tupleSignature struct {
+	TxHash       string
+	EventID      string
+	EventCategory string
+	Delta        string
+}
+
+func orderedCanonicalTuples(batch event.NormalizedBatch) []tupleSignature {
+	tuples := make([]tupleSignature, 0)
+	for _, tx := range batch.Transactions {
+		for _, be := range tx.BalanceEvents {
+			tuples = append(tuples, tupleSignature{
+				TxHash:       tx.TxHash,
+				EventID:      be.EventID,
+				EventCategory: string(be.EventCategory),
+				Delta:        be.Delta,
+			})
+		}
+	}
+	return tuples
+}
+
 func fixtureBaseFeeEventsByCategory(events []event.NormalizedBalanceEvent, category model.EventCategory) []event.NormalizedBalanceEvent {
 	out := make([]event.NormalizedBalanceEvent, 0, len(events))
 	for _, be := range events {
@@ -319,6 +341,65 @@ func TestProcessBatch_EventIDDeterminism(t *testing.T) {
 	require.Len(t, second.Transactions[0].BalanceEvents, 1)
 	assert.Equal(t, first.Transactions[0].BalanceEvents[0].EventID, second.Transactions[0].BalanceEvents[0].EventID)
 	assert.NotEmpty(t, first.Transactions[0].BalanceEvents[0].EventID)
+}
+
+func TestProcessBatch_PersistedArtifactsReplayHasZeroCanonicalTupleDiff(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+	response := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{
+			loadSolanaFixture(t, "solana_cpi_ownership_scoped.json"),
+		},
+	}
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Times(2).
+		Return(response, nil)
+
+	runNormalizerOnce := func() event.NormalizedBatch {
+		normalizedCh := make(chan event.NormalizedBatch, 1)
+		n := &Normalizer{
+			sidecarTimeout: 30_000_000_000, // 30s
+			normalizedCh:   normalizedCh,
+			logger:         slog.Default(),
+		}
+
+		batch := event.RawBatch{
+			Chain:   model.ChainSolana,
+			Network: model.NetworkDevnet,
+			Address: "addr_owner",
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"sig_scope_1"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: "sig_scope_1", Sequence: 100},
+			},
+		}
+
+		err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
+		require.NoError(t, err)
+
+		return <-normalizedCh
+	}
+
+	persistedDir := t.TempDir()
+	persistedPath := filepath.Join(persistedDir, "normalized-batch.json")
+
+	first := runNormalizerOnce()
+	persistedPayload, err := json.Marshal(first)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(persistedPath, persistedPayload, 0o600))
+
+	second := runNormalizerOnce()
+
+	var persisted event.NormalizedBatch
+	persistedRaw, err := os.ReadFile(persistedPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(persistedRaw, &persisted))
+
+	persistedTuples := orderedCanonicalTuples(persisted)
+	replayTuples := orderedCanonicalTuples(second)
+	assert.Equal(t, persistedTuples, replayTuples)
 }
 
 func TestProcessBatch_BaseSepoliaFeeDecomposition_DeterministicComponents(t *testing.T) {
