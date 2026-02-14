@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -25,6 +25,8 @@ Execution queue (dependency-ordered):
 14. `I-0123` (`M9-S2`) QA counterexample gate for adapter contract drift + runtime/replay invariants
 15. `I-0127` (`M10-S1`) transient-failure recovery hardening + deterministic retry-resume guard
 16. `I-0128` (`M10-S2`) QA counterexample gate for transient-failure recovery + duplicate/cursor invariants
+17. `I-0130` (`M11-S1`) deterministic retry-boundary hardening across fetch/normalize/ingest
+18. `I-0131` (`M11-S2`) QA counterexample gate for retry-boundary classification + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -310,7 +312,7 @@ Prevent RPC interface drift between mandatory chain runtime clients and test dou
 - Gate: strict contract parity checks may require broad test-double updates when adapter interfaces evolve.
 - Fallback: phase parity enforcement by mandatory chain adapters first; track non-mandatory parity gaps with explicit backlog issue links until promoted.
 
-### M10. Operational Continuity Reliability Tranche C0004 (P0, Next)
+### M10. Operational Continuity Reliability Tranche C0004 (P0, Completed)
 
 #### Objective
 Guarantee transient failure recovery is deterministic and replay-safe so RPC/decoder/ingestion errors do not silently advance cursors or duplicate canonical asset-volatility events.
@@ -345,6 +347,41 @@ Guarantee transient failure recovery is deterministic and replay-safe so RPC/dec
 - Gate: retry hardening may hide persistent provider-side faults if transient/permanent error boundaries are too broad.
 - Fallback: enforce bounded retries with explicit `transient_recovery_exhausted` diagnostics and required follow-up issue fanout when exhaustion occurs.
 
+### M11. Retry-Boundary Determinism Reliability Tranche C0005 (P0, Next)
+
+#### Objective
+Eliminate nondeterministic retry behavior by enforcing explicit transient-vs-terminal error boundaries so mandatory-chain runtime paths recover when safe, fail fast when terminal, and never compromise canonical/replay/cursor/runtime invariants.
+
+#### Entry Gate
+- `M10` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M11-S1` (`I-0130`): implement deterministic retry-boundary classification and stage-aware retry handling across mandatory-chain fetcher/normalizer/ingester paths.
+2. `M11-S2` (`I-0131`): execute QA counterexample gate for transient-vs-terminal boundary behavior and invariant evidence.
+
+#### Definition Of Done
+1. Retryability is decided by explicit deterministic classification rather than broad "retry on any error" behavior in mandatory-chain runtime stages.
+2. Terminal counterexample failures fail on first attempt and do not advance cursor/watermark state.
+3. Transient fail-first/retry paths continue to recover deterministically on both mandatory chains with stable canonical tuples and no duplicate canonical IDs.
+4. Retry exhaustion produces explicit stage-scoped diagnostics suitable for QA follow-up issue fanout.
+
+#### Test Contract
+1. Unit tests cover retryability classification for representative transient and terminal error classes used by fetch/normalize/ingest stages.
+2. Stage-level tests assert terminal errors are not retried and transient errors are retried up to bounded limits.
+3. Dual-chain replay/idempotency/cursor tests remain green with deterministic canonical tuple ordering and zero duplicate canonical IDs.
+4. QA executes required validation commands plus at least one transient and one terminal counterexample scenario, then records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` unexpected retries on terminal counterexample fixtures in mandatory-chain fetch/normalize/ingest tests.
+2. `0` cursor or watermark advancement on terminal or retry-exhausted pre-commit failure paths.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: misclassifying provider/client failures can reduce recovery rate (too strict) or mask persistent faults (too broad).
+- Fallback: default unknown errors to terminal classification, then promote to retryable only with deterministic tests and explicit QA evidence.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -376,10 +413,12 @@ Completed milestones/slices:
 12. `I-0118`
 13. `I-0122`
 14. `I-0123`
+15. `I-0127`
+16. `I-0128`
 
 Active downstream queue from this plan:
-1. `I-0127`
-2. `I-0128`
+1. `I-0130`
+2. `I-0131`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

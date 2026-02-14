@@ -185,6 +185,29 @@ Pass Evidence:
 - Counterexample outcomes are documented with invariant-level verdicts for fail-first/retry recovery checks.
 - Follow-up issue links are present for failures (if any).
 
+### I-0130 (M11-S1)
+Assertions:
+1. Mandatory-chain retry loops in fetcher/normalizer/ingester use explicit deterministic transient-vs-terminal classification instead of broad retry-on-any-error behavior.
+2. Terminal counterexample failures fail on first attempt and do not advance cursor/watermark state.
+3. Transient fail-first/retry paths on both mandatory chains recover deterministically with stable canonical tuples and zero duplicate canonical IDs.
+4. Retry exhaustion emits explicit stage-scoped diagnostics suitable for QA follow-up issue fanout.
+
+Pass Evidence:
+- Unit tests cover representative transient and terminal classification outcomes used by runtime retry loops.
+- Stage-level tests prove terminal no-retry behavior and bounded transient retry behavior.
+- Dual-chain replay/idempotency/cursor regressions remain green with no duplicate canonical IDs or cursor regression.
+
+### I-0131 (M11-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M11 invariants.
+2. QA executes both transient and terminal counterexample scenarios for retry-boundary behavior.
+3. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of terminal no-retry and transient bounded-retry behavior.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -194,3 +217,4 @@ Release recommendation must be `fail` if any condition holds:
 5. Mandatory chain adapter runtime wiring cannot be proven in runtime-path evidence.
 6. Mandatory-chain adapter RPC contract parity cannot be proven in deterministic test evidence.
 7. Transient-failure recovery invariants cannot be proven with deterministic fail-first/retry evidence for both mandatory chains.
+8. Retry-boundary determinism cannot be proven (terminal no-retry and transient bounded-retry behavior not evidenced for both mandatory chains).

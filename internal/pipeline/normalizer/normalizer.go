@@ -21,15 +21,25 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const (
+	defaultProcessRetryMaxAttempts = 3
+	defaultRetryDelayInitial       = 100 * time.Millisecond
+	defaultRetryDelayMax           = 1 * time.Second
+)
+
 // Normalizer receives RawBatches, calls sidecar gRPC for decoding,
 // and produces NormalizedBatches.
 type Normalizer struct {
-	sidecarAddr    string
-	sidecarTimeout time.Duration
-	rawBatchCh     <-chan event.RawBatch
-	normalizedCh   chan<- event.NormalizedBatch
-	workerCount    int
-	logger         *slog.Logger
+	sidecarAddr      string
+	sidecarTimeout   time.Duration
+	rawBatchCh       <-chan event.RawBatch
+	normalizedCh     chan<- event.NormalizedBatch
+	workerCount      int
+	logger           *slog.Logger
+	retryMaxAttempts int
+	retryDelayStart  time.Duration
+	retryDelayMax    time.Duration
+	sleepFn          func(context.Context, time.Duration) error
 }
 
 func New(
@@ -41,12 +51,16 @@ func New(
 	logger *slog.Logger,
 ) *Normalizer {
 	return &Normalizer{
-		sidecarAddr:    sidecarAddr,
-		sidecarTimeout: sidecarTimeout,
-		rawBatchCh:     rawBatchCh,
-		normalizedCh:   normalizedCh,
-		workerCount:    workerCount,
-		logger:         logger.With("component", "normalizer"),
+		sidecarAddr:      sidecarAddr,
+		sidecarTimeout:   sidecarTimeout,
+		rawBatchCh:       rawBatchCh,
+		normalizedCh:     normalizedCh,
+		workerCount:      workerCount,
+		logger:           logger.With("component", "normalizer"),
+		retryMaxAttempts: defaultProcessRetryMaxAttempts,
+		retryDelayStart:  defaultRetryDelayInitial,
+		retryDelayMax:    defaultRetryDelayMax,
+		sleepFn:          sleepContext,
 	}
 }
 
@@ -89,7 +103,7 @@ func (n *Normalizer) worker(ctx context.Context, workerID int, client sidecarv1.
 			if !ok {
 				return
 			}
-			if err := n.processBatch(ctx, log, client, batch); err != nil {
+			if err := n.processBatchWithRetry(ctx, log, client, batch); err != nil {
 				log.Error("process batch failed",
 					"address", batch.Address,
 					"error", err,
@@ -98,6 +112,41 @@ func (n *Normalizer) worker(ctx context.Context, workerID int, client sidecarv1.
 			}
 		}
 	}
+}
+
+func (n *Normalizer) processBatchWithRetry(
+	ctx context.Context,
+	log *slog.Logger,
+	client sidecarv1.ChainDecoderClient,
+	batch event.RawBatch,
+) error {
+	maxAttempts := n.effectiveRetryMaxAttempts()
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := n.processBatch(ctx, log, client, batch); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			lastErr = err
+			if attempt == maxAttempts {
+				break
+			}
+			log.Warn("process batch attempt failed; retrying",
+				"address", batch.Address,
+				"attempt", attempt,
+				"max_attempts", maxAttempts,
+				"error", err,
+			)
+			if err := n.sleep(ctx, n.retryDelay(attempt)); err != nil {
+				return err
+			}
+			continue
+		}
+		return nil
+	}
+
+	return fmt.Errorf("normalize batch retry exhausted: %w", lastErr)
 }
 
 func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client sidecarv1.ChainDecoderClient, batch event.RawBatch) error {
@@ -855,4 +904,53 @@ func mapTokenTypeToAssetType(tokenType model.TokenType) string {
 
 func balanceEventPath(outerInstructionIndex, innerInstructionIndex int32) string {
 	return fmt.Sprintf("outer:%d|inner:%d", outerInstructionIndex, innerInstructionIndex)
+}
+
+func (n *Normalizer) effectiveRetryMaxAttempts() int {
+	if n.retryMaxAttempts <= 0 {
+		return 1
+	}
+	return n.retryMaxAttempts
+}
+
+func (n *Normalizer) retryDelay(attempt int) time.Duration {
+	delay := n.retryDelayStart
+	if delay <= 0 {
+		return 0
+	}
+	if attempt <= 1 {
+		if n.retryDelayMax > 0 && delay > n.retryDelayMax {
+			return n.retryDelayMax
+		}
+		return delay
+	}
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if n.retryDelayMax > 0 && delay >= n.retryDelayMax {
+			return n.retryDelayMax
+		}
+	}
+	return delay
+}
+
+func (n *Normalizer) sleep(ctx context.Context, delay time.Duration) error {
+	if n.sleepFn == nil {
+		n.sleepFn = sleepContext
+	}
+	return n.sleepFn(ctx, delay)
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

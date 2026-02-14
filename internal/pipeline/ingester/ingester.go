@@ -8,11 +8,18 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/google/uuid"
+)
+
+const (
+	defaultProcessRetryMaxAttempts = 3
+	defaultRetryDelayInitial       = 100 * time.Millisecond
+	defaultRetryDelayMax           = 1 * time.Second
 )
 
 // Ingester is a single-writer that processes NormalizedBatches into the database.
@@ -27,6 +34,10 @@ type Ingester struct {
 	normalizedCh     <-chan event.NormalizedBatch
 	logger           *slog.Logger
 	reorgHandler     func(context.Context, *sql.Tx, event.NormalizedBatch) error
+	retryMaxAttempts int
+	retryDelayStart  time.Duration
+	retryDelayMax    time.Duration
+	sleepFn          func(context.Context, time.Duration) error
 }
 
 func New(
@@ -51,6 +62,10 @@ func New(
 		normalizedCh:     normalizedCh,
 		logger:           logger.With("component", "ingester"),
 		reorgHandler:     nil,
+		retryMaxAttempts: defaultProcessRetryMaxAttempts,
+		retryDelayStart:  defaultRetryDelayInitial,
+		retryDelayMax:    defaultRetryDelayMax,
+		sleepFn:          sleepContext,
 	}
 }
 
@@ -66,7 +81,7 @@ func (ing *Ingester) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if err := ing.processBatch(ctx, batch); err != nil {
+			if err := ing.processBatchWithRetry(ctx, batch); err != nil {
 				ing.logger.Error("process batch failed",
 					"address", batch.Address,
 					"error", err,
@@ -75,6 +90,37 @@ func (ing *Ingester) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (ing *Ingester) processBatchWithRetry(ctx context.Context, batch event.NormalizedBatch) error {
+	maxAttempts := ing.effectiveRetryMaxAttempts()
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := ing.processBatch(ctx, batch); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			lastErr = err
+			if attempt == maxAttempts {
+				break
+			}
+
+			ing.logger.Warn("process batch attempt failed; retrying",
+				"address", batch.Address,
+				"attempt", attempt,
+				"max_attempts", maxAttempts,
+				"error", err,
+			)
+			if err := ing.sleep(ctx, ing.retryDelay(attempt)); err != nil {
+				return err
+			}
+			continue
+		}
+		return nil
+	}
+
+	return fmt.Errorf("process batch retry exhausted: %w", lastErr)
 }
 
 func isCanonicalityDrift(batch event.NormalizedBatch) bool {
@@ -432,4 +478,53 @@ func defaultTokenName(be event.NormalizedBalanceEvent) string {
 		return "Solana"
 	}
 	return "Unknown Token"
+}
+
+func (ing *Ingester) effectiveRetryMaxAttempts() int {
+	if ing.retryMaxAttempts <= 0 {
+		return 1
+	}
+	return ing.retryMaxAttempts
+}
+
+func (ing *Ingester) retryDelay(attempt int) time.Duration {
+	delay := ing.retryDelayStart
+	if delay <= 0 {
+		return 0
+	}
+	if attempt <= 1 {
+		if ing.retryDelayMax > 0 && delay > ing.retryDelayMax {
+			return ing.retryDelayMax
+		}
+		return delay
+	}
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if ing.retryDelayMax > 0 && delay >= ing.retryDelayMax {
+			return ing.retryDelayMax
+		}
+	}
+	return delay
+}
+
+func (ing *Ingester) sleep(ctx context.Context, delay time.Duration) error {
+	if ing.sleepFn == nil {
+		ing.sleepFn = sleepContext
+	}
+	return ing.sleepFn(ctx, delay)
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

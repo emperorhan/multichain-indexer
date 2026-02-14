@@ -779,6 +779,188 @@ func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 	require.NoError(t, ing.processBatch(context.Background(), batch))
 }
 
+func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testing.T) {
+	testCases := []struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		address         string
+		txHash          string
+		blockCursor     int64
+		cursorValue     string
+		contractAddress string
+		programID       string
+		counterparty    string
+		delta           string
+		eventID         string
+	}{
+		{
+			name:            "solana-devnet",
+			chain:           model.ChainSolana,
+			network:         model.NetworkDevnet,
+			address:         "addr-retry-solana",
+			txHash:          "sol-retry-tx-1",
+			blockCursor:     111,
+			cursorValue:     "sol-retry-tx-1",
+			contractAddress: "11111111111111111111111111111111",
+			programID:       "11111111111111111111111111111111",
+			counterparty:    "counterparty-sol",
+			delta:           "1000",
+			eventID:         "solana|devnet|sol-retry-tx-1|tx:outer:0:inner:-1|addr:addr-retry-solana|asset:11111111111111111111111111111111|cat:TRANSFER",
+		},
+		{
+			name:            "base-sepolia",
+			chain:           model.ChainBase,
+			network:         model.NetworkSepolia,
+			address:         "0x1111111111111111111111111111111111111111",
+			txHash:          "0xbase_retry_tx_1",
+			blockCursor:     222,
+			cursorValue:     "0xbase_retry_tx_1",
+			contractAddress: "ETH",
+			programID:       "0xbase-program",
+			counterparty:    "0x2222222222222222222222222222222222222222",
+			delta:           "-1000",
+			eventID:         "base|sepolia|0xbase_retry_tx_1|tx:log:7|addr:0x1111111111111111111111111111111111111111|asset:ETH|cat:TRANSFER",
+		},
+	}
+
+	type canonicalTuple struct {
+		EventID  string
+		TxHash   string
+		Address  string
+		Category model.EventCategory
+		Delta    string
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			_ = ctrl
+
+			normalizedCh := make(chan event.NormalizedBatch, 1)
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+			ing.retryMaxAttempts = 2
+			ing.retryDelayStart = 0
+			ing.retryDelayMax = 0
+			ing.sleepFn = func(context.Context, time.Duration) error { return nil }
+
+			txID := uuid.New()
+			tokenID := uuid.New()
+
+			batch := event.NormalizedBatch{
+				Chain:   tc.chain,
+				Network: tc.network,
+				Address: tc.address,
+				Transactions: []event.NormalizedTransaction{
+					{
+						TxHash:      tc.txHash,
+						BlockCursor: tc.blockCursor,
+						FeeAmount:   "0",
+						FeePayer:    tc.address,
+						Status:      model.TxStatusSuccess,
+						ChainData:   json.RawMessage("{}"),
+						BalanceEvents: []event.NormalizedBalanceEvent{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         model.EventCategoryTransfer,
+								EventAction:           "transfer",
+								ProgramID:             tc.programID,
+								ContractAddress:       tc.contractAddress,
+								Address:               tc.address,
+								CounterpartyAddress:   tc.counterparty,
+								Delta:                 tc.delta,
+								EventID:               tc.eventID,
+								TokenType:             model.TokenTypeNative,
+							},
+						},
+					},
+				},
+				NewCursorValue:    &tc.cursorValue,
+				NewCursorSequence: tc.blockCursor,
+			}
+
+			setupBeginTx(mockDB)
+			setupBeginTx(mockDB)
+
+			mockTxRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, tx *model.Transaction) (uuid.UUID, error) {
+					assert.Equal(t, tc.chain, tx.Chain)
+					assert.Equal(t, tc.network, tx.Network)
+					assert.Equal(t, tc.txHash, tx.TxHash)
+					return txID, nil
+				}).
+				Times(2)
+
+			mockTokenRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, token *model.Token) (uuid.UUID, error) {
+					assert.Equal(t, tc.chain, token.Chain)
+					assert.Equal(t, tc.network, token.Network)
+					assert.Equal(t, tc.contractAddress, token.ContractAddress)
+					return tokenID, nil
+				}).
+				Times(2)
+
+			tuples := make([]canonicalTuple, 0, 2)
+			mockBERepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+					tuples = append(tuples, canonicalTuple{
+						EventID:  be.EventID,
+						TxHash:   be.TxHash,
+						Address:  be.Address,
+						Category: be.EventCategory,
+						Delta:    be.Delta,
+					})
+					return true, nil
+				}).
+				Times(2)
+
+			mockBalanceRepo.EXPECT().
+				AdjustBalanceTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					tokenID, nil, nil,
+					tc.delta, tc.blockCursor, tc.txHash,
+				).
+				Return(nil).
+				Times(2)
+
+			cursorAttempts := 0
+			mockCursorRepo.EXPECT().
+				UpsertTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					&tc.cursorValue, tc.blockCursor, int64(1),
+				).
+				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
+					cursorAttempts++
+					if cursorAttempts == 1 {
+						return errors.New("transient cursor write timeout")
+					}
+					return nil
+				}).
+				Times(2)
+
+			mockConfigRepo.EXPECT().
+				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
+				Return(nil).
+				Times(1)
+
+			normalizedCh <- batch
+			close(normalizedCh)
+
+			require.NoError(t, ing.Run(context.Background()))
+			require.Len(t, tuples, 2)
+			assert.Equal(t, tuples[0], tuples[1], "canonical tuple changed between fail-first and retry attempts")
+			assert.Equal(t, 2, cursorAttempts)
+		})
+	}
+}
+
 func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
 	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
@@ -892,6 +1074,7 @@ func TestIngester_Run_PanicsOnProcessBatchError(t *testing.T) {
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
 	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing.retryMaxAttempts = 1
 
 	normalizedCh <- event.NormalizedBatch{
 		Chain:   model.ChainSolana,

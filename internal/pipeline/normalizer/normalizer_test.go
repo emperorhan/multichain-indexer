@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -1661,6 +1662,113 @@ func TestProcessBatch_DecodeErrorAfterPrefix_FailsFast(t *testing.T) {
 	case got := <-normalizedCh:
 		t.Fatalf("expected no normalized batch, got %+v", got)
 	default:
+	}
+}
+
+func TestProcessBatchWithRetry_TransientDecodeFailureDeterministicAcrossChains(t *testing.T) {
+	testCases := []struct {
+		name        string
+		chain       model.Chain
+		network     model.Network
+		address     string
+		signature   string
+		sequence    int64
+		buildResult func(*testing.T) *sidecarv1.TransactionResult
+	}{
+		{
+			name:      "solana-devnet",
+			chain:     model.ChainSolana,
+			network:   model.NetworkDevnet,
+			address:   "addr_owner",
+			signature: "sig_scope_1",
+			sequence:  100,
+			buildResult: func(t *testing.T) *sidecarv1.TransactionResult {
+				return loadSolanaFixture(t, "solana_cpi_ownership_scoped.json")
+			},
+		},
+		{
+			name:      "base-sepolia",
+			chain:     model.ChainBase,
+			network:   model.NetworkSepolia,
+			address:   "0x1111111111111111111111111111111111111111",
+			signature: "baseSig1",
+			sequence:  200,
+			buildResult: func(t *testing.T) *sidecarv1.TransactionResult {
+				return loadBaseFeeFixture(t, "base_fee_decomposition_complete.json")
+			},
+		},
+	}
+
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id in retry output: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+			normalizedCh := make(chan event.NormalizedBatch, 2)
+			n := &Normalizer{
+				sidecarTimeout:   30 * time.Second,
+				normalizedCh:     normalizedCh,
+				logger:           slog.Default(),
+				retryMaxAttempts: 2,
+				retryDelayStart:  0,
+				retryDelayMax:    0,
+				sleepFn:          func(context.Context, time.Duration) error { return nil },
+			}
+
+			batch := event.RawBatch{
+				Chain:             tc.chain,
+				Network:           tc.network,
+				Address:           tc.address,
+				RawTransactions:   []json.RawMessage{json.RawMessage(`{"tx":"retry"}`)},
+				Signatures:        []event.SignatureInfo{{Hash: tc.signature, Sequence: tc.sequence}},
+				NewCursorValue:    strPtr(tc.signature),
+				NewCursorSequence: tc.sequence,
+			}
+
+			decodeAttempts := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(4).
+				DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					require.Len(t, req.Transactions, 1)
+					assert.Equal(t, tc.signature, req.Transactions[0].Signature)
+					decodeAttempts++
+					if decodeAttempts%2 == 1 {
+						return nil, errors.New("sidecar unavailable")
+					}
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+						Results: []*sidecarv1.TransactionResult{
+							tc.buildResult(t),
+						},
+					}, nil
+				})
+
+			require.NoError(t, n.processBatchWithRetry(context.Background(), slog.Default(), mockClient, batch))
+			first := <-normalizedCh
+			require.NoError(t, n.processBatchWithRetry(context.Background(), slog.Default(), mockClient, batch))
+			second := <-normalizedCh
+
+			assert.Equal(t, orderedCanonicalTuples(first), orderedCanonicalTuples(second), "canonical tuple order drifted after fail-first/retry recovery")
+			assertNoDuplicateCanonicalIDs(t, first)
+			assertNoDuplicateCanonicalIDs(t, second)
+			assert.Equal(t, tc.sequence, first.NewCursorSequence)
+			assert.Equal(t, tc.sequence, second.NewCursorSequence)
+			assert.Equal(t, 4, decodeAttempts)
+		})
 	}
 }
 
