@@ -163,6 +163,28 @@ Pass Evidence:
 - Counterexample outcomes are documented with invariant-level verdicts for mandatory-chain contract drift checks.
 - Follow-up issue links are present for failures (if any).
 
+### I-0127 (M10-S1)
+Assertions:
+1. Injected transient failures in mandatory-chain fetch/normalize/ingest paths do not advance persisted cursor or watermark state before successful commit.
+2. Fail-first then succeed replay runs for Solana and Base preserve deterministic ordered canonical tuples and produce zero duplicate canonical IDs.
+3. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic failure-injection tests exist for at least one fetch/normalize/ingest boundary on both mandatory chains.
+- Recovery replay tests show `0` canonical tuple diffs and `0` duplicate IDs after retry success.
+- Runtime wiring/adapter parity regression tests remain green.
+
+### I-0128 (M10-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M10 invariants.
+2. QA executes at least one counterexample scenario that injects transient failure before commit and verifies deterministic retry recovery.
+3. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes are documented with invariant-level verdicts for fail-first/retry recovery checks.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -171,3 +193,4 @@ Release recommendation must be `fail` if any condition holds:
 4. Required validation commands fail.
 5. Mandatory chain adapter runtime wiring cannot be proven in runtime-path evidence.
 6. Mandatory-chain adapter RPC contract parity cannot be proven in deterministic test evidence.
+7. Transient-failure recovery invariants cannot be proven with deterministic fail-first/retry evidence for both mandatory chains.

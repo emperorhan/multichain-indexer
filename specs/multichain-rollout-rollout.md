@@ -15,9 +15,11 @@
 12. `I-0118` (`M8-S2`): QA counterexample gate for failed-transaction fee coverage.
 13. `I-0122` (`M9-S1`): mandatory-chain adapter RPC contract parity hardening + deterministic drift guard.
 14. `I-0123` (`M9-S2`): QA counterexample gate for adapter contract drift + runtime/replay invariants.
+15. `I-0127` (`M10-S1`): transient-failure recovery hardening + deterministic retry-resume guard.
+16. `I-0128` (`M10-S2`): QA counterexample gate for transient-failure recovery + duplicate/cursor invariants.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -39,6 +41,8 @@ Each slice must be independently releasable:
 10. Before `I-0118`: `I-0117` emits deterministic failed-transaction fee coverage evidence for both mandatory chains.
 11. Before `I-0122`: `I-0118` QA report is `PASS` and no unresolved failed-fee coverage blocker remains.
 12. Before `I-0123`: `I-0122` emits deterministic adapter RPC contract parity evidence for both mandatory chains.
+13. Before `I-0127`: `I-0123` QA report is `PASS` and no unresolved adapter contract drift blocker remains.
+14. Before `I-0128`: `I-0127` emits deterministic fail-first/retry recovery evidence for both mandatory chains.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -47,6 +51,7 @@ Each slice must be independently releasable:
 4. If strict runtime wiring preflight is operationally disruptive, keep strict checks in tests/CI and use explicit local override with warning + QA follow-up.
 5. If failed-transaction fee metadata is missing from provider responses, preserve deterministic no-op behavior and record explicit unavailable markers for follow-up.
 6. If mandatory-chain RPC contract parity checks expose broad legacy fake-client drift, enforce parity on mandatory runtime paths first and file bounded follow-up issues for remaining adapters.
+7. If transient failure retry hardening blurs permanent-error boundaries, keep bounded retries with explicit `transient_recovery_exhausted` diagnostics and require QA follow-up issue fanout.
 
 ## Completion Evidence
 1. Developer slice output:
