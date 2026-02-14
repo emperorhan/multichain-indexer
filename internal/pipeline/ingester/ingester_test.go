@@ -112,6 +112,7 @@ func TestProcessBatch_Deposit(t *testing.T) {
 						Address:               "addr1",
 						CounterpartyAddress:   "otherAddr",
 						Delta:                 "1000000",
+						EventID:               "solana|devnet|sig1|tx:outer:0:inner:-1|addr:addr1|asset:11111111111111111111111111111111|cat:TRANSFER",
 						TokenSymbol:           "SOL",
 						TokenName:             "Solana",
 						TokenDecimals:         9,
@@ -133,13 +134,13 @@ func TestProcessBatch_Deposit(t *testing.T) {
 		Return(tokenID, nil)
 
 	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) error {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
 			assert.Equal(t, model.ChainSolana, be.Chain)
 			assert.Equal(t, "addr1", be.Address)
 			assert.Equal(t, "otherAddr", be.CounterpartyAddress)
 			assert.Equal(t, "1000000", be.Delta)
 			assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
-			return nil
+			return true, nil
 		})
 
 	// Positive delta for deposit
@@ -204,6 +205,7 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 						Address:               "addr1",
 						CounterpartyAddress:   "otherAddr",
 						Delta:                 "-2000000",
+						EventID:               "solana|devnet|sig1|tx:outer:0:inner:-1|addr:addr1|asset:11111111111111111111111111111111|cat:TRANSFER",
 						TokenType:             model.TokenTypeNative,
 					},
 					{
@@ -216,6 +218,7 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 						Address:               "addr1",
 						CounterpartyAddress:   "",
 						Delta:                 "-5000",
+						EventID:               "solana|devnet|sig1|tx:outer:-1:inner:-1|addr:addr1|asset:11111111111111111111111111111111|cat:FEE",
 						TokenSymbol:           "SOL",
 						TokenName:             "Solana",
 						TokenDecimals:         9,
@@ -243,15 +246,15 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 
 	// Two balance event upserts
 	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) error {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
 			assert.Equal(t, "-2000000", be.Delta)
-			return nil
+			return true, nil
 		})
 	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) error {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
 			assert.Equal(t, "-5000", be.Delta)
 			assert.Equal(t, model.EventCategoryFee, be.EventCategory)
-			return nil
+			return true, nil
 		})
 
 	// Two balance adjustments
@@ -311,6 +314,78 @@ func TestProcessBatch_NoEvents(t *testing.T) {
 		Return(txID, nil)
 
 	// No balance event, token, or balance calls
+
+	mockConfigRepo.EXPECT().UpdateWatermarkTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	err := ing.processBatch(context.Background(), batch)
+	require.NoError(t, err)
+}
+
+func TestProcessBatch_DuplicateEventReplayIsNoop(t *testing.T) {
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_ = ctrl
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+
+	txID := uuid.New()
+	tokenID := uuid.New()
+	cursorVal := "sig1"
+	walletID := "wallet-1"
+	orgID := "org-1"
+
+	batch := event.NormalizedBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: "addr1",
+		WalletID: &walletID,
+		OrgID:   &orgID,
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:      "sig1",
+				BlockCursor: 100,
+				FeeAmount:   "5000",
+				FeePayer:    "otherAddr",
+				Status:      model.TxStatusSuccess,
+				ChainData:   json.RawMessage("{}"),
+				BalanceEvents: []event.NormalizedBalanceEvent{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         model.EventCategoryTransfer,
+						EventAction:           "system_transfer",
+						ProgramID:             "11111111111111111111111111111111",
+						ContractAddress:       "11111111111111111111111111111111",
+						Address:               "addr1",
+						CounterpartyAddress:   "otherAddr",
+						Delta:                 "1000000",
+						EventID:               "solana|devnet|sig1|tx:outer:0:inner:-1|addr:addr1|asset:11111111111111111111111111111111|cat:TRANSFER",
+						TokenType:             model.TokenTypeNative,
+					},
+				},
+			},
+		},
+		NewCursorValue:    &cursorVal,
+		NewCursorSequence: 100,
+	}
+
+	setupBeginTx(mockDB)
+
+	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(txID, nil)
+
+	mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(tokenID, nil)
+
+	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(false, nil)
+
+	mockCursorRepo.EXPECT().UpsertTx(
+		gomock.Any(), gomock.Any(),
+		model.ChainSolana, model.NetworkDevnet, "addr1",
+		&cursorVal, int64(100), int64(1),
+	).Return(nil)
 
 	mockConfigRepo.EXPECT().UpdateWatermarkTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)

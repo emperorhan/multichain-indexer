@@ -1,7 +1,9 @@
 package normalizer
 
 import (
+	"crypto/sha256"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -154,6 +156,11 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 			chainData, _ := json.Marshal(be.Metadata)
 			assetType := mapTokenTypeToAssetType(model.TokenType(be.TokenType))
 			eventPath := balanceEventPath(be.OuterInstructionIndex, be.InnerInstructionIndex)
+			eventID := buildCanonicalEventID(
+				batch.Chain, batch.Network,
+				result.TxHash, eventPath,
+				be.Address, be.ContractAddress, model.EventCategory(be.EventCategory),
+			)
 
 			balanceEvent := event.NormalizedBalanceEvent{
 				OuterInstructionIndex: int(be.OuterInstructionIndex),
@@ -170,7 +177,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 				TokenName:             be.TokenName,
 				TokenDecimals:         int(be.TokenDecimals),
 				TokenType:             model.TokenType(be.TokenType),
-				EventID:               "",
+				EventID:               eventID,
 				BlockHash:             "",
 				TxIndex:               -1,
 				EventPath:             eventPath,
@@ -199,6 +206,12 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	}
 
 	return nil
+}
+
+func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, category model.EventCategory) string {
+	canonical := fmt.Sprintf("chain=%s|network=%s|tx=%s|path=%s|actor=%s|asset=%s|category=%s", chain, network, txHash, eventPath, actorAddress, assetID, category)
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
 }
 
 func mapTokenTypeToAssetType(tokenType model.TokenType) string {

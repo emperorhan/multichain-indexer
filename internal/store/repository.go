@@ -34,7 +34,7 @@ type TransactionRepository interface {
 
 // BalanceEventRepository provides access to balance event data.
 type BalanceEventRepository interface {
-	UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) error
+	UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (bool, error)
 }
 
 // BalanceRepository provides access to balance data.

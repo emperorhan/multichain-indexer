@@ -123,6 +123,7 @@ func TestProcessBatch_HappyPath(t *testing.T) {
 	assert.Equal(t, -1, be.InnerInstructionIndex)
 	assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
 	assert.Equal(t, "system_transfer", be.EventAction)
+	assert.NotEmpty(t, be.EventID)
 	assert.Equal(t, "addr1", be.Address)
 	assert.Equal(t, "addr2", be.CounterpartyAddress)
 	assert.Equal(t, "-1000000", be.Delta)
@@ -132,6 +133,92 @@ func TestProcessBatch_HappyPath(t *testing.T) {
 	tx2 := result.Transactions[1]
 	assert.Nil(t, tx2.BlockTime)
 	assert.Empty(t, tx2.BalanceEvents)
+}
+
+func TestProcessBatch_EventIDDeterminism(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 2)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000, // 30s
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	batch := event.RawBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: "addr1",
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":1}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: "sig1", Sequence: 100},
+		},
+	}
+
+	response := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{
+			{
+				TxHash:      "sig1",
+				BlockCursor: 100,
+				Status:      "SUCCESS",
+				BalanceEvents: []*sidecarv1.BalanceEventInfo{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         "TRANSFER",
+						EventAction:           "system_transfer",
+						ProgramId:             "11111111111111111111111111111111",
+						Address:               "addr1",
+						ContractAddress:       "11111111111111111111111111111111",
+						Delta:                 "-1000000",
+						CounterpartyAddress:   "addr2",
+						TokenSymbol:           "SOL",
+						TokenName:             "Solana",
+						TokenDecimals:         9,
+						TokenType:             "NATIVE",
+						Metadata:              map[string]string{},
+					},
+				},
+			},
+		},
+	}
+
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Times(2).
+		Return(response, nil)
+
+	err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
+	require.NoError(t, err)
+	first := <-normalizedCh
+
+	err = n.processBatch(context.Background(), slog.Default(), mockClient, batch)
+	require.NoError(t, err)
+	second := <-normalizedCh
+
+	require.Len(t, first.Transactions, 1)
+	require.Len(t, second.Transactions, 1)
+	require.Len(t, first.Transactions[0].BalanceEvents, 1)
+	require.Len(t, second.Transactions[0].BalanceEvents, 1)
+	assert.Equal(t, first.Transactions[0].BalanceEvents[0].EventID, second.Transactions[0].BalanceEvents[0].EventID)
+	assert.NotEmpty(t, first.Transactions[0].BalanceEvents[0].EventID)
+}
+
+func TestBuildCanonicalEventID_Stable(t *testing.T) {
+	id1 := buildCanonicalEventID(
+		model.ChainSolana, model.NetworkDevnet,
+		"sig1", "outer:0|inner:-1", "addr1", "So11111111111111111111111111111111111111112", model.EventCategoryTransfer,
+	)
+	id2 := buildCanonicalEventID(
+		model.ChainSolana, model.NetworkDevnet,
+		"sig1", "outer:0|inner:-1", "addr1", "So11111111111111111111111111111111111111112", model.EventCategoryTransfer,
+	)
+
+	assert.Equal(t, id1, id2)
+	assert.Len(t, id1, 64)
 }
 
 func TestProcessBatch_DecodeErrors(t *testing.T) {

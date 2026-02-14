@@ -257,11 +257,12 @@ func (m *MockBalanceEventRepository) EXPECT() *MockBalanceEventRepositoryMockRec
 }
 
 // UpsertTx mocks base method.
-func (m *MockBalanceEventRepository) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) error {
+func (m *MockBalanceEventRepository) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpsertTx", ctx, tx, be)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // UpsertTx indicates an expected call of UpsertTx.

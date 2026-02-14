@@ -166,21 +166,24 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				DecoderVersion:        be.DecoderVersion,
 				SchemaVersion:         be.SchemaVersion,
 			}
-			if err := ing.balanceEventRepo.UpsertTx(ctx, dbTx, beModel); err != nil {
+			inserted, err := ing.balanceEventRepo.UpsertTx(ctx, dbTx, beModel)
+			if err != nil {
 				return fmt.Errorf("upsert balance event: %w", err)
 			}
 
-			// 2c. Update balance (delta is already signed)
-			if err := ing.balanceRepo.AdjustBalanceTx(
-				ctx, dbTx,
-				batch.Chain, batch.Network, be.Address,
-				tokenID, batch.WalletID, batch.OrgID,
-				be.Delta, ntx.BlockCursor, ntx.TxHash,
-			); err != nil {
-				return fmt.Errorf("adjust balance: %w", err)
-			}
+			if inserted {
+				// 2c. Update balance (delta is already signed)
+				if err := ing.balanceRepo.AdjustBalanceTx(
+					ctx, dbTx,
+					batch.Chain, batch.Network, be.Address,
+					tokenID, batch.WalletID, batch.OrgID,
+					be.Delta, ntx.BlockCursor, ntx.TxHash,
+				); err != nil {
+					return fmt.Errorf("adjust balance: %w", err)
+				}
 
-			totalEvents++
+				totalEvents++
+			}
 		}
 	}
 
