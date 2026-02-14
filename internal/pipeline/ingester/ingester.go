@@ -154,6 +154,17 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				BlockCursor:           ntx.BlockCursor,
 				BlockTime:             ntx.BlockTime,
 				ChainData:             chainData,
+				EventID:               be.EventID,
+				BlockHash:             be.BlockHash,
+				TxIndex:               be.TxIndex,
+				EventPath:             be.EventPath,
+				EventPathType:         be.EventPathType,
+				ActorAddress:          be.ActorAddress,
+				AssetType:             be.AssetType,
+				AssetID:               be.AssetID,
+				FinalityState:         be.FinalityState,
+				DecoderVersion:        be.DecoderVersion,
+				SchemaVersion:         be.SchemaVersion,
 			}
 			if err := ing.balanceEventRepo.UpsertTx(ctx, dbTx, beModel); err != nil {
 				return fmt.Errorf("upsert balance event: %w", err)

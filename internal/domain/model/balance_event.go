@@ -40,5 +40,16 @@ type BalanceEvent struct {
 	BlockCursor           int64           `db:"block_cursor"`
 	BlockTime             *time.Time      `db:"block_time"`
 	ChainData             json.RawMessage `db:"chain_data"`
+	EventID               string          `json:"event_id" db:"event_id"`
+	BlockHash             string          `json:"block_hash" db:"block_hash"`
+	TxIndex               int64           `json:"tx_index" db:"tx_index"`
+	EventPath             string          `json:"event_path" db:"event_path"`
+	EventPathType         string          `json:"event_path_type" db:"event_path_type"`
+	ActorAddress          string          `json:"actor_address" db:"actor_address"`
+	AssetType             string          `json:"asset_type" db:"asset_type"`
+	AssetID               string          `json:"asset_id" db:"asset_id"`
+	FinalityState         string          `json:"finality_state" db:"finality_state"`
+	DecoderVersion        string          `json:"decoder_version" db:"decoder_version"`
+	SchemaVersion         string          `json:"schema_version" db:"schema_version"`
 	CreatedAt             time.Time       `db:"created_at"`
 }

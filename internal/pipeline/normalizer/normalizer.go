@@ -152,6 +152,8 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		for _, be := range result.BalanceEvents {
 			// Convert metadata map to JSON for chain_data
 			chainData, _ := json.Marshal(be.Metadata)
+			assetType := mapTokenTypeToAssetType(model.TokenType(be.TokenType))
+			eventPath := balanceEventPath(be.OuterInstructionIndex, be.InnerInstructionIndex)
 
 			balanceEvent := event.NormalizedBalanceEvent{
 				OuterInstructionIndex: int(be.OuterInstructionIndex),
@@ -168,6 +170,17 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 				TokenName:             be.TokenName,
 				TokenDecimals:         int(be.TokenDecimals),
 				TokenType:             model.TokenType(be.TokenType),
+				EventID:               "",
+				BlockHash:             "",
+				TxIndex:               -1,
+				EventPath:             eventPath,
+				EventPathType:         "solana_instruction",
+				ActorAddress:          be.Address,
+				AssetType:             assetType,
+				AssetID:               be.ContractAddress,
+				FinalityState:         "finalized",
+				DecoderVersion:        "solana-decoder-v1",
+				SchemaVersion:         "v2",
 			}
 			tx.BalanceEvents = append(tx.BalanceEvents, balanceEvent)
 		}
@@ -186,4 +199,21 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	}
 
 	return nil
+}
+
+func mapTokenTypeToAssetType(tokenType model.TokenType) string {
+	switch tokenType {
+	case model.TokenTypeNative:
+		return "native"
+	case model.TokenTypeNFT:
+		return "nft"
+	case model.TokenTypeFungible:
+		return "fungible_token"
+	default:
+		return "unknown"
+	}
+}
+
+func balanceEventPath(outerInstructionIndex, innerInstructionIndex int32) string {
+	return fmt.Sprintf("outer:%d|inner:%d", outerInstructionIndex, innerInstructionIndex)
 }

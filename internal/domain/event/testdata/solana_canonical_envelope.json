@@ -1,0 +1,13 @@
+{
+  "event_id": "solana|devnet|Fh5j...|outer:1|inner:-1|addr=7nY...",
+  "block_hash": "DqJ...",
+  "tx_index": 0,
+  "event_path": "outer:1|inner:-1|account:0",
+  "event_path_type": "solana_instruction",
+  "actor_address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+  "asset_type": "native",
+  "asset_id": "So11111111111111111111111111111111111111112",
+  "finality_state": "finalized",
+  "decoder_version": "solana-decoder-v1",
+  "schema_version": "v2"
+}

@@ -4,23 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func methodTestClient(handler http.HandlerFunc) (*Client, *httptest.Server) {
-	server := httptest.NewServer(handler)
-	client := NewClient(server.URL, slog.Default())
-	return client, server
+func methodTestClient(handler func(*http.Request) (*http.Response, error)) *Client {
+	client := NewClient("http://rpc.local", nil)
+	client.httpClient = &http.Client{
+		Transport: roundTripFunc(handler),
+	}
+	return client
 }
 
 func TestGetSlot_Success(t *testing.T) {
-	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
+	client := methodTestClient(func(r *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		var req Request
@@ -34,9 +34,10 @@ func TestGetSlot_Success(t *testing.T) {
 			ID:      req.ID,
 			Result:  json.RawMessage(`123456789`),
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(resp))
+		rawResp, err := json.Marshal(resp)
+		require.NoError(t, err)
+		return jsonHTTPResponse(http.StatusOK, string(rawResp)), nil
 	})
-	defer server.Close()
 
 	slot, err := client.GetSlot(context.Background(), "confirmed")
 	require.NoError(t, err)
@@ -44,15 +45,16 @@ func TestGetSlot_Success(t *testing.T) {
 }
 
 func TestGetSlot_Error(t *testing.T) {
-	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
+	client := methodTestClient(func(r *http.Request) (*http.Response, error) {
 		resp := Response{
 			JSONRPC: "2.0",
 			ID:      1,
 			Error:   &RPCError{Code: -32000, Message: "slot not available"},
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(resp))
+		rawResp, err := json.Marshal(resp)
+		require.NoError(t, err)
+		return jsonHTTPResponse(http.StatusOK, string(rawResp)), nil
 	})
-	defer server.Close()
 
 	_, err := client.GetSlot(context.Background(), "confirmed")
 	require.Error(t, err)
@@ -60,7 +62,7 @@ func TestGetSlot_Error(t *testing.T) {
 }
 
 func TestGetSignaturesForAddress_Success(t *testing.T) {
-	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
+	client := methodTestClient(func(r *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		var req Request
@@ -81,9 +83,10 @@ func TestGetSignaturesForAddress_Success(t *testing.T) {
 			ID:      req.ID,
 			Result:  result,
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(resp))
+		rawResp, err := json.Marshal(resp)
+		require.NoError(t, err)
+		return jsonHTTPResponse(http.StatusOK, string(rawResp)), nil
 	})
-	defer server.Close()
 
 	opts := &GetSignaturesOpts{Limit: 10}
 	sigs, err := client.GetSignaturesForAddress(context.Background(), "testAddr", opts)
@@ -96,7 +99,7 @@ func TestGetSignaturesForAddress_Success(t *testing.T) {
 }
 
 func TestGetSignaturesForAddress_OptsPassedCorrectly(t *testing.T) {
-	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
+	client := methodTestClient(func(r *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		var req Request
@@ -112,9 +115,10 @@ func TestGetSignaturesForAddress_OptsPassedCorrectly(t *testing.T) {
 			ID:      req.ID,
 			Result:  json.RawMessage(`[]`),
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(resp))
+		rawResp, err := json.Marshal(resp)
+		require.NoError(t, err)
+		return jsonHTTPResponse(http.StatusOK, string(rawResp)), nil
 	})
-	defer server.Close()
 
 	opts := &GetSignaturesOpts{
 		Limit:  50,
@@ -127,7 +131,7 @@ func TestGetSignaturesForAddress_OptsPassedCorrectly(t *testing.T) {
 }
 
 func TestGetSignaturesForAddress_NilOpts(t *testing.T) {
-	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
+	client := methodTestClient(func(r *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		var req Request
@@ -143,9 +147,10 @@ func TestGetSignaturesForAddress_NilOpts(t *testing.T) {
 			ID:      req.ID,
 			Result:  json.RawMessage(`[]`),
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(resp))
+		rawResp, err := json.Marshal(resp)
+		require.NoError(t, err)
+		return jsonHTTPResponse(http.StatusOK, string(rawResp)), nil
 	})
-	defer server.Close()
 
 	sigs, err := client.GetSignaturesForAddress(context.Background(), "addr", nil)
 	require.NoError(t, err)
@@ -155,7 +160,7 @@ func TestGetSignaturesForAddress_NilOpts(t *testing.T) {
 func TestGetTransaction_Success(t *testing.T) {
 	expectedResult := json.RawMessage(`{"slot":100,"transaction":{"message":{}},"meta":{}}`)
 
-	client, server := methodTestClient(func(w http.ResponseWriter, r *http.Request) {
+	client := methodTestClient(func(r *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		var req Request
@@ -169,9 +174,10 @@ func TestGetTransaction_Success(t *testing.T) {
 			ID:      req.ID,
 			Result:  expectedResult,
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(resp))
+		rawResp, err := json.Marshal(resp)
+		require.NoError(t, err)
+		return jsonHTTPResponse(http.StatusOK, string(rawResp)), nil
 	})
-	defer server.Close()
 
 	result, err := client.GetTransaction(context.Background(), "testSig")
 	require.NoError(t, err)

@@ -1,0 +1,13 @@
+{
+  "event_id": "base|sepolia|0xabc123...|log:42|path=contract",
+  "block_hash": "0xblockhash",
+  "tx_index": 1,
+  "event_path": "log:42",
+  "event_path_type": "base_log",
+  "actor_address": "0xabc",
+  "asset_type": "native",
+  "asset_id": "ETH",
+  "finality_state": "finalized",
+  "decoder_version": "base-decoder-v1",
+  "schema_version": "v2"
+}

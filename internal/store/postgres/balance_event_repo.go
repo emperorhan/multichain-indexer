@@ -24,8 +24,11 @@ func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.B
 			token_id, event_category, event_action, program_id,
 			address, counterparty_address, delta,
 			watched_address, wallet_id, organization_id,
-			block_cursor, block_time, chain_data
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+			block_cursor, block_time, chain_data,
+			event_id, block_hash, tx_index, event_path, event_path_type,
+			actor_address, asset_type, asset_id,
+			finality_state, decoder_version, schema_version
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
 		ON CONFLICT (chain, network, tx_hash, outer_instruction_index,
 		             inner_instruction_index, address, watched_address) DO NOTHING
 	`, be.Chain, be.Network, be.TransactionID, be.TxHash,
@@ -34,6 +37,9 @@ func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.B
 		be.Address, be.CounterpartyAddress, be.Delta,
 		be.WatchedAddress, be.WalletID, be.OrganizationID,
 		be.BlockCursor, be.BlockTime, be.ChainData,
+		be.EventID, be.BlockHash, be.TxIndex, be.EventPath, be.EventPathType,
+		be.ActorAddress, be.AssetType, be.AssetID,
+		be.FinalityState, be.DecoderVersion, be.SchemaVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert balance event: %w", err)
