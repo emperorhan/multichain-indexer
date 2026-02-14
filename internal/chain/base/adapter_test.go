@@ -105,6 +105,13 @@ func newTestAdapter(client rpc.RPCClient) *Adapter {
 	}
 }
 
+func TestAdapter_RPCClientContractParity(t *testing.T) {
+	t.Parallel()
+
+	var _ rpc.RPCClient = (*rpc.Client)(nil)
+	var _ rpc.RPCClient = (*fakeRPCClient)(nil)
+}
+
 func TestAdapter_Chain(t *testing.T) {
 	a := newTestAdapter(&fakeRPCClient{})
 	assert.Equal(t, "base", a.Chain())

@@ -23,6 +23,13 @@ func newTestAdapter(ctrl *gomock.Controller) (*Adapter, *rpcmocks.MockRPCClient)
 	return adapter, mockClient
 }
 
+func TestAdapter_RPCClientContractParity(t *testing.T) {
+	t.Parallel()
+
+	var _ rpc.RPCClient = (*rpc.Client)(nil)
+	var _ rpc.RPCClient = (*rpcmocks.MockRPCClient)(nil)
+}
+
 func TestAdapter_Chain(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	adapter, _ := newTestAdapter(ctrl)
