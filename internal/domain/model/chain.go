@@ -5,6 +5,7 @@ type Chain string
 const (
 	ChainSolana   Chain = "solana"
 	ChainEthereum Chain = "ethereum"
+	ChainBase     Chain = "base"
 )
 
 func (c Chain) String() string {
@@ -17,6 +18,7 @@ const (
 	NetworkMainnet Network = "mainnet"
 	NetworkDevnet  Network = "devnet"
 	NetworkTestnet Network = "testnet"
+	NetworkSepolia Network = "sepolia"
 )
 
 func (n Network) String() string {

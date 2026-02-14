@@ -1,0 +1,29 @@
+{
+  "tx_hash": "baseSig2",
+  "block_cursor": 12,
+  "block_time": 1700000200,
+  "status": "SUCCESS",
+  "fee_amount": "1000",
+  "fee_payer": "0x1111111111111111111111111111111111111111",
+  "balance_events": [
+    {
+      "outer_instruction_index": 0,
+      "inner_instruction_index": -1,
+      "event_category": "TRANSFER",
+      "event_action": "erc20_transfer",
+      "program_id": "0xabc",
+      "address": "0xaaaa1111111111111111111111111111111111111111",
+      "contract_address": "ETH",
+      "delta": "-1000",
+      "counterparty_address": "0xbbbb2222222222222222222222222222222222222222",
+      "token_symbol": "ETH",
+      "token_name": "Ether",
+      "token_decimals": 18,
+      "token_type": "NATIVE",
+      "metadata": {
+        "event_path": "log:50",
+        "fee_execution_l2": "1000"
+      }
+    }
+  ]
+}

@@ -17,6 +17,8 @@ const (
 	EventCategoryBurn     EventCategory = "BURN"
 	EventCategoryReward   EventCategory = "REWARD"
 	EventCategoryFee      EventCategory = "FEE"
+	EventCategoryFeeExecutionL2 EventCategory = "fee_execution_l2"
+	EventCategoryFeeDataL1    EventCategory = "fee_data_l1"
 )
 
 type BalanceEvent struct {

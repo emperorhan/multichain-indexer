@@ -1,0 +1,58 @@
+{
+  "tx_hash": "sig_scope_1",
+  "block_cursor": 120,
+  "block_time": 1700000050,
+  "status": "SUCCESS",
+  "fee_amount": "950",
+  "fee_payer": "owner_addr",
+  "balance_events": [
+    {
+      "outer_instruction_index": 0,
+      "inner_instruction_index": 2,
+      "event_category": "TRANSFER",
+      "event_action": "inner_owner_transfer",
+      "program_id": "11111111111111111111111111111111",
+      "address": "owner_addr",
+      "contract_address": "11111111111111111111111111111111",
+      "delta": "-500",
+      "counterparty_address": "other_addr",
+      "token_symbol": "SOL",
+      "token_name": "Solana",
+      "token_decimals": 9,
+      "token_type": "NATIVE",
+      "metadata": {}
+    },
+    {
+      "outer_instruction_index": 0,
+      "inner_instruction_index": -1,
+      "event_category": "TRANSFER",
+      "event_action": "outer_owner_transfer",
+      "program_id": "11111111111111111111111111111111",
+      "address": "owner_addr",
+      "contract_address": "11111111111111111111111111111111",
+      "delta": "-500",
+      "counterparty_address": "other_addr",
+      "token_symbol": "SOL",
+      "token_name": "Solana",
+      "token_decimals": 9,
+      "token_type": "NATIVE",
+      "metadata": {}
+    },
+    {
+      "outer_instruction_index": 0,
+      "inner_instruction_index": 1,
+      "event_category": "TRANSFER",
+      "event_action": "inner_non_owner_transfer",
+      "program_id": "11111111111111111111111111111111",
+      "address": "other_owner_addr",
+      "contract_address": "11111111111111111111111111111111",
+      "delta": "-250",
+      "counterparty_address": "third_addr",
+      "token_symbol": "SOL",
+      "token_name": "Solana",
+      "token_decimals": 9,
+      "token_type": "NATIVE",
+      "metadata": {}
+    }
+  ]
+}
