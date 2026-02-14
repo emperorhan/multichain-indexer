@@ -83,6 +83,18 @@ Pass Evidence:
 - QA report artifact present and complete.
 - follow-up issue files exist for any failed invariant.
 
+### I-0110 (M6)
+Assertions:
+1. Runtime bootstrap deterministically wires both Solana devnet and Base sepolia targets.
+2. Watched-address bootstrap initializes cursor state per address and fails fast on partial sync errors.
+3. Base runtime path validates fetch -> decode -> normalize -> ingest end-to-end.
+4. Replaying an already-ingested Base batch is idempotent (no duplicate balance adjustments).
+
+Pass Evidence:
+- `cmd/indexer/main_test.go` runtime target + watched-address sync tests green.
+- `internal/pipeline/normalizer/base_runtime_e2e_test.go` Base runtime e2e green.
+- `internal/pipeline/ingester/ingester_test.go` Base replay idempotency regression green.
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.

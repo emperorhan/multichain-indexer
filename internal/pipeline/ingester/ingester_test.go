@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,8 +108,8 @@ func (r *testCursorStateRepo) EnsureExists(_ context.Context, _ model.Chain, _ m
 
 type testIndexerConfigStateRepo struct {
 	HighestWatermark int64
-	Requested       []int64
-	Applied        []int64
+	Requested        []int64
+	Applied          []int64
 }
 
 func (r *testIndexerConfigStateRepo) Get(_ context.Context, _ model.Chain, _ model.Network) (*model.IndexerConfig, error) {
@@ -222,10 +223,10 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 	seedCursor := "seed_sig"
 	seedCursorSeq := int64(300)
 	seedBatch := event.NormalizedBatch{
-		Chain:           model.ChainSolana,
-		Network:         model.NetworkDevnet,
-		Address:         "addr1",
-		NewCursorValue:  &seedCursor,
+		Chain:             model.ChainSolana,
+		Network:           model.NetworkDevnet,
+		Address:           "addr1",
+		NewCursorValue:    &seedCursor,
 		NewCursorSequence: seedCursorSeq,
 		Transactions: []event.NormalizedTransaction{
 			{
@@ -268,7 +269,7 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 		Network:                model.NetworkDevnet,
 		Address:                "addr1",
 		PreviousCursorValue:    &seedCursor,
-		PreviousCursorSequence:  seedCursorSeq,
+		PreviousCursorSequence: seedCursorSeq,
 		NewCursorValue:         &newSig,
 		NewCursorSequence:      seedCursorSeq,
 	}
@@ -286,7 +287,7 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 		Network:                model.NetworkDevnet,
 		Address:                "addr1",
 		PreviousCursorValue:    &rewindSig,
-		PreviousCursorSequence:  rewindSigSeq,
+		PreviousCursorSequence: rewindSigSeq,
 		NewCursorValue:         &replaySig,
 		NewCursorSequence:      seedCursorSeq,
 		Transactions: []event.NormalizedTransaction{
@@ -643,6 +644,139 @@ func TestProcessBatch_DuplicateEventReplayIsNoop(t *testing.T) {
 
 	err := ing.processBatch(context.Background(), batch)
 	require.NoError(t, err)
+}
+
+func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_ = ctrl
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+
+	txID := uuid.New()
+	tokenID := uuid.New()
+	cursorVal := "0xbase_tx_1"
+
+	batch := event.NormalizedBatch{
+		Chain:   model.ChainBase,
+		Network: model.NetworkSepolia,
+		Address: "0x1111111111111111111111111111111111111111",
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:      "0xbase_tx_1",
+				BlockCursor: 200,
+				FeeAmount:   "21000000030000",
+				FeePayer:    "0x1111111111111111111111111111111111111111",
+				Status:      model.TxStatusSuccess,
+				ChainData:   json.RawMessage("{}"),
+				BalanceEvents: []event.NormalizedBalanceEvent{
+					{
+						OuterInstructionIndex: 7,
+						InnerInstructionIndex: -1,
+						EventCategory:         model.EventCategoryTransfer,
+						EventAction:           "native_transfer",
+						ContractAddress:       "ETH",
+						Address:               "0x1111111111111111111111111111111111111111",
+						CounterpartyAddress:   "0x2222222222222222222222222222222222222222",
+						Delta:                 "-100000000000000000",
+						EventID:               "base|sepolia|0xbase_tx_1|tx:log:7|addr:0x1111111111111111111111111111111111111111|asset:ETH|cat:TRANSFER",
+						TokenType:             model.TokenTypeNative,
+					},
+					{
+						OuterInstructionIndex: 7,
+						InnerInstructionIndex: -1,
+						EventCategory:         model.EventCategoryFeeExecutionL2,
+						EventAction:           "fee_execution_l2",
+						ContractAddress:       "ETH",
+						Address:               "0x1111111111111111111111111111111111111111",
+						Delta:                 "-21000000000000",
+						EventID:               "base|sepolia|0xbase_tx_1|tx:log:7|addr:0x1111111111111111111111111111111111111111|asset:ETH|cat:FEE_EXECUTION_L2",
+						TokenType:             model.TokenTypeNative,
+					},
+					{
+						OuterInstructionIndex: 7,
+						InnerInstructionIndex: -1,
+						EventCategory:         model.EventCategoryFeeDataL1,
+						EventAction:           "fee_data_l1",
+						ContractAddress:       "ETH",
+						Address:               "0x1111111111111111111111111111111111111111",
+						Delta:                 "-30000",
+						EventID:               "base|sepolia|0xbase_tx_1|tx:log:7|addr:0x1111111111111111111111111111111111111111|asset:ETH|cat:FEE_DATA_L1",
+						TokenType:             model.TokenTypeNative,
+					},
+				},
+			},
+		},
+		NewCursorValue:    &cursorVal,
+		NewCursorSequence: 200,
+	}
+
+	setupBeginTx(mockDB)
+	setupBeginTx(mockDB)
+
+	mockTxRepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(txID, nil).
+		Times(2)
+
+	mockTokenRepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(tokenID, nil).
+		Times(6)
+
+	upsertEventCalls := 0
+	mockBERepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+			upsertEventCalls++
+			assert.Equal(t, model.ChainBase, be.Chain)
+			assert.Equal(t, model.NetworkSepolia, be.Network)
+			assert.Equal(t, "0xbase_tx_1", be.TxHash)
+			return upsertEventCalls <= 3, nil
+		}).
+		Times(6)
+
+	mockBalanceRepo.EXPECT().
+		AdjustBalanceTx(
+			gomock.Any(),
+			gomock.Any(),
+			model.ChainBase,
+			model.NetworkSepolia,
+			"0x1111111111111111111111111111111111111111",
+			tokenID,
+			nil,
+			nil,
+			gomock.Any(),
+			int64(200),
+			"0xbase_tx_1",
+		).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string) error {
+			assert.True(t, strings.HasPrefix(delta, "-"))
+			return nil
+		}).
+		Times(3)
+
+	mockCursorRepo.EXPECT().
+		UpsertTx(
+			gomock.Any(),
+			gomock.Any(),
+			model.ChainBase,
+			model.NetworkSepolia,
+			"0x1111111111111111111111111111111111111111",
+			&cursorVal,
+			int64(200),
+			int64(1),
+		).
+		Return(nil).
+		Times(2)
+
+	mockConfigRepo.EXPECT().
+		UpdateWatermarkTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, int64(200)).
+		Return(nil).
+		Times(2)
+
+	require.NoError(t, ing.processBatch(context.Background(), batch))
+	require.NoError(t, ing.processBatch(context.Background(), batch))
 }
 
 func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
