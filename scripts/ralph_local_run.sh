@@ -46,6 +46,7 @@ CONTEXT_FILE="${RALPH_ROOT}/context.md"
 PUBLISH_STATE_FILE="${RALPH_ROOT}/state.last_publish"
 RUN_LOCK_FILE="${RALPH_ROOT}/run.lock"
 TRANSIENT_STATE_FILE="${RALPH_ROOT}/state.transient_failures"
+BLOCKED_RETRY_STATE_FILE="${RALPH_ROOT}/state.blocked_retries"
 
 MAX_LOOPS="${MAX_LOOPS:-0}" # 0 means infinite
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-20}"
@@ -62,6 +63,9 @@ TRANSIENT_RETRY_SLEEP_SEC="${RALPH_TRANSIENT_RETRY_SLEEP_SEC:-20}"
 TRANSIENT_BACKOFF_MAX_SEC="${RALPH_TRANSIENT_BACKOFF_MAX_SEC:-300}"
 TRANSIENT_HEALTHCHECK_AFTER_FAILS="${RALPH_TRANSIENT_HEALTHCHECK_AFTER_FAILS:-5}"
 TRANSIENT_HEALTHCHECK_TIMEOUT_SEC="${RALPH_TRANSIENT_HEALTHCHECK_TIMEOUT_SEC:-20}"
+BLOCKED_REQUEUE_ENABLED="${RALPH_BLOCKED_REQUEUE_ENABLED:-true}"
+BLOCKED_REQUEUE_MAX_ATTEMPTS="${RALPH_BLOCKED_REQUEUE_MAX_ATTEMPTS:-3}"
+BLOCKED_REQUEUE_COOLDOWN_SEC="${RALPH_BLOCKED_REQUEUE_COOLDOWN_SEC:-300}"
 AUTO_PUBLISH_ENABLED="${RALPH_AUTO_PUBLISH_ENABLED:-true}"
 AUTO_PUBLISH_MIN_COMMITS="${RALPH_AUTO_PUBLISH_MIN_COMMITS:-3}"
 AUTO_PUBLISH_TARGET_BRANCH="${RALPH_AUTO_PUBLISH_TARGET_BRANCH:-main}"
@@ -85,6 +89,7 @@ fi
 mkdir -p "${QUEUE_DIR}" "${IN_PROGRESS_DIR}" "${DONE_DIR}" "${BLOCKED_DIR}" "${REPORTS_DIR}" "${LOGS_DIR}"
 [ -f "${STATE_FILE}" ] || printf 'RALPH_LOCAL_ENABLED=true\n' > "${STATE_FILE}"
 [ -f "${TRANSIENT_STATE_FILE}" ] || printf '0\n' > "${TRANSIENT_STATE_FILE}"
+[ -f "${BLOCKED_RETRY_STATE_FILE}" ] || : > "${BLOCKED_RETRY_STATE_FILE}"
 
 exec 9>"${RUN_LOCK_FILE}"
 if ! flock -n 9; then
@@ -370,6 +375,165 @@ all_dependencies_satisfied() {
   return 0
 }
 
+set_issue_status() {
+  local file="$1"
+  local status="$2"
+  local tmp_file
+
+  [ -f "${file}" ] || return 0
+  tmp_file="${file}.tmp"
+  awk -v status="${status}" '
+    BEGIN { in_header=1; replaced=0; inserted=0 }
+    in_header && /^---[[:space:]]*$/ {
+      if (!replaced) {
+        print "status: " status
+        inserted=1
+      }
+      in_header=0
+      print
+      next
+    }
+    in_header && /^status:[[:space:]]*/ {
+      print "status: " status
+      replaced=1
+      next
+    }
+    { print }
+    END {
+      if (in_header && !replaced && !inserted) {
+        print "status: " status
+      }
+    }
+  ' "${file}" > "${tmp_file}"
+  mv "${tmp_file}" "${file}"
+}
+
+file_mtime_epoch() {
+  local file="$1"
+  if stat -c %Y "${file}" >/dev/null 2>&1; then
+    stat -c %Y "${file}"
+    return 0
+  fi
+  date -r "${file}" +%s
+}
+
+get_blocked_retry_count() {
+  local issue_id="$1"
+  local count
+  count="$(awk -v issue_id="${issue_id}" '
+    $1 == issue_id {
+      if ($2 ~ /^[0-9]+$/) {
+        print $2
+      } else {
+        print 0
+      }
+      found=1
+      exit
+    }
+    END {
+      if (!found) {
+        print 0
+      }
+    }
+  ' "${BLOCKED_RETRY_STATE_FILE}" 2>/dev/null || echo 0)"
+  if ! [[ "${count}" =~ ^[0-9]+$ ]]; then
+    count=0
+  fi
+  echo "${count}"
+}
+
+set_blocked_retry_count() {
+  local issue_id="$1"
+  local count="$2"
+  local tmp_file
+  tmp_file="${BLOCKED_RETRY_STATE_FILE}.tmp"
+  awk -v issue_id="${issue_id}" -v count="${count}" '
+    BEGIN { updated=0 }
+    $1 == issue_id {
+      print issue_id " " count
+      updated=1
+      next
+    }
+    NF > 0 { print }
+    END {
+      if (!updated) {
+        print issue_id " " count
+      }
+    }
+  ' "${BLOCKED_RETRY_STATE_FILE}" > "${tmp_file}"
+  mv "${tmp_file}" "${BLOCKED_RETRY_STATE_FILE}"
+}
+
+clear_blocked_retry_count() {
+  local issue_id="$1"
+  local tmp_file
+  tmp_file="${BLOCKED_RETRY_STATE_FILE}.tmp"
+  awk -v issue_id="${issue_id}" '
+    $1 == issue_id { next }
+    NF > 0 { print }
+  ' "${BLOCKED_RETRY_STATE_FILE}" > "${tmp_file}"
+  mv "${tmp_file}" "${BLOCKED_RETRY_STATE_FILE}"
+}
+
+pick_retryable_blocked_issue() {
+  local file issue_id deps attempts now cooldown age blocked_at
+  [ "${BLOCKED_REQUEUE_ENABLED}" = "true" ] || return 1
+  now="$(date -u +%s)"
+  cooldown="${BLOCKED_REQUEUE_COOLDOWN_SEC}"
+
+  while IFS= read -r file; do
+    [ -f "${file}" ] || continue
+    issue_id="$(meta_value "${file}" "id")"
+    [ -n "${issue_id}" ] || issue_id="$(basename "${file}" .md)"
+    deps="$(meta_value "${file}" "depends_on")"
+    if ! all_dependencies_satisfied "${deps}"; then
+      continue
+    fi
+
+    attempts="$(get_blocked_retry_count "${issue_id}")"
+    if [ "${attempts}" -ge "${BLOCKED_REQUEUE_MAX_ATTEMPTS}" ]; then
+      continue
+    fi
+
+    blocked_at="$(file_mtime_epoch "${file}")"
+    if ! [[ "${blocked_at}" =~ ^[0-9]+$ ]]; then
+      blocked_at="${now}"
+    fi
+    age=$((now - blocked_at))
+    if [ "${age}" -lt "${cooldown}" ]; then
+      continue
+    fi
+
+    printf '%s|%s|%s\n' "${file}" "${issue_id}" "${attempts}"
+    return 0
+  done < <(find "${BLOCKED_DIR}" -maxdepth 1 -type f -name '*.md' | sort)
+
+  return 1
+}
+
+requeue_retryable_blocked_issue() {
+  local candidate file issue_id attempts next_attempt queue_path
+  candidate="$(pick_retryable_blocked_issue || true)"
+  [ -n "${candidate}" ] || return 1
+
+  file="$(printf '%s' "${candidate}" | awk -F'|' '{print $1}')"
+  issue_id="$(printf '%s' "${candidate}" | awk -F'|' '{print $2}')"
+  attempts="$(printf '%s' "${candidate}" | awk -F'|' '{print $3}')"
+  [ -f "${file}" ] || return 1
+
+  set_issue_status "${file}" "ready"
+  queue_path="${QUEUE_DIR}/${issue_id}.md"
+  if [ -f "${queue_path}" ]; then
+    queue_path="${QUEUE_DIR}/retry-${issue_id}-$(date -u +%Y%m%dT%H%M%SZ).md"
+  fi
+  mv "${file}" "${queue_path}"
+
+  next_attempt=$((attempts + 1))
+  set_blocked_retry_count "${issue_id}" "${next_attempt}"
+  echo "[ralph-local] requeued blocked issue ${issue_id} (attempt ${next_attempt}/${BLOCKED_REQUEUE_MAX_ATTEMPTS})"
+  return 0
+}
+
 pick_next_issue() {
   local file status deps
   while IFS= read -r file; do
@@ -558,6 +722,7 @@ requeue_current_issue_on_exit() {
   if [ -f "${dst}" ]; then
     dst="${QUEUE_DIR}/recovered-${CURRENT_ISSUE_ID}-$(date -u +%Y%m%dT%H%M%SZ).md"
   fi
+  set_issue_status "${src}" "ready"
   mv "${src}" "${dst}"
   echo "[ralph-local] recovered ${CURRENT_ISSUE_ID} to queue on runner exit"
 }
@@ -579,6 +744,9 @@ while true; do
 
   next_issue="$(pick_next_issue || true)"
   if [ -z "${next_issue}" ]; then
+    if requeue_retryable_blocked_issue; then
+      continue
+    fi
     if [ "${EXIT_ON_IDLE}" = "true" ]; then
       echo "[ralph-local] no ready issues; exiting due to RALPH_EXIT_ON_IDLE=true"
       break
@@ -638,6 +806,7 @@ while true; do
 
     reset_transient_failures
     blocked_path="${BLOCKED_DIR}/${issue_id}.md"
+    set_issue_status "${in_progress_path}" "blocked"
     mv "${in_progress_path}" "${blocked_path}"
     CURRENT_ISSUE_ID=""
     CURRENT_IN_PROGRESS_PATH=""
@@ -651,6 +820,7 @@ while true; do
   validation_state="$(run_validation_if_needed "${role}" "${issue_id}" || true)"
   if [[ "${validation_state}" == failed:* ]]; then
     blocked_path="${BLOCKED_DIR}/${issue_id}.md"
+    set_issue_status "${in_progress_path}" "blocked"
     mv "${in_progress_path}" "${blocked_path}"
     CURRENT_ISSUE_ID=""
     CURRENT_IN_PROGRESS_PATH=""
@@ -678,7 +848,9 @@ while true; do
     loop_count=$((loop_count + 1))
     continue
   fi
+  set_issue_status "${in_progress_path}" "done"
   mv "${in_progress_path}" "${done_path}"
+  clear_blocked_retry_count "${issue_id}"
   CURRENT_ISSUE_ID=""
   CURRENT_IN_PROGRESS_PATH=""
   append_result_block "${done_path}" "done" "${role}" "${model}" "${log_file}" "${validation_state}" "completed" "${commit_sha}"

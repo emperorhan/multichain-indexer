@@ -85,6 +85,14 @@ complexity: high
   - `RALPH_TRANSIENT_HEALTHCHECK_AFTER_FAILS` (기본 `5`)
   - `RALPH_TRANSIENT_HEALTHCHECK_TIMEOUT_SEC` (기본 `20`)
 - 연속 transient 실패 시 지수 백오프를 적용해 endpoint를 과도하게 재시도하지 않는다.
+- `blocked` 이슈도 기본적으로 자동 재큐잉 대상이다(ready 이슈가 없을 때).
+  - 재큐잉 시 `status: ready`로 되돌리고 queue로 이동한다.
+  - 재실패하면 다시 `status: blocked`으로 이동한다.
+  - 최대 재시도 횟수를 넘기면 자동 재시도하지 않고 `blocked` 상태로 유지한다.
+- 제어 변수:
+  - `RALPH_BLOCKED_REQUEUE_ENABLED` (기본 `true`)
+  - `RALPH_BLOCKED_REQUEUE_MAX_ATTEMPTS` (기본 `3`)
+  - `RALPH_BLOCKED_REQUEUE_COOLDOWN_SEC` (기본 `300`)
 - `scripts/ralph_local_supervisor.sh`는 runner lock-busy(`rc=75`)를 별도로 처리해 중복 재기동 루프를 줄인다.
 
 ## 자동 main 반영
