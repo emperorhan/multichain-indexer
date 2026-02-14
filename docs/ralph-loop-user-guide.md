@@ -46,6 +46,7 @@
   - `lrstart`, `lrstop`, `lrrestart`, `lrstatus`, `lrtail`
 - 런타임 상태:
   - `lrcheck` (`lrwhat`)
+  - `lragents` (`lrtrack`)  # planner/developer/qa/manager 에이전트별 작업 추적
 - 계약/불변식 점검:
   - `lrinvariants`
   - `lrcontract <issue-file>`

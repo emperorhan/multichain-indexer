@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"testing"
 
+	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
@@ -13,6 +15,22 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+type staticChainAdapter struct {
+	chain string
+}
+
+func (a *staticChainAdapter) Chain() string { return a.chain }
+
+func (a *staticChainAdapter) GetHeadSequence(context.Context) (int64, error) { return 0, nil }
+
+func (a *staticChainAdapter) FetchNewSignatures(context.Context, string, *string, int) ([]chain.SignatureInfo, error) {
+	return nil, nil
+}
+
+func (a *staticChainAdapter) FetchTransactions(context.Context, []string) ([]json.RawMessage, error) {
+	return nil, nil
+}
 
 func TestBuildRuntimeTargets_IncludesSolanaAndBaseDeterministically(t *testing.T) {
 	cfg := &config.Config{
@@ -44,6 +62,59 @@ func TestBuildRuntimeTargets_IncludesSolanaAndBaseDeterministically(t *testing.T
 	assert.Equal(t, []string{"0xabc", "0xdef"}, targets[1].watched)
 	assert.Equal(t, "https://base.example", targets[1].rpcURL)
 	assert.Equal(t, "base", targets[1].adapter.Chain())
+	require.NoError(t, validateRuntimeWiring(targets))
+}
+
+func TestValidateRuntimeWiring_FailsWhenMandatoryTargetMissing(t *testing.T) {
+	targets := []runtimeTarget{
+		{
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
+		},
+	}
+
+	err := validateRuntimeWiring(targets)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing target base-sepolia")
+}
+
+func TestValidateRuntimeWiring_FailsWhenAdapterChainMismatched(t *testing.T) {
+	targets := []runtimeTarget{
+		{
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
+		},
+		{
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			adapter: &staticChainAdapter{chain: model.ChainEthereum.String()},
+		},
+	}
+
+	err := validateRuntimeWiring(targets)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "adapter mismatch for base-sepolia")
+}
+
+func TestValidateRuntimeWiring_FailsWhenMandatoryNetworkIsMisaligned(t *testing.T) {
+	targets := []runtimeTarget{
+		{
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
+		},
+		{
+			chain:   model.ChainBase,
+			network: model.NetworkMainnet,
+			adapter: &staticChainAdapter{chain: model.ChainBase.String()},
+		},
+	}
+
+	err := validateRuntimeWiring(targets)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing target base-sepolia")
 }
 
 func TestSyncWatchedAddresses_UpsertsAndInitializesCursors(t *testing.T) {

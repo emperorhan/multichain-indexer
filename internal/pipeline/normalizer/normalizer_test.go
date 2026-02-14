@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"google.golang.org/grpc"
 )
 
 type baseFeeEventFixture struct {
@@ -92,10 +93,10 @@ func loadSolanaFixture(t *testing.T, fixture string) *sidecarv1.TransactionResul
 }
 
 type tupleSignature struct {
-	TxHash       string
-	EventID      string
+	TxHash        string
+	EventID       string
 	EventCategory string
-	Delta        string
+	Delta         string
 }
 
 func orderedCanonicalTuples(batch event.NormalizedBatch) []tupleSignature {
@@ -103,10 +104,10 @@ func orderedCanonicalTuples(batch event.NormalizedBatch) []tupleSignature {
 	for _, tx := range batch.Transactions {
 		for _, be := range tx.BalanceEvents {
 			tuples = append(tuples, tupleSignature{
-				TxHash:       tx.TxHash,
-				EventID:      be.EventID,
+				TxHash:        tx.TxHash,
+				EventID:       be.EventID,
 				EventCategory: string(be.EventCategory),
-				Delta:        be.Delta,
+				Delta:         be.Delta,
 			})
 		}
 	}
@@ -400,6 +401,138 @@ func TestProcessBatch_PersistedArtifactsReplayHasZeroCanonicalTupleDiff(t *testi
 	persistedTuples := orderedCanonicalTuples(persisted)
 	replayTuples := orderedCanonicalTuples(second)
 	assert.Equal(t, persistedTuples, replayTuples)
+}
+
+func TestProcessBatch_DualChainReplaySmoke_NoDuplicateCanonicalIDsAndCursorMonotonic(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 4)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000, // 30s
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	solResp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{
+			loadSolanaFixture(t, "solana_cpi_ownership_scoped.json"),
+		},
+	}
+	baseResp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{
+			loadBaseFeeFixture(t, "base_fee_decomposition_complete.json"),
+		},
+	}
+
+	const solSig = "sol-replay-1"
+	const baseSig = "base-replay-1"
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any()).
+		Times(4).
+		DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+			require.Len(t, req.GetTransactions(), 1)
+			switch req.GetTransactions()[0].GetSignature() {
+			case solSig:
+				return solResp, nil
+			case baseSig:
+				return baseResp, nil
+			default:
+				t.Fatalf("unexpected signature %q", req.GetTransactions()[0].GetSignature())
+				return nil, nil
+			}
+		})
+
+	solPrev := "sol-prev"
+	basePrev := "base-prev"
+	solBatch := event.RawBatch{
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		Address:                "sol-addr-1",
+		PreviousCursorValue:    &solPrev,
+		PreviousCursorSequence: 10,
+		NewCursorValue:         strPtr(solSig),
+		NewCursorSequence:      11,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"sol-replay-1"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: solSig, Sequence: 11},
+		},
+	}
+	baseBatch := event.RawBatch{
+		Chain:                  model.ChainBase,
+		Network:                model.NetworkSepolia,
+		Address:                "0xbase-addr-1",
+		PreviousCursorValue:    &basePrev,
+		PreviousCursorSequence: 20,
+		NewCursorValue:         strPtr(baseSig),
+		NewCursorSequence:      21,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"base-replay-1"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: baseSig, Sequence: 21},
+		},
+	}
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, solBatch))
+	firstSol := <-normalizedCh
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseBatch))
+	firstBase := <-normalizedCh
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, solBatch))
+	secondSol := <-normalizedCh
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseBatch))
+	secondBase := <-normalizedCh
+
+	assertRunNoDuplicateCanonicalIDs := func(run []event.NormalizedBatch) {
+		seen := make(map[string]struct{})
+		for _, batch := range run {
+			for _, tx := range batch.Transactions {
+				for _, be := range tx.BalanceEvents {
+					require.NotEmpty(t, be.EventID)
+					_, exists := seen[be.EventID]
+					require.False(t, exists, "duplicate canonical event id in run: %s", be.EventID)
+					seen[be.EventID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	firstRun := []event.NormalizedBatch{firstSol, firstBase}
+	secondRun := []event.NormalizedBatch{secondSol, secondBase}
+	assertRunNoDuplicateCanonicalIDs(firstRun)
+	assertRunNoDuplicateCanonicalIDs(secondRun)
+
+	firstRunIDs := make(map[string]struct{})
+	secondRunIDs := make(map[string]struct{})
+	for _, batch := range firstRun {
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				firstRunIDs[be.EventID] = struct{}{}
+			}
+		}
+	}
+	for _, batch := range secondRun {
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				secondRunIDs[be.EventID] = struct{}{}
+			}
+		}
+	}
+	assert.Equal(t, firstRunIDs, secondRunIDs, "canonical event id set changed across identical replay inputs")
+
+	assert.GreaterOrEqual(t, firstSol.NewCursorSequence, firstSol.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, firstBase.NewCursorSequence, firstBase.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, secondSol.NewCursorSequence, secondSol.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, secondBase.NewCursorSequence, secondBase.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, secondSol.NewCursorSequence, firstSol.NewCursorSequence)
+	assert.GreaterOrEqual(t, secondBase.NewCursorSequence, firstBase.NewCursorSequence)
+}
+
+func strPtr(v string) *string {
+	return &v
 }
 
 func TestProcessBatch_BaseSepoliaFeeDecomposition_DeterministicComponents(t *testing.T) {

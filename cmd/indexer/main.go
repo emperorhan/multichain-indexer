@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,25 @@ type runtimeTarget struct {
 	watched []string
 	adapter chain.ChainAdapter
 	rpcURL  string
+}
+
+type mandatoryRuntimeTarget struct {
+	chain        model.Chain
+	network      model.Network
+	adapterChain string
+}
+
+var mandatoryRuntimeTargets = []mandatoryRuntimeTarget{
+	{
+		chain:        model.ChainSolana,
+		network:      model.NetworkDevnet,
+		adapterChain: model.ChainSolana.String(),
+	},
+	{
+		chain:        model.ChainBase,
+		network:      model.NetworkSepolia,
+		adapterChain: model.ChainBase.String(),
+	},
 }
 
 func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarget {
@@ -105,6 +125,10 @@ func main() {
 	}
 
 	targets := buildRuntimeTargets(cfg, logger)
+	if err := validateRuntimeWiring(targets); err != nil {
+		logger.Error("runtime wiring preflight failed", "error", err)
+		os.Exit(1)
+	}
 
 	for _, target := range targets {
 		if err := syncWatchedAddresses(context.Background(), repos.WatchedAddr, repos.Cursor, target.chain, target.network, target.watched); err != nil {
@@ -173,6 +197,54 @@ func main() {
 	}
 
 	logger.Info("indexer shut down gracefully")
+}
+
+func validateRuntimeWiring(targets []runtimeTarget) error {
+	targetsByKey := make(map[string][]runtimeTarget, len(targets))
+	for _, target := range targets {
+		key := runtimeTargetKey(target.chain, target.network)
+		targetsByKey[key] = append(targetsByKey[key], target)
+	}
+
+	failures := make([]string, 0)
+	for _, mandatory := range mandatoryRuntimeTargets {
+		key := runtimeTargetKey(mandatory.chain, mandatory.network)
+		wiredTargets := targetsByKey[key]
+		if len(wiredTargets) == 0 {
+			failures = append(failures, fmt.Sprintf("missing target %s", key))
+			continue
+		}
+		if len(wiredTargets) > 1 {
+			failures = append(failures, fmt.Sprintf("duplicate target %s (%d wired)", key, len(wiredTargets)))
+		}
+
+		validAdapter := false
+		for _, target := range wiredTargets {
+			if target.adapter == nil {
+				failures = append(failures, fmt.Sprintf("nil adapter for target %s", key))
+				continue
+			}
+			adapterChain := target.adapter.Chain()
+			if adapterChain != mandatory.adapterChain {
+				failures = append(failures, fmt.Sprintf("adapter mismatch for %s (expected=%s got=%s)", key, mandatory.adapterChain, adapterChain))
+				continue
+			}
+			validAdapter = true
+		}
+		if !validAdapter {
+			failures = append(failures, fmt.Sprintf("no valid adapter wired for %s", key))
+		}
+	}
+
+	if len(failures) > 0 {
+		return fmt.Errorf("mandatory chain runtime wiring parity check failed: %s", strings.Join(failures, "; "))
+	}
+
+	return nil
+}
+
+func runtimeTargetKey(chain model.Chain, network model.Network) string {
+	return fmt.Sprintf("%s-%s", chain, network)
 }
 
 func syncWatchedAddresses(
