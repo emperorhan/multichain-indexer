@@ -19,9 +19,11 @@
 16. `I-0128` (`M10-S2`): QA counterexample gate for transient-failure recovery + duplicate/cursor invariants.
 17. `I-0130` (`M11-S1`): deterministic retry-boundary hardening (transient vs terminal) across fetch/normalize/ingest.
 18. `I-0131` (`M11-S2`): QA counterexample gate for retry-boundary classification + invariant safety.
+19. `I-0135` (`M12-S1`): deterministic decode-error isolation + suffix continuity hardening across mandatory-chain runtime paths.
+20. `I-0136` (`M12-S2`): QA counterexample gate for decode-error isolation + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -47,6 +49,8 @@ Each slice must be independently releasable:
 14. Before `I-0128`: `I-0127` emits deterministic fail-first/retry recovery evidence for both mandatory chains.
 15. Before `I-0130`: `I-0128` QA report is `PASS` and no unresolved transient-failure recovery blocker remains.
 16. Before `I-0131`: `I-0130` emits deterministic evidence that terminal failures fail-fast (no retry) and transient failures recover with bounded retries.
+17. Before `I-0135`: `I-0131` QA report is `PASS` and no unresolved retry-boundary blocker remains.
+18. Before `I-0136`: `I-0135` emits deterministic evidence that single-signature decode failures do not block decodable suffix signatures.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -57,6 +61,7 @@ Each slice must be independently releasable:
 6. If mandatory-chain RPC contract parity checks expose broad legacy fake-client drift, enforce parity on mandatory runtime paths first and file bounded follow-up issues for remaining adapters.
 7. If transient failure retry hardening blurs permanent-error boundaries, keep bounded retries with explicit `transient_recovery_exhausted` diagnostics and require QA follow-up issue fanout.
 8. If retry-boundary classification is ambiguous for a provider error class, default to terminal handling until deterministic retryability tests and QA counterexample evidence are added.
+9. If decode-error isolation risks masking broad sidecar outages, keep deterministic full-batch-collapse fail-fast guardrails while allowing bounded per-signature isolation for partial decode failures.
 
 ## Completion Evidence
 1. Developer slice output:

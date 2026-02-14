@@ -309,6 +309,21 @@ func (mr *MockBalanceRepositoryMockRecorder) AdjustBalanceTx(ctx, tx, chain, net
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AdjustBalanceTx", reflect.TypeOf((*MockBalanceRepository)(nil).AdjustBalanceTx), ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash)
 }
 
+// GetAmountTx mocks base method.
+func (m *MockBalanceRepository) GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAmountTx", ctx, tx, chain, network, address, tokenID)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAmountTx indicates an expected call of GetAmountTx.
+func (mr *MockBalanceRepositoryMockRecorder) GetAmountTx(ctx, tx, chain, network, address, tokenID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAmountTx", reflect.TypeOf((*MockBalanceRepository)(nil).GetAmountTx), ctx, tx, chain, network, address, tokenID)
+}
+
 // GetByAddress mocks base method.
 func (m *MockBalanceRepository) GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error) {
 	m.ctrl.T.Helper()

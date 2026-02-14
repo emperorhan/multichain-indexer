@@ -10,15 +10,15 @@ import (
 type EventCategory string
 
 const (
-	EventCategoryTransfer EventCategory = "TRANSFER"
-	EventCategoryStake    EventCategory = "STAKE"
-	EventCategorySwap     EventCategory = "SWAP"
-	EventCategoryMint     EventCategory = "MINT"
-	EventCategoryBurn     EventCategory = "BURN"
-	EventCategoryReward   EventCategory = "REWARD"
-	EventCategoryFee      EventCategory = "FEE"
+	EventCategoryTransfer       EventCategory = "TRANSFER"
+	EventCategoryStake          EventCategory = "STAKE"
+	EventCategorySwap           EventCategory = "SWAP"
+	EventCategoryMint           EventCategory = "MINT"
+	EventCategoryBurn           EventCategory = "BURN"
+	EventCategoryReward         EventCategory = "REWARD"
+	EventCategoryFee            EventCategory = "FEE"
 	EventCategoryFeeExecutionL2 EventCategory = "fee_execution_l2"
-	EventCategoryFeeDataL1    EventCategory = "fee_data_l1"
+	EventCategoryFeeDataL1      EventCategory = "fee_data_l1"
 )
 
 type BalanceEvent struct {
@@ -36,6 +36,8 @@ type BalanceEvent struct {
 	Address               string          `db:"address"`
 	CounterpartyAddress   string          `db:"counterparty_address"`
 	Delta                 string          `db:"delta"`
+	BalanceBefore         *string         `json:"balance_before" db:"balance_before"`
+	BalanceAfter          *string         `json:"balance_after" db:"balance_after"`
 	WatchedAddress        *string         `db:"watched_address"`
 	WalletID              *string         `db:"wallet_id"`
 	OrganizationID        *string         `db:"organization_id"`

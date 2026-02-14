@@ -4,9 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
-	"github.com/google/uuid"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/google/uuid"
 )
 
 type BalanceRepo struct {
@@ -33,6 +34,28 @@ func (r *BalanceRepo) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain mod
 		return fmt.Errorf("adjust balance: %w", err)
 	}
 	return nil
+}
+
+func (r *BalanceRepo) GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (string, error) {
+	var amount string
+	err := tx.QueryRowContext(ctx, `
+		SELECT amount::text
+		FROM balances
+		WHERE chain = $1 AND network = $2 AND address = $3 AND token_id = $4
+		FOR UPDATE
+	`, chain, network, address, tokenID).Scan(&amount)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "0", nil
+		}
+		return "", fmt.Errorf("get balance amount: %w", err)
+	}
+
+	trimmed := strings.TrimSpace(amount)
+	if trimmed == "" {
+		return "0", nil
+	}
+	return trimmed, nil
 }
 
 func (r *BalanceRepo) GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error) {

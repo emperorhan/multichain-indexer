@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
@@ -235,6 +236,11 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				return fmt.Errorf("upsert token %s: %w", be.ContractAddress, err)
 			}
 
+			balanceBefore, balanceAfter, err := ing.computeBalanceTransition(ctx, dbTx, batch, be, tokenID)
+			if err != nil {
+				return fmt.Errorf("compute balance transition: %w", err)
+			}
+
 			// 2b. Upsert balance event
 			chainData := be.ChainData
 			if chainData == nil {
@@ -254,6 +260,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				Address:               be.Address,
 				CounterpartyAddress:   be.CounterpartyAddress,
 				Delta:                 be.Delta,
+				BalanceBefore:         &balanceBefore,
+				BalanceAfter:          &balanceAfter,
 				WatchedAddress:        &batch.Address,
 				WalletID:              batch.WalletID,
 				OrganizationID:        batch.OrgID,
@@ -327,6 +335,41 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	)
 
 	return nil
+}
+
+func (ing *Ingester) computeBalanceTransition(
+	ctx context.Context,
+	tx *sql.Tx,
+	batch event.NormalizedBatch,
+	be event.NormalizedBalanceEvent,
+	tokenID uuid.UUID,
+) (string, string, error) {
+	beforeAmount, err := ing.balanceRepo.GetAmountTx(ctx, tx, batch.Chain, batch.Network, be.Address, tokenID)
+	if err != nil {
+		return "", "", fmt.Errorf("get current balance: %w", err)
+	}
+
+	afterAmount, err := addDecimalStrings(beforeAmount, be.Delta)
+	if err != nil {
+		return "", "", fmt.Errorf("apply delta %s to balance %s: %w", be.Delta, beforeAmount, err)
+	}
+
+	return beforeAmount, afterAmount, nil
+}
+
+func addDecimalStrings(a, b string) (string, error) {
+	var left big.Int
+	if _, ok := left.SetString(strings.TrimSpace(a), 10); !ok {
+		return "", fmt.Errorf("invalid decimal value: %s", a)
+	}
+
+	var right big.Int
+	if _, ok := right.SetString(strings.TrimSpace(b), 10); !ok {
+		return "", fmt.Errorf("invalid decimal value: %s", b)
+	}
+
+	result := new(big.Int).Add(&left, &right)
+	return result.String(), nil
 }
 
 func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx, batch event.NormalizedBatch) error {

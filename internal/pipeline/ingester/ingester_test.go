@@ -56,11 +56,16 @@ func newIngesterMocks(t *testing.T) (
 	*storemocks.MockIndexerConfigRepository,
 ) {
 	ctrl := gomock.NewController(t)
+	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
+	mockBalanceRepo.EXPECT().
+		GetAmountTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Return("0", nil)
 	return ctrl,
 		storemocks.NewMockTxBeginner(ctrl),
 		storemocks.NewMockTransactionRepository(ctrl),
 		storemocks.NewMockBalanceEventRepository(ctrl),
-		storemocks.NewMockBalanceRepository(ctrl),
+		mockBalanceRepo,
 		storemocks.NewMockTokenRepository(ctrl),
 		storemocks.NewMockCursorRepository(ctrl),
 		storemocks.NewMockIndexerConfigRepository(ctrl)
@@ -393,6 +398,12 @@ func TestProcessBatch_Deposit(t *testing.T) {
 			assert.Equal(t, "otherAddr", be.CounterpartyAddress)
 			assert.Equal(t, "1000000", be.Delta)
 			assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
+			if assert.NotNil(t, be.BalanceBefore) {
+				assert.Equal(t, "0", *be.BalanceBefore)
+			}
+			if assert.NotNil(t, be.BalanceAfter) {
+				assert.Equal(t, "1000000", *be.BalanceAfter)
+			}
 			return true, nil
 		})
 
@@ -501,12 +512,24 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
 			assert.Equal(t, "-2000000", be.Delta)
+			if assert.NotNil(t, be.BalanceBefore) {
+				assert.Equal(t, "0", *be.BalanceBefore)
+			}
+			if assert.NotNil(t, be.BalanceAfter) {
+				assert.Equal(t, "-2000000", *be.BalanceAfter)
+			}
 			return true, nil
 		})
 	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
 			assert.Equal(t, "-5000", be.Delta)
 			assert.Equal(t, model.EventCategoryFee, be.EventCategory)
+			if assert.NotNil(t, be.BalanceBefore) {
+				assert.Equal(t, "0", *be.BalanceBefore)
+			}
+			if assert.NotNil(t, be.BalanceAfter) {
+				assert.Equal(t, "-5000", *be.BalanceAfter)
+			}
 			return true, nil
 		})
 
@@ -1111,6 +1134,34 @@ func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
 
 	err := ing.processBatch(context.Background(), batch)
 	require.NoError(t, err)
+}
+
+func TestAddDecimalStrings(t *testing.T) {
+	tests := []struct {
+		name    string
+		left    string
+		right   string
+		want    string
+		wantErr bool
+	}{
+		{name: "positive and negative", left: "100", right: "-40", want: "60"},
+		{name: "negative and negative", left: "-10", right: "-5", want: "-15"},
+		{name: "zero", left: "0", right: "0", want: "0"},
+		{name: "invalid", left: "abc", right: "1", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := addDecimalStrings(tc.left, tc.right)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestProcessBatch_BeginTxError(t *testing.T) {

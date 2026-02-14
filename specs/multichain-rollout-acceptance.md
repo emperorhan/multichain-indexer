@@ -208,6 +208,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of terminal no-retry and transient bounded-retry behavior.
 - Follow-up issue links are present for failures (if any).
 
+### I-0135 (M12-S1)
+Assertions:
+1. A decode error on one signature does not block normalization/ingestion of later decodable signatures in the same deterministic input batch for both mandatory chains.
+2. Decode-failed signatures emit deterministic stage-scoped diagnostics that include reproducible signature-level failure context.
+3. Mixed success+decode-failure replay runs preserve canonical no-dup behavior and cursor monotonicity.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject decode failures at controlled positions and prove suffix continuity on `solana-devnet` and `base-sepolia`.
+- Replay tests show `0` duplicate canonical IDs and stable tuple ordering for mixed success+decode-failure fixtures.
+- Diagnostic assertions prove identical decode-failure outputs across independent runs on the same fixtures.
+
+### I-0136 (M12-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M12 invariants.
+2. QA executes at least one counterexample where a decode failure is injected before decodable suffix signatures and verifies suffix continuity behavior.
+3. QA executes at least one counterexample for full-batch decode collapse and verifies deterministic fail-fast behavior.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of both partial-failure isolation and full-batch decode-collapse behavior.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -218,3 +242,4 @@ Release recommendation must be `fail` if any condition holds:
 6. Mandatory-chain adapter RPC contract parity cannot be proven in deterministic test evidence.
 7. Transient-failure recovery invariants cannot be proven with deterministic fail-first/retry evidence for both mandatory chains.
 8. Retry-boundary determinism cannot be proven (terminal no-retry and transient bounded-retry behavior not evidenced for both mandatory chains).
+9. Decode-error isolation determinism cannot be proven (partial-failure suffix continuity and full-batch fail-fast behavior not evidenced for both mandatory chains).

@@ -209,6 +209,10 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	mockTxRepo := storemocks.NewMockTransactionRepository(ctrl)
 	mockBERepo := storemocks.NewMockBalanceEventRepository(ctrl)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
+	mockBalanceRepo.EXPECT().
+		GetAmountTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Return("0", nil)
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
 	mockCursorRepo := storemocks.NewMockCursorRepository(ctrl)
 	mockConfigRepo := storemocks.NewMockIndexerConfigRepository(ctrl)

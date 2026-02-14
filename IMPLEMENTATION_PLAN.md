@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -27,6 +27,8 @@ Execution queue (dependency-ordered):
 16. `I-0128` (`M10-S2`) QA counterexample gate for transient-failure recovery + duplicate/cursor invariants
 17. `I-0130` (`M11-S1`) deterministic retry-boundary hardening across fetch/normalize/ingest
 18. `I-0131` (`M11-S2`) QA counterexample gate for retry-boundary classification + invariant safety
+19. `I-0135` (`M12-S1`) deterministic decode-error isolation + suffix continuity hardening
+20. `I-0136` (`M12-S2`) QA counterexample gate for decode-error isolation + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -347,7 +349,7 @@ Guarantee transient failure recovery is deterministic and replay-safe so RPC/dec
 - Gate: retry hardening may hide persistent provider-side faults if transient/permanent error boundaries are too broad.
 - Fallback: enforce bounded retries with explicit `transient_recovery_exhausted` diagnostics and required follow-up issue fanout when exhaustion occurs.
 
-### M11. Retry-Boundary Determinism Reliability Tranche C0005 (P0, Next)
+### M11. Retry-Boundary Determinism Reliability Tranche C0005 (P0, Completed)
 
 #### Objective
 Eliminate nondeterministic retry behavior by enforcing explicit transient-vs-terminal error boundaries so mandatory-chain runtime paths recover when safe, fail fast when terminal, and never compromise canonical/replay/cursor/runtime invariants.
@@ -382,6 +384,41 @@ Eliminate nondeterministic retry behavior by enforcing explicit transient-vs-ter
 - Gate: misclassifying provider/client failures can reduce recovery rate (too strict) or mask persistent faults (too broad).
 - Fallback: default unknown errors to terminal classification, then promote to retryable only with deterministic tests and explicit QA evidence.
 
+### M12. Decode-Error Isolation Reliability Tranche C0006 (P0, Next)
+
+#### Objective
+Prevent single-signature decode failures from stalling downstream indexing by isolating decode failures deterministically while preserving canonical/replay/cursor/runtime invariants on mandatory chains.
+
+#### Entry Gate
+- `M11` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M12-S1` (`I-0135`): implement deterministic decode-error isolation with suffix continuity and auditable per-signature diagnostics for mandatory-chain runtime paths.
+2. `M12-S2` (`I-0136`): execute QA counterexample gate for decode-error isolation behavior and invariant evidence.
+
+#### Definition Of Done
+1. A decode error tied to one signature does not block normalization/ingestion of later decodable signatures in the same deterministic input batch.
+2. Decode-failed signatures produce deterministic, stage-scoped diagnostics with reproducible signature/reason evidence for follow-up.
+3. Replay of mixed success+decode-failure fixture batches remains idempotent with stable canonical tuple ordering and no duplicate canonical IDs.
+4. Cursor/watermark progression remains monotonic for the processed range and runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject decode errors at controlled signature positions and assert suffix continuity for both `solana-devnet` and `base-sepolia`.
+2. Regression tests assert identical decode-failure diagnostics across two independent runs on the same fixtures.
+3. Replay/idempotency/cursor tests remain green with no duplicate canonical IDs or cursor regression.
+4. QA executes required validation commands plus decode-failure counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `100%` of decodable suffix signatures after injected single-signature decode failure are emitted exactly once in fixture tests for mandatory chains.
+2. `0` duplicate canonical IDs in mixed success+decode-failure replay fixtures.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-permissive decode-error isolation can hide broad sidecar/provider outages.
+- Fallback: keep deterministic failure threshold guardrails (fail-fast on full-batch decode collapse) while preserving per-signature isolation for bounded partial failures, with QA follow-up issue fanout.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -415,10 +452,13 @@ Completed milestones/slices:
 14. `I-0123`
 15. `I-0127`
 16. `I-0128`
+17. `I-0130`
+18. `I-0131`
 
 Active downstream queue from this plan:
-1. `I-0130`
-2. `I-0131`
+1. `I-0135`
+2. `I-0136`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
+- `I-0133` and `I-0134` are superseded by `I-0135` and `I-0136` for a clean planner-only handoff after prior scope-violation execution.

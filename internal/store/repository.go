@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/google/uuid"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/google/uuid"
 )
 
 // TxBeginner abstracts the ability to begin a database transaction.
@@ -40,6 +40,7 @@ type BalanceEventRepository interface {
 // BalanceRepository provides access to balance data.
 type BalanceRepository interface {
 	AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID *string, orgID *string, delta string, cursor int64, txHash string) error
+	GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (string, error)
 	GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error)
 }
 
