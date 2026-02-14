@@ -474,8 +474,8 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 15. GitHub-free 로컬 루프(권장 fallback):
    - `scripts/ralph_local_init.sh`
    - 인증 확인(필수): `scripts/codex_auth_status.sh --require-chatgpt` (`lrauth`)
-   - 시작(백그라운드, 기본 trust mode): `scripts/ralph_local_daemon.sh start`
-   - 보수 모드 시작: `RALPH_LOCAL_TRUST_MODE=false scripts/ralph_local_daemon.sh start`
+   - 시작(백그라운드, 기본 safe mode): `scripts/ralph_local_daemon.sh start`
+   - trust mode 시작(필요 시): `RALPH_LOCAL_TRUST_MODE=true scripts/ralph_local_daemon.sh start`
    - 로컬 md 이슈 추가: `scripts/ralph_local_new_issue.sh planner "..."` (또는 `.ralph/issues/*.md` 직접 작성)
    - 상태 확인: `scripts/ralph_local_daemon.sh status`
    - 로그 보기: `scripts/ralph_local_daemon.sh tail`

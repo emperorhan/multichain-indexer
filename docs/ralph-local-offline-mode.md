@@ -35,8 +35,8 @@ complexity: high
    - `scripts/ralph_local_init.sh`
 2. 백그라운드 시작:
    - `scripts/ralph_local_daemon.sh start`
-   - 기본값: `RALPH_LOCAL_TRUST_MODE=true` (approval 대기 없음, `danger-full-access`)
-   - 보수 모드: `RALPH_LOCAL_TRUST_MODE=false scripts/ralph_local_daemon.sh start`
+   - 기본값: `RALPH_LOCAL_TRUST_MODE=false` (`workspace-write`)
+   - trust 모드(필요 시): `RALPH_LOCAL_TRUST_MODE=true scripts/ralph_local_daemon.sh start`
    - 인증 점검: `scripts/codex_auth_status.sh` (별칭: `lrauth`)
 3. 루프 실행(내부):
    - `MAX_LOOPS=0 scripts/ralph_local_run.sh` (`daemon.sh start`가 내부에서 실행)
@@ -52,12 +52,20 @@ complexity: high
 - QA: `QA_TRIAGE_CODEX_MODEL` (기본 `gpt-5.3-codex`)
 
 ## 권한 모드
-- Trust mode(`RALPH_LOCAL_TRUST_MODE=true`, 기본):
+- Trust mode(`RALPH_LOCAL_TRUST_MODE=true`):
   - `AGENT_CODEX_APPROVAL=never`
   - `AGENT_CODEX_SANDBOX=danger-full-access`
   - `OMX_SAFE_MODE=false`로 safety guard sandbox 차단 해제
-- Safe mode(`RALPH_LOCAL_TRUST_MODE=false`):
-  - 기존 sandbox/guard 정책 유지
+- Safe mode(`RALPH_LOCAL_TRUST_MODE=false`, 기본):
+  - `AGENT_CODEX_SANDBOX=workspace-write`
+  - sandbox/guard 정책 유지
+
+## 시작 전 네트워크 프리플라이트
+- 데몬 시작 시 Codex 연결 프리플라이트를 수행한다.
+- 실패하면 시작을 중단하고 `.ralph/logs/connectivity-*.log` 경로를 출력한다.
+- 제어 변수:
+  - `RALPH_CONNECTIVITY_PREFLIGHT` (기본 `true`)
+  - `RALPH_CONNECTIVITY_TIMEOUT_SEC` (기본 `25`)
 
 ## 인증 모드 (Pro 사용량 기반)
 - 로컬 Ralph는 기본적으로 `ChatGPT 로그인` 모드만 허용한다.

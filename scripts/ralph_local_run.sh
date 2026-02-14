@@ -545,6 +545,24 @@ run_validation_if_needed() {
 
 loop_count=0
 noop_count=0
+CURRENT_ISSUE_ID=""
+CURRENT_IN_PROGRESS_PATH=""
+
+requeue_current_issue_on_exit() {
+  local src dst
+  src="${CURRENT_IN_PROGRESS_PATH:-}"
+  [ -n "${src}" ] || return 0
+  [ -f "${src}" ] || return 0
+
+  dst="${QUEUE_DIR}/${CURRENT_ISSUE_ID}.md"
+  if [ -f "${dst}" ]; then
+    dst="${QUEUE_DIR}/recovered-${CURRENT_ISSUE_ID}-$(date -u +%Y%m%dT%H%M%SZ).md"
+  fi
+  mv "${src}" "${dst}"
+  echo "[ralph-local] recovered ${CURRENT_ISSUE_ID} to queue on runner exit"
+}
+
+trap requeue_current_issue_on_exit EXIT INT TERM
 
 ensure_branch_strategy
 
@@ -581,6 +599,8 @@ while true; do
 
   in_progress_path="${IN_PROGRESS_DIR}/${issue_id}.md"
   mv "${next_issue}" "${in_progress_path}"
+  CURRENT_ISSUE_ID="${issue_id}"
+  CURRENT_IN_PROGRESS_PATH="${in_progress_path}"
   echo "[ralph-local] processing ${issue_id} role=${role} model=${model}"
 
   if run_codex_for_issue "${in_progress_path}" "${role}" "${model}"; then
@@ -604,6 +624,8 @@ while true; do
         requeue_path="${QUEUE_DIR}/retry-${issue_id}-$(date -u +%Y%m%dT%H%M%SZ).md"
       fi
       mv "${in_progress_path}" "${requeue_path}"
+      CURRENT_ISSUE_ID=""
+      CURRENT_IN_PROGRESS_PATH=""
       echo "[ralph-local] transient model error on ${issue_id}; requeued (fails=${transient_fails})"
       if [ "${transient_fails}" -ge "${TRANSIENT_HEALTHCHECK_AFTER_FAILS}" ]; then
         transient_connectivity_healthcheck || true
@@ -617,6 +639,8 @@ while true; do
     reset_transient_failures
     blocked_path="${BLOCKED_DIR}/${issue_id}.md"
     mv "${in_progress_path}" "${blocked_path}"
+    CURRENT_ISSUE_ID=""
+    CURRENT_IN_PROGRESS_PATH=""
     append_result_block "${blocked_path}" "blocked" "${role}" "${model}" "${log_file}" "not-run" "codex exited with code ${codex_rc}" ""
     echo "[ralph-local] blocked ${issue_id}: codex failure"
     loop_count=$((loop_count + 1))
@@ -628,6 +652,8 @@ while true; do
   if [[ "${validation_state}" == failed:* ]]; then
     blocked_path="${BLOCKED_DIR}/${issue_id}.md"
     mv "${in_progress_path}" "${blocked_path}"
+    CURRENT_ISSUE_ID=""
+    CURRENT_IN_PROGRESS_PATH=""
     append_result_block "${blocked_path}" "blocked" "${role}" "${model}" "${log_file}" "${validation_state}" "validation failed" ""
     echo "[ralph-local] blocked ${issue_id}: validation failed"
     loop_count=$((loop_count + 1))
@@ -653,6 +679,8 @@ while true; do
     continue
   fi
   mv "${in_progress_path}" "${done_path}"
+  CURRENT_ISSUE_ID=""
+  CURRENT_IN_PROGRESS_PATH=""
   append_result_block "${done_path}" "done" "${role}" "${model}" "${log_file}" "${validation_state}" "completed" "${commit_sha}"
   echo "[ralph-local] completed ${issue_id} commit=${commit_sha:-none}"
 
