@@ -27,7 +27,7 @@ build_path() {
   nvm_bin="$(detect_latest_nvm_node_bin || true)"
 
   cat <<EOF
-${HOME}/.local/bin:${codex_bin}:${nvm_bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${HOME}/.local/bin:${codex_bin}:${nvm_bin}
 EOF
 }
 
