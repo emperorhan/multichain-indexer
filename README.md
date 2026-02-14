@@ -488,6 +488,12 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
      - 기본 ON: `RALPH_BLOCKED_REQUEUE_ENABLED=true`
      - 최대 재시도: `RALPH_BLOCKED_REQUEUE_MAX_ATTEMPTS=3`
      - 재시도 쿨다운(초): `RALPH_BLOCKED_REQUEUE_COOLDOWN_SEC=300`
+   - 검증 실패 self-heal(컴파일/테스트/lint 자동 수정 시도):
+     - 기본 ON: `RALPH_SELF_HEAL_ENABLED=true`
+     - 최대 시도: `RALPH_SELF_HEAL_MAX_ATTEMPTS=3`
+     - 모델: `RALPH_SELF_HEAL_MODEL=gpt-5.3-codex`
+     - 로그 tail 라인 수: `RALPH_SELF_HEAL_LOG_TAIL_LINES=220`
+     - 시도 간 대기(초): `RALPH_SELF_HEAL_RETRY_SLEEP_SEC=5`
    - direct main push를 원하면(브랜치 보호 해제):
      - `scripts/enable_direct_main_push.sh emperorhan/multichain-indexer main`
    - 중단: `scripts/ralph_local_daemon.sh stop`

@@ -88,6 +88,7 @@ RALPH_LAST_LOG_FILE=""
 SELF_HEAL_RESULT="not-run"
 SELF_HEAL_LAST_ATTEMPTS=0
 SELF_HEAL_LAST_CODEX_RC=0
+SELF_HEAL_FINAL_VALIDATION_STATE=""
 
 if [ "${LOCAL_TRUST_MODE}" = "true" ]; then
   CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-danger-full-access}"
@@ -803,6 +804,7 @@ self_heal_validation_failure() {
   SELF_HEAL_RESULT="validation-failed"
   SELF_HEAL_LAST_ATTEMPTS=0
   SELF_HEAL_LAST_CODEX_RC=0
+  SELF_HEAL_FINAL_VALIDATION_STATE="${validation_state}"
 
   validation_log="$(validation_log_from_state "${validation_state}")"
   attempt=1
@@ -833,10 +835,10 @@ self_heal_validation_failure() {
 
     reset_transient_failures
     validation_state="$(run_validation_if_needed "${role}" "${issue_id}" || true)"
+    SELF_HEAL_FINAL_VALIDATION_STATE="${validation_state}"
     if [[ "${validation_state}" != failed:* ]]; then
       SELF_HEAL_RESULT="healed"
       echo "[ralph-local] self-heal succeeded for ${issue_id} on attempt ${attempt}"
-      printf '%s\n' "${validation_state}"
       return 0
     fi
 
@@ -847,7 +849,7 @@ self_heal_validation_failure() {
   done
 
   SELF_HEAL_RESULT="validation-failed"
-  printf '%s\n' "${validation_state}"
+  SELF_HEAL_FINAL_VALIDATION_STATE="${validation_state}"
   return 1
 }
 
@@ -963,15 +965,42 @@ while true; do
   reset_transient_failures
   validation_state="$(run_validation_if_needed "${role}" "${issue_id}" || true)"
   if [[ "${validation_state}" == failed:* ]]; then
-    blocked_path="${BLOCKED_DIR}/${issue_id}.md"
-    set_issue_status "${in_progress_path}" "blocked"
-    mv "${in_progress_path}" "${blocked_path}"
-    CURRENT_ISSUE_ID=""
-    CURRENT_IN_PROGRESS_PATH=""
-    append_result_block "${blocked_path}" "blocked" "${role}" "${model}" "${log_file}" "${validation_state}" "validation failed" ""
-    echo "[ralph-local] blocked ${issue_id}: validation failed"
-    loop_count=$((loop_count + 1))
-    continue
+    if [ "${SELF_HEAL_ENABLED}" = "true" ] && csv_contains "${VALIDATE_ROLES}" "${role}"; then
+      if self_heal_validation_failure "${in_progress_path}" "${issue_id}" "${role}" "${validation_state}"; then
+        validation_state="${SELF_HEAL_FINAL_VALIDATION_STATE}"
+        log_file="${RALPH_LAST_LOG_FILE:-${log_file}}"
+      else
+        validation_state="${SELF_HEAL_FINAL_VALIDATION_STATE}"
+        log_file="${RALPH_LAST_LOG_FILE:-${log_file}}"
+        blocked_path="${BLOCKED_DIR}/${issue_id}.md"
+        set_issue_status "${in_progress_path}" "blocked"
+        mv "${in_progress_path}" "${blocked_path}"
+        CURRENT_ISSUE_ID=""
+        CURRENT_IN_PROGRESS_PATH=""
+        case "${SELF_HEAL_RESULT}" in
+          codex-failed)
+            blocked_note="self-heal codex failed after ${SELF_HEAL_LAST_ATTEMPTS} attempt(s), rc=${SELF_HEAL_LAST_CODEX_RC}"
+            ;;
+          *)
+            blocked_note="validation failed after self-heal attempts=${SELF_HEAL_LAST_ATTEMPTS}"
+            ;;
+        esac
+        append_result_block "${blocked_path}" "blocked" "${role}" "${model}" "${log_file}" "${validation_state}" "${blocked_note}" ""
+        echo "[ralph-local] blocked ${issue_id}: ${blocked_note}"
+        loop_count=$((loop_count + 1))
+        continue
+      fi
+    else
+      blocked_path="${BLOCKED_DIR}/${issue_id}.md"
+      set_issue_status "${in_progress_path}" "blocked"
+      mv "${in_progress_path}" "${blocked_path}"
+      CURRENT_ISSUE_ID=""
+      CURRENT_IN_PROGRESS_PATH=""
+      append_result_block "${blocked_path}" "blocked" "${role}" "${model}" "${log_file}" "${validation_state}" "validation failed" ""
+      echo "[ralph-local] blocked ${issue_id}: validation failed"
+      loop_count=$((loop_count + 1))
+      continue
+    fi
   fi
 
   commit_sha=""

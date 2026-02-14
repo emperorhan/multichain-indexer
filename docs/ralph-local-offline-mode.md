@@ -93,6 +93,15 @@ complexity: high
   - `RALPH_BLOCKED_REQUEUE_ENABLED` (기본 `true`)
   - `RALPH_BLOCKED_REQUEUE_MAX_ATTEMPTS` (기본 `3`)
   - `RALPH_BLOCKED_REQUEUE_COOLDOWN_SEC` (기본 `300`)
+- 검증 실패(컴파일/테스트/lint) 시 self-heal을 기본 수행한다.
+  - 실패 로그 tail을 기반으로 Codex가 원인 수정 시도를 반복한다.
+  - 성공하면 동일 이슈를 계속 진행하고, 실패 누적 시에만 `blocked`로 이동한다.
+- 제어 변수:
+  - `RALPH_SELF_HEAL_ENABLED` (기본 `true`)
+  - `RALPH_SELF_HEAL_MAX_ATTEMPTS` (기본 `3`)
+  - `RALPH_SELF_HEAL_MODEL` (기본 `gpt-5.3-codex`)
+  - `RALPH_SELF_HEAL_LOG_TAIL_LINES` (기본 `220`)
+  - `RALPH_SELF_HEAL_RETRY_SLEEP_SEC` (기본 `5`)
 - `scripts/ralph_local_supervisor.sh`는 runner lock-busy(`rc=75`)를 별도로 처리해 중복 재기동 루프를 줄인다.
 
 ## 자동 main 반영

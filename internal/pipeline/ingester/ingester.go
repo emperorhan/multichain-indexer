@@ -312,6 +312,13 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 		return fmt.Errorf("rewind cursor: %w", err)
 	}
 
+	if err := ing.configRepo.UpdateWatermarkTx(
+		ctx, dbTx,
+		batch.Chain, batch.Network, rewindCursorSequence,
+	); err != nil {
+		return fmt.Errorf("update watermark after rewind: %w", err)
+	}
+
 	return nil
 }
 
