@@ -47,6 +47,7 @@ PUBLISH_STATE_FILE="${RALPH_ROOT}/state.last_publish"
 RUN_LOCK_FILE="${RALPH_ROOT}/run.lock"
 TRANSIENT_STATE_FILE="${RALPH_ROOT}/state.transient_failures"
 BLOCKED_RETRY_STATE_FILE="${RALPH_ROOT}/state.blocked_retries"
+AUTOMANAGER_STATE_FILE="${RALPH_ROOT}/state.automanager_last_run"
 
 MAX_LOOPS="${MAX_LOOPS:-0}" # 0 means infinite
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-20}"
@@ -66,6 +67,9 @@ TRANSIENT_HEALTHCHECK_TIMEOUT_SEC="${RALPH_TRANSIENT_HEALTHCHECK_TIMEOUT_SEC:-20
 BLOCKED_REQUEUE_ENABLED="${RALPH_BLOCKED_REQUEUE_ENABLED:-true}"
 BLOCKED_REQUEUE_MAX_ATTEMPTS="${RALPH_BLOCKED_REQUEUE_MAX_ATTEMPTS:-3}"
 BLOCKED_REQUEUE_COOLDOWN_SEC="${RALPH_BLOCKED_REQUEUE_COOLDOWN_SEC:-300}"
+AUTOMANAGER_ENABLED="${RALPH_AUTOMANAGER_ENABLED:-true}"
+AUTOMANAGER_CMD="${RALPH_AUTOMANAGER_CMD:-scripts/ralph_local_manager_autofill.sh}"
+AUTOMANAGER_COOLDOWN_SEC="${RALPH_AUTOMANAGER_COOLDOWN_SEC:-60}"
 SELF_HEAL_ENABLED="${RALPH_SELF_HEAL_ENABLED:-true}"
 SELF_HEAL_MAX_ATTEMPTS="${RALPH_SELF_HEAL_MAX_ATTEMPTS:-3}"
 SELF_HEAL_LOG_TAIL_LINES="${RALPH_SELF_HEAL_LOG_TAIL_LINES:-220}"
@@ -99,6 +103,7 @@ mkdir -p "${QUEUE_DIR}" "${IN_PROGRESS_DIR}" "${DONE_DIR}" "${BLOCKED_DIR}" "${R
 [ -f "${STATE_FILE}" ] || printf 'RALPH_LOCAL_ENABLED=true\n' > "${STATE_FILE}"
 [ -f "${TRANSIENT_STATE_FILE}" ] || printf '0\n' > "${TRANSIENT_STATE_FILE}"
 [ -f "${BLOCKED_RETRY_STATE_FILE}" ] || : > "${BLOCKED_RETRY_STATE_FILE}"
+[ -f "${AUTOMANAGER_STATE_FILE}" ] || printf '0\n' > "${AUTOMANAGER_STATE_FILE}"
 
 exec 9>"${RUN_LOCK_FILE}"
 if ! flock -n 9; then
@@ -543,6 +548,50 @@ requeue_retryable_blocked_issue() {
   return 0
 }
 
+get_automanager_last_run() {
+  awk 'NR==1 { if ($1 ~ /^[0-9]+$/) print $1; else print 0; exit }' "${AUTOMANAGER_STATE_FILE}" 2>/dev/null || echo 0
+}
+
+set_automanager_last_run() {
+  local ts="$1"
+  printf '%s\n' "${ts}" > "${AUTOMANAGER_STATE_FILE}"
+}
+
+run_automanager_if_due() {
+  local now last elapsed log_file rc new_issue
+  [ "${AUTOMANAGER_ENABLED}" = "true" ] || return 1
+  [ -x "${AUTOMANAGER_CMD}" ] || return 1
+
+  now="$(date -u +%s)"
+  last="$(get_automanager_last_run)"
+  if ! [[ "${last}" =~ ^[0-9]+$ ]]; then
+    last=0
+  fi
+  elapsed=$((now - last))
+  if [ "${elapsed}" -lt "${AUTOMANAGER_COOLDOWN_SEC}" ]; then
+    return 1
+  fi
+  set_automanager_last_run "${now}"
+
+  log_file="${LOGS_DIR}/automanager-$(date -u +%Y%m%dT%H%M%SZ).log"
+  set +e
+  bash -lc "${AUTOMANAGER_CMD}" >"${log_file}" 2>&1
+  rc=$?
+  set -e
+  if [ "${rc}" -ne 0 ]; then
+    echo "[ralph-local] automanager failed rc=${rc} log=${log_file}"
+    return 1
+  fi
+
+  new_issue="$(pick_next_issue || true)"
+  if [ -n "${new_issue}" ]; then
+    echo "[ralph-local] automanager produced ready issue(s) log=${log_file}"
+    return 0
+  fi
+  echo "[ralph-local] automanager ran with no new ready issue log=${log_file}"
+  return 1
+}
+
 pick_next_issue() {
   local file status deps
   while IFS= read -r file; do
@@ -891,6 +940,9 @@ while true; do
   next_issue="$(pick_next_issue || true)"
   if [ -z "${next_issue}" ]; then
     if requeue_retryable_blocked_issue; then
+      continue
+    fi
+    if run_automanager_if_due; then
       continue
     fi
     if [ "${EXIT_ON_IDLE}" = "true" ]; then

@@ -102,6 +102,12 @@ complexity: high
   - `RALPH_SELF_HEAL_MODEL` (기본 `gpt-5.3-codex`)
   - `RALPH_SELF_HEAL_LOG_TAIL_LINES` (기본 `220`)
   - `RALPH_SELF_HEAL_RETRY_SLEEP_SEC` (기본 `5`)
+- ready 이슈가 없으면 auto-manager가 제품 갭을 탐지해 새 이슈를 자동 생성할 수 있다.
+  - 기본 탐지 항목: Base Sepolia 런타임 미구현(정규화 테스트만 있고 실행 파이프라인 미연결).
+- 제어 변수:
+  - `RALPH_AUTOMANAGER_ENABLED` (기본 `true`)
+  - `RALPH_AUTOMANAGER_CMD` (기본 `scripts/ralph_local_manager_autofill.sh`)
+  - `RALPH_AUTOMANAGER_COOLDOWN_SEC` (기본 `60`)
 - `scripts/ralph_local_supervisor.sh`는 runner lock-busy(`rc=75`)를 별도로 처리해 중복 재기동 루프를 줄인다.
 
 ## 자동 main 반영

@@ -494,6 +494,10 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
      - 모델: `RALPH_SELF_HEAL_MODEL=gpt-5.3-codex`
      - 로그 tail 라인 수: `RALPH_SELF_HEAL_LOG_TAIL_LINES=220`
      - 시도 간 대기(초): `RALPH_SELF_HEAL_RETRY_SLEEP_SEC=5`
+   - ready 이슈가 없을 때 auto-manager로 새 이슈 자동 생성:
+     - 기본 ON: `RALPH_AUTOMANAGER_ENABLED=true`
+     - 명령: `RALPH_AUTOMANAGER_CMD=scripts/ralph_local_manager_autofill.sh`
+     - 재실행 쿨다운(초): `RALPH_AUTOMANAGER_COOLDOWN_SEC=60`
    - direct main push를 원하면(브랜치 보호 해제):
      - `scripts/enable_direct_main_push.sh emperorhan/multichain-indexer main`
    - 중단: `scripts/ralph_local_daemon.sh stop`
