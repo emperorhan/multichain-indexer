@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -19,6 +19,8 @@ Execution queue (dependency-ordered):
 8. `I-0110` (`M6`) Base Sepolia runtime pipeline wiring
 9. `I-0114` (`M7-S1`) runtime wiring drift guard + dual-chain replay smoke
 10. `I-0115` (`M7-S2`) QA counterexample gate for runtime wiring + replay invariants
+11. `I-0117` (`M8-S1`) failed-transaction fee completeness + replay safety hardening
+12. `I-0118` (`M8-S2`) QA counterexample gate for failed-transaction fee coverage
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -199,7 +201,7 @@ Move Base Sepolia from normalization-only coverage into deterministic runtime or
 2. Base runtime e2e replay path remains idempotent.
 3. Validation commands pass.
 
-### M7. Runtime Reliability Tranche C0001 (P0, Next)
+### M7. Runtime Reliability Tranche C0001 (P0, Completed)
 
 #### Objective
 Harden post-wiring runtime reliability so mandatory chain adapters cannot silently drift from configured runtime targets and replay invariants remain provable in dual-chain runtime paths.
@@ -234,6 +236,41 @@ Harden post-wiring runtime reliability so mandatory chain adapters cannot silent
 - Gate: strict fail-fast wiring checks may surface latent environment misconfiguration in local/operator runs.
 - Fallback: retain strict checks in test/CI and allow explicit operator override flag only with auditable warning + QA follow-up issue.
 
+### M8. Failure-Path Fee Completeness Tranche C0002 (P0, Next)
+
+#### Objective
+Close the remaining asset-volatility gap by ensuring failed transactions emit deterministic fee deltas when chain metadata includes fee payer/amount, while preserving replay/idempotency and runtime wiring invariants.
+
+#### Entry Gate
+- `M7` exit gate green.
+- Mandatory chain runtime wiring invariant remains green for `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M8-S1` (`I-0117`): implement failed-transaction fee normalization/ingestion hardening for Solana + Base with deterministic replay-safe identity.
+2. `M8-S2` (`I-0118`): QA counterexample validation and invariant evidence report for failed-transaction fee coverage paths.
+
+#### Definition Of Done
+1. Failed transactions with non-zero fee metadata and known payer emit explicit signed fee debit events.
+2. Replay of identical failed-transaction fixture batches remains idempotent (`event_id` no-dup, no double-apply balances).
+3. Existing runtime wiring guard behavior remains enforced for mandatory chains.
+4. QA report captures positive and negative/counterexample outcomes for failed-transaction fee paths.
+
+#### Test Contract
+1. Solana and Base fixture tests assert deterministic fee event emission for failed transactions where metadata is present.
+2. Replay tests over mixed success+failed fixture batches assert stable ordered canonical tuples and no duplicate fee events.
+3. Counterexample tests assert deterministic no-op behavior when failed-transaction fee metadata is incomplete (missing payer and/or missing fee amount).
+4. QA executes required validation commands and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `100%` failed fixture transactions with complete fee metadata emit canonical fee debit event(s).
+2. `0` duplicate canonical IDs in failed-path replay fixtures.
+3. `0` cursor monotonicity violations in mixed success/failed replay paths.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: RPC variability may omit failed-transaction fee metadata on some providers.
+- Fallback: keep deterministic no-op for incomplete metadata, emit explicit unavailable marker for observability, and file follow-up issue for provider-specific gap closure.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -259,10 +296,12 @@ Completed milestones/slices:
 6. `I-0109`
 7. `I-0107`
 8. `I-0110`
+9. `I-0114`
+10. `I-0115`
 
 Active downstream queue from this plan:
-1. `I-0114`
-2. `I-0115`
+1. `I-0117`
+2. `I-0118`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

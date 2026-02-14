@@ -13,14 +13,21 @@ import (
 )
 
 type fakeRPCClient struct {
-	head      int64
-	blocks    map[int64]*rpc.Block
-	txs       map[string]*rpc.Transaction
-	receipts  map[string]*rpc.TransactionReceipt
-	headErr   error
-	blockErr  error
-	txErr     error
-	receiptErr error
+	head         int64
+	blocks       map[int64]*rpc.Block
+	txs          map[string]*rpc.Transaction
+	receipts     map[string]*rpc.TransactionReceipt
+	logs         []*rpc.Log
+	getLogsFn    func(filter rpc.LogFilter) ([]*rpc.Log, error)
+	headErr      error
+	blockErr     error
+	txErr        error
+	receiptErr   error
+	logErr       error
+	batchTxErr   error
+	batchRxErr   error
+	batchTxCalls int
+	batchRxCalls int
 }
 
 func (f *fakeRPCClient) GetBlockNumber(_ context.Context) (int64, error) {
@@ -49,6 +56,46 @@ func (f *fakeRPCClient) GetTransactionReceipt(_ context.Context, hash string) (*
 		return nil, f.receiptErr
 	}
 	return f.receipts[hash], nil
+}
+
+func (f *fakeRPCClient) GetLogs(_ context.Context, filter rpc.LogFilter) ([]*rpc.Log, error) {
+	if f.getLogsFn != nil {
+		return f.getLogsFn(filter)
+	}
+	if f.logErr != nil {
+		return nil, f.logErr
+	}
+	return f.logs, nil
+}
+
+func (f *fakeRPCClient) GetTransactionsByHash(_ context.Context, hashes []string) ([]*rpc.Transaction, error) {
+	f.batchTxCalls++
+	if f.batchTxErr != nil {
+		return nil, f.batchTxErr
+	}
+	if f.txErr != nil {
+		return nil, f.txErr
+	}
+	results := make([]*rpc.Transaction, len(hashes))
+	for i, hash := range hashes {
+		results[i] = f.txs[hash]
+	}
+	return results, nil
+}
+
+func (f *fakeRPCClient) GetTransactionReceiptsByHash(_ context.Context, hashes []string) ([]*rpc.TransactionReceipt, error) {
+	f.batchRxCalls++
+	if f.batchRxErr != nil {
+		return nil, f.batchRxErr
+	}
+	if f.receiptErr != nil {
+		return nil, f.receiptErr
+	}
+	results := make([]*rpc.TransactionReceipt, len(hashes))
+	for i, hash := range hashes {
+		results[i] = f.receipts[hash]
+	}
+	return results, nil
 }
 
 func newTestAdapter(client rpc.RPCClient) *Adapter {
@@ -171,6 +218,8 @@ func TestAdapter_FetchTransactions(t *testing.T) {
 	payloads, err := a.FetchTransactions(context.Background(), []string{"0x1", "0x2"})
 	require.NoError(t, err)
 	require.Len(t, payloads, 2)
+	assert.Equal(t, 1, client.batchTxCalls)
+	assert.Equal(t, 1, client.batchRxCalls)
 
 	var decoded map[string]interface{}
 	require.NoError(t, json.Unmarshal(payloads[0], &decoded))
@@ -187,11 +236,180 @@ func TestAdapter_FetchTransactions(t *testing.T) {
 
 func TestAdapter_FetchTransactions_Error(t *testing.T) {
 	client := &fakeRPCClient{
-		txErr: errors.New("rpc unavailable"),
+		batchTxErr: errors.New("batch unavailable"),
+		txErr:      errors.New("rpc unavailable"),
 	}
 	a := newTestAdapter(client)
 
 	_, err := a.FetchTransactions(context.Background(), []string{"0x1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rpc unavailable")
+}
+
+func TestAdapter_FetchNewSignatures_UsesLogsForTopicMatches(t *testing.T) {
+	watched := "0xabc0000000000000000000000000000000000001"
+	client := &fakeRPCClient{
+		head: 20,
+		blocks: map[int64]*rpc.Block{
+			20: {
+				Number:    "0x14",
+				Timestamp: "0x100",
+				Transactions: []*rpc.Transaction{
+					{
+						Hash:             "0xviaLog",
+						TransactionIndex: "0x1",
+						From:             "0xdead",
+						To:               "0xbeef",
+					},
+				},
+			},
+		},
+		logs: []*rpc.Log{
+			{
+				BlockNumber:      "0x14",
+				TransactionHash:  "0xviaLog",
+				TransactionIndex: "0x1",
+			},
+		},
+	}
+	a := newTestAdapter(client)
+
+	sigs, err := a.FetchNewSignatures(context.Background(), watched, nil, 10)
+	require.NoError(t, err)
+	require.Len(t, sigs, 1)
+	assert.Equal(t, "0xviaLog", sigs[0].Hash)
+	assert.Equal(t, int64(20), sigs[0].Sequence)
+}
+
+func TestAdapter_FetchNewSignatures_SplitsLogRangeOnLimit(t *testing.T) {
+	watched := "0xabc0000000000000000000000000000000000001"
+	var sawRangeSplit bool
+	client := &fakeRPCClient{
+		head: 1,
+		blocks: map[int64]*rpc.Block{
+			1: {
+				Number:    "0x1",
+				Timestamp: "0x100",
+				Transactions: []*rpc.Transaction{
+					{
+						Hash:             "0xviaSplit",
+						TransactionIndex: "0x1",
+						From:             "0xdead",
+						To:               "0xbeef",
+					},
+				},
+			},
+		},
+		getLogsFn: func(filter rpc.LogFilter) ([]*rpc.Log, error) {
+			from, to, err := parseFilterRange(filter)
+			require.NoError(t, err)
+			if from != to {
+				sawRangeSplit = true
+				return nil, errors.New("query returned more than 10000 results")
+			}
+			if from == 1 {
+				return []*rpc.Log{
+					{
+						BlockNumber:      "0x1",
+						TransactionHash:  "0xviaSplit",
+						TransactionIndex: "0x1",
+						Topics:           []string{"0xddf252ad", "0x0", addressTopic(watched)},
+					},
+				}, nil
+			}
+			return []*rpc.Log{}, nil
+		},
+	}
+	a := newTestAdapter(client)
+
+	sigs, err := a.FetchNewSignatures(context.Background(), watched, nil, 10)
+	require.NoError(t, err)
+	require.Len(t, sigs, 1)
+	assert.True(t, sawRangeSplit)
+	assert.Equal(t, "0xviaSplit", sigs[0].Hash)
+	assert.Equal(t, int64(1), sigs[0].Sequence)
+}
+
+func TestAdapter_FetchNewSignatures_LogSingleBlockErrorFallsBackToReceipts(t *testing.T) {
+	watched := "0xabc0000000000000000000000000000000000001"
+	client := &fakeRPCClient{
+		head: 1,
+		blocks: map[int64]*rpc.Block{
+			1: {
+				Number:    "0x1",
+				Timestamp: "0x100",
+				Transactions: []*rpc.Transaction{
+					{
+						Hash:             "0xviaReceipt",
+						TransactionIndex: "0x2",
+						From:             "0xdead",
+						To:               "0xbeef",
+					},
+				},
+			},
+		},
+		receipts: map[string]*rpc.TransactionReceipt{
+			"0xviaReceipt": {
+				TransactionHash:  "0xviaReceipt",
+				BlockNumber:      "0x1",
+				TransactionIndex: "0x2",
+				Logs: []*rpc.Log{
+					{
+						Address: "0xtoken",
+						Topics:  []string{"0xddf252ad", "0x0", addressTopic(watched)},
+					},
+				},
+			},
+		},
+		getLogsFn: func(_ rpc.LogFilter) ([]*rpc.Log, error) {
+			return nil, errors.New("query returned more than 10000 results")
+		},
+	}
+	a := newTestAdapter(client)
+
+	sigs, err := a.FetchNewSignatures(context.Background(), watched, nil, 10)
+	require.NoError(t, err)
+	require.Len(t, sigs, 1)
+	assert.Equal(t, "0xviaReceipt", sigs[0].Hash)
+	assert.Equal(t, int64(1), sigs[0].Sequence)
+	assert.Greater(t, client.batchRxCalls, 0)
+}
+
+func TestAdapter_FetchNewSignatures_GetLogsFailure_FailsFast(t *testing.T) {
+	watched := "0xabc0000000000000000000000000000000000001"
+	client := &fakeRPCClient{
+		head: 20,
+		blocks: map[int64]*rpc.Block{
+			20: {
+				Number:    "0x14",
+				Timestamp: "0x100",
+				Transactions: []*rpc.Transaction{
+					{
+						Hash:             "0xfromTxScan",
+						TransactionIndex: "0x1",
+						From:             watched,
+						To:               "0xbeef",
+					},
+				},
+			},
+		},
+		logErr: errors.New("rpc throttled"),
+	}
+	a := newTestAdapter(client)
+
+	_, err := a.FetchNewSignatures(context.Background(), watched, nil, 10)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "eth_getLogs failed")
+}
+
+func parseFilterRange(filter rpc.LogFilter) (int64, int64, error) {
+	from, err := rpc.ParseHexInt64(filter.FromBlock)
+	if err != nil {
+		return 0, 0, err
+	}
+	to, err := rpc.ParseHexInt64(filter.ToBlock)
+	if err != nil {
+		return 0, 0, err
+	}
+	return from, to, nil
 }

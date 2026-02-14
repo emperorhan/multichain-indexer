@@ -30,6 +30,10 @@
    - RPC 호출 실패율
    - gRPC timeout
    - DB transaction 실패율
+4. 런타임 wiring preflight 실패 여부 확인:
+   - 필수 타겟: `solana-devnet`, `base-sepolia`
+   - 시작 시 `mandatory chain runtime wiring parity check failed` 에러가 발생하면 체인/네트워크 매핑과 adapter 연결 상태를 먼저 수정
+   - 중복 target, nil adapter, adapter chain mismatch는 즉시 부팅 실패(의도된 fail-fast)
 
 ### Sidecar
 1. gRPC health check 상태 확인
@@ -69,4 +73,3 @@
 1. 24시간 내 회고 문서 작성
 2. 재발 방지 액션을 Issue로 생성
 3. 런북/테스트/알람 규칙 업데이트
-

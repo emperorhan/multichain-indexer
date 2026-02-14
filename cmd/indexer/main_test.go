@@ -117,6 +117,50 @@ func TestValidateRuntimeWiring_FailsWhenMandatoryNetworkIsMisaligned(t *testing.
 	assert.Contains(t, err.Error(), "missing target base-sepolia")
 }
 
+func TestValidateRuntimeWiring_FailsWhenMandatoryTargetHasDuplicateEntries(t *testing.T) {
+	targets := []runtimeTarget{
+		{
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
+		},
+		{
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
+		},
+		{
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			adapter: &staticChainAdapter{chain: model.ChainBase.String()},
+		},
+	}
+
+	err := validateRuntimeWiring(targets)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate target solana-devnet")
+}
+
+func TestValidateRuntimeWiring_FailsWhenMandatoryTargetAdapterIsNil(t *testing.T) {
+	targets := []runtimeTarget{
+		{
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			adapter: nil,
+		},
+		{
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			adapter: &staticChainAdapter{chain: model.ChainBase.String()},
+		},
+	}
+
+	err := validateRuntimeWiring(targets)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil adapter for target solana-devnet")
+	assert.Contains(t, err.Error(), "no valid adapter wired for solana-devnet")
+}
+
 func TestSyncWatchedAddresses_UpsertsAndInitializesCursors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedRepo := storemocks.NewMockWatchedAddressRepository(ctrl)

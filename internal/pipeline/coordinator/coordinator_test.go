@@ -114,7 +114,7 @@ func TestTick_GetActiveError(t *testing.T) {
 	assert.Contains(t, err.Error(), "db connection lost")
 }
 
-func TestTick_CursorGetError_SkipsAddress(t *testing.T) {
+func TestTick_CursorGetError_FailsFast(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
 	mockCursor := storemocks.NewMockCursorRepository(ctrl)
@@ -138,17 +138,32 @@ func TestTick_CursorGetError_SkipsAddress(t *testing.T) {
 		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr1").
 		Return(nil, errors.New("cursor db error"))
 
-	mockCursor.EXPECT().
-		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr2").
-		Return(nil, nil)
-
 	err := c.tick(context.Background())
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cursor db error")
+	assert.Empty(t, jobCh)
+}
 
-	// Only addr2 should have a job
-	require.Len(t, jobCh, 1)
-	job := <-jobCh
-	assert.Equal(t, "addr2", job.Address)
+func TestRun_PanicsOnTickError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	mockCursor := storemocks.NewMockCursorRepository(ctrl)
+
+	jobCh := make(chan event.FetchJob, 10)
+	c := New(
+		model.ChainSolana, model.NetworkDevnet,
+		mockWatchedAddr, mockCursor,
+		100, time.Second,
+		jobCh, slog.Default(),
+	)
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainSolana, model.NetworkDevnet).
+		Return(nil, errors.New("db connection lost"))
+
+	require.Panics(t, func() {
+		_ = c.Run(context.Background())
+	})
 }
 
 func TestTick_ContextCanceled(t *testing.T) {

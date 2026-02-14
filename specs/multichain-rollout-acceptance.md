@@ -118,6 +118,29 @@ Pass Evidence:
 - Counterexample outcome is documented with invariant-level verdict.
 - Follow-up issue links are present for failures (if any).
 
+### I-0117 (M8-S1)
+Assertions:
+1. Solana failed transactions with complete fee metadata (`fee_payer`, non-zero `fee_amount`) emit one deterministic canonical fee debit event.
+2. Base failed transactions with complete fee metadata emit deterministic fee events (`fee_execution_l2`, and `fee_data_l1` when source fields exist).
+3. Mixed success+failed replay paths preserve canonical no-dup behavior and cursor monotonicity.
+4. Incomplete failed-transaction fee metadata paths stay deterministic and do not create synthetic/guessed fee events.
+
+Pass Evidence:
+- Normalizer fixture tests cover Solana/Base failed-transaction fee emission and incomplete-metadata no-op cases.
+- Replay tests show `0` duplicate canonical IDs on mixed success+failed fixtures.
+- Ingestion tests show no double-apply balance side effects on repeated failed-path replay.
+
+### I-0118 (M8-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M8 invariants.
+2. QA executes counterexample scenarios targeting failed-transaction fee metadata incompleteness and replay duplication regressions.
+3. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes are documented with invariant-level verdicts for failed-fee paths.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.

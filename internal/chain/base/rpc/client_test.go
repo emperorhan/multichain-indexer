@@ -103,3 +103,64 @@ func TestParseHexInt64(t *testing.T) {
 	_, err = ParseHexInt64("nope")
 	require.Error(t, err)
 }
+
+func TestCallBatch_Success(t *testing.T) {
+	client := newTestClient(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+
+		var reqs []Request
+		require.NoError(t, json.Unmarshal(body, &reqs))
+		require.Len(t, reqs, 2)
+
+		// Return reversed to verify ID-based reordering.
+		resp := []Response{
+			{JSONRPC: "2.0", ID: reqs[1].ID, Result: json.RawMessage(`"b"`)},
+			{JSONRPC: "2.0", ID: reqs[0].ID, Result: json.RawMessage(`"a"`)},
+		}
+		rawResp, err := json.Marshal(resp)
+		require.NoError(t, err)
+		return jsonHTTPResponse(http.StatusOK, string(rawResp)), nil
+	})
+
+	requests := []Request{
+		client.newRequest("m1", []interface{}{}),
+		client.newRequest("m2", []interface{}{}),
+	}
+	results, err := client.callBatch(context.Background(), requests)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	var first string
+	require.NoError(t, json.Unmarshal(results[0].Result, &first))
+	assert.Equal(t, "a", first)
+	var second string
+	require.NoError(t, json.Unmarshal(results[1].Result, &second))
+	assert.Equal(t, "b", second)
+}
+
+func TestCallBatch_MissingResponse(t *testing.T) {
+	client := newTestClient(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+
+		var reqs []Request
+		require.NoError(t, json.Unmarshal(body, &reqs))
+		require.Len(t, reqs, 2)
+
+		resp := []Response{
+			{JSONRPC: "2.0", ID: reqs[0].ID, Result: json.RawMessage(`null`)},
+		}
+		rawResp, err := json.Marshal(resp)
+		require.NoError(t, err)
+		return jsonHTTPResponse(http.StatusOK, string(rawResp)), nil
+	})
+
+	requests := []Request{
+		client.newRequest("m1", []interface{}{}),
+		client.newRequest("m2", []interface{}{}),
+	}
+	_, err := client.callBatch(context.Background(), requests)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing batch response")
+}

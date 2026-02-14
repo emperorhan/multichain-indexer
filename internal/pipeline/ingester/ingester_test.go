@@ -886,3 +886,33 @@ func TestIngester_Run_ContextCancel(t *testing.T) {
 	err := ing.Run(ctx)
 	assert.Equal(t, context.Canceled, err)
 }
+
+func TestIngester_Run_PanicsOnProcessBatchError(t *testing.T) {
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+
+	normalizedCh <- event.NormalizedBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: "addr1",
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:    "sig1",
+				FeeAmount: "0",
+				FeePayer:  "other",
+				Status:    model.TxStatusSuccess,
+				ChainData: json.RawMessage("{}"),
+			},
+		},
+	}
+	close(normalizedCh)
+
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Nil()).
+		Return(nil, errors.New("db down"))
+
+	require.Panics(t, func() {
+		_ = ing.Run(context.Background())
+	})
+}

@@ -59,9 +59,19 @@ type TransactionReceipt struct {
 }
 
 type Log struct {
-	Address  string   `json:"address"`
-	Topics   []string `json:"topics"`
-	Data     string   `json:"data"`
-	LogIndex string   `json:"logIndex"`
-	Removed  bool     `json:"removed"`
+	Address          string   `json:"address"`
+	Topics           []string `json:"topics"`
+	Data             string   `json:"data"`
+	BlockNumber      string   `json:"blockNumber"`
+	TransactionHash  string   `json:"transactionHash"`
+	TransactionIndex string   `json:"transactionIndex"`
+	LogIndex         string   `json:"logIndex"`
+	Removed          bool     `json:"removed"`
+}
+
+type LogFilter struct {
+	FromBlock string        `json:"fromBlock,omitempty"`
+	ToBlock   string        `json:"toBlock,omitempty"`
+	Address   interface{}   `json:"address,omitempty"`
+	Topics    []interface{} `json:"topics,omitempty"`
 }

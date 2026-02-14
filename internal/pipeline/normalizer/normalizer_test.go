@@ -114,6 +114,18 @@ func orderedCanonicalTuples(batch event.NormalizedBatch) []tupleSignature {
 	return tuples
 }
 
+func orderedCanonicalEventIDs(batches []event.NormalizedBatch) []string {
+	ids := make([]string, 0)
+	for _, batch := range batches {
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				ids = append(ids, be.EventID)
+			}
+		}
+	}
+	return ids
+}
+
 func fixtureBaseFeeEventsByCategory(events []event.NormalizedBalanceEvent, category model.EventCategory) []event.NormalizedBalanceEvent {
 	out := make([]event.NormalizedBalanceEvent, 0, len(events))
 	for _, be := range events {
@@ -504,6 +516,7 @@ func TestProcessBatch_DualChainReplaySmoke_NoDuplicateCanonicalIDsAndCursorMonot
 	secondRun := []event.NormalizedBatch{secondSol, secondBase}
 	assertRunNoDuplicateCanonicalIDs(firstRun)
 	assertRunNoDuplicateCanonicalIDs(secondRun)
+	assert.Equal(t, orderedCanonicalEventIDs(firstRun), orderedCanonicalEventIDs(secondRun), "canonical event ordering changed across identical replay inputs")
 
 	firstRunIDs := make(map[string]struct{})
 	secondRunIDs := make(map[string]struct{})
@@ -1207,10 +1220,124 @@ func TestProcessBatch_DecodeErrors(t *testing.T) {
 		}, nil)
 
 	err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
-	require.NoError(t, err) // decode errors are warnings, not failures
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decode blocked")
+}
 
-	result := <-normalizedCh
-	assert.Empty(t, result.Transactions)
+func TestProcessBatch_DecodeErrorAfterPrefix_FailsFast(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000,
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	firstSig := "sig1"
+	secondSig := "sig2"
+	batch := event.RawBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: "addr1",
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":1}`),
+			json.RawMessage(`{"tx":2}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: firstSig, Sequence: 100},
+			{Hash: secondSig, Sequence: 101},
+		},
+	}
+
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+			Results: []*sidecarv1.TransactionResult{
+				{
+					TxHash:      firstSig,
+					BlockCursor: 100,
+					Status:      string(model.TxStatusSuccess),
+				},
+			},
+			Errors: []*sidecarv1.DecodeError{
+				{Signature: secondSig, Error: "parse error"},
+			},
+		}, nil)
+
+	err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decode blocked")
+	select {
+	case got := <-normalizedCh:
+		t.Fatalf("expected no normalized batch, got %+v", got)
+	default:
+	}
+}
+
+func TestWorker_PanicsOnProcessBatchError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	rawBatchCh := make(chan event.RawBatch, 1)
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000,
+		rawBatchCh:     rawBatchCh,
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	rawBatchCh <- event.RawBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: "addr1",
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":1}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: "sig1", Sequence: 100},
+		},
+	}
+	close(rawBatchCh)
+
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("sidecar unavailable"))
+
+	require.Panics(t, func() {
+		n.worker(context.Background(), 0, mockClient)
+	})
+}
+
+func TestProcessBatch_RawSignatureLengthMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000,
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	batch := event.RawBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: "addr1",
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":1}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: "sig1", Sequence: 100},
+			{Hash: "sig2", Sequence: 101},
+		},
+	}
+
+	err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "length mismatch")
 }
 
 func TestProcessBatch_SidecarError(t *testing.T) {

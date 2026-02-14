@@ -78,6 +78,88 @@ func (c *Client) GetTransactionReceipt(ctx context.Context, hash string) (*Trans
 	return &receipt, nil
 }
 
+func (c *Client) GetLogs(ctx context.Context, filter LogFilter) ([]*Log, error) {
+	result, err := c.call(ctx, "eth_getLogs", []interface{}{filter})
+	if err != nil {
+		return nil, fmt.Errorf("eth_getLogs: %w", err)
+	}
+
+	var logs []*Log
+	if err := json.Unmarshal(result, &logs); err != nil {
+		return nil, fmt.Errorf("unmarshal logs: %w", err)
+	}
+
+	return logs, nil
+}
+
+func (c *Client) GetTransactionsByHash(ctx context.Context, hashes []string) ([]*Transaction, error) {
+	if len(hashes) == 0 {
+		return []*Transaction{}, nil
+	}
+
+	requests := make([]Request, len(hashes))
+	for i, hash := range hashes {
+		requests[i] = c.newRequest("eth_getTransactionByHash", []interface{}{hash})
+	}
+
+	responses, err := c.callBatch(ctx, requests)
+	if err != nil {
+		return nil, fmt.Errorf("eth_getTransactionByHash batch: %w", err)
+	}
+
+	results := make([]*Transaction, len(hashes))
+	for i, response := range responses {
+		if response.Error != nil {
+			return nil, fmt.Errorf("eth_getTransactionByHash(%s): %w", hashes[i], response.Error)
+		}
+		if string(response.Result) == "null" {
+			continue
+		}
+
+		var tx Transaction
+		if err := json.Unmarshal(response.Result, &tx); err != nil {
+			return nil, fmt.Errorf("unmarshal transaction %s: %w", hashes[i], err)
+		}
+		results[i] = &tx
+	}
+
+	return results, nil
+}
+
+func (c *Client) GetTransactionReceiptsByHash(ctx context.Context, hashes []string) ([]*TransactionReceipt, error) {
+	if len(hashes) == 0 {
+		return []*TransactionReceipt{}, nil
+	}
+
+	requests := make([]Request, len(hashes))
+	for i, hash := range hashes {
+		requests[i] = c.newRequest("eth_getTransactionReceipt", []interface{}{hash})
+	}
+
+	responses, err := c.callBatch(ctx, requests)
+	if err != nil {
+		return nil, fmt.Errorf("eth_getTransactionReceipt batch: %w", err)
+	}
+
+	results := make([]*TransactionReceipt, len(hashes))
+	for i, response := range responses {
+		if response.Error != nil {
+			return nil, fmt.Errorf("eth_getTransactionReceipt(%s): %w", hashes[i], response.Error)
+		}
+		if string(response.Result) == "null" {
+			continue
+		}
+
+		var receipt TransactionReceipt
+		if err := json.Unmarshal(response.Result, &receipt); err != nil {
+			return nil, fmt.Errorf("unmarshal transaction receipt %s: %w", hashes[i], err)
+		}
+		results[i] = &receipt
+	}
+
+	return results, nil
+}
+
 func ParseHexInt64(value string) (int64, error) {
 	raw := strings.TrimSpace(value)
 	if raw == "" {

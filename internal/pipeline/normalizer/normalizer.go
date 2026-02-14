@@ -94,12 +94,17 @@ func (n *Normalizer) worker(ctx context.Context, workerID int, client sidecarv1.
 					"address", batch.Address,
 					"error", err,
 				)
+				panic(fmt.Sprintf("normalizer process batch failed: address=%s err=%v", batch.Address, err))
 			}
 		}
 	}
 }
 
 func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client sidecarv1.ChainDecoderClient, batch event.RawBatch) error {
+	if len(batch.RawTransactions) != len(batch.Signatures) {
+		return fmt.Errorf("raw/signature length mismatch: raw=%d signatures=%d", len(batch.RawTransactions), len(batch.Signatures))
+	}
+
 	// Build gRPC request
 	rawTxs := make([]*sidecarv1.RawTransaction, len(batch.RawTransactions))
 	for i, rawJSON := range batch.RawTransactions {
@@ -125,6 +130,27 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		log.Warn("sidecar decode error", "signature", decErr.Signature, "error", decErr.Error)
 	}
 
+	resultBySignature := make(map[string]*sidecarv1.TransactionResult, len(resp.Results))
+	orderedResults := make([]*sidecarv1.TransactionResult, 0, len(resp.Results))
+	for _, result := range resp.Results {
+		if result == nil {
+			continue
+		}
+		orderedResults = append(orderedResults, result)
+		if strings.TrimSpace(result.TxHash) == "" {
+			continue
+		}
+		resultBySignature[strings.TrimSpace(result.TxHash)] = result
+	}
+
+	errorBySignature := make(map[string]string, len(resp.Errors))
+	for _, decErr := range resp.Errors {
+		if decErr == nil || strings.TrimSpace(decErr.Signature) == "" {
+			continue
+		}
+		errorBySignature[strings.TrimSpace(decErr.Signature)] = strings.TrimSpace(decErr.Error)
+	}
+
 	// Convert to NormalizedBatch
 	normalized := event.NormalizedBatch{
 		Chain:                  batch.Chain,
@@ -138,48 +164,61 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		NewCursorSequence:      batch.NewCursorSequence,
 	}
 
-	for _, result := range resp.Results {
-		tx := event.NormalizedTransaction{
-			TxHash:      result.TxHash,
-			BlockCursor: result.BlockCursor,
-			FeeAmount:   result.FeeAmount,
-			FeePayer:    result.FeePayer,
-			Status:      model.TxStatus(result.Status),
-			ChainData:   json.RawMessage("{}"),
+	processed := 0
+	decodeStopped := false
+	stopSignature := ""
+	stopReason := ""
+	orderedResultIndex := 0
+
+	for _, sig := range batch.Signatures {
+		signature := strings.TrimSpace(sig.Hash)
+		if signature == "" {
+			decodeStopped = true
+			stopReason = "empty signature"
+			break
+		}
+		if errMsg, hasErr := errorBySignature[signature]; hasErr {
+			decodeStopped = true
+			stopSignature = signature
+			stopReason = errMsg
+			break
 		}
 
-		if result.BlockTime != 0 {
-			bt := time.Unix(result.BlockTime, 0)
-			tx.BlockTime = &bt
-		}
-		if result.Error != nil {
-			tx.Err = result.Error
-		}
-
-		isBaseChain := batch.Chain == model.ChainBase || (batch.Chain == model.ChainEthereum && batch.Network == model.NetworkSepolia)
-		if isBaseChain {
-			tx.BalanceEvents = buildCanonicalBaseBalanceEvents(
-				batch.Chain,
-				batch.Network,
-				result.TxHash,
-				result.Status,
-				result.FeePayer,
-				result.FeeAmount,
-				result.BalanceEvents,
-			)
+		var (
+			result *sidecarv1.TransactionResult
+			ok     bool
+		)
+		if result, ok = resultBySignature[signature]; ok {
+			delete(resultBySignature, signature)
 		} else {
-			tx.BalanceEvents = buildCanonicalSolanaBalanceEvents(
-				batch.Chain,
-				batch.Network,
-				result.TxHash,
-				result.Status,
-				result.FeePayer,
-				result.FeeAmount,
-				result.BalanceEvents,
-			)
+			if orderedResultIndex >= len(orderedResults) {
+				decodeStopped = true
+				stopSignature = signature
+				stopReason = "missing decode result"
+				break
+			}
+			result = orderedResults[orderedResultIndex]
+			orderedResultIndex++
 		}
 
-		normalized.Transactions = append(normalized.Transactions, tx)
+		normalized.Transactions = append(normalized.Transactions, n.normalizedTxFromResult(batch, result))
+		cursorValue := sig.Hash
+		normalized.NewCursorValue = &cursorValue
+		normalized.NewCursorSequence = sig.Sequence
+		processed++
+	}
+
+	if decodeStopped {
+		if stopSignature == "" {
+			stopSignature = "<unknown>"
+		}
+		if stopReason == "" {
+			stopReason = "decode failed"
+		}
+		return fmt.Errorf("decode blocked at signature %s after %d successful txs: %s", stopSignature, processed, stopReason)
+	}
+	if processed == 0 && len(batch.Signatures) > 0 {
+		return fmt.Errorf("no decodable transactions in batch")
 	}
 
 	select {
@@ -193,6 +232,50 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	}
 
 	return nil
+}
+
+func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sidecarv1.TransactionResult) event.NormalizedTransaction {
+	tx := event.NormalizedTransaction{
+		TxHash:      result.TxHash,
+		BlockCursor: result.BlockCursor,
+		FeeAmount:   result.FeeAmount,
+		FeePayer:    result.FeePayer,
+		Status:      model.TxStatus(result.Status),
+		ChainData:   json.RawMessage("{}"),
+	}
+
+	if result.BlockTime != 0 {
+		bt := time.Unix(result.BlockTime, 0)
+		tx.BlockTime = &bt
+	}
+	if result.Error != nil {
+		tx.Err = result.Error
+	}
+
+	isBaseChain := batch.Chain == model.ChainBase || (batch.Chain == model.ChainEthereum && batch.Network == model.NetworkSepolia)
+	if isBaseChain {
+		tx.BalanceEvents = buildCanonicalBaseBalanceEvents(
+			batch.Chain,
+			batch.Network,
+			result.TxHash,
+			result.Status,
+			result.FeePayer,
+			result.FeeAmount,
+			result.BalanceEvents,
+		)
+	} else {
+		tx.BalanceEvents = buildCanonicalSolanaBalanceEvents(
+			batch.Chain,
+			batch.Network,
+			result.TxHash,
+			result.Status,
+			result.FeePayer,
+			result.FeeAmount,
+			result.BalanceEvents,
+		)
+	}
+
+	return tx
 }
 
 func buildCanonicalSolanaBalanceEvents(

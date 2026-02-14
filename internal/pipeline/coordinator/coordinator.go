@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -52,7 +53,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 
 	// Run immediately on start, then on interval
 	if err := c.tick(ctx); err != nil {
-		c.logger.Error("coordinator tick failed", "error", err)
+		panic(fmt.Sprintf("coordinator tick failed: %v", err))
 	}
 
 	for {
@@ -62,7 +63,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			if err := c.tick(ctx); err != nil {
-				c.logger.Error("coordinator tick failed", "error", err)
+				panic(fmt.Sprintf("coordinator tick failed: %v", err))
 			}
 		}
 	}
@@ -79,8 +80,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 	for _, addr := range addresses {
 		cursor, err := c.cursorRepo.Get(ctx, c.chain, c.network, addr.Address)
 		if err != nil {
-			c.logger.Error("get cursor failed", "address", addr.Address, "error", err)
-			continue
+			return fmt.Errorf("get cursor %s: %w", addr.Address, err)
 		}
 
 		var cursorValue *string

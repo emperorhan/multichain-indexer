@@ -183,3 +183,38 @@ func TestGetTransaction_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, string(expectedResult), string(result))
 }
+
+func TestGetTransactions_Batch(t *testing.T) {
+	client := methodTestClient(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+
+		var reqs []Request
+		require.NoError(t, json.Unmarshal(body, &reqs))
+		require.Len(t, reqs, 2)
+		assert.Equal(t, "getTransaction", reqs[0].Method)
+		assert.Equal(t, "getTransaction", reqs[1].Method)
+
+		resp := []Response{
+			{
+				JSONRPC: "2.0",
+				ID:      reqs[0].ID,
+				Result:  json.RawMessage(`{"slot":100}`),
+			},
+			{
+				JSONRPC: "2.0",
+				ID:      reqs[1].ID,
+				Result:  json.RawMessage(`{"slot":200}`),
+			},
+		}
+		rawResp, err := json.Marshal(resp)
+		require.NoError(t, err)
+		return jsonHTTPResponse(http.StatusOK, string(rawResp)), nil
+	})
+
+	results, err := client.GetTransactions(context.Background(), []string{"sig1", "sig2"})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	assert.JSONEq(t, `{"slot":100}`, string(results[0]))
+	assert.JSONEq(t, `{"slot":200}`, string(results[1]))
+}

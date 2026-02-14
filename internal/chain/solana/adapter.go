@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	maxPageSize       = 1000
-	maxConcurrentTxs  = 10
+	maxPageSize      = 1000
+	maxConcurrentTxs = 10
 )
 
 type Adapter struct {
@@ -115,6 +115,21 @@ func (a *Adapter) FetchNewSignatures(ctx context.Context, address string, cursor
 
 // FetchTransactions fetches raw transaction data for given signatures in parallel.
 func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error) {
+	if len(signatures) == 0 {
+		return []json.RawMessage{}, nil
+	}
+
+	if batchClient, ok := a.client.(interface {
+		GetTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error)
+	}); ok {
+		results, err := batchClient.GetTransactions(ctx, signatures)
+		if err == nil {
+			a.logger.Info("fetched transactions (batch)", "count", len(results))
+			return results, nil
+		}
+		a.logger.Warn("batch transaction fetch failed, falling back", "error", err)
+	}
+
 	results := make([]json.RawMessage, len(signatures))
 	var mu sync.Mutex
 	var firstErr error

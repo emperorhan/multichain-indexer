@@ -62,7 +62,41 @@ type GetSignaturesOpts struct {
 
 // GetTransaction returns a parsed transaction by signature.
 func (c *Client) GetTransaction(ctx context.Context, signature string) (json.RawMessage, error) {
-	params := []interface{}{
+	params := buildGetTransactionParams(signature)
+	result, err := c.call(ctx, "getTransaction", params)
+	if err != nil {
+		return nil, fmt.Errorf("getTransaction(%s): %w", signature, err)
+	}
+	return result, nil
+}
+
+func (c *Client) GetTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error) {
+	if len(signatures) == 0 {
+		return []json.RawMessage{}, nil
+	}
+
+	requests := make([]Request, len(signatures))
+	for i, signature := range signatures {
+		requests[i] = c.newRequest("getTransaction", buildGetTransactionParams(signature))
+	}
+
+	responses, err := c.callBatch(ctx, requests)
+	if err != nil {
+		return nil, fmt.Errorf("getTransaction batch: %w", err)
+	}
+
+	results := make([]json.RawMessage, len(signatures))
+	for i, response := range responses {
+		if response.Error != nil {
+			return nil, fmt.Errorf("getTransaction(%s): %w", signatures[i], response.Error)
+		}
+		results[i] = response.Result
+	}
+	return results, nil
+}
+
+func buildGetTransactionParams(signature string) []interface{} {
+	return []interface{}{
 		signature,
 		map[string]interface{}{
 			"encoding":                       "jsonParsed",
@@ -70,9 +104,4 @@ func (c *Client) GetTransaction(ctx context.Context, signature string) (json.Raw
 			"maxSupportedTransactionVersion": 0,
 		},
 	}
-	result, err := c.call(ctx, "getTransaction", params)
-	if err != nil {
-		return nil, fmt.Errorf("getTransaction(%s): %w", signature, err)
-	}
-	return result, nil
 }

@@ -213,3 +213,46 @@ func TestAdapter_FetchTransactions_EmptySignatures(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, results)
 }
+
+type batchCapableClient struct {
+	results      []json.RawMessage
+	batchCalled  bool
+	singleCalled bool
+}
+
+func (b *batchCapableClient) GetSlot(context.Context, string) (int64, error) {
+	return 0, nil
+}
+
+func (b *batchCapableClient) GetSignaturesForAddress(context.Context, string, *rpc.GetSignaturesOpts) ([]rpc.SignatureInfo, error) {
+	return []rpc.SignatureInfo{}, nil
+}
+
+func (b *batchCapableClient) GetTransaction(context.Context, string) (json.RawMessage, error) {
+	b.singleCalled = true
+	return nil, errors.New("single path should not be used")
+}
+
+func (b *batchCapableClient) GetTransactions(_ context.Context, _ []string) ([]json.RawMessage, error) {
+	b.batchCalled = true
+	return b.results, nil
+}
+
+func TestAdapter_FetchTransactions_BatchPreferred(t *testing.T) {
+	client := &batchCapableClient{
+		results: []json.RawMessage{
+			json.RawMessage(`{"slot":100}`),
+			json.RawMessage(`{"slot":200}`),
+		},
+	}
+	adapter := &Adapter{
+		client: client,
+		logger: slog.Default(),
+	}
+
+	results, err := adapter.FetchTransactions(context.Background(), []string{"sig1", "sig2"})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	assert.True(t, client.batchCalled)
+	assert.False(t, client.singleCalled)
+}

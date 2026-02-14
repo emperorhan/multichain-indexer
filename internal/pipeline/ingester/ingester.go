@@ -71,6 +71,7 @@ func (ing *Ingester) Run(ctx context.Context) error {
 					"address", batch.Address,
 					"error", err,
 				)
+				panic(fmt.Sprintf("ingester process batch failed: address=%s err=%v", batch.Address, err))
 			}
 		}
 	}

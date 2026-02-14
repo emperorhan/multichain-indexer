@@ -11,9 +11,11 @@
 8. `I-0110` (`M6`): Base runtime pipeline wiring.
 9. `I-0114` (`M7-S1`): runtime wiring drift guard + dual-chain replay smoke.
 10. `I-0115` (`M7-S2`): QA counterexample gate for runtime wiring/replay reliability.
+11. `I-0117` (`M8-S1`): failed-transaction fee completeness + replay safety hardening.
+12. `I-0118` (`M8-S2`): QA counterexample gate for failed-transaction fee coverage.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -31,12 +33,15 @@ Each slice must be independently releasable:
 6. Before `I-0110`: QA release gate from `I-0107` passes.
 7. Before `I-0114`: runtime wiring baseline from `I-0110` passes on both mandatory chains.
 8. Before `I-0115`: `I-0114` emits deterministic replay/wiring evidence and no unresolved blockers.
+9. Before `I-0117`: `I-0115` QA report is `PASS` with no unresolved blocker invariants.
+10. Before `I-0118`: `I-0117` emits deterministic failed-transaction fee coverage evidence for both mandatory chains.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
 2. If Base L1 data fee fields are unavailable, emit deterministic execution fee plus explicit unavailable marker metadata.
 3. If reorg path is unstable, run finalized-only ingest mode until rollback tests pass.
 4. If strict runtime wiring preflight is operationally disruptive, keep strict checks in tests/CI and use explicit local override with warning + QA follow-up.
+5. If failed-transaction fee metadata is missing from provider responses, preserve deterministic no-op behavior and record explicit unavailable markers for follow-up.
 
 ## Completion Evidence
 1. Developer slice output:
