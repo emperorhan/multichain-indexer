@@ -603,6 +603,11 @@ func buildSolanaFeeBalanceEvent(feePayer, feeAmount string) event.NormalizedBala
 	}
 }
 
+type solanaCanonicalSelection struct {
+	FromOuterInstruction bool
+	OriginalInnerIndex   int32
+}
+
 func canonicalizeSolanaBalanceEvents(
 	chain model.Chain,
 	network model.Network,
@@ -645,12 +650,17 @@ func canonicalizeSolanaBalanceEvents(
 	})
 
 	eventsByID := make(map[string]event.NormalizedBalanceEvent, len(normalizedEvents))
+	selectionByEventID := make(map[string]solanaCanonicalSelection, len(normalizedEvents))
 	for _, be := range normalizedEvents {
 		if be.EventCategory == model.EventCategoryFee {
 			be.OuterInstructionIndex = -1
 			be.InnerInstructionIndex = -1
 			be.Delta = canonicalFeeDelta(be.Delta)
 			be.EventAction = "transaction_fee"
+		}
+		selection := solanaCanonicalSelection{
+			FromOuterInstruction: be.InnerInstructionIndex == -1,
+			OriginalInnerIndex:   int32(be.InnerInstructionIndex),
 		}
 		if be.EventCategory != model.EventCategoryFee && be.OuterInstructionIndex >= 0 && be.InnerInstructionIndex > -1 {
 			key := solanaInstructionOwnerKey{
@@ -661,6 +671,7 @@ func canonicalizeSolanaBalanceEvents(
 			}
 			if _, ok := outerHasOwner[key]; ok {
 				be.InnerInstructionIndex = -1
+				selection.FromOuterInstruction = false
 			}
 		}
 
@@ -685,10 +696,12 @@ func canonicalizeSolanaBalanceEvents(
 		existing, ok := eventsByID[be.EventID]
 		if !ok {
 			eventsByID[be.EventID] = be
+			selectionByEventID[be.EventID] = selection
 			continue
 		}
-		if shouldReplaceCanonicalSolanaEvent(existing, be) {
+		if shouldReplaceCanonicalSolanaEvent(existing, be, selectionByEventID[be.EventID], selection) {
 			eventsByID[be.EventID] = be
+			selectionByEventID[be.EventID] = selection
 		}
 	}
 
@@ -704,11 +717,26 @@ func canonicalizeSolanaBalanceEvents(
 	return events
 }
 
-func shouldReplaceCanonicalSolanaEvent(existing, incoming event.NormalizedBalanceEvent) bool {
+func shouldReplaceCanonicalSolanaEvent(
+	existing, incoming event.NormalizedBalanceEvent,
+	existingSelection, incomingSelection solanaCanonicalSelection,
+) bool {
 	if existing.EventCategory == model.EventCategoryFee || incoming.EventCategory == model.EventCategoryFee {
 		return false
 	}
-	return incoming.InnerInstructionIndex == -1 && existing.InnerInstructionIndex > incoming.InnerInstructionIndex
+	if existingSelection.FromOuterInstruction != incomingSelection.FromOuterInstruction {
+		return incomingSelection.FromOuterInstruction
+	}
+	if existingSelection.OriginalInnerIndex != incomingSelection.OriginalInnerIndex {
+		return incomingSelection.OriginalInnerIndex < existingSelection.OriginalInnerIndex
+	}
+	if existing.EventAction != incoming.EventAction {
+		return incoming.EventAction < existing.EventAction
+	}
+	if existing.ContractAddress != incoming.ContractAddress {
+		return incoming.ContractAddress < existing.ContractAddress
+	}
+	return existing.Delta > incoming.Delta
 }
 
 func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, category model.EventCategory) string {

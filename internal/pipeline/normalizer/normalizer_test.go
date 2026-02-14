@@ -697,9 +697,13 @@ func TestProcessBatch_SolInstructionOwnershipDedupByAddressAsset(t *testing.T) {
 	assert.Equal(t, model.TxStatusSuccess, tx.Status)
 
 	transferByAction := map[string]event.NormalizedBalanceEvent{}
+	eventPaths := map[string]struct{}{}
 	for _, be := range tx.BalanceEvents {
 		if be.EventCategory == model.EventCategoryTransfer {
 			transferByAction[be.EventAction] = be
+			_, dup := eventPaths[be.EventPath]
+			require.False(t, dup, "duplicate event path %s", be.EventPath)
+			eventPaths[be.EventPath] = struct{}{}
 		}
 	}
 	assert.Equal(t, "outer:0|inner:-1", transferByAction["outer_owner_transfer"].EventPath)
