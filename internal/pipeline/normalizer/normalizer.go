@@ -17,6 +17,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -120,8 +121,14 @@ func (n *Normalizer) processBatchWithRetry(
 	client sidecarv1.ChainDecoderClient,
 	batch event.RawBatch,
 ) error {
+	const stage = "normalizer.decode_batch"
+
 	maxAttempts := n.effectiveRetryMaxAttempts()
 	var lastErr error
+	lastDecision := retry.Decision{
+		Class:  retry.ClassTerminal,
+		Reason: "unset",
+	}
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if err := n.processBatch(ctx, log, client, batch); err != nil {
@@ -129,10 +136,17 @@ func (n *Normalizer) processBatchWithRetry(
 				return ctx.Err()
 			}
 			lastErr = err
+			lastDecision = retry.Classify(err)
+			if !lastDecision.IsTransient() {
+				return fmt.Errorf("terminal_failure stage=%s attempt=%d reason=%s: %w", stage, attempt, lastDecision.Reason, err)
+			}
 			if attempt == maxAttempts {
 				break
 			}
 			log.Warn("process batch attempt failed; retrying",
+				"stage", stage,
+				"classification", lastDecision.Class,
+				"classification_reason", lastDecision.Reason,
 				"address", batch.Address,
 				"attempt", attempt,
 				"max_attempts", maxAttempts,
@@ -146,7 +160,7 @@ func (n *Normalizer) processBatchWithRetry(
 		return nil
 	}
 
-	return fmt.Errorf("normalize batch retry exhausted: %w", lastErr)
+	return fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, maxAttempts, lastDecision.Reason, lastErr)
 }
 
 func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client sidecarv1.ChainDecoderClient, batch event.RawBatch) error {

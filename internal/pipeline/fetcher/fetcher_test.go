@@ -12,6 +12,7 @@ import (
 	chainmocks "github.com/emperorhan/multichain-indexer/internal/chain/mocks"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -347,4 +348,186 @@ func TestFetcher_RetryDelay_ExponentialWithCap(t *testing.T) {
 	assert.Equal(t, 20*time.Millisecond, f.retryDelay(2))
 	assert.Equal(t, 25*time.Millisecond, f.retryDelay(3))
 	assert.Equal(t, 25*time.Millisecond, f.retryDelay(4))
+}
+
+func TestProcessJob_TerminalSignatureFetchError_NoRetryAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "addr1",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+			rawBatchCh := make(chan event.RawBatch, 1)
+
+			sleepCalls := 0
+			f := &Fetcher{
+				adapter:          mockAdapter,
+				rawBatchCh:       rawBatchCh,
+				logger:           slog.Default(),
+				retryMaxAttempts: 3,
+				backoffInitial:   time.Millisecond,
+				backoffMax:       2 * time.Millisecond,
+				sleepFn: func(context.Context, time.Duration) error {
+					sleepCalls++
+					return nil
+				},
+			}
+
+			job := event.FetchJob{
+				Chain:     tc.chain,
+				Network:   tc.network,
+				Address:   tc.address,
+				BatchSize: 4,
+			}
+
+			attempts := 0
+			mockAdapter.EXPECT().
+				FetchNewSignatures(gomock.Any(), tc.address, (*string)(nil), 4).
+				DoAndReturn(func(context.Context, string, *string, int) ([]chain.SignatureInfo, error) {
+					attempts++
+					return nil, retry.Terminal(errors.New("invalid cursor"))
+				}).
+				Times(1)
+
+			err := f.processJob(context.Background(), slog.Default(), job)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "terminal_failure stage=fetcher.fetch_signatures")
+			assert.Equal(t, 1, attempts)
+			assert.Equal(t, 0, sleepCalls)
+			select {
+			case got := <-rawBatchCh:
+				t.Fatalf("expected no raw batch, got %+v", got)
+			default:
+			}
+		})
+	}
+}
+
+func TestProcessJob_TransientSignatureFetchRetryAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+		txHash  string
+		cursor  int64
+	}{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "addr1",
+			txHash:  "sig-sol-1",
+			cursor:  101,
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			txHash:  "0xbase-sig-1",
+			cursor:  202,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+			rawBatchCh := make(chan event.RawBatch, 1)
+
+			var delays []time.Duration
+			f := &Fetcher{
+				adapter:          mockAdapter,
+				rawBatchCh:       rawBatchCh,
+				logger:           slog.Default(),
+				retryMaxAttempts: 2,
+				backoffInitial:   5 * time.Millisecond,
+				backoffMax:       20 * time.Millisecond,
+				adaptiveMinBatch: 1,
+				sleepFn: func(_ context.Context, d time.Duration) error {
+					delays = append(delays, d)
+					return nil
+				},
+			}
+
+			job := event.FetchJob{
+				Chain:     tc.chain,
+				Network:   tc.network,
+				Address:   tc.address,
+				BatchSize: 4,
+			}
+
+			gomock.InOrder(
+				mockAdapter.EXPECT().
+					FetchNewSignatures(gomock.Any(), tc.address, (*string)(nil), 4).
+					Return(nil, retry.Transient(errors.New("rpc timeout"))),
+				mockAdapter.EXPECT().
+					FetchNewSignatures(gomock.Any(), tc.address, (*string)(nil), 2).
+					Return([]chain.SignatureInfo{{Hash: tc.txHash, Sequence: tc.cursor}}, nil),
+				mockAdapter.EXPECT().
+					FetchTransactions(gomock.Any(), []string{tc.txHash}).
+					Return([]json.RawMessage{json.RawMessage(`{"tx":1}`)}, nil),
+			)
+
+			require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+			batch := <-rawBatchCh
+			require.NotNil(t, batch.NewCursorValue)
+			assert.Equal(t, tc.txHash, *batch.NewCursorValue)
+			assert.Equal(t, tc.cursor, batch.NewCursorSequence)
+			assert.Equal(t, []time.Duration{5 * time.Millisecond}, delays)
+		})
+	}
+}
+
+func TestProcessJob_TransientSignatureFetchExhaustion_StageDiagnostic(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+	f := &Fetcher{
+		adapter:          mockAdapter,
+		logger:           slog.Default(),
+		retryMaxAttempts: 2,
+		backoffInitial:   time.Millisecond,
+		backoffMax:       2 * time.Millisecond,
+		sleepFn:          func(context.Context, time.Duration) error { return nil },
+	}
+
+	job := event.FetchJob{
+		Chain:     model.ChainSolana,
+		Network:   model.NetworkDevnet,
+		Address:   "addr1",
+		BatchSize: 4,
+	}
+
+	mockAdapter.EXPECT().
+		FetchNewSignatures(gomock.Any(), "addr1", (*string)(nil), 4).
+		Return(nil, retry.Transient(errors.New("rpc timeout")))
+	mockAdapter.EXPECT().
+		FetchNewSignatures(gomock.Any(), "addr1", (*string)(nil), 2).
+		Return(nil, retry.Transient(errors.New("rpc timeout")))
+
+	err := f.processJob(context.Background(), slog.Default(), job)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transient_recovery_exhausted stage=fetcher.fetch_signatures")
 }

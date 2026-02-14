@@ -13,6 +13,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -939,7 +940,7 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
 					cursorAttempts++
 					if cursorAttempts == 1 {
-						return errors.New("transient cursor write timeout")
+						return retry.Transient(errors.New("transient cursor write timeout"))
 					}
 					return nil
 				}).
@@ -959,6 +960,113 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 			assert.Equal(t, 2, cursorAttempts)
 		})
 	}
+}
+
+func TestIngester_ProcessBatchWithRetry_TerminalFailure_NoRetryAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name      string
+		chain     model.Chain
+		network   model.Network
+		address   string
+		txHash    string
+		txCursor  int64
+		txStatus  model.TxStatus
+		feePayer  string
+		feeAmount string
+	}{
+		{
+			name:      "solana-devnet",
+			chain:     model.ChainSolana,
+			network:   model.NetworkDevnet,
+			address:   "addr-sol-terminal",
+			txHash:    "sig-terminal-1",
+			txCursor:  101,
+			txStatus:  model.TxStatusSuccess,
+			feePayer:  "addr-sol-terminal",
+			feeAmount: "0",
+		},
+		{
+			name:      "base-sepolia",
+			chain:     model.ChainBase,
+			network:   model.NetworkSepolia,
+			address:   "0x1111111111111111111111111111111111111111",
+			txHash:    "0xbase-terminal-1",
+			txCursor:  202,
+			txStatus:  model.TxStatusSuccess,
+			feePayer:  "0x1111111111111111111111111111111111111111",
+			feeAmount: "0",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+
+			normalizedCh := make(chan event.NormalizedBatch, 1)
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+			ing.retryMaxAttempts = 3
+			ing.retryDelayStart = time.Millisecond
+			ing.retryDelayMax = 2 * time.Millisecond
+			sleepCalls := 0
+			ing.sleepFn = func(context.Context, time.Duration) error {
+				sleepCalls++
+				return nil
+			}
+
+			batch := event.NormalizedBatch{
+				Chain:   tc.chain,
+				Network: tc.network,
+				Address: tc.address,
+				Transactions: []event.NormalizedTransaction{
+					{
+						TxHash:      tc.txHash,
+						BlockCursor: tc.txCursor,
+						FeeAmount:   tc.feeAmount,
+						FeePayer:    tc.feePayer,
+						Status:      tc.txStatus,
+						ChainData:   json.RawMessage("{}"),
+					},
+				},
+				NewCursorSequence: tc.txCursor,
+			}
+
+			setupBeginTx(mockDB)
+			mockTxRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(uuid.Nil, retry.Terminal(errors.New("constraint violation"))).
+				Times(1)
+
+			err := ing.processBatchWithRetry(context.Background(), batch)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "terminal_failure stage=ingester.process_batch")
+			assert.Equal(t, 0, sleepCalls)
+		})
+	}
+}
+
+func TestIngester_ProcessBatchWithRetry_TransientExhaustion_StageDiagnostic(t *testing.T) {
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing.retryMaxAttempts = 2
+	ing.retryDelayStart = 0
+	ing.retryDelayMax = 0
+	ing.sleepFn = func(context.Context, time.Duration) error { return nil }
+
+	mockDB.EXPECT().
+		BeginTx(gomock.Any(), gomock.Nil()).
+		Return(nil, retry.Transient(errors.New("db timeout"))).
+		Times(2)
+
+	err := ing.processBatchWithRetry(context.Background(), event.NormalizedBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: "addr1",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transient_recovery_exhausted stage=ingester.process_batch")
 }
 
 func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {

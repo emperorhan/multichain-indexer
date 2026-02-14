@@ -13,6 +13,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/normalizer/mocks"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1770,6 +1771,115 @@ func TestProcessBatchWithRetry_TransientDecodeFailureDeterministicAcrossChains(t
 			assert.Equal(t, 4, decodeAttempts)
 		})
 	}
+}
+
+func TestProcessBatchWithRetry_TerminalDecodeFailure_NoRetryAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name      string
+		chain     model.Chain
+		network   model.Network
+		address   string
+		signature string
+		sequence  int64
+	}{
+		{
+			name:      "solana-devnet",
+			chain:     model.ChainSolana,
+			network:   model.NetworkDevnet,
+			address:   "addr-retry-solana",
+			signature: "sig-sol-terminal-1",
+			sequence:  101,
+		},
+		{
+			name:      "base-sepolia",
+			chain:     model.ChainBase,
+			network:   model.NetworkSepolia,
+			address:   "0x1111111111111111111111111111111111111111",
+			signature: "0xbase-terminal-1",
+			sequence:  202,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+			sleepCalls := 0
+			n := &Normalizer{
+				sidecarTimeout:   30 * time.Second,
+				normalizedCh:     make(chan event.NormalizedBatch, 1),
+				logger:           slog.Default(),
+				retryMaxAttempts: 3,
+				retryDelayStart:  time.Millisecond,
+				retryDelayMax:    2 * time.Millisecond,
+				sleepFn: func(context.Context, time.Duration) error {
+					sleepCalls++
+					return nil
+				},
+			}
+
+			batch := event.RawBatch{
+				Chain:             tc.chain,
+				Network:           tc.network,
+				Address:           tc.address,
+				RawTransactions:   []json.RawMessage{json.RawMessage(`{"tx":"terminal"}`)},
+				Signatures:        []event.SignatureInfo{{Hash: tc.signature, Sequence: tc.sequence}},
+				NewCursorValue:    strPtr(tc.signature),
+				NewCursorSequence: tc.sequence,
+			}
+
+			decodeAttempts := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					decodeAttempts++
+					return nil, retry.Terminal(errors.New("decode schema mismatch"))
+				}).
+				Times(1)
+
+			err := n.processBatchWithRetry(context.Background(), slog.Default(), mockClient, batch)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "terminal_failure stage=normalizer.decode_batch")
+			assert.Equal(t, 1, decodeAttempts)
+			assert.Equal(t, 0, sleepCalls)
+		})
+	}
+}
+
+func TestProcessBatchWithRetry_TransientDecodeFailureExhausted_StageDiagnostic(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	n := &Normalizer{
+		sidecarTimeout:   30 * time.Second,
+		normalizedCh:     make(chan event.NormalizedBatch, 1),
+		logger:           slog.Default(),
+		retryMaxAttempts: 2,
+		retryDelayStart:  0,
+		retryDelayMax:    0,
+		sleepFn:          func(context.Context, time.Duration) error { return nil },
+	}
+
+	batch := event.RawBatch{
+		Chain:             model.ChainSolana,
+		Network:           model.NetworkDevnet,
+		Address:           "addr1",
+		RawTransactions:   []json.RawMessage{json.RawMessage(`{"tx":"retry"}`)},
+		Signatures:        []event.SignatureInfo{{Hash: "sig-retry", Sequence: 1}},
+		NewCursorValue:    strPtr("sig-retry"),
+		NewCursorSequence: 1,
+	}
+
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, retry.Transient(errors.New("sidecar unavailable"))).
+		Times(2)
+
+	err := n.processBatchWithRetry(context.Background(), slog.Default(), mockClient, batch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transient_recovery_exhausted stage=normalizer.decode_batch")
 }
 
 func TestWorker_PanicsOnProcessBatchError(t *testing.T) {

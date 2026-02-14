@@ -10,6 +10,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 )
 
 const (
@@ -172,19 +173,29 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 }
 
 func (f *Fetcher) fetchSignaturesWithRetry(ctx context.Context, log *slog.Logger, job event.FetchJob, batchSize int) ([]chain.SignatureInfo, int, error) {
+	const stage = "fetcher.fetch_signatures"
+
 	currentBatch := batchSize
 	attempts := f.effectiveRetryMaxAttempts()
 
 	var lastErr error
+	lastDecision := retry.Decision{
+		Class:  retry.ClassTerminal,
+		Reason: "unset",
+	}
 	for attempt := 1; attempt <= attempts; attempt++ {
 		sigs, err := f.adapter.FetchNewSignatures(ctx, job.Address, job.CursorValue, currentBatch)
 		if err == nil {
 			return sigs, currentBatch, nil
 		}
 		lastErr = err
+		lastDecision = retry.Classify(err)
 
 		if ctx.Err() != nil {
 			return nil, currentBatch, ctx.Err()
+		}
+		if !lastDecision.IsTransient() {
+			return nil, currentBatch, fmt.Errorf("terminal_failure stage=%s attempt=%d reason=%s: %w", stage, attempt, lastDecision.Reason, err)
 		}
 		if attempt == attempts {
 			break
@@ -193,6 +204,9 @@ func (f *Fetcher) fetchSignaturesWithRetry(ctx context.Context, log *slog.Logger
 		nextBatch := f.reduceBatchSize(currentBatch)
 		if nextBatch < currentBatch {
 			log.Warn("signature fetch failed; reducing batch",
+				"stage", stage,
+				"classification", lastDecision.Class,
+				"classification_reason", lastDecision.Reason,
 				"address", job.Address,
 				"attempt", attempt,
 				"from", currentBatch,
@@ -202,6 +216,9 @@ func (f *Fetcher) fetchSignaturesWithRetry(ctx context.Context, log *slog.Logger
 			currentBatch = nextBatch
 		} else {
 			log.Warn("signature fetch failed; retrying",
+				"stage", stage,
+				"classification", lastDecision.Class,
+				"classification_reason", lastDecision.Reason,
 				"address", job.Address,
 				"attempt", attempt,
 				"batch_size", currentBatch,
@@ -215,14 +232,20 @@ func (f *Fetcher) fetchSignaturesWithRetry(ctx context.Context, log *slog.Logger
 		}
 	}
 
-	return nil, currentBatch, fmt.Errorf("fetch signatures failed after %d attempts: %w", attempts, lastErr)
+	return nil, currentBatch, fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, attempts, lastDecision.Reason, lastErr)
 }
 
 func (f *Fetcher) fetchTransactionsWithRetry(ctx context.Context, log *slog.Logger, sigs []chain.SignatureInfo) ([]chain.SignatureInfo, []json.RawMessage, int, error) {
+	const stage = "fetcher.fetch_transactions"
+
 	currentBatch := len(sigs)
 	attempts := f.effectiveRetryMaxAttempts()
 
 	var lastErr error
+	lastDecision := retry.Decision{
+		Class:  retry.ClassTerminal,
+		Reason: "unset",
+	}
 	for attempt := 1; attempt <= attempts; attempt++ {
 		selected := sigs[:currentBatch]
 		sigHashes := make([]string, len(selected))
@@ -235,9 +258,13 @@ func (f *Fetcher) fetchTransactionsWithRetry(ctx context.Context, log *slog.Logg
 			return selected, rawTxs, currentBatch, nil
 		}
 		lastErr = err
+		lastDecision = retry.Classify(err)
 
 		if ctx.Err() != nil {
 			return nil, nil, currentBatch, ctx.Err()
+		}
+		if !lastDecision.IsTransient() {
+			return nil, nil, currentBatch, fmt.Errorf("terminal_failure stage=%s attempt=%d reason=%s: %w", stage, attempt, lastDecision.Reason, err)
 		}
 		if attempt == attempts {
 			break
@@ -246,6 +273,9 @@ func (f *Fetcher) fetchTransactionsWithRetry(ctx context.Context, log *slog.Logg
 		nextBatch := f.reduceBatchSize(currentBatch)
 		if nextBatch < currentBatch {
 			log.Warn("transaction fetch failed; reducing batch",
+				"stage", stage,
+				"classification", lastDecision.Class,
+				"classification_reason", lastDecision.Reason,
 				"attempt", attempt,
 				"from", currentBatch,
 				"to", nextBatch,
@@ -254,6 +284,9 @@ func (f *Fetcher) fetchTransactionsWithRetry(ctx context.Context, log *slog.Logg
 			currentBatch = nextBatch
 		} else {
 			log.Warn("transaction fetch failed; retrying",
+				"stage", stage,
+				"classification", lastDecision.Class,
+				"classification_reason", lastDecision.Reason,
 				"attempt", attempt,
 				"batch_size", currentBatch,
 				"error", err,
@@ -266,7 +299,7 @@ func (f *Fetcher) fetchTransactionsWithRetry(ctx context.Context, log *slog.Logg
 		}
 	}
 
-	return nil, nil, currentBatch, fmt.Errorf("fetch transactions failed after %d attempts: %w", attempts, lastErr)
+	return nil, nil, currentBatch, fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, attempts, lastDecision.Reason, lastErr)
 }
 
 func (f *Fetcher) resolveBatchSize(address string, hardCap int) int {

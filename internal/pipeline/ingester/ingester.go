@@ -12,6 +12,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/google/uuid"
 )
@@ -93,8 +94,14 @@ func (ing *Ingester) Run(ctx context.Context) error {
 }
 
 func (ing *Ingester) processBatchWithRetry(ctx context.Context, batch event.NormalizedBatch) error {
+	const stage = "ingester.process_batch"
+
 	maxAttempts := ing.effectiveRetryMaxAttempts()
 	var lastErr error
+	lastDecision := retry.Decision{
+		Class:  retry.ClassTerminal,
+		Reason: "unset",
+	}
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if err := ing.processBatch(ctx, batch); err != nil {
@@ -102,11 +109,18 @@ func (ing *Ingester) processBatchWithRetry(ctx context.Context, batch event.Norm
 				return ctx.Err()
 			}
 			lastErr = err
+			lastDecision = retry.Classify(err)
+			if !lastDecision.IsTransient() {
+				return fmt.Errorf("terminal_failure stage=%s attempt=%d reason=%s: %w", stage, attempt, lastDecision.Reason, err)
+			}
 			if attempt == maxAttempts {
 				break
 			}
 
 			ing.logger.Warn("process batch attempt failed; retrying",
+				"stage", stage,
+				"classification", lastDecision.Class,
+				"classification_reason", lastDecision.Reason,
 				"address", batch.Address,
 				"attempt", attempt,
 				"max_attempts", maxAttempts,
@@ -120,7 +134,7 @@ func (ing *Ingester) processBatchWithRetry(ctx context.Context, batch event.Norm
 		return nil
 	}
 
-	return fmt.Errorf("process batch retry exhausted: %w", lastErr)
+	return fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, maxAttempts, lastDecision.Reason, lastErr)
 }
 
 func isCanonicalityDrift(batch event.NormalizedBatch) bool {
