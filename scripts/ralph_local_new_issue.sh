@@ -99,7 +99,7 @@ evidence_required: true
 - TODO
 
 ## Constraints
-- Keep changes within `allowed_paths` and `max_diff_scope`.
+- Keep changes within \`allowed_paths\` and \`max_diff_scope\`.
 - Do not bypass declared invariants.
 
 ## Evidence Checklist
