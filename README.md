@@ -418,95 +418,37 @@ type ChainAdapter interface {
 
 DDL 변경 없음. 기존 8개 테이블이 모든 체인을 수용합니다.
 
-## 24/7 Autonomous Agent Setup
+## Ralph Loop (Local First)
 
-GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로 설정합니다.
+로컬 Ralph 루프 기준으로 최소 실행 절차만 유지합니다.
 
-1. 브랜치 보호 적용:
-   - `scripts/setup_branch_protection.sh emperorhan/multichain-indexer main`
-2. 에이전트 변수 설정:
-   - `AGENT_EXEC_CMD='scripts/agent_executor.sh' AGENT_RUNNER='self-hosted' scripts/setup_agent_loop.sh emperorhan/multichain-indexer`
-3. 이슈는 `Autonomous Task` 템플릿으로 생성하고 `autonomous + ready` 라벨을 유지
-4. 의사결정이 필요하면 에이전트가 `decision-needed + needs-opinion` 라벨과 코멘트로 중단
-5. 자동 발굴을 켜면 `Issue Scout`가 TODO/FIXME와 최근 실패 CI를 이슈로 올림 (`agent/discovered`)
-6. Manager/QA 협업을 켜면:
-   - Manager loop가 `solana-devnet`, `base-sepolia` whitelist 주소셋에서 `qa-ready` 이슈 생성
-   - QA 입력은 이슈 본문 `QA_CHAIN`, `QA_WATCHED_ADDRESSES`로 전달
-   - QA loop가 해당 이슈를 검증하고 실패 시 developer 버그 이슈 자동 생성
-7. Planner 협업:
-   - `role/planner` 이슈는 `PROMPT_plan.md` 기반으로 `specs/*`, `IMPLEMENTATION_PLAN.md`를 갱신
-   - 범위가 크면 `.agent/planner-fanout-<issue>.json` 생성 후 child issue 자동 분할(fanout)
-8. 모델 배치:
-   - Developer 기본: `gpt-5.3-codex-spark`
-   - Developer 고위험/고우선: `gpt-5.3-codex`
-   - QA 실패 triage: `gpt-5.3-codex`
-9. 역할별 병렬 러너(선택):
-   - planner: `AGENT_RUNNER_PLANNER`
-   - developer: `AGENT_RUNNER_DEVELOPER`
-   - manager: `MANAGER_RUNNER`
-   - qa: `QA_RUNNER`
-   - scout: `SCOUT_RUNNER`
-   - 미설정 시 각각 `AGENT_RUNNER`로 fallback
-10. 전역 ON/OFF:
-   - `RALPH_LOOP_ENABLED=true|false` 변수로 전체 자율 루프 토글
-   - `RALPH_AUTOPILOT_ENABLED=true|false` 변수로 Agent Loop 연속 재기동 토글
-   - 수동 토글: `.github/workflows/ralph-loop-control.yml` 또는 `scripts/toggle_ralph_loop.sh on|off|status`
-   - 터미널 단축: `scripts/install_ralph_aliases.sh` 후 `ron|roff|rstat|rkick|rscout`
-   - 휴대폰 제어: GitHub App -> Actions -> `Ralph Loop Control` 실행 (on/off/status + optional kick)
-   - 휴대폰 상태 확인: Actions -> `Ralph Status Board` 또는 이슈 `[Ops] Ralph Loop Status Board`
-11. 주요 의사결정:
-   - `Major Decision` 템플릿 사용 (`decision/major`)
-   - 해당 이슈는 owner 입력 전 자동 실행이 진행되지 않음
-12. PR 자동 머지:
-   - `Agent Auto Merge` 워크플로가 agent PR을 조건부 자동 머지
-   - 15분 주기 스캔으로 미처리 agent PR을 재수집
-   - 차단 라벨(`decision-needed`, `needs-opinion`, `blocked`, `decision/major`, `risk/high`)이 있으면 머지 중단
-   - 토글 변수: `AGENT_AUTO_MERGE_ENABLED=true|false`
-   - 선택: `AGENT_GH_TOKEN` secret(repo+workflow scope) 설정 시 workflow 파일 변경 PR까지 자동 머지 가능
-13. Self-heal(권장):
-   - `RALPH_SELF_HEAL_ENABLED=true|false` (기본 `true`)
-   - PR 생성 권한 오류를 감지하면 Actions workflow 권한(`write + can_approve_pull_request_reviews`) 자동 복구 시도
-   - auto-merge가 workflow scope 부족으로 막히면 PR에 자동 안내 코멘트 남김
-   - `AGENT_IN_PROGRESS_TIMEOUT_HOURS`(기본 `6`)를 넘긴 `in-progress` 이슈는 자동으로 `ready`로 복구
-14. 로컬 반복 루프(Playbook 스타일):
-   - 작업 지시를 `.agent/ralph_task.md`에 작성
-   - `MAX_LOOPS=6 scripts/ralph_loop_local.sh`
-15. GitHub-free 로컬 루프(권장 fallback):
+1. 초기화:
    - `scripts/ralph_local_init.sh`
-   - 인증 확인(필수): `scripts/codex_auth_status.sh --require-chatgpt` (`lrauth`)
-   - 시작(백그라운드, 기본 safe mode): `scripts/ralph_local_daemon.sh start`
-   - trust mode 시작(필요 시): `RALPH_LOCAL_TRUST_MODE=true scripts/ralph_local_daemon.sh start`
-   - 로컬 md 이슈 추가: `scripts/ralph_local_new_issue.sh planner "..."` (또는 `.ralph/issues/*.md` 직접 작성)
-   - 상태 확인: `scripts/ralph_local_daemon.sh status`
-   - 로그 보기: `scripts/ralph_local_daemon.sh tail`
-   - 의미 있는 단위 자동 main 반영:
-     - 기본 ON: `RALPH_AUTO_PUBLISH_ENABLED=true`
-     - 임계 커밋 수: `RALPH_AUTO_PUBLISH_MIN_COMMITS=3` (기본)
-     - 대상 브랜치/리모트: `RALPH_AUTO_PUBLISH_TARGET_BRANCH=main`, `RALPH_AUTO_PUBLISH_REMOTE=origin`
-     - 브랜치 전략(기본 main): `RALPH_BRANCH_STRATEGY=main`
-   - blocked 자동 재큐잉(ready 이슈가 없을 때):
-     - 기본 ON: `RALPH_BLOCKED_REQUEUE_ENABLED=true`
-     - 최대 재시도: `RALPH_BLOCKED_REQUEUE_MAX_ATTEMPTS=3`
-     - 재시도 쿨다운(초): `RALPH_BLOCKED_REQUEUE_COOLDOWN_SEC=300`
-   - 검증 실패 self-heal(컴파일/테스트/lint 자동 수정 시도):
-     - 기본 ON: `RALPH_SELF_HEAL_ENABLED=true`
-     - 최대 시도: `RALPH_SELF_HEAL_MAX_ATTEMPTS=3`
-     - 모델: `RALPH_SELF_HEAL_MODEL=gpt-5.3-codex`
-     - 로그 tail 라인 수: `RALPH_SELF_HEAL_LOG_TAIL_LINES=220`
-     - 시도 간 대기(초): `RALPH_SELF_HEAL_RETRY_SLEEP_SEC=5`
-   - ready 이슈가 없을 때 auto-manager로 새 이슈 자동 생성:
-     - 기본 ON: `RALPH_AUTOMANAGER_ENABLED=true`
-     - 명령: `RALPH_AUTOMANAGER_CMD=scripts/ralph_local_manager_autofill.sh`
-     - 재실행 쿨다운(초): `RALPH_AUTOMANAGER_COOLDOWN_SEC=60`
-   - direct main push를 원하면(브랜치 보호 해제):
-     - `scripts/enable_direct_main_push.sh emperorhan/multichain-indexer main`
-   - 중단: `scripts/ralph_local_daemon.sh stop`
-15. 릴리즈 자동화:
-   - `main` 반영 시 `release.yml`이 `vX.Y.Z` 태그와 릴리즈 노트 자동 생성
-   - PR 라벨 `release/major|minor|patch`로 버전 범위를 제어
+2. 인증 확인:
+   - `scripts/codex_auth_status.sh --require-chatgpt`
+3. 데몬 시작:
+   - `scripts/ralph_local_daemon.sh start`
+4. 로컬 이슈 추가:
+   - `scripts/ralph_local_new_issue.sh developer "<title>"`
+5. 상태/로그:
+   - `scripts/ralph_local_daemon.sh status`
+   - `scripts/ralph_local_daemon.sh tail`
+6. 종료:
+   - `scripts/ralph_local_daemon.sh stop`
+
+신뢰 모드가 필요하면 시작 시 1회만 설정합니다.
+- `RALPH_LOCAL_TRUST_MODE=true scripts/ralph_local_daemon.sh start`
+
+GitHub 기반 루프(원격 runner, workflow 토글, auto-merge)는 기본 흐름에서 분리했고, 필요할 때만 아래 문서를 참고합니다.
+- `docs/autonomy-policy.md`
+- `docs/github-collaboration.md`
 
 ## Docs
 
+- [Ralph Local Offline Mode](docs/ralph-local-offline-mode.md) — 로컬 루프 운영 정책(로컬 범위만)
+- [Ralph Local Script Map](docs/ralph-local-script-map.md) — 로컬 루프 기준 스크립트 분류표
+- [Ralph Loop Usage Guide](docs/ralph-loop-user-guide.md) — 시작/점검/중지 커맨드 요약
+- [Ralph Loop Troubleshooter](docs/ralph-loop-troubleshooter.md) — 실제 장애 원인/복구 체크리스트
 - [Architecture](docs/architecture.md) — 상세 아키텍처 명세서
 - [Testing](docs/testing.md) — 테스트 방법론 및 시나리오
 - [DB Migration Rationale](docs/db-migration-rationale.md) — AS-IS (JPA JOINED) → TO-BE (JSONB) 비교
@@ -515,9 +457,6 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 - [Definition Of Done](docs/definition-of-done.md) — 작업 완료 기준
 - [GitHub Collaboration](docs/github-collaboration.md) — 이슈/PR/라벨/승인 운영 규칙
 - [Autonomy Policy](docs/autonomy-policy.md) — 에이전트 자율 실행 정책 및 큐 규칙
-- [Ralph Local Offline Mode](docs/ralph-local-offline-mode.md) — GitHub 없이 md+commit 기반 운영 가이드
-- [Ralph Loop Usage Guide](docs/ralph-loop-user-guide.md) — 로컬 Ralph 루프 실행/점검/트러블슈팅 운영자 매뉴얼
-- [Ralph Loop Troubleshooter](docs/ralph-loop-troubleshooter.md) — 실제 장애 원인/복구/이식 체크리스트
 
 ## License
 
