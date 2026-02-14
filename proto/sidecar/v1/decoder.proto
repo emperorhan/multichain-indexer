@@ -34,6 +34,7 @@ message TransactionResult {
   string status = 6;            // "SUCCESS" or "FAILED"
   optional string error = 7;
   repeated BalanceEventInfo balance_events = 8;
+  map<string, string> metadata = 9;
 }
 
 message BalanceEventInfo {

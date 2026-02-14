@@ -1,4 +1,5 @@
 import { decodeSolanaTransaction, BalanceEventInfo, TransactionResult } from './solana/transaction_decoder';
+import { decodeBaseTransaction } from './base/transaction_decoder';
 
 interface RawTxInput {
   signature: string;
@@ -39,7 +40,9 @@ export function decodeSolanaTransactionBatch(
         continue;
       }
 
-      const result = decodeSolanaTransaction(parsed, tx.signature, watchedSet);
+      const result = isBasePayload(parsed)
+        ? decodeBaseTransaction(parsed, tx.signature, watchedSet)
+        : decodeSolanaTransaction(parsed, tx.signature, watchedSet);
       results.push(result);
     } catch (err: any) {
       errors.push({
@@ -50,4 +53,15 @@ export function decodeSolanaTransactionBatch(
   }
 
   return { results, errors };
+}
+
+function isBasePayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+  const parsed = payload as Record<string, unknown>;
+  if (parsed.chain === 'base') {
+    return true;
+  }
+  return parsed.tx !== undefined || parsed.receipt !== undefined;
 }

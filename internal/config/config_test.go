@@ -10,6 +10,7 @@ import (
 func TestLoad_Defaults(t *testing.T) {
 	// Clear env vars that might interfere
 	t.Setenv("DB_URL", "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org")
 	t.Setenv("SOLANA_RPC_URL", "https://api.devnet.solana.com")
 	t.Setenv("SIDECAR_ADDR", "localhost:50051")
 	t.Setenv("WATCHED_ADDRESSES", "")
@@ -24,6 +25,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "localhost:50051", cfg.Sidecar.Addr)
 	assert.Equal(t, "https://api.devnet.solana.com", cfg.Solana.RPCURL)
 	assert.Equal(t, "devnet", cfg.Solana.Network)
+	assert.Equal(t, "https://sepolia.base.org", cfg.Base.RPCURL)
+	assert.Equal(t, "sepolia", cfg.Base.Network)
 	assert.Equal(t, 2, cfg.Pipeline.FetchWorkers)
 	assert.Equal(t, 2, cfg.Pipeline.NormalizerWorkers)
 	assert.Equal(t, 100, cfg.Pipeline.BatchSize)
@@ -32,11 +35,14 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 8080, cfg.Server.HealthPort)
 	assert.Equal(t, "info", cfg.Log.Level)
 	assert.Empty(t, cfg.Pipeline.WatchedAddresses)
+	assert.Empty(t, cfg.Pipeline.SolanaWatchedAddresses)
+	assert.Empty(t, cfg.Pipeline.BaseWatchedAddresses)
 }
 
 func TestLoad_EnvOverride(t *testing.T) {
 	t.Setenv("DB_URL", "postgres://test:test@db:5432/testdb")
-	t.Setenv("SOLANA_RPC_URL", "https://mainnet.solana.com")
+	t.Setenv("SOLANA_DEVNET_RPC_URL", "https://mainnet.solana.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base-sepolia.example")
 	t.Setenv("SIDECAR_ADDR", "sidecar:50051")
 	t.Setenv("REDIS_URL", "redis://redis:6379")
 	t.Setenv("SOLANA_NETWORK", "mainnet")
@@ -51,6 +57,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 
 	assert.Equal(t, "postgres://test:test@db:5432/testdb", cfg.DB.URL)
 	assert.Equal(t, "https://mainnet.solana.com", cfg.Solana.RPCURL)
+	assert.Equal(t, "https://base-sepolia.example", cfg.Base.RPCURL)
 	assert.Equal(t, "sidecar:50051", cfg.Sidecar.Addr)
 	assert.Equal(t, "redis://redis:6379", cfg.Redis.URL)
 	assert.Equal(t, "mainnet", cfg.Solana.Network)
@@ -63,6 +70,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 
 func TestLoad_WatchedAddresses_Parsing(t *testing.T) {
 	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
 	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
 	t.Setenv("SIDECAR_ADDR", "localhost:50051")
 
@@ -106,14 +114,33 @@ func TestLoad_WatchedAddresses_Parsing(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.expected, cfg.Pipeline.WatchedAddresses)
+			assert.Equal(t, tt.expected, cfg.Pipeline.SolanaWatchedAddresses)
 		})
 	}
+}
+
+func TestLoad_ChainSpecificWatchedAddresses(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+	t.Setenv("WATCHED_ADDRESSES", "legacy1,legacy2")
+	t.Setenv("SOLANA_WATCHED_ADDRESSES", "sol1,sol2")
+	t.Setenv("BASE_WATCHED_ADDRESSES", "base1,base2")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"sol1", "sol2"}, cfg.Pipeline.SolanaWatchedAddresses)
+	assert.Equal(t, []string{"sol1", "sol2"}, cfg.Pipeline.WatchedAddresses)
+	assert.Equal(t, []string{"base1", "base2"}, cfg.Pipeline.BaseWatchedAddresses)
 }
 
 func TestValidate_MissingDBURL(t *testing.T) {
 	cfg := &Config{
 		DB:      DBConfig{URL: ""},
 		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
 		Sidecar: SidecarConfig{Addr: "localhost:50051"},
 	}
 	err := cfg.validate()
@@ -125,6 +152,7 @@ func TestValidate_MissingSolanaRPCURL(t *testing.T) {
 	cfg := &Config{
 		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
 		Solana:  SolanaConfig{RPCURL: ""},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
 		Sidecar: SidecarConfig{Addr: "localhost:50051"},
 	}
 	err := cfg.validate()
@@ -132,10 +160,23 @@ func TestValidate_MissingSolanaRPCURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "SOLANA_RPC_URL")
 }
 
+func TestValidate_MissingBaseRPCURL(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
+		Base:    BaseConfig{RPCURL: ""},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+	}
+	err := cfg.validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "BASE_SEPOLIA_RPC_URL")
+}
+
 func TestValidate_MissingSidecarAddr(t *testing.T) {
 	cfg := &Config{
 		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
 		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
 		Sidecar: SidecarConfig{Addr: ""},
 	}
 	err := cfg.validate()

@@ -32,6 +32,7 @@ export interface TransactionResult {
   status: string;
   error?: string;
   balanceEvents: BalanceEventInfo[];
+  metadata?: Record<string, string>;
 }
 
 const defaultDispatcher = createDefaultDispatcher();

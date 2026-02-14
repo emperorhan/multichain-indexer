@@ -47,6 +47,7 @@ function handleDecodeSolanaTransactionBatch(
       feePayer: r.feePayer,
       status: r.status,
       error: r.error,
+      metadata: r.metadata || {},
       balanceEvents: r.balanceEvents.map((ev) => ({
         outerInstructionIndex: ev.outerInstructionIndex,
         innerInstructionIndex: ev.innerInstructionIndex,

@@ -103,4 +103,41 @@ describe('decodeSolanaTransactionBatch', () => {
     expect(result.results).toHaveLength(0);
     expect(result.errors).toHaveLength(0);
   });
+
+  it('routes base payloads to base decoder', () => {
+    const baseWatched = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const transactions = [
+      {
+        signature: 'baseSig',
+        rawJson: Buffer.from(JSON.stringify({
+          chain: 'base',
+          tx: {
+            hash: '0xbaseTx',
+            blockNumber: '0x10',
+            transactionIndex: '0x0',
+            from: baseWatched,
+            to: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            value: '0x1',
+            gasPrice: '0x1',
+          },
+          receipt: {
+            transactionHash: '0xbaseTx',
+            blockNumber: '0x10',
+            transactionIndex: '0x0',
+            status: '0x1',
+            from: baseWatched,
+            gasUsed: '0x2',
+            effectiveGasPrice: '0x3',
+            logs: [],
+          },
+        })),
+      },
+    ];
+
+    const result = decodeSolanaTransactionBatch(transactions, [baseWatched]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].txHash).toBe('0xbaseTx');
+    expect(result.results[0].metadata?.fee_execution_l2).toBe('6');
+  });
 });

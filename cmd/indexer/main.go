@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/chain"
+	"github.com/emperorhan/multichain-indexer/internal/chain/base"
 	"github.com/emperorhan/multichain-indexer/internal/chain/solana"
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -43,8 +45,11 @@ func main() {
 	logger.Info("starting multichain-indexer",
 		"solana_rpc", cfg.Solana.RPCURL,
 		"solana_network", cfg.Solana.Network,
+		"base_rpc", cfg.Base.RPCURL,
+		"base_network", cfg.Base.Network,
 		"sidecar_addr", cfg.Sidecar.Addr,
-		"watched_addresses", len(cfg.Pipeline.WatchedAddresses),
+		"solana_watched_addresses", len(cfg.Pipeline.SolanaWatchedAddresses),
+		"base_watched_addresses", len(cfg.Pipeline.BaseWatchedAddresses),
 	)
 
 	// Connect to PostgreSQL
@@ -72,30 +77,57 @@ func main() {
 		Config:       postgres.NewIndexerConfigRepo(db),
 	}
 
-	// Sync watched addresses from env to DB
-	network := model.Network(cfg.Solana.Network)
-	if err := syncWatchedAddresses(context.Background(), repos.WatchedAddr, repos.Cursor, network, cfg.Pipeline.WatchedAddresses); err != nil {
-		logger.Error("failed to sync watched addresses", "error", err)
-		os.Exit(1)
+	type runtimeTarget struct {
+		chain    model.Chain
+		network  model.Network
+		watched  []string
+		adapter  chain.ChainAdapter
+		rpcURL   string
 	}
 
-	// Create Solana adapter
-	adapter := solana.NewAdapter(cfg.Solana.RPCURL, logger)
-
-	// Setup pipeline
-	pipelineCfg := pipeline.Config{
-		Chain:             model.ChainSolana,
-		Network:           network,
-		BatchSize:         cfg.Pipeline.BatchSize,
-		IndexingInterval:  time.Duration(cfg.Pipeline.IndexingIntervalMs) * time.Millisecond,
-		FetchWorkers:      cfg.Pipeline.FetchWorkers,
-		NormalizerWorkers: cfg.Pipeline.NormalizerWorkers,
-		ChannelBufferSize: cfg.Pipeline.ChannelBufferSize,
-		SidecarAddr:       cfg.Sidecar.Addr,
-		SidecarTimeout:    cfg.Sidecar.Timeout,
+	targets := []runtimeTarget{
+		{
+			chain:   model.ChainSolana,
+			network: model.Network(cfg.Solana.Network),
+			watched: cfg.Pipeline.SolanaWatchedAddresses,
+			adapter: solana.NewAdapter(cfg.Solana.RPCURL, logger),
+			rpcURL:  cfg.Solana.RPCURL,
+		},
+		{
+			chain:   model.ChainBase,
+			network: model.Network(cfg.Base.Network),
+			watched: cfg.Pipeline.BaseWatchedAddresses,
+			adapter: base.NewAdapter(cfg.Base.RPCURL, logger),
+			rpcURL:  cfg.Base.RPCURL,
+		},
 	}
 
-	p := pipeline.New(pipelineCfg, adapter, db, repos, logger)
+	for _, target := range targets {
+		if err := syncWatchedAddresses(context.Background(), repos.WatchedAddr, repos.Cursor, target.chain, target.network, target.watched); err != nil {
+			logger.Error("failed to sync watched addresses",
+				"chain", target.chain,
+				"network", target.network,
+				"error", err,
+			)
+			os.Exit(1)
+		}
+	}
+
+	pipelines := make([]*pipeline.Pipeline, 0, len(targets))
+	for _, target := range targets {
+		pipelineCfg := pipeline.Config{
+			Chain:             target.chain,
+			Network:           target.network,
+			BatchSize:         cfg.Pipeline.BatchSize,
+			IndexingInterval:  time.Duration(cfg.Pipeline.IndexingIntervalMs) * time.Millisecond,
+			FetchWorkers:      cfg.Pipeline.FetchWorkers,
+			NormalizerWorkers: cfg.Pipeline.NormalizerWorkers,
+			ChannelBufferSize: cfg.Pipeline.ChannelBufferSize,
+			SidecarAddr:       cfg.Sidecar.Addr,
+			SidecarTimeout:    cfg.Sidecar.Timeout,
+		}
+		pipelines = append(pipelines, pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL)))
+	}
 
 	// Context with signal handling
 	ctx, cancel := context.WithCancel(context.Background())
@@ -111,10 +143,13 @@ func main() {
 		return runHealthServer(gCtx, cfg.Server.HealthPort, logger)
 	})
 
-	// Pipeline
-	g.Go(func() error {
-		return p.Run(gCtx)
-	})
+	// Pipelines
+	for _, p := range pipelines {
+		p := p
+		g.Go(func() error {
+			return p.Run(gCtx)
+		})
+	}
 
 	// Signal handler
 	g.Go(func() error {
@@ -136,10 +171,17 @@ func main() {
 	logger.Info("indexer shut down gracefully")
 }
 
-func syncWatchedAddresses(ctx context.Context, repo store.WatchedAddressRepository, cursorRepo store.CursorRepository, network model.Network, addresses []string) error {
+func syncWatchedAddresses(
+	ctx context.Context,
+	repo store.WatchedAddressRepository,
+	cursorRepo store.CursorRepository,
+	chain model.Chain,
+	network model.Network,
+	addresses []string,
+) error {
 	for _, addr := range addresses {
 		wa := &model.WatchedAddress{
-			Chain:    model.ChainSolana,
+			Chain:    chain,
 			Network:  network,
 			Address:  addr,
 			IsActive: true,
@@ -149,11 +191,11 @@ func syncWatchedAddresses(ctx context.Context, repo store.WatchedAddressReposito
 			return fmt.Errorf("upsert watched address %s: %w", addr, err)
 		}
 		// Ensure cursor exists
-		if err := cursorRepo.EnsureExists(ctx, model.ChainSolana, network, addr); err != nil {
+		if err := cursorRepo.EnsureExists(ctx, chain, network, addr); err != nil {
 			return fmt.Errorf("ensure cursor for %s: %w", addr, err)
 		}
 	}
-	slog.Info("synced watched addresses from env", "count", len(addresses))
+	slog.Info("synced watched addresses from env", "chain", chain, "network", network, "count", len(addresses))
 	return nil
 }
 
