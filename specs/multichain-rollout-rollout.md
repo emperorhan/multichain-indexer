@@ -13,9 +13,11 @@
 10. `I-0115` (`M7-S2`): QA counterexample gate for runtime wiring/replay reliability.
 11. `I-0117` (`M8-S1`): failed-transaction fee completeness + replay safety hardening.
 12. `I-0118` (`M8-S2`): QA counterexample gate for failed-transaction fee coverage.
+13. `I-0122` (`M9-S1`): mandatory-chain adapter RPC contract parity hardening + deterministic drift guard.
+14. `I-0123` (`M9-S2`): QA counterexample gate for adapter contract drift + runtime/replay invariants.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -35,6 +37,8 @@ Each slice must be independently releasable:
 8. Before `I-0115`: `I-0114` emits deterministic replay/wiring evidence and no unresolved blockers.
 9. Before `I-0117`: `I-0115` QA report is `PASS` with no unresolved blocker invariants.
 10. Before `I-0118`: `I-0117` emits deterministic failed-transaction fee coverage evidence for both mandatory chains.
+11. Before `I-0122`: `I-0118` QA report is `PASS` and no unresolved failed-fee coverage blocker remains.
+12. Before `I-0123`: `I-0122` emits deterministic adapter RPC contract parity evidence for both mandatory chains.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -42,6 +46,7 @@ Each slice must be independently releasable:
 3. If reorg path is unstable, run finalized-only ingest mode until rollback tests pass.
 4. If strict runtime wiring preflight is operationally disruptive, keep strict checks in tests/CI and use explicit local override with warning + QA follow-up.
 5. If failed-transaction fee metadata is missing from provider responses, preserve deterministic no-op behavior and record explicit unavailable markers for follow-up.
+6. If mandatory-chain RPC contract parity checks expose broad legacy fake-client drift, enforce parity on mandatory runtime paths first and file bounded follow-up issues for remaining adapters.
 
 ## Completion Evidence
 1. Developer slice output:

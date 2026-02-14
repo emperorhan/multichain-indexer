@@ -314,8 +314,8 @@ func TestIngester_DirectionDeposit(t *testing.T) {
 
 | # | 케이스 | Input | Assert |
 |---|--------|-------|--------|
-| 13 | 수수료 차감 조건 충족 | fee_payer==watched, fee≠"0", SUCCESS | native token upsert + balance -= fee |
-| 14 | 수수료 조건 불충족 (FAILED) | status=FAILED | 수수료 차감 안 함 |
+| 13 | 수수료 차감 조건 충족 | fee_payer==watched, fee≠"0", status∈{SUCCESS,FAILED} | native token upsert + balance -= fee |
+| 14 | 수수료 조건 불충족 (메타데이터 불완전) | fee_payer 없음 또는 fee="0" | 수수료 차감 안 함 |
 
 #### 4.5.6 트랜잭션 무결성
 

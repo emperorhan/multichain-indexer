@@ -141,6 +141,28 @@ Pass Evidence:
 - Counterexample outcomes are documented with invariant-level verdicts for failed-fee paths.
 - Follow-up issue links are present for failures (if any).
 
+### I-0122 (M9-S1)
+Assertions:
+1. Mandatory-chain adapter RPC contracts are explicit and enforced for runtime clients and test doubles.
+2. Contract drift is surfaced deterministically in tests/lint before runtime execution.
+3. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Contract-parity test coverage is present for both `solana-devnet` and `base-sepolia` adapter client surfaces.
+- Runtime wiring guard tests remain green for mandatory chains.
+- Replay/idempotency regression tests remain green with no duplicate canonical IDs or cursor regression evidence.
+
+### I-0123 (M9-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M9 invariants.
+2. QA executes at least one counterexample scenario targeting adapter RPC contract drift or missing mandatory adapter wiring.
+3. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes are documented with invariant-level verdicts for mandatory-chain contract drift checks.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -148,3 +170,4 @@ Release recommendation must be `fail` if any condition holds:
 3. Determinism comparison differs between independent runs on same range.
 4. Required validation commands fail.
 5. Mandatory chain adapter runtime wiring cannot be proven in runtime-path evidence.
+6. Mandatory-chain adapter RPC contract parity cannot be proven in deterministic test evidence.

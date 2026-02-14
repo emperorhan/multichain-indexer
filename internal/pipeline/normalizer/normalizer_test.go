@@ -787,6 +787,394 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_ReplayProducesNoDuplicateFeeEv
 	}
 }
 
+func TestProcessBatch_SolanaFailedTransaction_EmitsFeeWithCompleteMetadata(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000, // 30s
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	const failedSig = "sol-failed-fee-1"
+	errMsg := "instruction error"
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+			Results: []*sidecarv1.TransactionResult{
+				{
+					TxHash:      failedSig,
+					BlockCursor: 321,
+					BlockTime:   1700000300,
+					FeeAmount:   "7000",
+					FeePayer:    "sol-fee-payer-1",
+					Status:      "FAILED",
+					Error:       &errMsg,
+				},
+			},
+		}, nil)
+
+	batch := event.RawBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: "sol-fee-payer-1",
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"sol-failed-fee-1"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: failedSig, Sequence: 321},
+		},
+	}
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+	result := <-normalizedCh
+
+	require.Len(t, result.Transactions, 1)
+	tx := result.Transactions[0]
+	assert.Equal(t, model.TxStatusFailed, tx.Status)
+	require.NotNil(t, tx.Err)
+	assert.Equal(t, errMsg, *tx.Err)
+
+	feeEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFee)
+	require.Len(t, feeEvents, 1)
+	assert.Equal(t, "transaction_fee", feeEvents[0].EventAction)
+	assert.Equal(t, "sol-fee-payer-1", feeEvents[0].Address)
+	assert.Equal(t, "-7000", feeEvents[0].Delta)
+	assert.Equal(t, "outer:-1|inner:-1", feeEvents[0].EventPath)
+	assert.NotEmpty(t, feeEvents[0].EventID)
+}
+
+func TestProcessBatch_SolanaFailedTransaction_IncompleteFeeMetadata_NoSyntheticFeeEvent(t *testing.T) {
+	cases := []struct {
+		name      string
+		feeAmount string
+		feePayer  string
+	}{
+		{
+			name:      "missing_fee_payer",
+			feeAmount: "7000",
+			feePayer:  "",
+		},
+		{
+			name:      "zero_fee_amount",
+			feeAmount: "0",
+			feePayer:  "sol-fee-payer-1",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+			normalizedCh := make(chan event.NormalizedBatch, 1)
+			n := &Normalizer{
+				sidecarTimeout: 30_000_000_000, // 30s
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			const failedSig = "sol-failed-fee-incomplete"
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+					Results: []*sidecarv1.TransactionResult{
+						{
+							TxHash:      failedSig,
+							BlockCursor: 322,
+							FeeAmount:   tc.feeAmount,
+							FeePayer:    tc.feePayer,
+							Status:      "FAILED",
+						},
+					},
+				}, nil)
+
+			batch := event.RawBatch{
+				Chain:   model.ChainSolana,
+				Network: model.NetworkDevnet,
+				Address: "sol-fee-payer-1",
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":"sol-failed-fee-incomplete"}`),
+				},
+				Signatures: []event.SignatureInfo{
+					{Hash: failedSig, Sequence: 322},
+				},
+			}
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			result := <-normalizedCh
+			require.Len(t, result.Transactions, 1)
+			assert.Equal(t, model.TxStatusFailed, result.Transactions[0].Status)
+			assert.Len(t, fixtureBaseFeeEventsByCategory(result.Transactions[0].BalanceEvents, model.EventCategoryFee), 0)
+			assert.Len(t, result.Transactions[0].BalanceEvents, 0)
+		})
+	}
+}
+
+func TestProcessBatch_BaseFailedTransaction_EmitsDeterministicFeeEventsWithCompleteMetadata(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000, // 30s
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	const failedSig = "base-failed-fee-1"
+	txResult := loadBaseFeeFixture(t, "base_fee_decomposition_complete.json")
+	txResult.TxHash = failedSig
+	txResult.Status = "FAILED"
+
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+			Results: []*sidecarv1.TransactionResult{txResult},
+		}, nil)
+
+	batch := event.RawBatch{
+		Chain:   model.ChainBase,
+		Network: model.NetworkSepolia,
+		Address: "0x1111111111111111111111111111111111111111",
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"base-failed-fee-1"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: failedSig, Sequence: 401},
+		},
+	}
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+	result := <-normalizedCh
+
+	require.Len(t, result.Transactions, 1)
+	tx := result.Transactions[0]
+	assert.Equal(t, model.TxStatusFailed, tx.Status)
+
+	execEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
+	dataEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+	require.Len(t, execEvents, 1)
+	require.Len(t, dataEvents, 1)
+
+	assert.Equal(t, "fee_execution_l2", execEvents[0].EventAction)
+	assert.Equal(t, "-600", execEvents[0].Delta)
+	assert.Equal(t, "log:42", execEvents[0].EventPath)
+	assert.NotEmpty(t, execEvents[0].EventID)
+
+	assert.Equal(t, "fee_data_l1", dataEvents[0].EventAction)
+	assert.Equal(t, "-400", dataEvents[0].Delta)
+	assert.Equal(t, "log:42", dataEvents[0].EventPath)
+	assert.NotEmpty(t, dataEvents[0].EventID)
+}
+
+func TestProcessBatch_BaseFailedTransaction_IncompleteFeeMetadata_NoSyntheticFeeEvents(t *testing.T) {
+	cases := []struct {
+		name      string
+		feeAmount string
+		feePayer  string
+	}{
+		{
+			name:      "missing_fee_payer",
+			feeAmount: "1000",
+			feePayer:  "",
+		},
+		{
+			name:      "zero_fee_amount",
+			feeAmount: "0",
+			feePayer:  "0x1111111111111111111111111111111111111111",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+			normalizedCh := make(chan event.NormalizedBatch, 1)
+			n := &Normalizer{
+				sidecarTimeout: 30_000_000_000, // 30s
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			txResult := loadBaseFeeFixture(t, "base_fee_decomposition_complete.json")
+			txResult.TxHash = "base-failed-fee-incomplete"
+			txResult.Status = "FAILED"
+			txResult.FeeAmount = tc.feeAmount
+			txResult.FeePayer = tc.feePayer
+
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+					Results: []*sidecarv1.TransactionResult{txResult},
+				}, nil)
+
+			batch := event.RawBatch{
+				Chain:   model.ChainBase,
+				Network: model.NetworkSepolia,
+				Address: "0x1111111111111111111111111111111111111111",
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":"base-failed-fee-incomplete"}`),
+				},
+				Signatures: []event.SignatureInfo{
+					{Hash: "base-failed-fee-incomplete", Sequence: 402},
+				},
+			}
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			result := <-normalizedCh
+			require.Len(t, result.Transactions, 1)
+
+			tx := result.Transactions[0]
+			assert.Equal(t, model.TxStatusFailed, tx.Status)
+			assert.Len(t, fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2), 0)
+			assert.Len(t, fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1), 0)
+		})
+	}
+}
+
+func TestProcessBatch_DualChainReplaySmoke_MixedSuccessFailed_NoDuplicateCanonicalIDsAndCursorMonotonic(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 4)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000, // 30s
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	const (
+		solSuccessSig  = "sol-mix-success-1"
+		solFailedSig   = "sol-mix-failed-1"
+		baseSuccessSig = "base-mix-success-1"
+		baseFailedSig  = "base-mix-failed-1"
+	)
+
+	solSuccess := loadSolanaFixture(t, "solana_cpi_ownership_scoped.json")
+	solSuccess.TxHash = solSuccessSig
+	solFailed := &sidecarv1.TransactionResult{
+		TxHash:      solFailedSig,
+		BlockCursor: 121,
+		BlockTime:   1700000051,
+		FeeAmount:   "750",
+		FeePayer:    "owner_addr",
+		Status:      "FAILED",
+	}
+	baseSuccess := loadBaseFeeFixture(t, "base_fee_decomposition_complete.json")
+	baseSuccess.TxHash = baseSuccessSig
+	baseFailed := loadBaseFeeFixture(t, "base_fee_decomposition_complete.json")
+	baseFailed.TxHash = baseFailedSig
+	baseFailed.Status = "FAILED"
+
+	solResp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{solSuccess, solFailed},
+	}
+	baseResp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{baseSuccess, baseFailed},
+	}
+
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any()).
+		Times(4).
+		DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+			require.Len(t, req.GetTransactions(), 2)
+			switch req.GetTransactions()[0].GetSignature() {
+			case solSuccessSig:
+				return solResp, nil
+			case baseSuccessSig:
+				return baseResp, nil
+			default:
+				t.Fatalf("unexpected signature %q", req.GetTransactions()[0].GetSignature())
+				return nil, nil
+			}
+		})
+
+	solPrev := "sol-prev-mixed"
+	basePrev := "base-prev-mixed"
+	solBatch := event.RawBatch{
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		Address:                "owner_addr",
+		PreviousCursorValue:    &solPrev,
+		PreviousCursorSequence: 300,
+		NewCursorValue:         strPtr(solFailedSig),
+		NewCursorSequence:      302,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"sol-mix-success-1"}`),
+			json.RawMessage(`{"tx":"sol-mix-failed-1"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: solSuccessSig, Sequence: 301},
+			{Hash: solFailedSig, Sequence: 302},
+		},
+	}
+	baseBatch := event.RawBatch{
+		Chain:                  model.ChainBase,
+		Network:                model.NetworkSepolia,
+		Address:                "0x1111111111111111111111111111111111111111",
+		PreviousCursorValue:    &basePrev,
+		PreviousCursorSequence: 500,
+		NewCursorValue:         strPtr(baseFailedSig),
+		NewCursorSequence:      502,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"base-mix-success-1"}`),
+			json.RawMessage(`{"tx":"base-mix-failed-1"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: baseSuccessSig, Sequence: 501},
+			{Hash: baseFailedSig, Sequence: 502},
+		},
+	}
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, solBatch))
+	firstSol := <-normalizedCh
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseBatch))
+	firstBase := <-normalizedCh
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, solBatch))
+	secondSol := <-normalizedCh
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseBatch))
+	secondBase := <-normalizedCh
+
+	assertRunNoDuplicateCanonicalIDs := func(run []event.NormalizedBatch) {
+		seen := make(map[string]struct{})
+		for _, batch := range run {
+			for _, tx := range batch.Transactions {
+				for _, be := range tx.BalanceEvents {
+					require.NotEmpty(t, be.EventID)
+					_, exists := seen[be.EventID]
+					require.False(t, exists, "duplicate canonical event id in run: %s", be.EventID)
+					seen[be.EventID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	firstRun := []event.NormalizedBatch{firstSol, firstBase}
+	secondRun := []event.NormalizedBatch{secondSol, secondBase}
+	assertRunNoDuplicateCanonicalIDs(firstRun)
+	assertRunNoDuplicateCanonicalIDs(secondRun)
+	assert.Equal(t, orderedCanonicalEventIDs(firstRun), orderedCanonicalEventIDs(secondRun), "canonical event ordering changed across mixed status replay inputs")
+
+	require.NotNil(t, firstSol.NewCursorValue)
+	require.NotNil(t, firstBase.NewCursorValue)
+	assert.Equal(t, solFailedSig, *firstSol.NewCursorValue)
+	assert.Equal(t, baseFailedSig, *firstBase.NewCursorValue)
+
+	assert.GreaterOrEqual(t, firstSol.NewCursorSequence, firstSol.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, firstBase.NewCursorSequence, firstBase.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, secondSol.NewCursorSequence, secondSol.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, secondBase.NewCursorSequence, secondBase.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, secondSol.NewCursorSequence, firstSol.NewCursorSequence)
+	assert.GreaterOrEqual(t, secondBase.NewCursorSequence, firstBase.NewCursorSequence)
+}
+
 func TestBuildCanonicalEventID_Stable(t *testing.T) {
 	id1 := buildCanonicalEventID(
 		model.ChainSolana, model.NetworkDevnet,

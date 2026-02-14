@@ -311,7 +311,7 @@ func buildCanonicalSolanaBalanceEvents(
 		})
 	}
 
-	if shouldEmitSolanaFeeEvent(txStatus, feePayer) && !hasSolanaFeeEvent(normalizedEvents, feePayer) {
+	if shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount) && !hasSolanaFeeEvent(normalizedEvents, feePayer) {
 		normalizedEvents = append(normalizedEvents, buildSolanaFeeBalanceEvent(feePayer, feeAmount))
 	}
 
@@ -354,7 +354,7 @@ func buildCanonicalBaseBalanceEvents(
 		})
 	}
 
-	if shouldEmitBaseFeeEvent(txStatus, feePayer) {
+	if shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount) {
 		executionFee := deriveBaseExecutionFee(feeAmount, meta)
 		dataFee, hasDataFee := deriveBaseDataFee(meta)
 
@@ -466,8 +466,8 @@ func resolveBaseFeeEventPath(metadata map[string]string) string {
 	return "log:0"
 }
 
-func shouldEmitBaseFeeEvent(txStatus, feePayer string) bool {
-	return shouldEmitSolanaFeeEvent(txStatus, feePayer)
+func shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount string) bool {
+	return shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount)
 }
 
 func deriveBaseExecutionFee(totalFee string, metadata map[string]string) *big.Int {
@@ -620,14 +620,24 @@ func isBaseFeeCategory(category model.EventCategory) bool {
 	}
 }
 
-func shouldEmitSolanaFeeEvent(txStatus, feePayer string) bool {
-	if !strings.EqualFold(txStatus, string(model.TxStatusSuccess)) {
+func shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount string) bool {
+	if !isFeeEligibleStatus(txStatus) {
 		return false
 	}
 	if strings.TrimSpace(feePayer) == "" {
 		return false
 	}
+	feeAmountInt, ok := parseBigInt(feeAmount)
+	if !ok || feeAmountInt.Sign() == 0 {
+		return false
+	}
 	return true
+}
+
+func isFeeEligibleStatus(txStatus string) bool {
+	status := strings.TrimSpace(txStatus)
+	return strings.EqualFold(status, string(model.TxStatusSuccess)) ||
+		strings.EqualFold(status, string(model.TxStatusFailed))
 }
 
 func hasSolanaFeeEvent(events []event.NormalizedBalanceEvent, feePayer string) bool {

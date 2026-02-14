@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -21,6 +21,8 @@ Execution queue (dependency-ordered):
 10. `I-0115` (`M7-S2`) QA counterexample gate for runtime wiring + replay invariants
 11. `I-0117` (`M8-S1`) failed-transaction fee completeness + replay safety hardening
 12. `I-0118` (`M8-S2`) QA counterexample gate for failed-transaction fee coverage
+13. `I-0122` (`M9-S1`) adapter RPC contract parity hardening + deterministic regression guard
+14. `I-0123` (`M9-S2`) QA counterexample gate for adapter contract drift + runtime/replay invariants
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -236,7 +238,7 @@ Harden post-wiring runtime reliability so mandatory chain adapters cannot silent
 - Gate: strict fail-fast wiring checks may surface latent environment misconfiguration in local/operator runs.
 - Fallback: retain strict checks in test/CI and allow explicit operator override flag only with auditable warning + QA follow-up issue.
 
-### M8. Failure-Path Fee Completeness Tranche C0002 (P0, Next)
+### M8. Failure-Path Fee Completeness Tranche C0002 (P0, Completed)
 
 #### Objective
 Close the remaining asset-volatility gap by ensuring failed transactions emit deterministic fee deltas when chain metadata includes fee payer/amount, while preserving replay/idempotency and runtime wiring invariants.
@@ -271,6 +273,41 @@ Close the remaining asset-volatility gap by ensuring failed transactions emit de
 - Gate: RPC variability may omit failed-transaction fee metadata on some providers.
 - Fallback: keep deterministic no-op for incomplete metadata, emit explicit unavailable marker for observability, and file follow-up issue for provider-specific gap closure.
 
+### M9. Adapter Contract Reliability Tranche C0003 (P0, Next)
+
+#### Objective
+Prevent RPC interface drift between mandatory chain runtime clients and test doubles from silently breaking reliability gates, while preserving canonical/replay/cursor/runtime invariants.
+
+#### Entry Gate
+- `M8` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M9-S1` (`I-0122`): implement adapter RPC contract parity guardrails for mandatory chains and add deterministic regression tests that fail fast on contract drift.
+2. `M9-S2` (`I-0123`): execute QA counterexample gate for contract drift and runtime/replay invariants; produce pass/fail evidence with follow-up issue fanout on failure.
+
+#### Definition Of Done
+1. Required RPC method contracts are explicit and exercised for mandatory chain runtime adapters and their test doubles.
+2. Contract drift is caught by deterministic tests/lint before runtime execution.
+3. Canonical identity uniqueness, replay idempotency, cursor monotonicity, and runtime adapter wiring invariants remain green.
+4. QA report records at least one counterexample-oriented contract-drift check and explicit disposition.
+
+#### Test Contract
+1. Contract-parity tests assert mandatory chain runtime RPC clients and corresponding test doubles satisfy required method sets.
+2. Runtime wiring tests continue to prove adapter parity for `solana-devnet` and `base-sepolia`.
+3. Replay/idempotency regression tests continue to show no duplicate canonical IDs and no cursor regression.
+4. QA executes required validation commands and counterexample checks, then records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` mandatory-chain adapter RPC contract-parity violations in targeted test/lint suites.
+2. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+3. QA report includes explicit `pass`/`fail` recommendation for `M9`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: strict contract parity checks may require broad test-double updates when adapter interfaces evolve.
+- Fallback: phase parity enforcement by mandatory chain adapters first; track non-mandatory parity gaps with explicit backlog issue links until promoted.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -298,10 +335,12 @@ Completed milestones/slices:
 8. `I-0110`
 9. `I-0114`
 10. `I-0115`
+11. `I-0117`
+12. `I-0118`
 
 Active downstream queue from this plan:
-1. `I-0117`
-2. `I-0118`
+1. `I-0122`
+2. `I-0123`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
