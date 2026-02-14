@@ -33,13 +33,14 @@ func TestProcessJob_HappyPath(t *testing.T) {
 	cursor := "prevSig"
 
 	job := event.FetchJob{
-		Chain:       model.ChainSolana,
-		Network:     model.NetworkDevnet,
-		Address:     "addr1",
-		CursorValue: &cursor,
-		BatchSize:   100,
-		WalletID:    &walletID,
-		OrgID:       &orgID,
+		Chain:          model.ChainSolana,
+		Network:        model.NetworkDevnet,
+		Address:        "addr1",
+		CursorValue:    &cursor,
+		CursorSequence: 42,
+		BatchSize:      100,
+		WalletID:       &walletID,
+		OrgID:          &orgID,
 	}
 
 	now := time.Now()
@@ -66,6 +67,8 @@ func TestProcessJob_HappyPath(t *testing.T) {
 	assert.Equal(t, model.ChainSolana, batch.Chain)
 	assert.Equal(t, model.NetworkDevnet, batch.Network)
 	assert.Equal(t, "addr1", batch.Address)
+	assert.Equal(t, &cursor, batch.PreviousCursorValue)
+	assert.Equal(t, int64(42), batch.PreviousCursorSequence)
 	assert.Equal(t, &walletID, batch.WalletID)
 	assert.Equal(t, &orgID, batch.OrgID)
 	assert.Len(t, batch.RawTransactions, 3)

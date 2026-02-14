@@ -9,14 +9,16 @@ import (
 
 // NormalizedBatch contains decoded/normalized transaction data ready for DB ingestion.
 type NormalizedBatch struct {
-	Chain             model.Chain
-	Network           model.Network
-	Address           string
-	WalletID          *string
-	OrgID             *string
-	Transactions      []NormalizedTransaction
-	NewCursorValue    *string
-	NewCursorSequence int64
+	Chain                  model.Chain
+	Network                model.Network
+	Address                string
+	WalletID               *string
+	OrgID                  *string
+	PreviousCursorValue    *string
+	PreviousCursorSequence int64
+	Transactions           []NormalizedTransaction
+	NewCursorValue         *string
+	NewCursorSequence      int64
 }
 
 type NormalizedTransaction struct {
@@ -34,18 +36,18 @@ type NormalizedTransaction struct {
 type NormalizedBalanceEvent struct {
 	OuterInstructionIndex int
 	InnerInstructionIndex int
-	EventCategory       model.EventCategory
-	EventAction         string
-	ProgramID           string
-	ContractAddress     string // mint address or contract address
-	Address             string // account whose balance changed
-	CounterpartyAddress string
-	Delta               string // SIGNED: positive = inflow, negative = outflow
-	ChainData           json.RawMessage
-	TokenSymbol         string
-	TokenName           string
-	TokenDecimals       int
-	TokenType           model.TokenType
+	EventCategory         model.EventCategory
+	EventAction           string
+	ProgramID             string
+	ContractAddress       string // mint address or contract address
+	Address               string // account whose balance changed
+	CounterpartyAddress   string
+	Delta                 string // SIGNED: positive = inflow, negative = outflow
+	ChainData             json.RawMessage
+	TokenSymbol           string
+	TokenName             string
+	TokenDecimals         int
+	TokenType             model.TokenType
 
 	EventID        string `json:"event_id" db:"event_id"`
 	BlockHash      string `json:"block_hash" db:"block_hash"`

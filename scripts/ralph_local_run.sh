@@ -66,6 +66,10 @@ TRANSIENT_HEALTHCHECK_TIMEOUT_SEC="${RALPH_TRANSIENT_HEALTHCHECK_TIMEOUT_SEC:-20
 BLOCKED_REQUEUE_ENABLED="${RALPH_BLOCKED_REQUEUE_ENABLED:-true}"
 BLOCKED_REQUEUE_MAX_ATTEMPTS="${RALPH_BLOCKED_REQUEUE_MAX_ATTEMPTS:-3}"
 BLOCKED_REQUEUE_COOLDOWN_SEC="${RALPH_BLOCKED_REQUEUE_COOLDOWN_SEC:-300}"
+SELF_HEAL_ENABLED="${RALPH_SELF_HEAL_ENABLED:-true}"
+SELF_HEAL_MAX_ATTEMPTS="${RALPH_SELF_HEAL_MAX_ATTEMPTS:-3}"
+SELF_HEAL_LOG_TAIL_LINES="${RALPH_SELF_HEAL_LOG_TAIL_LINES:-220}"
+SELF_HEAL_RETRY_SLEEP_SEC="${RALPH_SELF_HEAL_RETRY_SLEEP_SEC:-5}"
 AUTO_PUBLISH_ENABLED="${RALPH_AUTO_PUBLISH_ENABLED:-true}"
 AUTO_PUBLISH_MIN_COMMITS="${RALPH_AUTO_PUBLISH_MIN_COMMITS:-3}"
 AUTO_PUBLISH_TARGET_BRANCH="${RALPH_AUTO_PUBLISH_TARGET_BRANCH:-main}"
@@ -79,7 +83,11 @@ MODEL_PLANNER="${PLANNING_CODEX_MODEL:-gpt-5.3-codex}"
 MODEL_DEVELOPER_FAST="${AGENT_CODEX_MODEL_FAST:-gpt-5.3-codex-spark}"
 MODEL_DEVELOPER_COMPLEX="${AGENT_CODEX_MODEL_COMPLEX:-gpt-5.3-codex}"
 MODEL_QA="${QA_TRIAGE_CODEX_MODEL:-gpt-5.3-codex}"
+SELF_HEAL_MODEL="${RALPH_SELF_HEAL_MODEL:-gpt-5.3-codex}"
 RALPH_LAST_LOG_FILE=""
+SELF_HEAL_RESULT="not-run"
+SELF_HEAL_LAST_ATTEMPTS=0
+SELF_HEAL_LAST_CODEX_RC=0
 
 if [ "${LOCAL_TRUST_MODE}" = "true" ]; then
   CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-danger-full-access}"
@@ -704,6 +712,142 @@ run_validation_if_needed() {
   fi
 
   echo "failed:${validation_log}"
+  return 1
+}
+
+validation_log_from_state() {
+  local state="$1"
+  case "${state}" in
+    failed:*|passed:*|skipped:*)
+      printf '%s\n' "${state#*:}"
+      ;;
+    *)
+      printf '%s\n' ""
+      ;;
+  esac
+}
+
+run_codex_self_heal() {
+  local issue_file="$1"
+  local role="$2"
+  local model="$3"
+  local validation_log="$4"
+  local attempt="$5"
+  local prompt log_file rc validation_excerpt
+
+  log_file="${LOGS_DIR}/$(basename "${issue_file}" .md)-self-heal-${attempt}-$(date -u +%Y%m%dT%H%M%SZ).log"
+  validation_excerpt="(validation log unavailable)"
+  if [ -n "${validation_log}" ] && [ -f "${validation_log}" ]; then
+    validation_excerpt="$(tail -n "${SELF_HEAL_LOG_TAIL_LINES}" "${validation_log}" 2>/dev/null || true)"
+  fi
+
+  prompt="$(cat <<EOF
+You are running an automated self-heal pass for a local Ralph loop task.
+
+Goal:
+- Fix the concrete compile/test/lint failures shown below.
+- Keep scope limited to the current issue file.
+- After edits, stop. Validation is run by the runner externally.
+
+Requirements:
+- Resolve root cause(s), not superficial workarounds.
+- Do not skip/disable tests or lint rules.
+- Keep changes deterministic and production-safe.
+
+Role context:
+$(role_guide "${role}")
+
+Task file (${issue_file}):
+$(cat "${issue_file}")
+
+Validation failure excerpt (${validation_log}):
+${validation_excerpt}
+EOF
+)"
+
+  cmd=(
+    codex
+    --ask-for-approval "${CODEX_APPROVAL}"
+  )
+  if [ "${CODEX_SEARCH}" = "true" ] && supports_codex_search; then
+    cmd+=(--search)
+  fi
+  cmd+=(
+    exec
+    --model "${model}"
+    --sandbox "${CODEX_SANDBOX}"
+    --cd "$(pwd)"
+  )
+
+  if [ "${LOCAL_TRUST_MODE}" = "true" ]; then
+    OMX_SAFE_MODE=false "${CODEX_SAFETY_GUARD_CMD}" "${cmd[@]}"
+  else
+    "${CODEX_SAFETY_GUARD_CMD}" "${cmd[@]}"
+  fi
+
+  set +e
+  "${cmd[@]}" "${prompt}" >"${log_file}" 2>&1
+  rc=$?
+  set -e
+  RALPH_LAST_LOG_FILE="${log_file}"
+  return "${rc}"
+}
+
+self_heal_validation_failure() {
+  local issue_file="$1"
+  local issue_id="$2"
+  local role="$3"
+  local validation_state="$4"
+  local attempt validation_log heal_log codex_rc transient_fails sleep_sec
+
+  SELF_HEAL_RESULT="validation-failed"
+  SELF_HEAL_LAST_ATTEMPTS=0
+  SELF_HEAL_LAST_CODEX_RC=0
+
+  validation_log="$(validation_log_from_state "${validation_state}")"
+  attempt=1
+  while [ "${attempt}" -le "${SELF_HEAL_MAX_ATTEMPTS}" ]; do
+    SELF_HEAL_LAST_ATTEMPTS="${attempt}"
+    echo "[ralph-local] self-heal ${issue_id} attempt ${attempt}/${SELF_HEAL_MAX_ATTEMPTS} model=${SELF_HEAL_MODEL}"
+
+    if run_codex_self_heal "${issue_file}" "${role}" "${SELF_HEAL_MODEL}" "${validation_log}" "${attempt}"; then
+      codex_rc=0
+    else
+      codex_rc=$?
+    fi
+    heal_log="${RALPH_LAST_LOG_FILE:-}"
+
+    if [ "${codex_rc}" -ne 0 ]; then
+      if [ "${TRANSIENT_REQUEUE_ENABLED}" = "true" ] && is_transient_model_error "${heal_log}"; then
+        transient_fails="$(increment_transient_failures)"
+        sleep_sec="$(compute_transient_backoff "${transient_fails}")"
+        echo "[ralph-local] self-heal transient model error on ${issue_id} (fails=${transient_fails}, sleep=${sleep_sec}s)"
+        sleep "${sleep_sec}"
+        attempt=$((attempt + 1))
+        continue
+      fi
+      SELF_HEAL_RESULT="codex-failed"
+      SELF_HEAL_LAST_CODEX_RC="${codex_rc}"
+      return 1
+    fi
+
+    reset_transient_failures
+    validation_state="$(run_validation_if_needed "${role}" "${issue_id}" || true)"
+    if [[ "${validation_state}" != failed:* ]]; then
+      SELF_HEAL_RESULT="healed"
+      echo "[ralph-local] self-heal succeeded for ${issue_id} on attempt ${attempt}"
+      printf '%s\n' "${validation_state}"
+      return 0
+    fi
+
+    validation_log="$(validation_log_from_state "${validation_state}")"
+    echo "[ralph-local] self-heal validation still failing for ${issue_id} on attempt ${attempt}"
+    sleep "${SELF_HEAL_RETRY_SLEEP_SEC}"
+    attempt=$((attempt + 1))
+  done
+
+  SELF_HEAL_RESULT="validation-failed"
+  printf '%s\n' "${validation_state}"
   return 1
 }
 

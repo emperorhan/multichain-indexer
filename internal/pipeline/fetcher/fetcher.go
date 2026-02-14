@@ -106,15 +106,17 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	cursorValue := newest.Hash
 
 	batch := event.RawBatch{
-		Chain:             job.Chain,
-		Network:           job.Network,
-		Address:           job.Address,
-		WalletID:          job.WalletID,
-		OrgID:             job.OrgID,
-		RawTransactions:   rawTxs,
-		Signatures:        sigInfos,
-		NewCursorValue:    &cursorValue,
-		NewCursorSequence: newest.Sequence,
+		Chain:                  job.Chain,
+		Network:                job.Network,
+		Address:                job.Address,
+		WalletID:               job.WalletID,
+		OrgID:                  job.OrgID,
+		PreviousCursorValue:    job.CursorValue,
+		PreviousCursorSequence: job.CursorSequence,
+		RawTransactions:        rawTxs,
+		Signatures:             sigInfos,
+		NewCursorValue:         &cursorValue,
+		NewCursorSequence:      newest.Sequence,
 	}
 
 	select {

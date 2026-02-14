@@ -12,14 +12,14 @@ import (
 
 // Coordinator iterates over watched addresses and creates FetchJobs.
 type Coordinator struct {
-	chain          model.Chain
-	network        model.Network
+	chain           model.Chain
+	network         model.Network
 	watchedAddrRepo store.WatchedAddressRepository
-	cursorRepo     store.CursorRepository
-	batchSize      int
-	interval       time.Duration
-	jobCh          chan<- event.FetchJob
-	logger         *slog.Logger
+	cursorRepo      store.CursorRepository
+	batchSize       int
+	interval        time.Duration
+	jobCh           chan<- event.FetchJob
+	logger          *slog.Logger
 }
 
 func New(
@@ -33,14 +33,14 @@ func New(
 	logger *slog.Logger,
 ) *Coordinator {
 	return &Coordinator{
-		chain:          chain,
-		network:        network,
+		chain:           chain,
+		network:         network,
 		watchedAddrRepo: watchedAddrRepo,
-		cursorRepo:     cursorRepo,
-		batchSize:      batchSize,
-		interval:       interval,
-		jobCh:          jobCh,
-		logger:         logger.With("component", "coordinator"),
+		cursorRepo:      cursorRepo,
+		batchSize:       batchSize,
+		interval:        interval,
+		jobCh:           jobCh,
+		logger:          logger.With("component", "coordinator"),
 	}
 }
 
@@ -84,18 +84,21 @@ func (c *Coordinator) tick(ctx context.Context) error {
 		}
 
 		var cursorValue *string
+		var cursorSequence int64
 		if cursor != nil {
 			cursorValue = cursor.CursorValue
+			cursorSequence = cursor.CursorSequence
 		}
 
 		job := event.FetchJob{
-			Chain:       c.chain,
-			Network:     c.network,
-			Address:     addr.Address,
-			CursorValue: cursorValue,
-			BatchSize:   c.batchSize,
-			WalletID:    addr.WalletID,
-			OrgID:       addr.OrganizationID,
+			Chain:          c.chain,
+			Network:        c.network,
+			Address:        addr.Address,
+			CursorValue:    cursorValue,
+			CursorSequence: cursorSequence,
+			BatchSize:      c.batchSize,
+			WalletID:       addr.WalletID,
+			OrgID:          addr.OrganizationID,
 		}
 
 		select {

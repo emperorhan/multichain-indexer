@@ -127,13 +127,15 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 
 	// Convert to NormalizedBatch
 	normalized := event.NormalizedBatch{
-		Chain:             batch.Chain,
-		Network:           batch.Network,
-		Address:           batch.Address,
-		WalletID:          batch.WalletID,
-		OrgID:             batch.OrgID,
-		NewCursorValue:    batch.NewCursorValue,
-		NewCursorSequence: batch.NewCursorSequence,
+		Chain:                  batch.Chain,
+		Network:                batch.Network,
+		Address:                batch.Address,
+		WalletID:               batch.WalletID,
+		OrgID:                  batch.OrgID,
+		PreviousCursorValue:    batch.PreviousCursorValue,
+		PreviousCursorSequence: batch.PreviousCursorSequence,
+		NewCursorValue:         batch.NewCursorValue,
+		NewCursorSequence:      batch.NewCursorSequence,
 	}
 
 	for _, result := range resp.Results {

@@ -113,12 +113,15 @@ func TestProcessBatch_HappyPath(t *testing.T) {
 	}
 
 	walletID := "wallet-1"
+	prevCursor := "sig0"
 	cursorVal := "sig2"
 	batch := event.RawBatch{
-		Chain:    model.ChainSolana,
-		Network:  model.NetworkDevnet,
-		Address:  "addr1",
-		WalletID: &walletID,
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		Address:                "addr1",
+		WalletID:               &walletID,
+		PreviousCursorValue:    &prevCursor,
+		PreviousCursorSequence: 50,
 		RawTransactions: []json.RawMessage{
 			json.RawMessage(`{"tx":1}`),
 			json.RawMessage(`{"tx":2}`),
@@ -187,6 +190,8 @@ func TestProcessBatch_HappyPath(t *testing.T) {
 	assert.Equal(t, model.NetworkDevnet, result.Network)
 	assert.Equal(t, "addr1", result.Address)
 	assert.Equal(t, &walletID, result.WalletID)
+	assert.Equal(t, &prevCursor, result.PreviousCursorValue)
+	assert.Equal(t, int64(50), result.PreviousCursorSequence)
 	assert.Equal(t, &cursorVal, result.NewCursorValue)
 	assert.Equal(t, int64(200), result.NewCursorSequence)
 

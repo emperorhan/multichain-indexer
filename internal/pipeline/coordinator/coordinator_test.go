@@ -41,7 +41,10 @@ func TestTick_HappyPath(t *testing.T) {
 
 	mockCursor.EXPECT().
 		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr1").
-		Return(&model.AddressCursor{CursorValue: &cursorVal}, nil)
+		Return(&model.AddressCursor{
+			CursorValue:    &cursorVal,
+			CursorSequence: 100,
+		}, nil)
 
 	mockCursor.EXPECT().
 		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr2").
@@ -58,6 +61,7 @@ func TestTick_HappyPath(t *testing.T) {
 	assert.Equal(t, "addr1", job1.Address)
 	assert.Equal(t, &cursorVal, job1.CursorValue)
 	assert.Equal(t, 100, job1.BatchSize)
+	assert.Equal(t, int64(100), job1.CursorSequence)
 	assert.Equal(t, &walletID, job1.WalletID)
 	assert.Equal(t, &orgID, job1.OrgID)
 

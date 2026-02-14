@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -29,10 +29,10 @@ func (d *fakeDriver) Open(name string) (driver.Conn, error) { return &fakeConn{}
 func (c *fakeConn) Prepare(query string) (driver.Stmt, error) {
 	return nil, errors.New("not implemented")
 }
-func (c *fakeConn) Close() error                     { return nil }
-func (c *fakeConn) Begin() (driver.Tx, error)        { return &fakeTxImpl{}, nil }
-func (tx *fakeTxImpl) Commit() error                  { return nil }
-func (tx *fakeTxImpl) Rollback() error                { return nil }
+func (c *fakeConn) Close() error              { return nil }
+func (c *fakeConn) Begin() (driver.Tx, error) { return &fakeTxImpl{}, nil }
+func (tx *fakeTxImpl) Commit() error          { return nil }
+func (tx *fakeTxImpl) Rollback() error        { return nil }
 
 func init() {
 	sql.Register("fake_ingester", &fakeDriver{})
@@ -72,6 +72,75 @@ func setupBeginTx(mockDB *storemocks.MockTxBeginner) {
 		})
 }
 
+func Test_isCanonicalityDrift(t *testing.T) {
+	oldSig := "old_sig"
+	newSig := "new_sig"
+
+	assert.False(t, isCanonicalityDrift(event.NormalizedBatch{
+		PreviousCursorValue:    nil,
+		NewCursorValue:         &newSig,
+		PreviousCursorSequence: 10,
+		NewCursorSequence:      10,
+	}))
+	assert.False(t, isCanonicalityDrift(event.NormalizedBatch{
+		PreviousCursorValue:    &oldSig,
+		NewCursorValue:         &newSig,
+		PreviousCursorSequence: 0,
+		NewCursorSequence:      10,
+	}))
+	assert.True(t, isCanonicalityDrift(event.NormalizedBatch{
+		PreviousCursorValue:    &oldSig,
+		NewCursorValue:         &newSig,
+		PreviousCursorSequence: 10,
+		NewCursorSequence:      10,
+	}))
+	assert.True(t, isCanonicalityDrift(event.NormalizedBatch{
+		PreviousCursorValue:    &oldSig,
+		NewCursorValue:         &oldSig,
+		PreviousCursorSequence: 20,
+		NewCursorSequence:      10,
+	}))
+}
+
+func TestProcessBatch_ReorgDrift_TriggersDeterministicRollbackPath(t *testing.T) {
+	ctrl, mockDB, _, _, _, _, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_ = ctrl
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, nil, nil, nil, nil, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	// Keep SQL path unchanged; replace only rollback path for deterministic simulation.
+	rollbackCalls := 0
+	ing.reorgHandler = func(ctx context.Context, tx *sql.Tx, got event.NormalizedBatch) error {
+		rollbackCalls++
+		assert.Equal(t, "addr1", got.Address)
+		assert.NotNil(t, got.PreviousCursorValue)
+		assert.Equal(t, "old_sig", *got.PreviousCursorValue)
+		assert.Equal(t, int64(100), got.PreviousCursorSequence)
+		return nil
+	}
+
+	prevSig := "old_sig"
+	newSig := "new_sig"
+	batch := event.NormalizedBatch{
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		Address:                "addr1",
+		PreviousCursorValue:    &prevSig,
+		PreviousCursorSequence: 100,
+		NewCursorValue:         &newSig,
+		NewCursorSequence:      100,
+	}
+
+	setupBeginTx(mockDB)
+	setupBeginTx(mockDB)
+	err := ing.processBatch(context.Background(), batch)
+	require.NoError(t, err)
+
+	err = ing.processBatch(context.Background(), batch)
+	require.NoError(t, err)
+	assert.Equal(t, 2, rollbackCalls)
+}
+
 func TestProcessBatch_Deposit(t *testing.T) {
 	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
@@ -87,11 +156,11 @@ func TestProcessBatch_Deposit(t *testing.T) {
 	orgID := "org-1"
 
 	batch := event.NormalizedBatch{
-		Chain:   model.ChainSolana,
-		Network: model.NetworkDevnet,
-		Address: "addr1",
+		Chain:    model.ChainSolana,
+		Network:  model.NetworkDevnet,
+		Address:  "addr1",
 		WalletID: &walletID,
-		OrgID:   &orgID,
+		OrgID:    &orgID,
 		Transactions: []event.NormalizedTransaction{
 			{
 				TxHash:      "sig1",
@@ -181,11 +250,11 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 	orgID := "org-1"
 
 	batch := event.NormalizedBatch{
-		Chain:   model.ChainSolana,
-		Network: model.NetworkDevnet,
-		Address: "addr1",
+		Chain:    model.ChainSolana,
+		Network:  model.NetworkDevnet,
+		Address:  "addr1",
 		WalletID: &walletID,
-		OrgID:   &orgID,
+		OrgID:    &orgID,
 		Transactions: []event.NormalizedTransaction{
 			{
 				TxHash:      "sig1",
@@ -336,11 +405,11 @@ func TestProcessBatch_DuplicateEventReplayIsNoop(t *testing.T) {
 	orgID := "org-1"
 
 	batch := event.NormalizedBatch{
-		Chain:   model.ChainSolana,
-		Network: model.NetworkDevnet,
-		Address: "addr1",
+		Chain:    model.ChainSolana,
+		Network:  model.NetworkDevnet,
+		Address:  "addr1",
 		WalletID: &walletID,
-		OrgID:   &orgID,
+		OrgID:    &orgID,
 		Transactions: []event.NormalizedTransaction{
 			{
 				TxHash:      "sig1",
