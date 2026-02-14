@@ -8,9 +8,12 @@
 5. `I-0108` (`M4-S1`): reorg detection + rollback orchestration.
 6. `I-0109` (`M4-S2`): replay determinism + cursor monotonicity.
 7. `I-0107` (`M5`): QA goldens + invariants + release recommendation.
+8. `I-0110` (`M6`): Base runtime pipeline wiring.
+9. `I-0114` (`M7-S1`): runtime wiring drift guard + dual-chain replay smoke.
+10. `I-0115` (`M7-S2`): QA counterexample gate for runtime wiring/replay reliability.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -25,11 +28,15 @@ Each slice must be independently releasable:
 3. Before `I-0108`: Solana and Base completeness slices green.
 4. Before `I-0109`: rollback simulation evidence from `I-0108` green.
 5. Before `I-0107`: replay determinism and cursor monotonicity evidence green.
+6. Before `I-0110`: QA release gate from `I-0107` passes.
+7. Before `I-0114`: runtime wiring baseline from `I-0110` passes on both mandatory chains.
+8. Before `I-0115`: `I-0114` emits deterministic replay/wiring evidence and no unresolved blockers.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
 2. If Base L1 data fee fields are unavailable, emit deterministic execution fee plus explicit unavailable marker metadata.
 3. If reorg path is unstable, run finalized-only ingest mode until rollback tests pass.
+4. If strict runtime wiring preflight is operationally disruptive, keep strict checks in tests/CI and use explicit local override with warning + QA follow-up.
 
 ## Completion Evidence
 1. Developer slice output:

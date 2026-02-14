@@ -11,6 +11,7 @@ Every slice must pass:
 2. Re-ingest/replay does not duplicate normalized events.
 3. Signed deltas are transaction-scope balance-consistent.
 4. Fee deltas are explicitly present per chain fee rules.
+5. Mandatory runtime chain adapters are wired in production boot path, not only test paths.
 
 ## Slice-Level Test Contracts
 
@@ -95,9 +96,32 @@ Pass Evidence:
 - `internal/pipeline/normalizer/base_runtime_e2e_test.go` Base runtime e2e green.
 - `internal/pipeline/ingester/ingester_test.go` Base replay idempotency regression green.
 
+### I-0114 (M7-S1)
+Assertions:
+1. Runtime preflight rejects missing/misaligned mandatory chain adapter wiring deterministically.
+2. Dual-chain replay smoke checks preserve canonical no-dup behavior (`event_id` uniqueness) across consecutive identical runs.
+3. Post-replay cursor/watermark progression remains monotonic in the same smoke path.
+
+Pass Evidence:
+- Runtime wiring guard tests green for both mandatory chains (`solana-devnet`, `base-sepolia`).
+- Dual-chain replay smoke test/report shows `0` duplicate canonical IDs.
+- Cursor monotonic assertions for the same replay path are green.
+
+### I-0115 (M7-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M7 invariants.
+2. QA executes at least one counterexample scenario for runtime wiring drift or replay regression.
+3. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report artifact includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcome is documented with invariant-level verdict.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
 2. Fee completeness invariant fails on either chain.
 3. Determinism comparison differs between independent runs on same range.
 4. Required validation commands fail.
+5. Mandatory chain adapter runtime wiring cannot be proven in runtime-path evidence.

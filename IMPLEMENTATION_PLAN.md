@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -16,6 +16,9 @@ Execution queue (dependency-ordered):
 5. `I-0108` (`M4-S1`) reorg detection + rollback wiring
 6. `I-0109` (`M4-S2`) replay determinism + cursor monotonicity hardening
 7. `I-0107` (`M5`) QA golden/invariant release gate
+8. `I-0110` (`M6`) Base Sepolia runtime pipeline wiring
+9. `I-0114` (`M7-S1`) runtime wiring drift guard + dual-chain replay smoke
+10. `I-0115` (`M7-S2`) QA counterexample gate for runtime wiring + replay invariants
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -30,6 +33,7 @@ Global non-negotiables:
 4. Explicit fee event coverage:
 - Solana transaction fee.
 - Base L2 execution fee + L1 data/rollup fee (or deterministic unavailable marker path).
+5. Runtime wiring invariants stay enforced for mandatory chains (`solana-devnet`, `base-sepolia`).
 
 ## Milestone Scorecard
 
@@ -182,6 +186,54 @@ Block release unless deterministic, duplicate-free, fee-complete behavior is pro
 2. Explicit release recommendation is present.
 3. Validation commands pass.
 
+### M6. Base Sepolia Runtime Wiring (P0, Completed)
+
+#### Objective
+Move Base Sepolia from normalization-only coverage into deterministic runtime orchestration.
+
+#### Slice
+1. `I-0110`: runtime target wiring + Base fetch/decode/normalize/ingest end-to-end regression coverage.
+
+#### Exit Gate (Measurable)
+1. Runtime target builder includes both mandatory chains in deterministic order.
+2. Base runtime e2e replay path remains idempotent.
+3. Validation commands pass.
+
+### M7. Runtime Reliability Tranche C0001 (P0, Next)
+
+#### Objective
+Harden post-wiring runtime reliability so mandatory chain adapters cannot silently drift from configured runtime targets and replay invariants remain provable in dual-chain runtime paths.
+
+#### Entry Gate
+- `M6` exit gate green.
+- Mandatory chain set fixed to `solana-devnet` + `base-sepolia`.
+
+#### Slices
+1. `M7-S1` (`I-0114`): implement runtime wiring drift guard + deterministic dual-chain replay smoke checks.
+2. `M7-S2` (`I-0115`): QA counterexample validation and invariant evidence report for the M7-S1 increment.
+
+#### Definition Of Done
+1. Startup/runtime preflight fails fast when a mandatory chain target is declared but not adapter-wired.
+2. Dual-chain replay smoke run proves idempotent canonical persistence (`event_id` no-dup) and cursor monotonicity.
+3. QA report captures at least one negative/counterexample scenario and explicitly records pass/fail disposition.
+
+#### Test Contract
+1. Runtime unit/integration tests assert target-to-adapter parity for both mandatory chains.
+2. Replay smoke test executes two consecutive runs over identical dual-chain fixture input and asserts:
+- `0` duplicate canonical event IDs.
+- no cursor regression.
+3. QA executes required validation commands and documents counterexample checks under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `100%` mandatory target-to-adapter parity at runtime preflight.
+2. `0` duplicate canonical IDs in dual-chain replay smoke.
+3. `0` cursor monotonicity violations in M7 regression tests.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: strict fail-fast wiring checks may surface latent environment misconfiguration in local/operator runs.
+- Fallback: retain strict checks in test/CI and allow explicit operator override flag only with auditable warning + QA follow-up issue.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -198,7 +250,7 @@ Block release unless deterministic, duplicate-free, fee-complete behavior is pro
 
 ## Local Queue Mapping
 
-Active downstream queue from this plan:
+Completed milestones/slices:
 1. `I-0102`
 2. `I-0103`
 3. `I-0104`
@@ -206,6 +258,11 @@ Active downstream queue from this plan:
 5. `I-0108`
 6. `I-0109`
 7. `I-0107`
+8. `I-0110`
+
+Active downstream queue from this plan:
+1. `I-0114`
+2. `I-0115`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
