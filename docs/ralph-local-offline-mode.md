@@ -25,10 +25,25 @@ priority: p0
 depends_on:
 title: M1 planning
 complexity: high
+risk_class: high
+max_diff_scope: 15
+allowed_paths: IMPLEMENTATION_PLAN.md,specs/,docs/,PROMPT_plan.md,.agent/,.ralph/
+denied_paths: .github/workflows/,deployments/,.git/
+acceptance_tests: make test,make test-sidecar,make lint
+invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic
+non_goals: ...
+evidence_required: true
 ---
 ## Objective
 - ...
 ```
+
+기관급 v1 기본 게이트:
+- 이슈 계약 검증(`scripts/ralph_issue_contract.sh`) 통과 필수
+- 변경 범위 게이트(`allowed_paths`, `denied_paths`, `max_diff_scope`)
+- 불변식 선언 검증(`scripts/ralph_invariants.sh`)
+- 완료 전 Evidence Pack 생성(`.ralph/reports/<issue>-evidence.md`)
+- planner 이슈는 계획 계약 JSON(`.ralph/plans/plan-output-<issue>.json`) 스키마 검증 필수
 
 ## 실행 순서
 1. 초기화:
@@ -48,7 +63,7 @@ complexity: high
 ## 모델 라우팅
 - Planner: `PLANNING_CODEX_MODEL` (기본 `gpt-5.3-codex`)
 - Developer: `AGENT_CODEX_MODEL_FAST`/`AGENT_CODEX_MODEL_COMPLEX`
-  - `complexity: high|critical` -> complex 모델
+  - 라벨/복잡도만 보지 않고 리스크 점수(`complexity`, `risk_class`, 도메인 키워드, `max_diff_scope`) 기반 라우팅
 - QA: `QA_TRIAGE_CODEX_MODEL` (기본 `gpt-5.3-codex`)
 
 ## 권한 모드

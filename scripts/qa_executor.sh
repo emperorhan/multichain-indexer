@@ -5,9 +5,20 @@ ISSUE_NUMBER="${AGENT_ISSUE_NUMBER:-}"
 ISSUE_TITLE="${AGENT_ISSUE_TITLE:-}"
 ISSUE_URL="${AGENT_ISSUE_URL:-}"
 ISSUE_BODY_FILE="${AGENT_ISSUE_BODY_FILE:-}"
+COUNTEREXAMPLE_CMD="${QA_COUNTEREXAMPLE_CMD:-scripts/qa_counterexample_checks.sh}"
+INVARIANTS_CMD="${RALPH_INVARIANTS_CMD:-scripts/ralph_invariants.sh}"
 
 if [ -z "${ISSUE_NUMBER}" ] || [ -z "${ISSUE_BODY_FILE}" ] || [ ! -f "${ISSUE_BODY_FILE}" ]; then
   echo "qa issue context is missing. expected AGENT_ISSUE_NUMBER and AGENT_ISSUE_BODY_FILE." >&2
+  exit 3
+fi
+
+if [ ! -x "${COUNTEREXAMPLE_CMD}" ]; then
+  echo "qa counterexample command is missing or not executable: ${COUNTEREXAMPLE_CMD}" >&2
+  exit 3
+fi
+if [ ! -x "${INVARIANTS_CMD}" ]; then
+  echo "invariants script is missing or not executable: ${INVARIANTS_CMD}" >&2
   exit 3
 fi
 
@@ -21,6 +32,7 @@ fi
 QA_CHAIN="$(tr '[:upper:]' '[:lower:]' <<<"${QA_CHAIN}")"
 
 QA_WATCHED_ADDRESSES="$(awk -F= '/^QA_WATCHED_ADDRESSES=/{print $2; exit}' "${ISSUE_BODY_FILE}" | tr -d '[:space:]')"
+DECLARED_INVARIANTS="$(awk -F': ' '$1=="invariants"{print $2; exit}' "${ISSUE_BODY_FILE}" | tr -d '[:space:]')"
 if [ -z "${QA_WATCHED_ADDRESSES}" ]; then
   cat >"${REPORT_FILE}" <<EOF
 ## QA Report (Issue #${ISSUE_NUMBER})
@@ -32,6 +44,22 @@ if [ -z "${QA_WATCHED_ADDRESSES}" ]; then
 - reason: QA_WATCHED_ADDRESSES not found in issue body
 EOF
   exit 4
+fi
+
+if [ -n "${DECLARED_INVARIANTS}" ]; then
+  if ! "${INVARIANTS_CMD}" validate "${DECLARED_INVARIANTS}" >/dev/null 2>&1; then
+    cat >"${REPORT_FILE}" <<EOF
+## QA Report (Issue #${ISSUE_NUMBER})
+
+- title: ${ISSUE_TITLE}
+- issue: ${ISSUE_URL}
+- chain: ${QA_CHAIN}
+- result: failed
+- reason: invalid invariants declaration in issue header
+- invariants: ${DECLARED_INVARIANTS}
+EOF
+    exit 7
+  fi
 fi
 
 address_is_valid_solana() {
@@ -135,6 +163,7 @@ cat >"${REPORT_FILE}" <<EOF
 - issue: ${ISSUE_URL}
 - chain: ${QA_CHAIN}
 - addresses: ${QA_WATCHED_ADDRESSES}
+- invariants: ${DECLARED_INVARIANTS:-not-declared}
 - result: running
 
 ## Checks
@@ -142,6 +171,7 @@ EOF
 
 all_passed=true
 run_step "Config parse test" ".agent/qa-config-${ISSUE_NUMBER}.log" go test ./internal/config -run TestLoadFromEnv -count=1 || all_passed=false
+run_step "Counterexample invariant checks" ".agent/qa-counterexample-${ISSUE_NUMBER}.log" bash -lc "${COUNTEREXAMPLE_CMD}" || all_passed=false
 run_step "Go test suite" ".agent/qa-go-${ISSUE_NUMBER}.log" make test || all_passed=false
 run_step "Sidecar test suite" ".agent/qa-sidecar-${ISSUE_NUMBER}.log" make test-sidecar || all_passed=false
 run_step "Lint suite" ".agent/qa-lint-${ISSUE_NUMBER}.log" make lint || all_passed=false

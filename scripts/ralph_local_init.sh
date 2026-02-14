@@ -56,6 +56,14 @@ priority: p1
 depends_on:
 title: Replace with title
 complexity: medium
+risk_class: medium
+max_diff_scope: 25
+allowed_paths: cmd/,internal/,pkg/,proto/,sidecar/,scripts/,docs/,specs/,PROMPT_build.md,PROMPT_plan.md,IMPLEMENTATION_PLAN.md,.ralph/
+denied_paths: .github/workflows/,deployments/,.git/
+acceptance_tests: make test,make test-sidecar,make lint
+invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic
+non_goals: replace-with-non-goals
+evidence_required: true
 ---
 
 ## Objective
@@ -71,6 +79,18 @@ complexity: medium
 - [ ] criterion 1
 - [ ] criterion 2
 
+## Non Goals
+- item 1
+
+## Constraints
+- Keep changes within `allowed_paths` and `max_diff_scope`.
+- Do not bypass declared invariants.
+
+## Evidence Checklist
+- [ ] Root cause or design intent is documented.
+- [ ] Invariant impact is documented.
+- [ ] Validation outputs are linked.
+
 ## Notes
 - Optional context.
 EOF
@@ -83,7 +103,10 @@ seed_issue() {
   local depends_on="$4"
   local title="$5"
   local complexity="$6"
-  local body="$7"
+  local risk_class="$7"
+  local max_diff_scope="$8"
+  local invariants="$9"
+  local body="${10}"
   local path="${ISSUES_DIR}/${id}.md"
 
   [ -f "${path}" ] && return 0
@@ -96,6 +119,14 @@ priority: ${priority}
 depends_on: ${depends_on}
 title: ${title}
 complexity: ${complexity}
+risk_class: ${risk_class}
+max_diff_scope: ${max_diff_scope}
+allowed_paths: cmd/,internal/,pkg/,proto/,sidecar/,scripts/,docs/,specs/,PROMPT_build.md,PROMPT_plan.md,IMPLEMENTATION_PLAN.md,.ralph/
+denied_paths: .github/workflows/,deployments/,.git/
+acceptance_tests: make test,make test-sidecar,make lint
+invariants: ${invariants}
+non_goals: replace-with-non-goals
+evidence_required: true
 ---
 ${body}
 EOF
@@ -103,7 +134,7 @@ EOF
 
 if [ "${SEED_DEFAULT_ISSUES}" = "true" ]; then
   seed_issue "I-0001" "planner" "p0" "" \
-    "M1 plan for dual-chain runtime bootstrap" "high" \
+    "M1 plan for dual-chain runtime bootstrap" "high" "high" "15" "canonical_event_id_unique,replay_idempotent,cursor_monotonic,chain_adapter_runtime_wired" \
 "## Objective
 - Define a concrete M1 plan to make solana-devnet + base-sepolia runtime bootstrap executable.
 
@@ -117,10 +148,13 @@ if [ "${SEED_DEFAULT_ISSUES}" = "true" ]; then
 
 ## Acceptance Criteria
 - [ ] M1 scope, DoD, risks, and decision placeholders are explicit.
-- [ ] Developer tasks are decomposed and actionable."
+- [ ] Developer tasks are decomposed and actionable.
+
+## Non Goals
+- Do not implement runtime code in planning."
 
   seed_issue "I-0002" "developer" "p0" "I-0001" \
-    "Implement M1 slice for dual-chain runtime config/bootstrap" "high" \
+    "Implement M1 slice for dual-chain runtime config/bootstrap" "high" "high" "30" "canonical_event_id_unique,replay_idempotent,cursor_monotonic,chain_adapter_runtime_wired" \
 "## Objective
 - Implement first executable slice for dual-chain runtime bootstrap.
 
@@ -134,10 +168,13 @@ if [ "${SEED_DEFAULT_ISSUES}" = "true" ]; then
 
 ## Acceptance Criteria
 - [ ] Slice compiles and tests pass in local CI command.
-- [ ] Behavior is documented in README/specs."
+- [ ] Behavior is documented in README/specs.
+
+## Non Goals
+- Do not add unrelated refactors."
 
   seed_issue "I-0003" "qa" "p0" "I-0002" \
-    "QA gate for dual-chain runtime bootstrap slice" "medium" \
+    "QA gate for dual-chain runtime bootstrap slice" "medium" "medium" "20" "canonical_event_id_unique,replay_idempotent,cursor_monotonic,solana_fee_event_coverage,base_fee_split_coverage" \
 "## Objective
 - Verify no-regression and chain-target correctness for M1 slice.
 
@@ -150,7 +187,10 @@ if [ "${SEED_DEFAULT_ISSUES}" = "true" ]; then
 
 ## Acceptance Criteria
 - [ ] QA report written to .ralph/reports/.
-- [ ] If failed, create follow-up local developer issue(s) with repro context."
+- [ ] If failed, create follow-up local developer issue(s) with repro context.
+
+## Non Goals
+- Do not ship product code changes in QA task."
 fi
 
 echo "Initialized local Ralph workspace at ${RALPH_ROOT}"

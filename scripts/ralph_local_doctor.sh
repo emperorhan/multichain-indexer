@@ -51,5 +51,15 @@ echo "- codex_smoke_exit: ${rc}"
 tail -n 40 /tmp/ralph-codex-smoke.log || true
 
 echo
+echo "### Known Blockers"
+if command -v journalctl >/dev/null 2>&1; then
+  journalctl --user -u ralph-local.service -n 200 --no-pager 2>/dev/null | \
+    grep -Ei "missing command: rg|missing command|auth preflight failed|stream disconnected before completion|error sending request for url|failed to connect to bus" || \
+    echo "- no known blocker signature in recent service logs"
+else
+  echo "- journalctl unavailable; skip blocker signature scan"
+fi
+
+echo
 echo "### Recent Runner Log"
 tail -n 80 "${RUNNER_LOG}" 2>/dev/null || true

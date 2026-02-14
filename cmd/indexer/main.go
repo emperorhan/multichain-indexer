@@ -21,6 +21,33 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type runtimeTarget struct {
+	chain   model.Chain
+	network model.Network
+	watched []string
+	adapter chain.ChainAdapter
+	rpcURL  string
+}
+
+func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarget {
+	return []runtimeTarget{
+		{
+			chain:   model.ChainSolana,
+			network: model.Network(cfg.Solana.Network),
+			watched: cfg.Pipeline.SolanaWatchedAddresses,
+			adapter: solana.NewAdapter(cfg.Solana.RPCURL, logger),
+			rpcURL:  cfg.Solana.RPCURL,
+		},
+		{
+			chain:   model.ChainBase,
+			network: model.Network(cfg.Base.Network),
+			watched: cfg.Pipeline.BaseWatchedAddresses,
+			adapter: base.NewAdapter(cfg.Base.RPCURL, logger),
+			rpcURL:  cfg.Base.RPCURL,
+		},
+	}
+}
+
 func main() {
 	// Setup logger
 	logLevel := slog.LevelInfo
@@ -77,30 +104,7 @@ func main() {
 		Config:       postgres.NewIndexerConfigRepo(db),
 	}
 
-	type runtimeTarget struct {
-		chain    model.Chain
-		network  model.Network
-		watched  []string
-		adapter  chain.ChainAdapter
-		rpcURL   string
-	}
-
-	targets := []runtimeTarget{
-		{
-			chain:   model.ChainSolana,
-			network: model.Network(cfg.Solana.Network),
-			watched: cfg.Pipeline.SolanaWatchedAddresses,
-			adapter: solana.NewAdapter(cfg.Solana.RPCURL, logger),
-			rpcURL:  cfg.Solana.RPCURL,
-		},
-		{
-			chain:   model.ChainBase,
-			network: model.Network(cfg.Base.Network),
-			watched: cfg.Pipeline.BaseWatchedAddresses,
-			adapter: base.NewAdapter(cfg.Base.RPCURL, logger),
-			rpcURL:  cfg.Base.RPCURL,
-		},
-	}
+	targets := buildRuntimeTargets(cfg, logger)
 
 	for _, target := range targets {
 		if err := syncWatchedAddresses(context.Background(), repos.WatchedAddr, repos.Cursor, target.chain, target.network, target.watched); err != nil {

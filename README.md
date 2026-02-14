@@ -516,6 +516,8 @@ GitHub 이슈를 큐로 사용해 밤새 자동 작업하려면 아래 순서로
 - [GitHub Collaboration](docs/github-collaboration.md) — 이슈/PR/라벨/승인 운영 규칙
 - [Autonomy Policy](docs/autonomy-policy.md) — 에이전트 자율 실행 정책 및 큐 규칙
 - [Ralph Local Offline Mode](docs/ralph-local-offline-mode.md) — GitHub 없이 md+commit 기반 운영 가이드
+- [Ralph Loop Usage Guide](docs/ralph-loop-user-guide.md) — 로컬 Ralph 루프 실행/점검/트러블슈팅 운영자 매뉴얼
+- [Ralph Loop Troubleshooter](docs/ralph-loop-troubleshooter.md) — 실제 장애 원인/복구/이식 체크리스트
 
 ## License
 
