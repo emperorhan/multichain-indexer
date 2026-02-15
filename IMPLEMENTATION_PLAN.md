@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -35,6 +35,8 @@ Execution queue (dependency-ordered):
 24. `I-0142` (`M14-S2`) QA counterexample gate for canonical identity alias determinism + invariant safety
 25. `I-0144` (`M15-S1`) finality-transition canonical dedupe/update hardening
 26. `I-0145` (`M15-S2`) QA counterexample gate for finality-transition determinism + invariant safety
+27. `I-0147` (`M16-S1`) rollback/finality convergence dedupe hardening
+28. `I-0148` (`M16-S2`) QA counterexample gate for rollback/finality convergence determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -495,7 +497,7 @@ Eliminate canonical identity alias drift (case/prefix/format variance) across fe
 - Gate: over-normalizing alias inputs can accidentally collapse legitimately distinct chain identifiers.
 - Fallback: keep canonicalization chain-scoped and format-conservative; emit deterministic diagnostics and fail fast on ambiguous alias collisions until contract extensions are added.
 
-### M15. Finality-Transition Determinism Reliability Tranche C0009 (P0, Next)
+### M15. Finality-Transition Determinism Reliability Tranche C0009 (P0, Completed)
 
 #### Objective
 Prevent duplicate canonical emission during finality-state transitions by ensuring replay-equivalent events observed at different finality levels converge to one canonical identity with deterministic state evolution.
@@ -529,6 +531,41 @@ Prevent duplicate canonical emission during finality-state transitions by ensuri
 #### Risk Gate + Fallback
 - Gate: over-aggressive finality unification may collapse legitimately distinct lifecycle events if canonical identity boundaries are underspecified.
 - Fallback: keep finality transition handling chain-scoped and contract-conservative; emit deterministic diagnostics and fail fast on ambiguous transition collisions until model extension is approved.
+
+### M16. Rollback-Finality Convergence Reliability Tranche C0010 (P0, Next)
+
+#### Objective
+Preserve deterministic canonical identity and balance correctness when previously finality-promoted events are later invalidated by rollback/reorg and replaced by fork-successor data.
+
+#### Entry Gate
+- `M15` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M16-S1` (`I-0147`): implement deterministic rollback-aware canonical replacement semantics so reorg-invalidated, finality-promoted events cannot survive as stale duplicates or trigger balance double-apply side effects.
+2. `M16-S2` (`I-0148`): execute QA counterexample gate for rollback-after-finality transition determinism and invariant evidence.
+
+#### Definition Of Done
+1. Reorg/rollback paths that invalidate previously finality-promoted events deterministically converge to one canonical post-fork event set per logical balance delta.
+2. Orphaned pre-fork canonical events cannot persist as duplicate canonical IDs and cannot cause balance double-apply after rollback replay.
+3. Repeated rollback+replay cycles over equivalent input ranges remain idempotent with stable canonical tuple ordering.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject weaker->stronger finality promotion followed by rollback/fork replacement for both `solana-devnet` and `base-sepolia` and assert stable canonical tuple outputs.
+2. Deterministic tests replay rollback/fork-replacement fixtures multiple times and assert no stale canonical IDs and no balance double-apply side effects.
+3. Replay/idempotency/cursor tests remain green with no regressions on `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, and `chain_adapter_runtime_wired`.
+4. QA executes required validation commands plus rollback-after-finality counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` stale or duplicate canonical IDs after rollback/fork replacement replay fixtures on mandatory chains.
+2. `0` balance drift across repeated rollback+replay fixture runs.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-pruning during rollback reconciliation can drop valid post-fork events if fork boundaries are computed incorrectly.
+- Fallback: keep reconciliation strictly fork-range scoped, emit deterministic rollback-collision diagnostics, and fail fast on ambiguous ancestry boundaries until contract extension is approved.
 
 ## Decision Register (Major + Fallback)
 
@@ -571,10 +608,12 @@ Completed milestones/slices:
 22. `I-0139`
 23. `I-0141`
 24. `I-0142`
+25. `I-0144`
+26. `I-0145`
 
 Active downstream queue from this plan:
-1. `I-0144`
-2. `I-0145`
+1. `I-0147`
+2. `I-0148`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

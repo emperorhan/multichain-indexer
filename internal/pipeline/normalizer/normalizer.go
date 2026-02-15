@@ -361,6 +361,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 	if txHash == "" {
 		txHash = strings.TrimSpace(result.TxHash)
 	}
+	finalityState := resolveResultFinalityState(batch.Chain, result)
 	tx := event.NormalizedTransaction{
 		TxHash:      txHash,
 		BlockCursor: result.BlockCursor,
@@ -387,6 +388,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			result.Status,
 			result.FeePayer,
 			result.FeeAmount,
+			finalityState,
 			result.BalanceEvents,
 		)
 	} else {
@@ -397,6 +399,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			result.Status,
 			result.FeePayer,
 			result.FeeAmount,
+			finalityState,
 			result.BalanceEvents,
 		)
 	}
@@ -407,9 +410,10 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 func buildCanonicalSolanaBalanceEvents(
 	chain model.Chain,
 	network model.Network,
-	txHash, txStatus, feePayer, feeAmount string,
+	txHash, txStatus, feePayer, feeAmount, finalityState string,
 	rawEvents []*sidecarv1.BalanceEventInfo,
 ) []event.NormalizedBalanceEvent {
+	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
 	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+1)
 
 	for _, be := range rawEvents {
@@ -441,15 +445,16 @@ func buildCanonicalSolanaBalanceEvents(
 		normalizedEvents = append(normalizedEvents, buildSolanaFeeBalanceEvent(feePayer, feeAmount))
 	}
 
-	return canonicalizeSolanaBalanceEvents(chain, network, txHash, normalizedEvents)
+	return canonicalizeSolanaBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)
 }
 
 func buildCanonicalBaseBalanceEvents(
 	chain model.Chain,
 	network model.Network,
-	txHash, txStatus, feePayer, feeAmount string,
+	txHash, txStatus, feePayer, feeAmount, finalityState string,
 	rawEvents []*sidecarv1.BalanceEventInfo,
 ) []event.NormalizedBalanceEvent {
+	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
 	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+2)
 	meta := collectBaseMetadata(rawEvents)
 	missingDataFee := !hasBaseDataFee(meta)
@@ -529,7 +534,7 @@ func buildCanonicalBaseBalanceEvents(
 		}
 	}
 
-	return canonicalizeBaseBalanceEvents(chain, network, txHash, normalizedEvents)
+	return canonicalizeBaseBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)
 }
 
 func collectBaseMetadata(rawEvents []*sidecarv1.BalanceEventInfo) map[string]string {
@@ -693,8 +698,10 @@ func canonicalizeBaseBalanceEvents(
 	chain model.Chain,
 	network model.Network,
 	txHash string,
+	finalityState string,
 	normalizedEvents []event.NormalizedBalanceEvent,
 ) []event.NormalizedBalanceEvent {
+	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
 	eventsByID := make(map[string]event.NormalizedBalanceEvent, len(normalizedEvents))
 	for _, be := range normalizedEvents {
 		if be.EventCategory == model.EventCategoryFeeExecutionL2 || be.EventCategory == model.EventCategoryFeeDataL1 {
@@ -713,7 +720,7 @@ func canonicalizeBaseBalanceEvents(
 		be.ActorAddress = be.Address
 		be.AssetType = assetType
 		be.EventPathType = "base_log"
-		be.FinalityState = "finalized"
+		be.FinalityState = finalityState
 		be.DecoderVersion = "base-decoder-v1"
 		be.SchemaVersion = "v2"
 		be.EventID = buildCanonicalEventID(
@@ -722,7 +729,10 @@ func canonicalizeBaseBalanceEvents(
 			be.ActorAddress, be.AssetID, be.EventCategory,
 		)
 
-		eventsByID[be.EventID] = be
+		existing, ok := eventsByID[be.EventID]
+		if !ok || shouldReplaceCanonicalBaseEvent(existing, be) {
+			eventsByID[be.EventID] = be
+		}
 	}
 
 	events := make([]event.NormalizedBalanceEvent, 0, len(eventsByID))
@@ -833,8 +843,10 @@ func canonicalizeSolanaBalanceEvents(
 	chain model.Chain,
 	network model.Network,
 	txHash string,
+	finalityState string,
 	normalizedEvents []event.NormalizedBalanceEvent,
 ) []event.NormalizedBalanceEvent {
+	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
 	type solanaInstructionOwnerKey struct {
 		OuterInstruction int
 		Address          string
@@ -905,7 +917,7 @@ func canonicalizeSolanaBalanceEvents(
 		be.AssetType = assetType
 		be.EventPath = balanceEventPath(int32(be.OuterInstructionIndex), int32(be.InnerInstructionIndex))
 		be.EventPathType = "solana_instruction"
-		be.FinalityState = "finalized"
+		be.FinalityState = finalityState
 		be.DecoderVersion = "solana-decoder-v1"
 		be.SchemaVersion = "v2"
 		be.EventID = buildCanonicalEventID(
@@ -942,8 +954,14 @@ func shouldReplaceCanonicalSolanaEvent(
 	existing, incoming event.NormalizedBalanceEvent,
 	existingSelection, incomingSelection solanaCanonicalSelection,
 ) bool {
+	if cmp := compareFinalityStateStrength(existing.FinalityState, incoming.FinalityState); cmp != 0 {
+		return cmp < 0
+	}
 	if existing.EventCategory == model.EventCategoryFee || incoming.EventCategory == model.EventCategoryFee {
-		return false
+		if existing.EventAction != incoming.EventAction {
+			return incoming.EventAction < existing.EventAction
+		}
+		return existing.Delta > incoming.Delta
 	}
 	if existingSelection.FromOuterInstruction != incomingSelection.FromOuterInstruction {
 		return incomingSelection.FromOuterInstruction
@@ -1069,6 +1087,11 @@ func shouldReplaceDecodedResult(chainID model.Chain, existing, incoming *sidecar
 	if existing.BlockCursor != incoming.BlockCursor {
 		return incoming.BlockCursor > existing.BlockCursor
 	}
+	existingFinality := resolveResultFinalityState(chainID, existing)
+	incomingFinality := resolveResultFinalityState(chainID, incoming)
+	if cmp := compareFinalityStateStrength(existingFinality, incomingFinality); cmp != 0 {
+		return cmp < 0
+	}
 
 	existingStatus := strings.TrimSpace(existing.Status)
 	incomingStatus := strings.TrimSpace(incoming.Status)
@@ -1124,6 +1147,14 @@ func compareDecodedResultOrder(chainID model.Chain, left, right *sidecarv1.Trans
 		}
 		return 1
 	}
+	leftFinality := resolveResultFinalityState(chainID, left)
+	rightFinality := resolveResultFinalityState(chainID, right)
+	if cmp := compareFinalityStateStrength(leftFinality, rightFinality); cmp != 0 {
+		if cmp < 0 {
+			return 1
+		}
+		return -1
+	}
 
 	leftStatus := strings.TrimSpace(left.Status)
 	rightStatus := strings.TrimSpace(right.Status)
@@ -1157,6 +1188,119 @@ func compareDecodedResultOrder(chainID model.Chain, left, right *sidecarv1.Trans
 
 func isEVMChain(chainID model.Chain) bool {
 	return chainID == model.ChainBase || chainID == model.ChainEthereum
+}
+
+func shouldReplaceCanonicalBaseEvent(existing, incoming event.NormalizedBalanceEvent) bool {
+	if cmp := compareFinalityStateStrength(existing.FinalityState, incoming.FinalityState); cmp != 0 {
+		return cmp < 0
+	}
+	if existing.EventAction != incoming.EventAction {
+		return incoming.EventAction < existing.EventAction
+	}
+	if existing.ContractAddress != incoming.ContractAddress {
+		return incoming.ContractAddress < existing.ContractAddress
+	}
+	if existing.CounterpartyAddress != incoming.CounterpartyAddress {
+		return incoming.CounterpartyAddress < existing.CounterpartyAddress
+	}
+	return existing.Delta > incoming.Delta
+}
+
+func resolveResultFinalityState(chainID model.Chain, result *sidecarv1.TransactionResult) string {
+	if result == nil {
+		return defaultFinalityState(chainID)
+	}
+	keys := [...]string{"finality_state", "finality", "commitment", "confirmation_status"}
+
+	best := ""
+	for _, be := range result.BalanceEvents {
+		if be == nil {
+			continue
+		}
+		for _, key := range keys {
+			candidate := canonicalizeFinalityState(be.Metadata[key])
+			if candidate == "" {
+				continue
+			}
+			if best == "" || compareFinalityStateStrength(best, candidate) < 0 {
+				best = candidate
+			}
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return defaultFinalityState(chainID)
+}
+
+func normalizeFinalityStateOrDefault(chainID model.Chain, state string) string {
+	normalized := canonicalizeFinalityState(state)
+	if normalized != "" {
+		return normalized
+	}
+	return defaultFinalityState(chainID)
+}
+
+func defaultFinalityState(chainID model.Chain) string {
+	if chainID == model.ChainSolana {
+		return "finalized"
+	}
+	if isEVMChain(chainID) {
+		return "finalized"
+	}
+	return "finalized"
+}
+
+func canonicalizeFinalityState(state string) string {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "":
+		return ""
+	case "processed", "pending", "latest", "unsafe":
+		return "processed"
+	case "confirmed", "accepted":
+		return "confirmed"
+	case "safe":
+		return "safe"
+	case "finalized", "finalised":
+		return "finalized"
+	default:
+		return ""
+	}
+}
+
+func compareFinalityStateStrength(left, right string) int {
+	leftRank := finalityStateRank(left)
+	rightRank := finalityStateRank(right)
+	if leftRank != rightRank {
+		if leftRank < rightRank {
+			return -1
+		}
+		return 1
+	}
+	leftNorm := canonicalizeFinalityState(left)
+	rightNorm := canonicalizeFinalityState(right)
+	if leftNorm < rightNorm {
+		return -1
+	}
+	if leftNorm > rightNorm {
+		return 1
+	}
+	return 0
+}
+
+func finalityStateRank(state string) int {
+	switch canonicalizeFinalityState(state) {
+	case "processed":
+		return 1
+	case "confirmed":
+		return 2
+	case "safe":
+		return 3
+	case "finalized":
+		return 4
+	default:
+		return 0
+	}
 }
 
 func isHexString(v string) bool {

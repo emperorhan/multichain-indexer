@@ -747,6 +747,189 @@ func TestProcessBatch_AliasOverlapDuplicatesSuppressedAcrossMandatoryChains(t *t
 	}
 }
 
+func TestProcessBatch_MixedFinalityOverlapConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name           string
+		chain          model.Chain
+		network        model.Network
+		address        string
+		signatures     []event.SignatureInfo
+		expectedTxs    []string
+		expectedCursor string
+		responseA      []*sidecarv1.TransactionResult
+		responseB      []*sidecarv1.TransactionResult
+	}
+
+	buildTransfer := func(txHash string, cursor int64, address string, contract string, metadata map[string]string) *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      txHash,
+			BlockCursor: cursor,
+			Status:      "SUCCESS",
+			FeeAmount:   "1",
+			FeePayer:    address,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "transfer",
+					ProgramId:             "program",
+					Address:               address,
+					ContractAddress:       contract,
+					Delta:                 "-1",
+					TokenSymbol:           "ETH",
+					TokenName:             "Ether",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata:              metadata,
+				},
+			},
+		}
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "sol-finality-addr",
+			signatures: []event.SignatureInfo{
+				{Hash: "sol-finality-1", Sequence: 50},
+				{Hash: "sol-finality-1", Sequence: 50},
+				{Hash: "sol-finality-2", Sequence: 51},
+				{Hash: "sol-finality-2", Sequence: 51},
+			},
+			expectedTxs:    []string{"sol-finality-1", "sol-finality-2"},
+			expectedCursor: "sol-finality-2",
+			responseA: []*sidecarv1.TransactionResult{
+				buildTransfer("sol-finality-1", 50, "sol-finality-addr", "SOL", map[string]string{"commitment": "confirmed"}),
+				buildTransfer("sol-finality-1", 50, "sol-finality-addr", "SOL", map[string]string{"commitment": "finalized"}),
+				buildTransfer("sol-finality-2", 51, "sol-finality-addr", "SOL", map[string]string{"commitment": "processed"}),
+				buildTransfer("sol-finality-2", 51, "sol-finality-addr", "SOL", map[string]string{"commitment": "finalized"}),
+			},
+			responseB: []*sidecarv1.TransactionResult{
+				buildTransfer("sol-finality-2", 51, "sol-finality-addr", "SOL", map[string]string{"commitment": "confirmed"}),
+				buildTransfer("sol-finality-2", 51, "sol-finality-addr", "SOL", map[string]string{"commitment": "finalized"}),
+				buildTransfer("sol-finality-1", 50, "sol-finality-addr", "SOL", map[string]string{"commitment": "processed"}),
+				buildTransfer("sol-finality-1", 50, "sol-finality-addr", "SOL", map[string]string{"commitment": "finalized"}),
+			},
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			signatures: []event.SignatureInfo{
+				{Hash: "ABCDEF", Sequence: 60},
+				{Hash: "0xABCDEF", Sequence: 60},
+				{Hash: "0xBEEF", Sequence: 61},
+				{Hash: "beef", Sequence: 61},
+			},
+			expectedTxs:    []string{"0xabcdef", "0xbeef"},
+			expectedCursor: "0xbeef",
+			responseA: []*sidecarv1.TransactionResult{
+				buildTransfer("ABCDEF", 60, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "safe"}),
+				buildTransfer("0xabcdef", 60, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "finalized"}),
+				buildTransfer("0xBEEF", 61, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality": "latest"}),
+				buildTransfer("beef", 61, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality": "finalized"}),
+			},
+			responseB: []*sidecarv1.TransactionResult{
+				buildTransfer("0xabcdef", 60, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "finalized"}),
+				buildTransfer("ABCDEF", 60, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "safe"}),
+				buildTransfer("beef", 61, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "finalized"}),
+				buildTransfer("0xBEEF", 61, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "safe"}),
+			},
+		},
+	}
+
+	txHashes := func(batch event.NormalizedBatch) []string {
+		out := make([]string, 0, len(batch.Transactions))
+		for _, tx := range batch.Transactions {
+			out = append(out, tx.TxHash)
+		}
+		return out
+	}
+
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	assertAllFinalized := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				assert.Equal(t, "finalized", be.FinalityState)
+			}
+		}
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+			normalizedCh := make(chan event.NormalizedBatch, 2)
+			n := &Normalizer{
+				sidecarTimeout: 30 * time.Second,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			rawTxs := make([]json.RawMessage, len(tc.signatures))
+			for i := range rawTxs {
+				rawTxs[i] = json.RawMessage(`{"tx":"mixed-finality-overlap"}`)
+			}
+
+			batch := event.RawBatch{
+				Chain:           tc.chain,
+				Network:         tc.network,
+				Address:         tc.address,
+				RawTransactions: rawTxs,
+				Signatures:      tc.signatures,
+			}
+
+			call := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(2).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					call++
+					if call == 1 {
+						return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: tc.responseA}, nil
+					}
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: tc.responseB}, nil
+				})
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			first := <-normalizedCh
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			second := <-normalizedCh
+
+			assert.Equal(t, tc.expectedTxs, txHashes(first))
+			assert.Equal(t, tc.expectedTxs, txHashes(second))
+			assert.Equal(t, orderedCanonicalTuples(first), orderedCanonicalTuples(second))
+			assertNoDuplicateCanonicalIDs(t, first)
+			assertNoDuplicateCanonicalIDs(t, second)
+			assertAllFinalized(t, first)
+			assertAllFinalized(t, second)
+
+			require.NotNil(t, first.NewCursorValue)
+			require.NotNil(t, second.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *first.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *second.NewCursorValue)
+		})
+	}
+}
+
 func TestProcessBatch_PersistedArtifactsReplayHasZeroCanonicalTupleDiff(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockChainDecoderClient(ctrl)

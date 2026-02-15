@@ -770,6 +770,148 @@ func TestProcessBatch_DuplicateEventReplayIsNoop(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestProcessBatch_MixedFinalityReplayPromotesWithoutDoubleApplyAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name         string
+		chain        model.Chain
+		network      model.Network
+		address      string
+		txHash       string
+		cursor       int64
+		eventID      string
+		contractAddr string
+		programID    string
+		counterparty string
+	}{
+		{
+			name:         "solana-devnet",
+			chain:        model.ChainSolana,
+			network:      model.NetworkDevnet,
+			address:      "addr-finality-sol",
+			txHash:       "sig-finality-sol-1",
+			cursor:       301,
+			eventID:      "solana|devnet|sig-finality-sol-1|tx:outer:0:inner:-1|addr:addr-finality-sol|asset:11111111111111111111111111111111|cat:TRANSFER",
+			contractAddr: "11111111111111111111111111111111",
+			programID:    "11111111111111111111111111111111",
+			counterparty: "addr-counterparty-sol",
+		},
+		{
+			name:         "base-sepolia",
+			chain:        model.ChainBase,
+			network:      model.NetworkSepolia,
+			address:      "0x1111111111111111111111111111111111111111",
+			txHash:       "0xbase_finality_1",
+			cursor:       302,
+			eventID:      "base|sepolia|0xbase_finality_1|tx:log:7|addr:0x1111111111111111111111111111111111111111|asset:ETH|cat:TRANSFER",
+			contractAddr: "ETH",
+			programID:    "0xbase-program",
+			counterparty: "0x2222222222222222222222222222222222222222",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			_ = ctrl
+
+			normalizedCh := make(chan event.NormalizedBatch, 1)
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+
+			txID := uuid.New()
+			tokenID := uuid.New()
+			cursorValue := tc.txHash
+
+			buildBatch := func(finality string) event.NormalizedBatch {
+				return event.NormalizedBatch{
+					Chain:   tc.chain,
+					Network: tc.network,
+					Address: tc.address,
+					Transactions: []event.NormalizedTransaction{
+						{
+							TxHash:      tc.txHash,
+							BlockCursor: tc.cursor,
+							FeeAmount:   "0",
+							FeePayer:    tc.address,
+							Status:      model.TxStatusSuccess,
+							ChainData:   json.RawMessage("{}"),
+							BalanceEvents: []event.NormalizedBalanceEvent{
+								{
+									OuterInstructionIndex: 0,
+									InnerInstructionIndex: -1,
+									EventCategory:         model.EventCategoryTransfer,
+									EventAction:           "transfer",
+									ProgramID:             tc.programID,
+									ContractAddress:       tc.contractAddr,
+									Address:               tc.address,
+									CounterpartyAddress:   tc.counterparty,
+									Delta:                 "-1",
+									EventID:               tc.eventID,
+									TokenType:             model.TokenTypeNative,
+									FinalityState:         finality,
+								},
+							},
+						},
+					},
+					NewCursorValue:    &cursorValue,
+					NewCursorSequence: tc.cursor,
+				}
+			}
+
+			weaker := buildBatch("confirmed")
+			stronger := buildBatch("finalized")
+
+			setupBeginTx(mockDB)
+			setupBeginTx(mockDB)
+
+			mockTxRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(txID, nil).
+				Times(2)
+
+			mockTokenRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(tokenID, nil).
+				Times(2)
+
+			finalityWrites := make([]string, 0, 2)
+			call := 0
+			mockBERepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+					call++
+					finalityWrites = append(finalityWrites, be.FinalityState)
+					return call == 1, nil
+				}).
+				Times(2)
+
+			mockBalanceRepo.EXPECT().
+				AdjustBalanceTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					tokenID, nil, nil,
+					"-1", tc.cursor, tc.txHash,
+				).
+				Return(nil).
+				Times(1)
+
+			mockCursorRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.address, &cursorValue, tc.cursor, int64(1)).
+				Return(nil).
+				Times(2)
+
+			mockConfigRepo.EXPECT().
+				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.cursor).
+				Return(nil).
+				Times(2)
+
+			require.NoError(t, ing.processBatch(context.Background(), weaker))
+			require.NoError(t, ing.processBatch(context.Background(), stronger))
+			assert.Equal(t, []string{"confirmed", "finalized"}, finalityWrites)
+		})
+	}
+}
+
 func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl

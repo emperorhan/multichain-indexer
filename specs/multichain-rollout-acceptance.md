@@ -304,6 +304,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of finality-transition determinism and finality+overlap duplicate suppression behavior on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0147 (M16-S1)
+Assertions:
+1. Rollback/reorg paths that invalidate previously finality-promoted events converge to one deterministic post-fork canonical event set per logical balance delta on both mandatory chains.
+2. Orphaned pre-fork canonical events cannot persist as stale duplicate canonical IDs and cannot trigger balance double-apply during rollback replay.
+3. Repeated rollback+replay cycles preserve deterministic canonical tuple ordering and cursor monotonicity.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject finality promotion followed by rollback/fork replacement on `solana-devnet` and `base-sepolia` and show `0` stale or duplicate canonical IDs.
+- Rollback+replay fixture tests show `0` balance drift and no double-apply side effects across repeated runs.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0148 (M16-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M16 invariants.
+2. QA executes at least one counterexample with finality-promotion then rollback/fork replacement and verifies deterministic canonical convergence.
+3. QA executes at least one counterexample with repeated rollback+replay cycles and verifies no stale canonical IDs, no balance double-apply, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of rollback-after-finality determinism and stale-canonical suppression behavior on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -318,3 +342,4 @@ Release recommendation must be `fail` if any condition holds:
 10. Fetch-order canonicalization determinism cannot be proven (order-permutation equivalence and overlap-dedupe stability not evidenced for both mandatory chains).
 11. Canonical identity alias determinism cannot be proven (alias-equivalent identity convergence and alias+overlap duplicate suppression not evidenced for both mandatory chains).
 12. Finality-transition determinism cannot be proven (mixed-finality equivalence, finality+overlap duplicate suppression, and no balance double-apply behavior not evidenced for both mandatory chains).
+13. Rollback-after-finality convergence determinism cannot be proven (fork-replacement convergence, stale-canonical suppression, replay idempotency, and cursor monotonicity not evidenced for both mandatory chains).
