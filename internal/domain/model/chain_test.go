@@ -10,6 +10,7 @@ func TestChainString(t *testing.T) {
 	assert.Equal(t, "solana", ChainSolana.String())
 	assert.Equal(t, "ethereum", ChainEthereum.String())
 	assert.Equal(t, "base", ChainBase.String())
+	assert.Equal(t, "btc", ChainBTC.String())
 }
 
 func TestNetworkString(t *testing.T) {
@@ -23,6 +24,7 @@ func TestChainConstants(t *testing.T) {
 	assert.Equal(t, Chain("solana"), ChainSolana)
 	assert.Equal(t, Chain("ethereum"), ChainEthereum)
 	assert.Equal(t, Chain("base"), ChainBase)
+	assert.Equal(t, Chain("btc"), ChainBTC)
 }
 
 func TestNetworkConstants(t *testing.T) {

@@ -398,6 +398,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 	}
 
 	isBaseChain := batch.Chain == model.ChainBase || (batch.Chain == model.ChainEthereum && batch.Network == model.NetworkSepolia)
+	isBTCChain := batch.Chain == model.ChainBTC
 	if isBaseChain {
 		tx.BalanceEvents = buildCanonicalBaseBalanceEvents(
 			batch.Chain,
@@ -406,6 +407,14 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			result.Status,
 			result.FeePayer,
 			result.FeeAmount,
+			finalityState,
+			result.BalanceEvents,
+		)
+	} else if isBTCChain {
+		tx.BalanceEvents = buildCanonicalBTCBalanceEvents(
+			batch.Chain,
+			batch.Network,
+			txHash,
 			finalityState,
 			result.BalanceEvents,
 		)
@@ -553,6 +562,42 @@ func buildCanonicalBaseBalanceEvents(
 	}
 
 	return canonicalizeBaseBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)
+}
+
+func buildCanonicalBTCBalanceEvents(
+	chain model.Chain,
+	network model.Network,
+	txHash, finalityState string,
+	rawEvents []*sidecarv1.BalanceEventInfo,
+) []event.NormalizedBalanceEvent {
+	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
+	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents))
+
+	for _, be := range rawEvents {
+		if be == nil {
+			continue
+		}
+		chainData, _ := json.Marshal(be.Metadata)
+		normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
+			OuterInstructionIndex: int(be.OuterInstructionIndex),
+			InnerInstructionIndex: int(be.InnerInstructionIndex),
+			EventCategory:         model.EventCategory(be.EventCategory),
+			EventAction:           be.EventAction,
+			ProgramID:             be.ProgramId,
+			ContractAddress:       be.ContractAddress,
+			Address:               be.Address,
+			CounterpartyAddress:   be.CounterpartyAddress,
+			Delta:                 be.Delta,
+			ChainData:             chainData,
+			TokenSymbol:           be.TokenSymbol,
+			TokenName:             be.TokenName,
+			TokenDecimals:         int(be.TokenDecimals),
+			TokenType:             model.TokenType(be.TokenType),
+			AssetID:               be.ContractAddress,
+		})
+	}
+
+	return canonicalizeBTCBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)
 }
 
 func collectBaseMetadata(rawEvents []*sidecarv1.BalanceEventInfo) map[string]string {
@@ -957,6 +1002,94 @@ func isBaseFeeCategory(category model.EventCategory) bool {
 	}
 }
 
+func canonicalizeBTCBalanceEvents(
+	chain model.Chain,
+	network model.Network,
+	txHash string,
+	finalityState string,
+	normalizedEvents []event.NormalizedBalanceEvent,
+) []event.NormalizedBalanceEvent {
+	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
+	eventsByID := make(map[string]event.NormalizedBalanceEvent, len(normalizedEvents))
+
+	for _, be := range normalizedEvents {
+		metadata := metadataFromChainData(be.ChainData)
+		be.EventPath = strings.TrimSpace(metadata["event_path"])
+		if be.EventPath == "" {
+			be.EventPath = strings.TrimSpace(be.EventPath)
+		}
+		if be.EventPath == "" {
+			be.EventPath = balanceEventPath(int32(be.OuterInstructionIndex), int32(be.InnerInstructionIndex))
+		}
+
+		be.Address = canonicalizeAddressIdentity(chain, be.Address)
+		be.CounterpartyAddress = canonicalizeAddressIdentity(chain, be.CounterpartyAddress)
+		be.ContractAddress = canonicalizeBTCAssetID(be.ContractAddress)
+		be.AssetID = canonicalizeBTCAssetID(be.AssetID)
+		if be.AssetID == "" {
+			be.AssetID = be.ContractAddress
+		}
+
+		assetType := mapTokenTypeToAssetType(be.TokenType)
+		if be.EventCategory == model.EventCategoryFee {
+			assetType = "fee"
+		}
+
+		be.ActorAddress = canonicalizeAddressIdentity(chain, be.Address)
+		be.AssetType = assetType
+		be.EventPathType = "btc_utxo"
+		be.FinalityState = finalityState
+		be.DecoderVersion = "btc-decoder-v1"
+		be.SchemaVersion = "v2"
+		be.EventID = buildCanonicalEventID(
+			chain, network,
+			txHash, be.EventPath,
+			be.ActorAddress, be.AssetID, be.EventCategory,
+		)
+
+		existing, ok := eventsByID[be.EventID]
+		if !ok || shouldReplaceCanonicalBTCEvent(existing, be) {
+			eventsByID[be.EventID] = be
+		}
+	}
+
+	events := make([]event.NormalizedBalanceEvent, 0, len(eventsByID))
+	for _, be := range eventsByID {
+		events = append(events, be)
+	}
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].EventID < events[j].EventID
+	})
+	return events
+}
+
+func shouldReplaceCanonicalBTCEvent(existing, incoming event.NormalizedBalanceEvent) bool {
+	if cmp := compareFinalityStateStrength(existing.FinalityState, incoming.FinalityState); cmp != 0 {
+		return cmp < 0
+	}
+	if existing.EventAction != incoming.EventAction {
+		return incoming.EventAction < existing.EventAction
+	}
+	if existing.ContractAddress != incoming.ContractAddress {
+		return incoming.ContractAddress < existing.ContractAddress
+	}
+	if existing.CounterpartyAddress != incoming.CounterpartyAddress {
+		return incoming.CounterpartyAddress < existing.CounterpartyAddress
+	}
+	return existing.Delta > incoming.Delta
+}
+
+func canonicalizeBTCAssetID(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "BTC"
+	}
+	if strings.EqualFold(trimmed, "btc") {
+		return "BTC"
+	}
+	return trimmed
+}
+
 func shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount string) bool {
 	if !isFeeEligibleStatus(txStatus) {
 		return false
@@ -1269,6 +1402,13 @@ func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
 	trimmed := strings.TrimSpace(hash)
 	if trimmed == "" {
 		return ""
+	}
+	if chainID == model.ChainBTC {
+		withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
+		if withoutPrefix == "" {
+			return ""
+		}
+		return strings.ToLower(withoutPrefix)
 	}
 	if !isEVMChain(chainID) {
 		return trimmed

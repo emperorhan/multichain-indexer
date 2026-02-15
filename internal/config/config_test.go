@@ -11,6 +11,7 @@ func TestLoad_Defaults(t *testing.T) {
 	// Clear env vars that might interfere
 	t.Setenv("DB_URL", "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable")
 	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.testnet.example")
 	t.Setenv("SOLANA_RPC_URL", "https://api.devnet.solana.com")
 	t.Setenv("SIDECAR_ADDR", "localhost:50051")
 	t.Setenv("WATCHED_ADDRESSES", "")
@@ -27,6 +28,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "devnet", cfg.Solana.Network)
 	assert.Equal(t, "https://sepolia.base.org", cfg.Base.RPCURL)
 	assert.Equal(t, "sepolia", cfg.Base.Network)
+	assert.Equal(t, "https://btc.testnet.example", cfg.BTC.RPCURL)
+	assert.Equal(t, "testnet", cfg.BTC.Network)
 	assert.Equal(t, 2, cfg.Pipeline.FetchWorkers)
 	assert.Equal(t, 2, cfg.Pipeline.NormalizerWorkers)
 	assert.Equal(t, 100, cfg.Pipeline.BatchSize)
@@ -40,12 +43,14 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Empty(t, cfg.Pipeline.WatchedAddresses)
 	assert.Empty(t, cfg.Pipeline.SolanaWatchedAddresses)
 	assert.Empty(t, cfg.Pipeline.BaseWatchedAddresses)
+	assert.Empty(t, cfg.Pipeline.BTCWatchedAddresses)
 }
 
 func TestLoad_EnvOverride(t *testing.T) {
 	t.Setenv("DB_URL", "postgres://test:test@db:5432/testdb")
 	t.Setenv("SOLANA_DEVNET_RPC_URL", "https://mainnet.solana.com")
 	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base-sepolia.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc-testnet.example")
 	t.Setenv("SIDECAR_ADDR", "sidecar:50051")
 	t.Setenv("REDIS_URL", "redis://redis:6379")
 	t.Setenv("SOLANA_NETWORK", "mainnet")
@@ -63,6 +68,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 	assert.Equal(t, "postgres://test:test@db:5432/testdb", cfg.DB.URL)
 	assert.Equal(t, "https://mainnet.solana.com", cfg.Solana.RPCURL)
 	assert.Equal(t, "https://base-sepolia.example", cfg.Base.RPCURL)
+	assert.Equal(t, "https://btc-testnet.example", cfg.BTC.RPCURL)
 	assert.Equal(t, "sidecar:50051", cfg.Sidecar.Addr)
 	assert.Equal(t, "redis://redis:6379", cfg.Redis.URL)
 	assert.Equal(t, "mainnet", cfg.Solana.Network)
@@ -78,6 +84,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 func TestLoad_WatchedAddresses_Parsing(t *testing.T) {
 	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
 	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
 	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
 	t.Setenv("SIDECAR_ADDR", "localhost:50051")
 
@@ -130,10 +137,12 @@ func TestLoad_ChainSpecificWatchedAddresses(t *testing.T) {
 	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
 	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
 	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
 	t.Setenv("SIDECAR_ADDR", "localhost:50051")
 	t.Setenv("WATCHED_ADDRESSES", "legacy1,legacy2")
 	t.Setenv("SOLANA_WATCHED_ADDRESSES", "sol1,sol2")
 	t.Setenv("BASE_WATCHED_ADDRESSES", "base1,base2")
+	t.Setenv("BTC_WATCHED_ADDRESSES", "btc1,btc2")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -141,6 +150,7 @@ func TestLoad_ChainSpecificWatchedAddresses(t *testing.T) {
 	assert.Equal(t, []string{"sol1", "sol2"}, cfg.Pipeline.SolanaWatchedAddresses)
 	assert.Equal(t, []string{"sol1", "sol2"}, cfg.Pipeline.WatchedAddresses)
 	assert.Equal(t, []string{"base1", "base2"}, cfg.Pipeline.BaseWatchedAddresses)
+	assert.Equal(t, []string{"btc1", "btc2"}, cfg.Pipeline.BTCWatchedAddresses)
 }
 
 func TestValidate_MissingDBURL(t *testing.T) {
@@ -180,6 +190,20 @@ func TestValidate_MissingBaseRPCURL(t *testing.T) {
 	err := cfg.validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "BASE_SEPOLIA_RPC_URL")
+}
+
+func TestValidate_MissingBTCRPCURL(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
+		BTC:     BTCConfig{RPCURL: ""},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{DeploymentMode: RuntimeDeploymentModeLikeGroup},
+	}
+	err := cfg.validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "BTC_TESTNET_RPC_URL")
 }
 
 func TestValidate_MissingSidecarAddr(t *testing.T) {
@@ -285,20 +309,49 @@ func TestValidate_IndependentMode_RejectsUnsupportedTargetChain(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported chain")
 }
 
-func TestValidate_LikeGroupBTCRejectedUntilWired(t *testing.T) {
+func TestValidate_IndependentMode_AcceptsBTCTarget(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: ""},
+		Base:    BaseConfig{RPCURL: ""},
+		BTC:     BTCConfig{RPCURL: "https://btc.example"},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeIndependent,
+			ChainTargets:   []string{"btc-testnet"},
+		},
+	}
+	require.NoError(t, cfg.validate())
+}
+
+func TestValidate_LikeGroupBTCAllowedWhenRPCConfigured(t *testing.T) {
 	cfg := &Config{
 		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
 		Solana:  SolanaConfig{RPCURL: "https://solana.example"},
 		Base:    BaseConfig{RPCURL: "https://base.example"},
+		BTC:     BTCConfig{RPCURL: "https://btc.example"},
 		Sidecar: SidecarConfig{Addr: "localhost:50051"},
 		Runtime: RuntimeConfig{
 			DeploymentMode: RuntimeDeploymentModeLikeGroup,
 			LikeGroup:      RuntimeLikeGroupBTC,
 		},
 	}
-	err := cfg.validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not wired yet")
+	require.NoError(t, cfg.validate())
+}
+
+func TestValidate_IndependentMode_BTCOnlyDoesNotRequireSolanaOrBaseRPC(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: ""},
+		Base:    BaseConfig{RPCURL: ""},
+		BTC:     BTCConfig{RPCURL: "https://btc.example"},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeIndependent,
+			ChainTargets:   []string{"btc-testnet"},
+		},
+	}
+	require.NoError(t, cfg.validate())
 }
 
 func TestGetEnvInt_InvalidValue(t *testing.T) {

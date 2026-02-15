@@ -140,4 +140,36 @@ describe('decodeSolanaTransactionBatch', () => {
     expect(result.results[0].txHash).toBe('0xbaseTx');
     expect(result.results[0].metadata?.fee_execution_l2).toBe('6');
   });
+
+  it('routes btc payloads to btc decoder', () => {
+    const watched = 'tb1watched';
+    const transactions = [
+      {
+        signature: 'btcSig',
+        rawJson: Buffer.from(JSON.stringify({
+          chain: 'btc',
+          txid: 'btcTx',
+          block_height: 7,
+          block_time: 1700000007,
+          fee_sat: '25',
+          fee_payer: watched,
+          vin: [
+            { index: 0, address: watched, value_sat: '1000', txid: 'prev', vout: 0 },
+          ],
+          vout: [
+            { index: 0, address: watched, value_sat: '200' },
+            { index: 1, address: 'tb1external', value_sat: '775' },
+          ],
+        })),
+      },
+    ];
+
+    const result = decodeSolanaTransactionBatch(transactions, [watched]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].txHash).toBe('btcTx');
+    expect(result.results[0].feeAmount).toBe('25');
+    expect(result.results[0].balanceEvents.find((ev) => ev.eventAction === 'vin_spend')).toBeDefined();
+    expect(result.results[0].balanceEvents.find((ev) => ev.eventAction === 'vout_receive')).toBeDefined();
+  });
 });

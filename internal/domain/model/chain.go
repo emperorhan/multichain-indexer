@@ -6,6 +6,7 @@ const (
 	ChainSolana   Chain = "solana"
 	ChainEthereum Chain = "ethereum"
 	ChainBase     Chain = "base"
+	ChainBTC      Chain = "btc"
 )
 
 func (c Chain) String() string {

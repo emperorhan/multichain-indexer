@@ -32,7 +32,7 @@ func (a *staticChainAdapter) FetchTransactions(context.Context, []string) ([]jso
 	return nil, nil
 }
 
-func TestBuildRuntimeTargets_IncludesSolanaAndBaseDeterministically(t *testing.T) {
+func TestBuildRuntimeTargets_IncludesMandatoryChainsDeterministically(t *testing.T) {
 	cfg := &config.Config{
 		Solana: config.SolanaConfig{
 			RPCURL:  "https://solana.example",
@@ -42,14 +42,19 @@ func TestBuildRuntimeTargets_IncludesSolanaAndBaseDeterministically(t *testing.T
 			RPCURL:  "https://base.example",
 			Network: string(model.NetworkSepolia),
 		},
+		BTC: config.BTCConfig{
+			RPCURL:  "https://btc.example",
+			Network: string(model.NetworkTestnet),
+		},
 		Pipeline: config.PipelineConfig{
 			SolanaWatchedAddresses: []string{"sol-1", "sol-2"},
 			BaseWatchedAddresses:   []string{"0xabc", "0xdef"},
+			BTCWatchedAddresses:    []string{"tb1abc", "tb1def"},
 		},
 	}
 
 	targets := buildRuntimeTargets(cfg, slog.Default())
-	require.Len(t, targets, 2)
+	require.Len(t, targets, 3)
 
 	assert.Equal(t, model.ChainSolana, targets[0].chain)
 	assert.Equal(t, model.NetworkDevnet, targets[0].network)
@@ -64,6 +69,13 @@ func TestBuildRuntimeTargets_IncludesSolanaAndBaseDeterministically(t *testing.T
 	assert.Equal(t, []string{"0xabc", "0xdef"}, targets[1].watched)
 	assert.Equal(t, "https://base.example", targets[1].rpcURL)
 	assert.Equal(t, "base", targets[1].adapter.Chain())
+
+	assert.Equal(t, model.ChainBTC, targets[2].chain)
+	assert.Equal(t, model.NetworkTestnet, targets[2].network)
+	assert.Equal(t, config.RuntimeLikeGroupBTC, targets[2].group)
+	assert.Equal(t, []string{"tb1abc", "tb1def"}, targets[2].watched)
+	assert.Equal(t, "https://btc.example", targets[2].rpcURL)
+	assert.Equal(t, "btc", targets[2].adapter.Chain())
 	require.NoError(t, validateRuntimeWiring(targets))
 }
 
@@ -168,19 +180,22 @@ func TestSelectRuntimeTargets_LikeGroupDefaultSelectsAll(t *testing.T) {
 	all := []runtimeTarget{
 		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
 		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+		{chain: model.ChainBTC, network: model.NetworkTestnet, group: config.RuntimeLikeGroupBTC},
 	}
 
 	selected, err := selectRuntimeTargets(all, config.RuntimeConfig{DeploymentMode: config.RuntimeDeploymentModeLikeGroup})
 	require.NoError(t, err)
-	require.Len(t, selected, 2)
+	require.Len(t, selected, 3)
 	assert.Equal(t, model.ChainSolana, selected[0].chain)
 	assert.Equal(t, model.ChainBase, selected[1].chain)
+	assert.Equal(t, model.ChainBTC, selected[2].chain)
 }
 
 func TestSelectRuntimeTargets_LikeGroupFilter(t *testing.T) {
 	all := []runtimeTarget{
 		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
 		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+		{chain: model.ChainBTC, network: model.NetworkTestnet, group: config.RuntimeLikeGroupBTC},
 	}
 
 	selected, err := selectRuntimeTargets(all, config.RuntimeConfig{
@@ -192,10 +207,28 @@ func TestSelectRuntimeTargets_LikeGroupFilter(t *testing.T) {
 	assert.Equal(t, model.ChainBase, selected[0].chain)
 }
 
+func TestSelectRuntimeTargets_LikeGroupFilterBTC(t *testing.T) {
+	all := []runtimeTarget{
+		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
+		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+		{chain: model.ChainBTC, network: model.NetworkTestnet, group: config.RuntimeLikeGroupBTC},
+	}
+
+	selected, err := selectRuntimeTargets(all, config.RuntimeConfig{
+		DeploymentMode: config.RuntimeDeploymentModeLikeGroup,
+		LikeGroup:      config.RuntimeLikeGroupBTC,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.Equal(t, model.ChainBTC, selected[0].chain)
+	assert.Equal(t, model.NetworkTestnet, selected[0].network)
+}
+
 func TestSelectRuntimeTargets_IndependentMode(t *testing.T) {
 	all := []runtimeTarget{
 		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
 		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+		{chain: model.ChainBTC, network: model.NetworkTestnet, group: config.RuntimeLikeGroupBTC},
 	}
 
 	selected, err := selectRuntimeTargets(all, config.RuntimeConfig{
@@ -208,10 +241,28 @@ func TestSelectRuntimeTargets_IndependentMode(t *testing.T) {
 	assert.Equal(t, model.NetworkSepolia, selected[0].network)
 }
 
+func TestSelectRuntimeTargets_IndependentModeBTC(t *testing.T) {
+	all := []runtimeTarget{
+		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
+		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+		{chain: model.ChainBTC, network: model.NetworkTestnet, group: config.RuntimeLikeGroupBTC},
+	}
+
+	selected, err := selectRuntimeTargets(all, config.RuntimeConfig{
+		DeploymentMode: config.RuntimeDeploymentModeIndependent,
+		ChainTargets:   []string{"btc-testnet"},
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.Equal(t, model.ChainBTC, selected[0].chain)
+	assert.Equal(t, model.NetworkTestnet, selected[0].network)
+}
+
 func TestSelectRuntimeTargets_FailsWhenUnknownTargetRequested(t *testing.T) {
 	all := []runtimeTarget{
 		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
 		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+		{chain: model.ChainBTC, network: model.NetworkTestnet, group: config.RuntimeLikeGroupBTC},
 	}
 
 	_, err := selectRuntimeTargets(all, config.RuntimeConfig{

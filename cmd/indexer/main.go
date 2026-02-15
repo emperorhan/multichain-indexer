@@ -13,6 +13,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/chain/base"
+	"github.com/emperorhan/multichain-indexer/internal/chain/btc"
 	"github.com/emperorhan/multichain-indexer/internal/chain/solana"
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -49,6 +50,14 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 			adapter: base.NewAdapter(cfg.Base.RPCURL, logger),
 			rpcURL:  cfg.Base.RPCURL,
 		},
+		{
+			chain:   model.ChainBTC,
+			network: model.Network(cfg.BTC.Network),
+			group:   config.RuntimeLikeGroupBTC,
+			watched: cfg.Pipeline.BTCWatchedAddresses,
+			adapter: btc.NewAdapter(cfg.BTC.RPCURL, logger),
+			rpcURL:  cfg.BTC.RPCURL,
+		},
 	}
 }
 
@@ -78,9 +87,12 @@ func main() {
 		"solana_network", cfg.Solana.Network,
 		"base_rpc", cfg.Base.RPCURL,
 		"base_network", cfg.Base.Network,
+		"btc_rpc", cfg.BTC.RPCURL,
+		"btc_network", cfg.BTC.Network,
 		"sidecar_addr", cfg.Sidecar.Addr,
 		"solana_watched_addresses", len(cfg.Pipeline.SolanaWatchedAddresses),
 		"base_watched_addresses", len(cfg.Pipeline.BaseWatchedAddresses),
+		"btc_watched_addresses", len(cfg.Pipeline.BTCWatchedAddresses),
 	)
 
 	// Connect to PostgreSQL

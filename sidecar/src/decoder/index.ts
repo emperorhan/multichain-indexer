@@ -1,5 +1,6 @@
 import { decodeSolanaTransaction, BalanceEventInfo, TransactionResult } from './solana/transaction_decoder';
 import { decodeBaseTransaction } from './base/transaction_decoder';
+import { decodeBTCTransaction } from './btc/transaction_decoder';
 
 interface RawTxInput {
   signature: string;
@@ -42,6 +43,8 @@ export function decodeSolanaTransactionBatch(
 
       const result = isBasePayload(parsed)
         ? decodeBaseTransaction(parsed, tx.signature, watchedSet)
+        : isBTCPayload(parsed)
+          ? decodeBTCTransaction(parsed, tx.signature, watchedSet)
         : decodeSolanaTransaction(parsed, tx.signature, watchedSet);
       results.push(result);
     } catch (err: any) {
@@ -64,4 +67,18 @@ function isBasePayload(payload: unknown): boolean {
     return true;
   }
   return parsed.tx !== undefined || parsed.receipt !== undefined;
+}
+
+function isBTCPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+  const parsed = payload as Record<string, unknown>;
+  if (parsed.chain === 'btc') {
+    return true;
+  }
+  if (parsed.txid !== undefined && (parsed.vin !== undefined || parsed.vout !== undefined)) {
+    return true;
+  }
+  return false;
 }

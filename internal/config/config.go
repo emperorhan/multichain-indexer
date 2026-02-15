@@ -14,6 +14,7 @@ type Config struct {
 	Sidecar  SidecarConfig
 	Solana   SolanaConfig
 	Base     BaseConfig
+	BTC      BTCConfig
 	Runtime  RuntimeConfig
 	Pipeline PipelineConfig
 	Server   ServerConfig
@@ -46,6 +47,11 @@ type BaseConfig struct {
 	Network string
 }
 
+type BTCConfig struct {
+	RPCURL  string
+	Network string
+}
+
 const (
 	RuntimeDeploymentModeLikeGroup   = "like-group"
 	RuntimeDeploymentModeIndependent = "independent"
@@ -67,6 +73,7 @@ type PipelineConfig struct {
 	WatchedAddresses       []string // legacy alias of SolanaWatchedAddresses
 	SolanaWatchedAddresses []string
 	BaseWatchedAddresses   []string
+	BTCWatchedAddresses    []string
 	FetchWorkers           int
 	NormalizerWorkers      int
 	BatchSize              int
@@ -105,6 +112,10 @@ func Load() (*Config, error) {
 			RPCURL:  getEnvAny([]string{"BASE_SEPOLIA_RPC_URL", "BASE_RPC_URL"}, ""),
 			Network: getEnv("BASE_NETWORK", "sepolia"),
 		},
+		BTC: BTCConfig{
+			RPCURL:  getEnvAny([]string{"BTC_TESTNET_RPC_URL", "BTC_RPC_URL"}, ""),
+			Network: getEnv("BTC_NETWORK", "testnet"),
+		},
 		Runtime: RuntimeConfig{
 			DeploymentMode: strings.ToLower(getEnv("RUNTIME_DEPLOYMENT_MODE", RuntimeDeploymentModeLikeGroup)),
 			LikeGroup:      strings.ToLower(getEnv("RUNTIME_LIKE_GROUP", "")),
@@ -128,6 +139,7 @@ func Load() (*Config, error) {
 		getEnvAny([]string{"SOLANA_WATCHED_ADDRESSES", "WATCHED_ADDRESSES"}, ""),
 	)
 	cfg.Pipeline.BaseWatchedAddresses = parseAddressCSV(getEnv("BASE_WATCHED_ADDRESSES", ""))
+	cfg.Pipeline.BTCWatchedAddresses = parseAddressCSV(getEnv("BTC_WATCHED_ADDRESSES", ""))
 	cfg.Runtime.ChainTargets = normalizeCSVValues(parseAddressCSV(
 		getEnvAny([]string{"RUNTIME_CHAIN_TARGETS", "RUNTIME_CHAIN_TARGET"}, ""),
 	))
@@ -182,6 +194,9 @@ func (c *Config) validate() error {
 	if requiredChains["base"] && c.Base.RPCURL == "" {
 		return fmt.Errorf("BASE_SEPOLIA_RPC_URL is required for selected runtime targets")
 	}
+	if requiredChains["btc"] && c.BTC.RPCURL == "" {
+		return fmt.Errorf("BTC_TESTNET_RPC_URL is required for selected runtime targets")
+	}
 	return nil
 }
 
@@ -189,6 +204,7 @@ func requiredRuntimeChains(runtime RuntimeConfig) (map[string]bool, error) {
 	required := map[string]bool{
 		"solana": false,
 		"base":   false,
+		"btc":    false,
 	}
 
 	addChainTargets := func(targets []string) error {
@@ -219,12 +235,13 @@ func requiredRuntimeChains(runtime RuntimeConfig) (map[string]bool, error) {
 		case "":
 			required["solana"] = true
 			required["base"] = true
+			required["btc"] = true
 		case RuntimeLikeGroupSolana:
 			required["solana"] = true
 		case RuntimeLikeGroupEVM:
 			required["base"] = true
 		case RuntimeLikeGroupBTC:
-			return nil, fmt.Errorf("RUNTIME_LIKE_GROUP=%q is not wired yet in runtime targets", RuntimeLikeGroupBTC)
+			required["btc"] = true
 		default:
 			return nil, fmt.Errorf("RUNTIME_LIKE_GROUP must be one of %q, %q, %q", RuntimeLikeGroupSolana, RuntimeLikeGroupEVM, RuntimeLikeGroupBTC)
 		}
@@ -246,7 +263,7 @@ func chainNameFromTargetKey(target string) (string, error) {
 	}
 
 	switch parts[0] {
-	case "solana", "base":
+	case "solana", "base", "btc":
 		return parts[0], nil
 	default:
 		return "", fmt.Errorf("runtime chain target %q has unsupported chain %q", target, parts[0])

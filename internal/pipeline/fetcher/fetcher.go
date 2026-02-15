@@ -629,6 +629,13 @@ func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
 	if trimmed == "" {
 		return ""
 	}
+	if chainID == model.ChainBTC {
+		withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
+		if withoutPrefix == "" {
+			return ""
+		}
+		return strings.ToLower(withoutPrefix)
+	}
 	if !isEVMChain(chainID) {
 		return trimmed
 	}

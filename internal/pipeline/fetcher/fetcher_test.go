@@ -1553,3 +1553,15 @@ func signatureSequenceForCursor(chainID model.Chain, sigs []chain.SignatureInfo,
 	}
 	return 0
 }
+
+func TestCanonicalSignatureIdentity_BTC(t *testing.T) {
+	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
+	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
+}
+
+func TestCanonicalizeCursorValue_BTC(t *testing.T) {
+	cursor := "ABCDEF0099"
+	canonical := canonicalizeCursorValue(model.ChainBTC, &cursor)
+	require.NotNil(t, canonical)
+	assert.Equal(t, "abcdef0099", *canonical)
+}

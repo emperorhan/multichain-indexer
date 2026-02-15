@@ -3186,3 +3186,8 @@ func TestIngester_Run_PanicsOnProcessBatchError(t *testing.T) {
 		_ = ing.Run(context.Background())
 	})
 }
+
+func TestCanonicalSignatureIdentity_BTC(t *testing.T) {
+	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
+	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
+}

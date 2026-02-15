@@ -5481,3 +5481,55 @@ func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMa
 		})
 	}
 }
+
+func TestCanonicalSignatureIdentity_BTCTxIDIsLowercased(t *testing.T) {
+	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
+	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
+}
+
+func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithoutSyntheticFeeEvent(t *testing.T) {
+	n := &Normalizer{}
+	batch := event.RawBatch{
+		Chain:   model.ChainBTC,
+		Network: model.NetworkTestnet,
+	}
+	result := &sidecarv1.TransactionResult{
+		TxHash:      "ABCDEF001122",
+		BlockCursor: 321,
+		BlockTime:   1_700_000_321,
+		FeeAmount:   "100",
+		FeePayer:    "tb1payer",
+		Status:      "SUCCESS",
+		BalanceEvents: []*sidecarv1.BalanceEventInfo{
+			{
+				OuterInstructionIndex: 0,
+				InnerInstructionIndex: -1,
+				EventCategory:         "TRANSFER",
+				EventAction:           "vin_spend",
+				ProgramId:             "btc",
+				Address:               "tb1payer",
+				ContractAddress:       "BTC",
+				Delta:                 "-10000",
+				TokenSymbol:           "BTC",
+				TokenName:             "Bitcoin",
+				TokenDecimals:         8,
+				TokenType:             "NATIVE",
+				Metadata: map[string]string{
+					"event_path":     "vin:0",
+					"finality_state": "confirmed",
+				},
+			},
+		},
+	}
+
+	tx := n.normalizedTxFromResult(batch, result)
+	require.Len(t, tx.BalanceEvents, 1)
+	assert.Equal(t, "abcdef001122", tx.TxHash)
+
+	be := tx.BalanceEvents[0]
+	assert.Equal(t, "vin:0", be.EventPath)
+	assert.Equal(t, "btc_utxo", be.EventPathType)
+	assert.Equal(t, "btc-decoder-v1", be.DecoderVersion)
+	assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
+	assert.NotEmpty(t, be.EventID)
+}
