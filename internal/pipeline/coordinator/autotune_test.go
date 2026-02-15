@@ -2351,6 +2351,168 @@ func TestAutoTuneController_RollbackCheckpointFencePostRebaselineBaselineRotatio
 	assert.Equal(t, 0, rotationGen2Decision.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFencePostBaselineRotationGenerationPruneRejectsRetiredMarkers(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	lateBridgeSeq2Cfg := quarantineCfg
+	lateBridgeSeq2Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=7|rollback-fence-late-bridge-seq=2|rollback-fence-late-bridge-release-watermark=80"
+	drainStage2Cfg := lateBridgeSeq2Cfg
+	drainStage2Cfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=82"
+	liveCatchupHead130Cfg := quarantineCfg
+	liveCatchupHead130Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=8|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90|rollback-fence-late-bridge-drain-watermark=120|rollback-fence-live-head=130"
+	steadyState145Cfg := liveCatchupHead130Cfg
+	steadyState145Cfg.PolicyManifestDigest = liveCatchupHead130Cfg.PolicyManifestDigest + "|rollback-fence-steady-state-watermark=145"
+	steadyGeneration2Cfg := steadyState145Cfg
+	steadyGeneration2Cfg.PolicyManifestDigest = steadyState145Cfg.PolicyManifestDigest + "|rollback-fence-steady-generation=2"
+	pruneFloor1Cfg := steadyGeneration2Cfg
+	pruneFloor1Cfg.PolicyManifestDigest = steadyGeneration2Cfg.PolicyManifestDigest + "|rollback-fence-generation-retention-floor=1"
+	pruneFloor2Cfg := steadyGeneration2Cfg
+	pruneFloor2Cfg.PolicyManifestDigest = steadyGeneration2Cfg.PolicyManifestDigest + "|rollback-fence-generation-retention-floor=2"
+	staleRetiredGeneration1Cfg := steadyState145Cfg
+	staleRetiredGeneration1Cfg.PolicyManifestDigest = steadyState145Cfg.PolicyManifestDigest +
+		"|rollback-fence-steady-generation=1|rollback-fence-generation-retention-floor=2"
+	ambiguousPruneCfg := steadyState145Cfg
+	ambiguousPruneCfg.PolicyManifestDigest = steadyState145Cfg.PolicyManifestDigest + "|rollback-fence-generation-retention-floor=2"
+	stalePrePruneCfg := steadyGeneration2Cfg
+
+	baseSeed := 220
+	baseController := newAutoTuneControllerWithSeed(100, steadyGeneration2Cfg, &baseSeed)
+	require.NotNil(t, baseController)
+	baseController.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:       true,
+		Version:        releaseCfg.PolicyVersion,
+		ManifestDigest: releaseCfg.PolicyManifestDigest,
+		Epoch:          releaseCfg.PolicyManifestRefreshEpoch,
+	})
+	batch, baseDecision := baseController.Resolve(highLag)
+	assert.Equal(t, baseSeed+20, batch)
+	assert.Equal(t, "apply_increase", baseDecision.Decision)
+	assert.Equal(t, steadyGeneration2Cfg.PolicyManifestDigest, baseDecision.PolicyManifestDigest)
+	assert.Equal(t, steadyGeneration2Cfg.PolicyManifestRefreshEpoch, baseDecision.PolicyEpoch)
+	assert.Equal(t, 0, baseDecision.PolicyActivationTicks)
+
+	pruneFloor1Seed := baseController.currentBatch
+	pruneFloor1Controller := newAutoTuneControllerWithSeed(100, pruneFloor1Cfg, &pruneFloor1Seed)
+	require.NotNil(t, pruneFloor1Controller)
+	pruneFloor1Controller.reconcilePolicyTransition(baseController.exportPolicyTransition())
+	batch, pruneFloor1Decision := pruneFloor1Controller.Resolve(highLag)
+	assert.Equal(t, pruneFloor1Seed+20, batch)
+	assert.Equal(t, "apply_increase", pruneFloor1Decision.Decision)
+	assert.Equal(t, pruneFloor1Cfg.PolicyManifestDigest, pruneFloor1Decision.PolicyManifestDigest)
+	assert.Equal(t, pruneFloor1Cfg.PolicyManifestRefreshEpoch, pruneFloor1Decision.PolicyEpoch)
+	assert.Equal(t, 0, pruneFloor1Decision.PolicyActivationTicks)
+
+	pruneFloor2Seed := pruneFloor1Controller.currentBatch
+	pruneFloor2Controller := newAutoTuneControllerWithSeed(100, pruneFloor2Cfg, &pruneFloor2Seed)
+	require.NotNil(t, pruneFloor2Controller)
+	pruneFloor2Controller.reconcilePolicyTransition(pruneFloor1Controller.exportPolicyTransition())
+	batch, pruneFloor2Decision := pruneFloor2Controller.Resolve(highLag)
+	assert.Equal(t, pruneFloor2Seed+20, batch)
+	assert.Equal(t, "apply_increase", pruneFloor2Decision.Decision)
+	assert.Equal(t, pruneFloor2Cfg.PolicyManifestDigest, pruneFloor2Decision.PolicyManifestDigest)
+	assert.Equal(t, pruneFloor2Cfg.PolicyManifestRefreshEpoch, pruneFloor2Decision.PolicyEpoch)
+	assert.Equal(t, 0, pruneFloor2Decision.PolicyActivationTicks)
+
+	staleRetiredSeed := pruneFloor2Controller.currentBatch
+	staleRetiredController := newAutoTuneControllerWithSeed(100, staleRetiredGeneration1Cfg, &staleRetiredSeed)
+	require.NotNil(t, staleRetiredController)
+	staleRetiredController.reconcilePolicyTransition(pruneFloor2Controller.exportPolicyTransition())
+	batch, staleRetiredDecision := staleRetiredController.Resolve(highLag)
+	assert.Equal(t, staleRetiredSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleRetiredDecision.Decision)
+	assert.Equal(
+		t,
+		pruneFloor2Cfg.PolicyManifestDigest,
+		staleRetiredDecision.PolicyManifestDigest,
+		"retired-generation markers below the retention floor must stay pinned behind the latest verified generation-prune ownership",
+	)
+	assert.Equal(t, pruneFloor2Cfg.PolicyManifestRefreshEpoch, staleRetiredDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleRetiredDecision.PolicyActivationTicks)
+
+	ambiguousPruneSeed := staleRetiredController.currentBatch
+	ambiguousPruneController := newAutoTuneControllerWithSeed(100, ambiguousPruneCfg, &ambiguousPruneSeed)
+	require.NotNil(t, ambiguousPruneController)
+	ambiguousPruneController.reconcilePolicyTransition(staleRetiredController.exportPolicyTransition())
+	batch, ambiguousPruneDecision := ambiguousPruneController.Resolve(highLag)
+	assert.Equal(t, ambiguousPruneSeed+20, batch)
+	assert.Equal(t, "apply_increase", ambiguousPruneDecision.Decision)
+	assert.Equal(
+		t,
+		pruneFloor2Cfg.PolicyManifestDigest,
+		ambiguousPruneDecision.PolicyManifestDigest,
+		"generation-prune markers must remain quarantined until steady-generation ownership is explicit",
+	)
+	assert.Equal(t, pruneFloor2Cfg.PolicyManifestRefreshEpoch, ambiguousPruneDecision.PolicyEpoch)
+	assert.Equal(t, 0, ambiguousPruneDecision.PolicyActivationTicks)
+
+	stalePrePruneSeed := ambiguousPruneController.currentBatch
+	stalePrePruneController := newAutoTuneControllerWithSeed(100, stalePrePruneCfg, &stalePrePruneSeed)
+	require.NotNil(t, stalePrePruneController)
+	stalePrePruneController.reconcilePolicyTransition(ambiguousPruneController.exportPolicyTransition())
+	batch, stalePrePruneDecision := stalePrePruneController.Resolve(highLag)
+	assert.Equal(t, stalePrePruneSeed+20, batch)
+	assert.Equal(t, "apply_increase", stalePrePruneDecision.Decision)
+	assert.Equal(
+		t,
+		pruneFloor2Cfg.PolicyManifestDigest,
+		stalePrePruneDecision.PolicyManifestDigest,
+		"pre-prune markers without retention-floor ownership must not reclaim control after prune commitment",
+	)
+	assert.Equal(t, pruneFloor2Cfg.PolicyManifestRefreshEpoch, stalePrePruneDecision.PolicyEpoch)
+	assert.Equal(t, 0, stalePrePruneDecision.PolicyActivationTicks)
+
+	reForwardSeed := stalePrePruneController.currentBatch
+	reForwardController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reForwardSeed)
+	require.NotNil(t, reForwardController)
+	reForwardController.reconcilePolicyTransition(stalePrePruneController.exportPolicyTransition())
+	batch, reForwardHold := reForwardController.Resolve(highLag)
+	assert.Equal(t, reForwardSeed, batch)
+	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after generation-prune must deterministically apply one activation hold")
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardHold.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardHold.PolicyEpoch)
+	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,

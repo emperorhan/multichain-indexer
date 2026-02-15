@@ -1095,6 +1095,36 @@ func parseRollbackFenceSteadyGeneration(digest string) (int64, bool) {
 	return 0, false
 }
 
+func parseRollbackFenceGenerationRetentionFloor(digest string) (int64, bool) {
+	const (
+		retentionFloorKey      = "rollback-fence-generation-retention-floor="
+		retentionFloorShortKey = "rollback-fence-retention-floor="
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, retentionFloorKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, retentionFloorKey))
+		case strings.HasPrefix(token, retentionFloorShortKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, retentionFloorShortKey))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		retentionFloor, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || retentionFloor < 0 {
+			return 0, false
+		}
+		return retentionFloor, true
+	}
+
+	return 0, false
+}
+
 type rollbackFenceOwnershipOrdering struct {
 	epoch                int64
 	bridgeSequence       int64
@@ -1102,6 +1132,7 @@ type rollbackFenceOwnershipOrdering struct {
 	liveHead             int64
 	steadyStateWatermark int64
 	steadyGeneration     int64
+	generationFloor      int64
 }
 
 func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
@@ -1122,6 +1153,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	liveHead, hasLiveHead := parseRollbackFenceLiveHeadWatermark(normalized)
 	steadyStateWatermark, hasSteadyStateWatermark := parseRollbackFenceSteadyStateWatermark(normalized)
 	steadyGeneration, hasSteadyGeneration := parseRollbackFenceSteadyGeneration(normalized)
+	generationFloor, hasGenerationFloor := parseRollbackFenceGenerationRetentionFloor(normalized)
 	if hasBridgeSequence != hasExplicitWatermark {
 		// Quarantine ambiguous late-bridge markers until both sequence and
 		// release watermark are present for deterministic ordering.
@@ -1153,6 +1185,11 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		// ordering.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if hasGenerationFloor && !hasSteadyGeneration {
+		// Quarantine generation-prune markers until the corresponding
+		// steady-generation ownership tuple is explicit.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	if !hasBridgeSequence {
 		bridgeSequence = 0
 		releaseWatermark = releaseEpoch
@@ -1181,6 +1218,14 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if !hasSteadyGeneration {
 		steadyGeneration = 0
 	}
+	if !hasGenerationFloor {
+		generationFloor = 0
+	}
+	if generationFloor > steadyGeneration {
+		// Quarantine unresolved retired-generation markers whose ownership
+		// points below the active retention floor.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	return rollbackFenceOwnershipOrdering{
 		epoch:                epoch,
 		bridgeSequence:       bridgeSequence,
@@ -1188,6 +1233,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		liveHead:             liveHead,
 		steadyStateWatermark: steadyStateWatermark,
 		steadyGeneration:     steadyGeneration,
+		generationFloor:      generationFloor,
 	}, true
 }
 
@@ -1229,6 +1275,12 @@ func compareRollbackFenceOwnershipOrdering(
 	case left.steadyGeneration < right.steadyGeneration:
 		return -1
 	case left.steadyGeneration > right.steadyGeneration:
+		return 1
+	}
+	switch {
+	case left.generationFloor < right.generationFloor:
+		return -1
+	case left.generationFloor > right.generationFloor:
 		return 1
 	default:
 		return 0
@@ -1574,7 +1626,8 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	}
 	// Ownership progression is strictly monotonic under explicit
 	// (epoch, bridge_sequence, drain_watermark, live_head,
-	// steady_state_watermark, steady_generation) ordering.
+	// steady_state_watermark, steady_generation, generation_retention_floor)
+	// ordering.
 	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }
 
