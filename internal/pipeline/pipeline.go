@@ -26,6 +26,7 @@ type Config struct {
 	ChannelBufferSize int
 	SidecarAddr       string
 	SidecarTimeout    time.Duration
+	CommitInterleaver ingester.CommitInterleaver
 }
 
 type Pipeline struct {
@@ -95,6 +96,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		p.repos.Balance, p.repos.Token,
 		p.repos.Cursor, p.repos.Config,
 		normalizedCh, p.logger,
+		ingester.WithCommitInterleaver(p.cfg.CommitInterleaver),
 	)
 
 	p.logger.Info("pipeline starting",
