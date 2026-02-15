@@ -1790,6 +1790,369 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_ReconcilesAcrossMandatoryChain
 	}
 }
 
+func TestIngester_ProcessBatch_AmbiguousCommitAck_PermutationsConvergeCanonicalTupleAcrossMandatoryChains(t *testing.T) {
+	type canonicalTuple struct {
+		EventID  string
+		TxHash   string
+		Address  string
+		Category model.EventCategory
+		Delta    string
+	}
+	type permutation struct {
+		name      string
+		commitErr error
+	}
+
+	testCases := []struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		address         string
+		txHashInput     string
+		txHashExpected  string
+		cursorInput     string
+		cursorExpected  string
+		blockCursor     int64
+		contractAddress string
+		programID       string
+		counterparty    string
+		eventID         string
+	}{
+		{
+			name:            "solana-devnet",
+			chain:           model.ChainSolana,
+			network:         model.NetworkDevnet,
+			address:         "addr-sol-permutation",
+			txHashInput:     "sig-sol-permutation-1",
+			txHashExpected:  "sig-sol-permutation-1",
+			cursorInput:     "sig-sol-permutation-1",
+			cursorExpected:  "sig-sol-permutation-1",
+			blockCursor:     803,
+			contractAddress: "11111111111111111111111111111111",
+			programID:       "11111111111111111111111111111111",
+			counterparty:    "sol-counterparty",
+			eventID:         "solana|devnet|sig-sol-permutation-1|tx:outer:0:inner:-1|addr:addr-sol-permutation|asset:11111111111111111111111111111111|cat:TRANSFER",
+		},
+		{
+			name:            "base-sepolia",
+			chain:           model.ChainBase,
+			network:         model.NetworkSepolia,
+			address:         "0x7777777777777777777777777777777777777777",
+			txHashInput:     "0xAbCdEf001122",
+			txHashExpected:  "0xabcdef001122",
+			cursorInput:     "0xAbCdEf001122",
+			cursorExpected:  "0xabcdef001122",
+			blockCursor:     903,
+			contractAddress: "ETH",
+			programID:       "0xbase-program",
+			counterparty:    "0x8888888888888888888888888888888888888888",
+			eventID:         "base|sepolia|0xabcdef001122|tx:log:11|addr:0x7777777777777777777777777777777777777777|asset:ETH|cat:TRANSFER",
+		},
+	}
+	permutations := []permutation{
+		{name: "ack-timeout", commitErr: errors.New("commit ack timeout")},
+		{name: "post-write-disconnect", commitErr: errors.New("driver: bad connection")},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runPermutation := func(t *testing.T, p permutation) canonicalTuple {
+				t.Helper()
+				clearFakeCommitErrors()
+				setFakeCommitErrors(p.commitErr)
+				t.Cleanup(clearFakeCommitErrors)
+
+				ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+				_ = ctrl
+
+				ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+
+				txID := uuid.New()
+				tokenID := uuid.New()
+				batch := event.NormalizedBatch{
+					Chain:   tc.chain,
+					Network: tc.network,
+					Address: tc.address,
+					Transactions: []event.NormalizedTransaction{
+						{
+							TxHash:      tc.txHashInput,
+							BlockCursor: tc.blockCursor,
+							FeeAmount:   "0",
+							FeePayer:    tc.address,
+							Status:      model.TxStatusSuccess,
+							ChainData:   json.RawMessage("{}"),
+							BalanceEvents: []event.NormalizedBalanceEvent{
+								{
+									OuterInstructionIndex: 0,
+									InnerInstructionIndex: -1,
+									EventCategory:         model.EventCategoryTransfer,
+									EventAction:           "transfer",
+									ProgramID:             tc.programID,
+									ContractAddress:       tc.contractAddress,
+									Address:               tc.address,
+									CounterpartyAddress:   tc.counterparty,
+									Delta:                 "-1",
+									EventID:               tc.eventID,
+									TokenType:             model.TokenTypeNative,
+								},
+							},
+						},
+					},
+					NewCursorValue:    &tc.cursorInput,
+					NewCursorSequence: tc.blockCursor,
+				}
+
+				setupBeginTx(mockDB)
+
+				mockTxRepo.EXPECT().
+					UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _ *sql.Tx, tx *model.Transaction) (uuid.UUID, error) {
+						assert.Equal(t, tc.txHashExpected, tx.TxHash)
+						return txID, nil
+					}).
+					Times(1)
+
+				mockTokenRepo.EXPECT().
+					UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(tokenID, nil).
+					Times(1)
+
+				var tuple canonicalTuple
+				mockBERepo.EXPECT().
+					UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+						tuple = canonicalTuple{
+							EventID:  be.EventID,
+							TxHash:   be.TxHash,
+							Address:  be.Address,
+							Category: be.EventCategory,
+							Delta:    be.Delta,
+						}
+						return true, nil
+					}).
+					Times(1)
+
+				mockBalanceRepo.EXPECT().
+					AdjustBalanceTx(
+						gomock.Any(), gomock.Any(),
+						tc.chain, tc.network, tc.address,
+						tokenID, nil, nil,
+						"-1", tc.blockCursor, tc.txHashExpected,
+					).
+					Return(nil).
+					Times(1)
+
+				mockCursorRepo.EXPECT().
+					UpsertTx(
+						gomock.Any(), gomock.Any(),
+						tc.chain, tc.network, tc.address,
+						&tc.cursorExpected, tc.blockCursor, int64(1),
+					).
+					Return(nil).
+					Times(1)
+
+				mockConfigRepo.EXPECT().
+					UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
+					Return(nil).
+					Times(1)
+
+				mockCursorRepo.EXPECT().
+					Get(gomock.Any(), tc.chain, tc.network, tc.address).
+					Return(&model.AddressCursor{
+						Chain:          tc.chain,
+						Network:        tc.network,
+						Address:        tc.address,
+						CursorValue:    &tc.cursorExpected,
+						CursorSequence: tc.blockCursor,
+					}, nil).
+					Times(1)
+
+				require.NoError(t, ing.processBatch(context.Background(), batch))
+				return tuple
+			}
+
+			timeoutTuple := runPermutation(t, permutations[0])
+			disconnectTuple := runPermutation(t, permutations[1])
+			assert.Equal(t, timeoutTuple, disconnectTuple, "ambiguous commit permutations must converge to an identical canonical tuple")
+		})
+	}
+}
+
+func TestIngester_ProcessBatch_AmbiguousCommitAck_CursorAheadFailsClosedAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		address         string
+		txHash          string
+		blockCursor     int64
+		cursorValue     string
+		observedCursor  string
+		contractAddress string
+		programID       string
+		counterparty    string
+		eventID         string
+		commitErr       error
+	}{
+		{
+			name:            "solana-devnet-cursor-ahead",
+			chain:           model.ChainSolana,
+			network:         model.NetworkDevnet,
+			address:         "addr-sol-cursor-ahead",
+			txHash:          "sig-sol-cursor-ahead-1",
+			blockCursor:     1001,
+			cursorValue:     "sig-sol-cursor-ahead-1",
+			observedCursor:  "sig-sol-cursor-ahead-2",
+			contractAddress: "11111111111111111111111111111111",
+			programID:       "11111111111111111111111111111111",
+			counterparty:    "sol-counterparty",
+			eventID:         "solana|devnet|sig-sol-cursor-ahead-1|tx:outer:0:inner:-1|addr:addr-sol-cursor-ahead|asset:11111111111111111111111111111111|cat:TRANSFER",
+			commitErr:       errors.New("commit ack timeout"),
+		},
+		{
+			name:            "base-sepolia-cursor-ahead",
+			chain:           model.ChainBase,
+			network:         model.NetworkSepolia,
+			address:         "0x9999999999999999999999999999999999999999",
+			txHash:          "0xbasecursorahead01",
+			blockCursor:     1101,
+			cursorValue:     "0xbasecursorahead01",
+			observedCursor:  "0xbasecursorahead02",
+			contractAddress: "ETH",
+			programID:       "0xbase-program",
+			counterparty:    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			eventID:         "base|sepolia|0xbasecursorahead01|tx:log:12|addr:0x9999999999999999999999999999999999999999|asset:ETH|cat:TRANSFER",
+			commitErr:       errors.New("connection reset by peer after commit"),
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			clearFakeCommitErrors()
+			t.Cleanup(clearFakeCommitErrors)
+			setFakeCommitErrors(tc.commitErr)
+
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			_ = ctrl
+
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+
+			txID := uuid.New()
+			tokenID := uuid.New()
+			batch := event.NormalizedBatch{
+				Chain:   tc.chain,
+				Network: tc.network,
+				Address: tc.address,
+				Transactions: []event.NormalizedTransaction{
+					{
+						TxHash:      tc.txHash,
+						BlockCursor: tc.blockCursor,
+						FeeAmount:   "0",
+						FeePayer:    tc.address,
+						Status:      model.TxStatusSuccess,
+						ChainData:   json.RawMessage("{}"),
+						BalanceEvents: []event.NormalizedBalanceEvent{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         model.EventCategoryTransfer,
+								EventAction:           "transfer",
+								ProgramID:             tc.programID,
+								ContractAddress:       tc.contractAddress,
+								Address:               tc.address,
+								CounterpartyAddress:   tc.counterparty,
+								Delta:                 "-1",
+								EventID:               tc.eventID,
+								TokenType:             model.TokenTypeNative,
+							},
+						},
+					},
+				},
+				NewCursorValue:    &tc.cursorValue,
+				NewCursorSequence: tc.blockCursor,
+			}
+
+			setupBeginTx(mockDB)
+			setupBeginTx(mockDB)
+
+			mockTxRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(txID, nil).
+				Times(2)
+
+			mockTokenRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(tokenID, nil).
+				Times(2)
+
+			insertedCount := 0
+			mockBERepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(context.Context, *sql.Tx, *model.BalanceEvent) (bool, error) {
+					if insertedCount == 0 {
+						insertedCount++
+						return true, nil
+					}
+					return false, nil
+				}).
+				Times(2)
+
+			mockBalanceRepo.EXPECT().
+				AdjustBalanceTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					tokenID, nil, nil,
+					"-1", tc.blockCursor, tc.txHash,
+				).
+				Return(nil).
+				Times(1)
+
+			cursorWrites := make([]int64, 0, 2)
+			mockCursorRepo.EXPECT().
+				UpsertTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					&tc.cursorValue, tc.blockCursor, int64(1),
+				).
+				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
+					cursorWrites = append(cursorWrites, tc.blockCursor)
+					return nil
+				}).
+				Times(2)
+
+			mockConfigRepo.EXPECT().
+				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
+				Return(nil).
+				Times(2)
+
+			observedSequence := tc.blockCursor + 5
+			mockCursorRepo.EXPECT().
+				Get(gomock.Any(), tc.chain, tc.network, tc.address).
+				Return(&model.AddressCursor{
+					Chain:          tc.chain,
+					Network:        tc.network,
+					Address:        tc.address,
+					CursorValue:    &tc.observedCursor,
+					CursorSequence: observedSequence,
+				}, nil).
+				Times(1)
+
+			err := ing.processBatch(context.Background(), batch)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "commit_ambiguity_unresolved")
+			assert.Contains(t, err.Error(), "reason=cursor_ahead_ambiguous")
+
+			// Replay after a fail-closed ambiguity decision must remain idempotent.
+			require.NoError(t, ing.processBatch(context.Background(), batch))
+			assert.Equal(t, 1, insertedCount, "replay should not duplicate canonical IDs when first commit outcome was ambiguous")
+			require.Len(t, cursorWrites, 2)
+			assert.GreaterOrEqual(t, cursorWrites[1], cursorWrites[0], "cursor progression must remain monotonic across ambiguous boundary replay")
+		})
+	}
+}
+
 func TestIngester_ProcessBatch_AmbiguousCommitRetryAfterUnknown_DeduplicatesAcrossMandatoryChains(t *testing.T) {
 	testCases := []struct {
 		name            string

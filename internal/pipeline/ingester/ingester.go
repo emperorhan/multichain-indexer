@@ -651,6 +651,19 @@ func (ing *Ingester) reconcileAmbiguousCommitOutcome(
 			observedCursor = *normalized
 		}
 	}
+	if cursor != nil && cursor.CursorSequence > batch.NewCursorSequence {
+		return false, retry.Terminal(fmt.Errorf(
+			"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=cursor_ahead_ambiguous expected_seq=%d expected_cursor=%s observed_seq=%d observed_cursor=%s commit_err=%w",
+			batch.Chain,
+			batch.Network,
+			batch.Address,
+			batch.NewCursorSequence,
+			*expectedCursor,
+			observedSeq,
+			observedCursor,
+			commitErr,
+		))
+	}
 
 	return false, retry.Terminal(fmt.Errorf(
 		"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=cursor_mismatch expected_seq=%d expected_cursor=%s observed_seq=%d observed_cursor=%s commit_err=%w",
@@ -674,11 +687,8 @@ func cursorMatchesCommitBoundary(
 	if cursor == nil || expectedCursor == nil {
 		return false
 	}
-	if cursor.CursorSequence < expectedSeq {
+	if cursor.CursorSequence != expectedSeq {
 		return false
-	}
-	if cursor.CursorSequence > expectedSeq {
-		return true
 	}
 
 	observedCursor := canonicalizeCursorValue(chain, cursor.CursorValue)
