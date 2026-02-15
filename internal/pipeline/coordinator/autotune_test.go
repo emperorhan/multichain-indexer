@@ -2513,6 +2513,162 @@ func TestAutoTuneController_RollbackCheckpointFencePostBaselineRotationGeneratio
 	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFencePostGenerationPruneRetentionFloorLiftRejectsPreLiftMarkers(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	liveCatchupHead130Cfg := quarantineCfg
+	liveCatchupHead130Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=8|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90|rollback-fence-late-bridge-drain-watermark=120|rollback-fence-live-head=130"
+	steadyState145Cfg := liveCatchupHead130Cfg
+	steadyState145Cfg.PolicyManifestDigest = liveCatchupHead130Cfg.PolicyManifestDigest + "|rollback-fence-steady-state-watermark=145"
+	steadyGeneration2Cfg := steadyState145Cfg
+	steadyGeneration2Cfg.PolicyManifestDigest = steadyState145Cfg.PolicyManifestDigest + "|rollback-fence-steady-generation=2"
+	pruneFloor2Cfg := steadyGeneration2Cfg
+	pruneFloor2Cfg.PolicyManifestDigest = steadyGeneration2Cfg.PolicyManifestDigest + "|rollback-fence-generation-retention-floor=2"
+	floorLiftEpoch1Cfg := pruneFloor2Cfg
+	floorLiftEpoch1Cfg.PolicyManifestDigest = pruneFloor2Cfg.PolicyManifestDigest + "|rollback-fence-floor-lift-epoch=1"
+	floorLiftEpoch2Cfg := pruneFloor2Cfg
+	floorLiftEpoch2Cfg.PolicyManifestDigest = pruneFloor2Cfg.PolicyManifestDigest + "|rollback-fence-floor-lift-epoch=2"
+	ambiguousFloorLiftCfg := steadyGeneration2Cfg
+	ambiguousFloorLiftCfg.PolicyManifestDigest = steadyGeneration2Cfg.PolicyManifestDigest + "|rollback-fence-floor-lift-epoch=3"
+	stalePreLiftCfg := pruneFloor2Cfg
+
+	baseSeed := 220
+	baseController := newAutoTuneControllerWithSeed(100, pruneFloor2Cfg, &baseSeed)
+	require.NotNil(t, baseController)
+	baseController.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:       true,
+		Version:        releaseCfg.PolicyVersion,
+		ManifestDigest: releaseCfg.PolicyManifestDigest,
+		Epoch:          releaseCfg.PolicyManifestRefreshEpoch,
+	})
+	batch, baseDecision := baseController.Resolve(highLag)
+	assert.Equal(t, baseSeed+20, batch)
+	assert.Equal(t, "apply_increase", baseDecision.Decision)
+	assert.Equal(t, pruneFloor2Cfg.PolicyManifestDigest, baseDecision.PolicyManifestDigest)
+	assert.Equal(t, pruneFloor2Cfg.PolicyManifestRefreshEpoch, baseDecision.PolicyEpoch)
+	assert.Equal(t, 0, baseDecision.PolicyActivationTicks)
+
+	floorLift1Seed := baseController.currentBatch
+	floorLift1Controller := newAutoTuneControllerWithSeed(100, floorLiftEpoch1Cfg, &floorLift1Seed)
+	require.NotNil(t, floorLift1Controller)
+	floorLift1Controller.reconcilePolicyTransition(baseController.exportPolicyTransition())
+	batch, floorLift1Decision := floorLift1Controller.Resolve(highLag)
+	assert.Equal(t, floorLift1Seed+20, batch)
+	assert.Equal(t, "apply_increase", floorLift1Decision.Decision)
+	assert.Equal(t, floorLiftEpoch1Cfg.PolicyManifestDigest, floorLift1Decision.PolicyManifestDigest)
+	assert.Equal(t, floorLiftEpoch1Cfg.PolicyManifestRefreshEpoch, floorLift1Decision.PolicyEpoch)
+	assert.Equal(t, 0, floorLift1Decision.PolicyActivationTicks)
+
+	floorLift2Seed := floorLift1Controller.currentBatch
+	floorLift2Controller := newAutoTuneControllerWithSeed(100, floorLiftEpoch2Cfg, &floorLift2Seed)
+	require.NotNil(t, floorLift2Controller)
+	floorLift2Controller.reconcilePolicyTransition(floorLift1Controller.exportPolicyTransition())
+	batch, floorLift2Decision := floorLift2Controller.Resolve(highLag)
+	assert.Equal(t, floorLift2Seed+20, batch)
+	assert.Equal(t, "apply_increase", floorLift2Decision.Decision)
+	assert.Equal(t, floorLiftEpoch2Cfg.PolicyManifestDigest, floorLift2Decision.PolicyManifestDigest)
+	assert.Equal(t, floorLiftEpoch2Cfg.PolicyManifestRefreshEpoch, floorLift2Decision.PolicyEpoch)
+	assert.Equal(t, 0, floorLift2Decision.PolicyActivationTicks)
+
+	staleLiftSeed := floorLift2Controller.currentBatch
+	staleLiftController := newAutoTuneControllerWithSeed(100, floorLiftEpoch1Cfg, &staleLiftSeed)
+	require.NotNil(t, staleLiftController)
+	staleLiftController.reconcilePolicyTransition(floorLift2Controller.exportPolicyTransition())
+	batch, staleLiftDecision := staleLiftController.Resolve(highLag)
+	assert.Equal(t, staleLiftSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleLiftDecision.Decision)
+	assert.Equal(
+		t,
+		floorLiftEpoch2Cfg.PolicyManifestDigest,
+		staleLiftDecision.PolicyManifestDigest,
+		"lower floor-lift epochs must remain pinned behind the latest verified retention-floor-lift ownership",
+	)
+	assert.Equal(t, floorLiftEpoch2Cfg.PolicyManifestRefreshEpoch, staleLiftDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleLiftDecision.PolicyActivationTicks)
+
+	ambiguousLiftSeed := staleLiftController.currentBatch
+	ambiguousLiftController := newAutoTuneControllerWithSeed(100, ambiguousFloorLiftCfg, &ambiguousLiftSeed)
+	require.NotNil(t, ambiguousLiftController)
+	ambiguousLiftController.reconcilePolicyTransition(staleLiftController.exportPolicyTransition())
+	batch, ambiguousLiftDecision := ambiguousLiftController.Resolve(highLag)
+	assert.Equal(t, ambiguousLiftSeed+20, batch)
+	assert.Equal(t, "apply_increase", ambiguousLiftDecision.Decision)
+	assert.Equal(
+		t,
+		floorLiftEpoch2Cfg.PolicyManifestDigest,
+		ambiguousLiftDecision.PolicyManifestDigest,
+		"retention-floor-lift markers must remain quarantined until generation-retention-floor ownership is explicit",
+	)
+	assert.Equal(t, floorLiftEpoch2Cfg.PolicyManifestRefreshEpoch, ambiguousLiftDecision.PolicyEpoch)
+	assert.Equal(t, 0, ambiguousLiftDecision.PolicyActivationTicks)
+
+	stalePreLiftSeed := ambiguousLiftController.currentBatch
+	stalePreLiftController := newAutoTuneControllerWithSeed(100, stalePreLiftCfg, &stalePreLiftSeed)
+	require.NotNil(t, stalePreLiftController)
+	stalePreLiftController.reconcilePolicyTransition(ambiguousLiftController.exportPolicyTransition())
+	batch, stalePreLiftDecision := stalePreLiftController.Resolve(highLag)
+	assert.Equal(t, stalePreLiftSeed+20, batch)
+	assert.Equal(t, "apply_increase", stalePreLiftDecision.Decision)
+	assert.Equal(
+		t,
+		floorLiftEpoch2Cfg.PolicyManifestDigest,
+		stalePreLiftDecision.PolicyManifestDigest,
+		"post-lift markers without floor-lift ownership must not reclaim control after lift commitment",
+	)
+	assert.Equal(t, floorLiftEpoch2Cfg.PolicyManifestRefreshEpoch, stalePreLiftDecision.PolicyEpoch)
+	assert.Equal(t, 0, stalePreLiftDecision.PolicyActivationTicks)
+
+	reForwardSeed := stalePreLiftController.currentBatch
+	reForwardController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reForwardSeed)
+	require.NotNil(t, reForwardController)
+	reForwardController.reconcilePolicyTransition(stalePreLiftController.exportPolicyTransition())
+	batch, reForwardHold := reForwardController.Resolve(highLag)
+	assert.Equal(t, reForwardSeed, batch)
+	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after retention-floor-lift must deterministically apply one activation hold")
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardHold.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardHold.PolicyEpoch)
+	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,

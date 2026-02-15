@@ -1125,6 +1125,36 @@ func parseRollbackFenceGenerationRetentionFloor(digest string) (int64, bool) {
 	return 0, false
 }
 
+func parseRollbackFenceFloorLiftEpoch(digest string) (int64, bool) {
+	const (
+		floorLiftEpochKey          = "rollback-fence-floor-lift-epoch="
+		retentionFloorLiftEpochKey = "rollback-fence-retention-floor-lift-epoch="
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, floorLiftEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, floorLiftEpochKey))
+		case strings.HasPrefix(token, retentionFloorLiftEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, retentionFloorLiftEpochKey))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		floorLiftEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || floorLiftEpoch < 0 {
+			return 0, false
+		}
+		return floorLiftEpoch, true
+	}
+
+	return 0, false
+}
+
 type rollbackFenceOwnershipOrdering struct {
 	epoch                int64
 	bridgeSequence       int64
@@ -1133,6 +1163,7 @@ type rollbackFenceOwnershipOrdering struct {
 	steadyStateWatermark int64
 	steadyGeneration     int64
 	generationFloor      int64
+	floorLiftEpoch       int64
 }
 
 func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
@@ -1154,6 +1185,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	steadyStateWatermark, hasSteadyStateWatermark := parseRollbackFenceSteadyStateWatermark(normalized)
 	steadyGeneration, hasSteadyGeneration := parseRollbackFenceSteadyGeneration(normalized)
 	generationFloor, hasGenerationFloor := parseRollbackFenceGenerationRetentionFloor(normalized)
+	floorLiftEpoch, hasFloorLiftEpoch := parseRollbackFenceFloorLiftEpoch(normalized)
 	if hasBridgeSequence != hasExplicitWatermark {
 		// Quarantine ambiguous late-bridge markers until both sequence and
 		// release watermark are present for deterministic ordering.
@@ -1190,6 +1222,11 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		// steady-generation ownership tuple is explicit.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if hasFloorLiftEpoch && !hasGenerationFloor {
+		// Quarantine retention-floor-lift markers until explicit
+		// generation-retention-floor ownership is present.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	if !hasBridgeSequence {
 		bridgeSequence = 0
 		releaseWatermark = releaseEpoch
@@ -1221,6 +1258,9 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if !hasGenerationFloor {
 		generationFloor = 0
 	}
+	if !hasFloorLiftEpoch {
+		floorLiftEpoch = 0
+	}
 	if generationFloor > steadyGeneration {
 		// Quarantine unresolved retired-generation markers whose ownership
 		// points below the active retention floor.
@@ -1234,6 +1274,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		steadyStateWatermark: steadyStateWatermark,
 		steadyGeneration:     steadyGeneration,
 		generationFloor:      generationFloor,
+		floorLiftEpoch:       floorLiftEpoch,
 	}, true
 }
 
@@ -1281,6 +1322,12 @@ func compareRollbackFenceOwnershipOrdering(
 	case left.generationFloor < right.generationFloor:
 		return -1
 	case left.generationFloor > right.generationFloor:
+		return 1
+	}
+	switch {
+	case left.floorLiftEpoch < right.floorLiftEpoch:
+		return -1
+	case left.floorLiftEpoch > right.floorLiftEpoch:
 		return 1
 	default:
 		return 0
@@ -1626,8 +1673,8 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	}
 	// Ownership progression is strictly monotonic under explicit
 	// (epoch, bridge_sequence, drain_watermark, live_head,
-	// steady_state_watermark, steady_generation, generation_retention_floor)
-	// ordering.
+	// steady_state_watermark, steady_generation, generation_retention_floor,
+	// floor_lift_epoch) ordering.
 	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }
 

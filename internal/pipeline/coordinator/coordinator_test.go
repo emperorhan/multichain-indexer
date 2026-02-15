@@ -8904,6 +8904,367 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostBaselineR
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+type autoTuneRetentionFloorLiftFixtures struct {
+	segment1Cfg                             AutoTuneConfig
+	pruneFloor2Cfg                          AutoTuneConfig
+	floorLift1Cfg                           AutoTuneConfig
+	floorLift2Cfg                           AutoTuneConfig
+	segment3Cfg                             AutoTuneConfig
+	pruneOnlySchedule                       map[int]AutoTuneConfig
+	floorLiftReplaySchedule                 map[int]AutoTuneConfig
+	rollbackReforwardAfterFloorLiftSchedule map[int]AutoTuneConfig
+}
+
+func cloneAutoTunePolicySchedule(schedule map[int]AutoTuneConfig) map[int]AutoTuneConfig {
+	cloned := make(map[int]AutoTuneConfig, len(schedule))
+	for tick, cfg := range schedule {
+		cloned[tick] = cfg
+	}
+	return cloned
+}
+
+func buildAutoTuneRetentionFloorLiftFixtures() autoTuneRetentionFloorLiftFixtures {
+	base := buildAutoTuneGenerationPruneFixtures()
+
+	floorLift1Cfg := base.pruneFloor2Cfg
+	floorLift1Cfg.PolicyManifestDigest = base.pruneFloor2Cfg.PolicyManifestDigest + "|rollback-fence-floor-lift-epoch=1"
+	floorLift2Cfg := base.pruneFloor2Cfg
+	floorLift2Cfg.PolicyManifestDigest = base.pruneFloor2Cfg.PolicyManifestDigest + "|rollback-fence-floor-lift-epoch=2"
+	ambiguousFloorLiftCfg := base.steadyGeneration2Cfg
+	ambiguousFloorLiftCfg.PolicyManifestDigest = base.steadyGeneration2Cfg.PolicyManifestDigest + "|rollback-fence-floor-lift-epoch=3"
+	stalePreLiftCfg := base.pruneFloor2Cfg
+
+	pruneOnlySchedule := cloneAutoTunePolicySchedule(base.generationPruneReplaySchedule)
+	for i := 27; i <= 29; i++ {
+		pruneOnlySchedule[i] = base.pruneFloor2Cfg
+	}
+
+	floorLiftReplaySchedule := cloneAutoTunePolicySchedule(pruneOnlySchedule)
+	floorLiftReplaySchedule[23] = floorLift1Cfg
+	floorLiftReplaySchedule[24] = floorLift2Cfg
+	for i := 25; i <= 29; i++ {
+		floorLiftReplaySchedule[i] = floorLift2Cfg
+	}
+
+	rollbackReforwardAfterFloorLiftSchedule := cloneAutoTunePolicySchedule(pruneOnlySchedule)
+	rollbackReforwardAfterFloorLiftSchedule[23] = floorLift1Cfg
+	rollbackReforwardAfterFloorLiftSchedule[24] = floorLift2Cfg
+	rollbackReforwardAfterFloorLiftSchedule[25] = floorLift1Cfg
+	rollbackReforwardAfterFloorLiftSchedule[26] = ambiguousFloorLiftCfg
+	rollbackReforwardAfterFloorLiftSchedule[27] = stalePreLiftCfg
+	rollbackReforwardAfterFloorLiftSchedule[28] = base.segment3Cfg
+	rollbackReforwardAfterFloorLiftSchedule[29] = base.segment3Cfg
+
+	return autoTuneRetentionFloorLiftFixtures{
+		segment1Cfg:                             base.segment1Cfg,
+		pruneFloor2Cfg:                          base.pruneFloor2Cfg,
+		floorLift1Cfg:                           floorLift1Cfg,
+		floorLift2Cfg:                           floorLift2Cfg,
+		segment3Cfg:                             base.segment3Cfg,
+		pruneOnlySchedule:                       pruneOnlySchedule,
+		floorLiftReplaySchedule:                 floorLiftReplaySchedule,
+		rollbackReforwardAfterFloorLiftSchedule: rollbackReforwardAfterFloorLiftSchedule,
+	}
+}
+
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePostGenerationPruneRetentionFloorLiftPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp69",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcdefff69",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestfloorlift00000000000000",
+		},
+	}
+
+	fixture := buildAutoTuneRetentionFloorLiftFixtures()
+	heads := []int64{
+		260, 261, 262, 263, 264, 265, 266, 267, 268, 269,
+		270, 271, 272, 273, 274, 275, 276, 277, 278, 279,
+		280, 281, 282, 283, 284, 285, 286, 287, 288, 289,
+	}
+	permutations := []struct {
+		name                  string
+		policySchedule        map[int]AutoTuneConfig
+		staleFenceCaptureTick map[int]struct{}
+		crashpoints           []autoTuneCheckpointFenceCrashpoint
+		assertControlParity   bool
+	}{
+		{
+			name:                "floor-lift-replay",
+			policySchedule:      fixture.floorLiftReplaySchedule,
+			assertControlParity: false,
+		},
+		{
+			name:           "crash-during-floor-lift-restart",
+			policySchedule: fixture.floorLiftReplaySchedule,
+			staleFenceCaptureTick: map[int]struct{}{
+				23: {},
+			},
+			crashpoints: []autoTuneCheckpointFenceCrashpoint{
+				{Tick: 24, UseStaleFenceState: true},
+			},
+			assertControlParity: false,
+		},
+		{
+			name:                "rollback-reforward-after-floor-lift",
+			policySchedule:      fixture.rollbackReforwardAfterFloorLiftSchedule,
+			assertControlParity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				fixture.segment1Cfg,
+				fixture.pruneOnlySchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						fixture.segment1Cfg,
+						permutation.policySchedule,
+						permutation.staleFenceCaptureTick,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "post-generation-prune retention-floor-lift permutations must converge to deterministic canonical tuples")
+					if permutation.assertControlParity {
+						assert.Equal(t, baselineBatches, candidateBatches, "post-generation-prune retention-floor-lift permutations must preserve deterministic control decisions")
+					}
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "post-generation-prune retention-floor-lift baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostGenerationPruneRetentionFloorLiftDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	fixture := buildAutoTuneRetentionFloorLiftFixtures()
+
+	const tickCount = 30
+	healthyBaseAddress := "0xccccccccccccccccccccccccccccccccccccee67"
+	healthyBTCAddress := "tb1qmanifestfloorlifthealthy000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp70"
+
+	healthyHeads := []int64{
+		130, 131, 132, 133, 134, 135, 136, 137, 138, 139,
+		140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
+		150, 151, 152, 153, 154, 155, 156, 157, 158, 159,
+	}
+	laggingHeads := []int64{
+		260, 261, 262, 263, 264, 265, 266, 267, 268, 269,
+		270, 271, 272, 273, 274, 275, 276, 277, 278, 279,
+		280, 281, 282, 283, 284, 285, 286, 287, 288, 289,
+	}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+		fixture.pruneOnlySchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := fixture.segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{23: {}}
+	crashpoints := map[int]bool{24: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := fixture.rollbackReforwardAfterFloorLiftSchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 22 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.pruneFloor2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "prune baseline must adopt deterministic generation-retention-floor ownership before lift progression")
+				assert.Equal(t, fixture.pruneFloor2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 23 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.floorLift1Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "retention-floor-lift replay must adopt first lift epoch deterministically")
+				assert.Equal(t, fixture.floorLift1Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 24 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.floorLift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "retention-floor-lift replay must advance to deterministic second lift epoch ownership")
+				assert.Equal(t, fixture.floorLift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 25 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.floorLift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "stale lower floor-lift epochs must remain pinned behind latest lift ownership")
+				assert.Equal(t, fixture.floorLift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 26 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.floorLift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "ambiguous floor-lift markers must remain quarantined until generation-retention-floor ownership is explicit")
+				assert.Equal(t, fixture.floorLift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 27 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.floorLift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-lift stale pre-lift markers must not reclaim ownership")
+				assert.Equal(t, fixture.floorLift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 28 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rollback+re-forward after floor-lift must deterministically promote forward lineage")
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "floor-lift crashpoint requires captured pre-restart state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-generation-prune retention-floor-lift transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-generation-prune retention-floor-lift transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-generation-prune retention-floor-lift transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-generation-prune retention-floor-lift transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-generation-prune retention-floor-lift replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-generation-prune retention-floor-lift replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-generation-prune retention-floor-lift replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-generation-prune retention-floor-lift replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
