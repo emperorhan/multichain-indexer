@@ -328,6 +328,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of rollback-after-finality determinism and stale-canonical suppression behavior on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0150 (M17-S1)
+Assertions:
+1. Adjacent ingestion windows sharing a boundary transaction/signature converge to one deterministic canonical event set on both mandatory chains.
+2. Restart/resume from persisted boundary cursors cannot skip in-scope boundary events and cannot create duplicate canonical IDs.
+3. Replay-equivalent ranges executed with different deterministic window partitions produce identical canonical tuple ordering with no balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject boundary-overlap and restart-from-boundary scenarios on `solana-devnet` and `base-sepolia` and show `0` duplicate canonical IDs.
+- Deterministic partition-variance tests show `0` canonical tuple diffs and `0` missing boundary events across at least two fixed partition strategies.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0151 (M17-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M17 invariants.
+2. QA executes at least one counterexample with boundary-overlap windows and verifies deterministic duplicate suppression with no missing boundary events.
+3. QA executes at least one counterexample with restart-from-boundary replay and verifies canonical tuple equivalence across partition strategies.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of boundary-overlap determinism and restart-from-boundary continuity behavior on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -343,3 +367,4 @@ Release recommendation must be `fail` if any condition holds:
 11. Canonical identity alias determinism cannot be proven (alias-equivalent identity convergence and alias+overlap duplicate suppression not evidenced for both mandatory chains).
 12. Finality-transition determinism cannot be proven (mixed-finality equivalence, finality+overlap duplicate suppression, and no balance double-apply behavior not evidenced for both mandatory chains).
 13. Rollback-after-finality convergence determinism cannot be proven (fork-replacement convergence, stale-canonical suppression, replay idempotency, and cursor monotonicity not evidenced for both mandatory chains).
+14. Cursor-boundary continuity determinism cannot be proven (boundary-overlap convergence, restart-from-boundary completeness, partition-variance equivalence, and no duplicate/missing boundary events not evidenced for both mandatory chains).

@@ -912,6 +912,223 @@ func TestProcessBatch_MixedFinalityReplayPromotesWithoutDoubleApplyAcrossMandato
 	}
 }
 
+func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		address         string
+		preForkTxHash   string
+		postForkTxHash  string
+		preForkEventID  string
+		postForkEventID string
+		contractAddr    string
+		programID       string
+		counterparty    string
+	}{
+		{
+			name:            "solana-devnet",
+			chain:           model.ChainSolana,
+			network:         model.NetworkDevnet,
+			address:         "addr-rollback-sol",
+			preForkTxHash:   "sig-fork-old-sol",
+			postForkTxHash:  "sig-fork-new-sol",
+			preForkEventID:  "solana|devnet|sig-fork-old-sol|tx:outer:0:inner:-1|addr:addr-rollback-sol|asset:11111111111111111111111111111111|cat:TRANSFER",
+			postForkEventID: "solana|devnet|sig-fork-new-sol|tx:outer:0:inner:-1|addr:addr-rollback-sol|asset:11111111111111111111111111111111|cat:TRANSFER",
+			contractAddr:    "11111111111111111111111111111111",
+			programID:       "11111111111111111111111111111111",
+			counterparty:    "addr-counterparty-sol",
+		},
+		{
+			name:            "base-sepolia",
+			chain:           model.ChainBase,
+			network:         model.NetworkSepolia,
+			address:         "0x1111111111111111111111111111111111111111",
+			preForkTxHash:   "0xbase_fork_old",
+			postForkTxHash:  "0xbase_fork_new",
+			preForkEventID:  "base|sepolia|0xbase_fork_old|tx:log:7|addr:0x1111111111111111111111111111111111111111|asset:ETH|cat:TRANSFER",
+			postForkEventID: "base|sepolia|0xbase_fork_new|tx:log:7|addr:0x1111111111111111111111111111111111111111|asset:ETH|cat:TRANSFER",
+			contractAddr:    "ETH",
+			programID:       "0xbase-program",
+			counterparty:    "0x2222222222222222222222222222222222222222",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			_ = ctrl
+
+			normalizedCh := make(chan event.NormalizedBatch, 1)
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+
+			for i := 0; i < 6; i++ {
+				setupBeginTx(mockDB)
+			}
+
+			preForkTxID := uuid.New()
+			postForkTxID := uuid.New()
+			tokenID := uuid.New()
+			preForkCursor := tc.preForkTxHash
+			rewindCursor := "rewind-anchor"
+			postForkCursor := tc.postForkTxHash
+
+			buildBatch := func(prevCursor *string, prevSeq int64, txHash, eventID, finality, delta string, newCursor string, newSeq int64) event.NormalizedBatch {
+				return event.NormalizedBatch{
+					Chain:                  tc.chain,
+					Network:                tc.network,
+					Address:                tc.address,
+					PreviousCursorValue:    prevCursor,
+					PreviousCursorSequence: prevSeq,
+					Transactions: []event.NormalizedTransaction{
+						{
+							TxHash:      txHash,
+							BlockCursor: newSeq,
+							FeeAmount:   "0",
+							FeePayer:    tc.address,
+							Status:      model.TxStatusSuccess,
+							ChainData:   json.RawMessage("{}"),
+							BalanceEvents: []event.NormalizedBalanceEvent{
+								{
+									OuterInstructionIndex: 0,
+									InnerInstructionIndex: -1,
+									EventCategory:         model.EventCategoryTransfer,
+									EventAction:           "transfer",
+									ProgramID:             tc.programID,
+									ContractAddress:       tc.contractAddr,
+									Address:               tc.address,
+									CounterpartyAddress:   tc.counterparty,
+									Delta:                 delta,
+									EventID:               eventID,
+									TokenType:             model.TokenTypeNative,
+									FinalityState:         finality,
+								},
+							},
+						},
+					},
+					NewCursorValue:    &newCursor,
+					NewCursorSequence: newSeq,
+				}
+			}
+
+			preForkConfirmed := buildBatch(nil, 0, tc.preForkTxHash, tc.preForkEventID, "confirmed", "-1", preForkCursor, 120)
+			preForkFinalized := buildBatch(&preForkCursor, 120, tc.preForkTxHash, tc.preForkEventID, "finalized", "-1", preForkCursor, 120)
+			rollback := event.NormalizedBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorValue:    &preForkCursor,
+				PreviousCursorSequence: 120,
+				NewCursorValue:         &rewindCursor,
+				NewCursorSequence:      100,
+			}
+			postForkReplay := buildBatch(&rewindCursor, 100, tc.postForkTxHash, tc.postForkEventID, "finalized", "-2", postForkCursor, 110)
+			rollbackRepeat := event.NormalizedBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorValue:    &postForkCursor,
+				PreviousCursorSequence: 110,
+				NewCursorValue:         &rewindCursor,
+				NewCursorSequence:      100,
+			}
+			postForkReplayRepeat := buildBatch(&rewindCursor, 100, tc.postForkTxHash, tc.postForkEventID, "finalized", "-2", postForkCursor, 110)
+
+			mockTxRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(preForkTxID, nil).
+				Times(2)
+			mockTxRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(postForkTxID, nil).
+				Times(2)
+
+			mockTokenRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(tokenID, nil).
+				Times(4)
+
+			upsertCalls := 0
+			writtenEventIDs := make([]string, 0, 4)
+			writtenFinality := make([]string, 0, 4)
+			mockBERepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+					upsertCalls++
+					writtenEventIDs = append(writtenEventIDs, be.EventID)
+					writtenFinality = append(writtenFinality, be.FinalityState)
+					switch upsertCalls {
+					case 1:
+						return true, nil
+					case 2:
+						return false, nil
+					case 3:
+						return true, nil
+					case 4:
+						return false, nil
+					default:
+						t.Fatalf("unexpected upsert call count: %d", upsertCalls)
+						return false, nil
+					}
+				}).
+				Times(4)
+
+			appliedDeltas := make([]string, 0, 2)
+			mockBalanceRepo.EXPECT().
+				AdjustBalanceTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					tokenID, nil, nil,
+					gomock.Any(), gomock.Any(), gomock.Any(),
+				).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string) error {
+					appliedDeltas = append(appliedDeltas, delta)
+					return nil
+				}).
+				Times(2)
+
+			cursorWrites := make([]int64, 0, 4)
+			mockCursorRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.address, gomock.Any(), gomock.Any(), int64(1)).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ *string, cursorSeq int64, _ int64) error {
+					cursorWrites = append(cursorWrites, cursorSeq)
+					return nil
+				}).
+				Times(4)
+
+			watermarkWrites := make([]int64, 0, 4)
+			mockConfigRepo.EXPECT().
+				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, ingestedSeq int64) error {
+					watermarkWrites = append(watermarkWrites, ingestedSeq)
+					return nil
+				}).
+				Times(4)
+
+			rollbackForkSequences := make([]int64, 0, 2)
+			ing.reorgHandler = func(_ context.Context, _ *sql.Tx, got event.NormalizedBatch) error {
+				rollbackForkSequences = append(rollbackForkSequences, got.PreviousCursorSequence)
+				return nil
+			}
+
+			require.NoError(t, ing.processBatch(context.Background(), preForkConfirmed))
+			require.NoError(t, ing.processBatch(context.Background(), preForkFinalized))
+			require.NoError(t, ing.processBatch(context.Background(), rollback))
+			require.NoError(t, ing.processBatch(context.Background(), postForkReplay))
+			require.NoError(t, ing.processBatch(context.Background(), rollbackRepeat))
+			require.NoError(t, ing.processBatch(context.Background(), postForkReplayRepeat))
+
+			assert.Equal(t, []int64{100, 100}, rollbackForkSequences)
+			assert.Equal(t, []string{"-1", "-2"}, appliedDeltas)
+			assert.Equal(t, []int64{120, 120, 110, 110}, cursorWrites)
+			assert.Equal(t, []int64{120, 120, 110, 110}, watermarkWrites)
+			assert.Equal(t, []string{tc.preForkEventID, tc.preForkEventID, tc.postForkEventID, tc.postForkEventID}, writtenEventIDs)
+			assert.Equal(t, []string{"confirmed", "finalized", "finalized", "finalized"}, writtenFinality)
+		})
+	}
+}
+
 func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl

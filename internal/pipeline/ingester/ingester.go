@@ -163,6 +163,19 @@ func isCanonicalityDrift(batch event.NormalizedBatch) bool {
 	return false
 }
 
+func rollbackForkCursorSequence(batch event.NormalizedBatch) int64 {
+	if batch.NewCursorSequence < batch.PreviousCursorSequence {
+		return batch.NewCursorSequence
+	}
+	return batch.PreviousCursorSequence
+}
+
+func withRollbackForkCursor(batch event.NormalizedBatch) event.NormalizedBatch {
+	adjusted := batch
+	adjusted.PreviousCursorSequence = rollbackForkCursorSequence(batch)
+	return adjusted
+}
+
 func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBatch) error {
 	if ing.reorgHandler == nil {
 		ing.reorgHandler = ing.rollbackCanonicalityDrift
@@ -185,7 +198,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	}()
 
 	if isCanonicalityDrift(batch) {
-		if err := ing.reorgHandler(ctx, dbTx, batch); err != nil {
+		rollbackBatch := withRollbackForkCursor(batch)
+		if err := ing.reorgHandler(ctx, dbTx, rollbackBatch); err != nil {
 			return fmt.Errorf("handle reorg path: %w", err)
 		}
 
@@ -198,7 +212,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 			"address", batch.Address,
 			"previous_cursor", batch.PreviousCursorValue,
 			"new_cursor", batch.NewCursorValue,
-			"fork_cursor_sequence", batch.PreviousCursorSequence,
+			"fork_cursor_sequence", rollbackBatch.PreviousCursorSequence,
 		)
 		return nil
 	}
@@ -388,7 +402,9 @@ func addDecimalStrings(a, b string) (string, error) {
 }
 
 func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx, batch event.NormalizedBatch) error {
-	rollbackEvents, err := ing.fetchRollbackEvents(ctx, dbTx, batch.Chain, batch.Network, batch.Address, batch.PreviousCursorSequence)
+	forkCursor := rollbackForkCursorSequence(batch)
+
+	rollbackEvents, err := ing.fetchRollbackEvents(ctx, dbTx, batch.Chain, batch.Network, batch.Address, forkCursor)
 	if err != nil {
 		return fmt.Errorf("fetch rollback events: %w", err)
 	}
@@ -412,12 +428,12 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 	if _, err := dbTx.ExecContext(ctx, `
 		DELETE FROM balance_events
 		WHERE chain = $1 AND network = $2 AND watched_address = $3 AND block_cursor >= $4
-	`, batch.Chain, batch.Network, batch.Address, batch.PreviousCursorSequence); err != nil {
+	`, batch.Chain, batch.Network, batch.Address, forkCursor); err != nil {
 		return fmt.Errorf("delete rollback balance events: %w", err)
 	}
 
 	rewindCursorValue, rewindCursorSequence, err := ing.findRewindCursor(
-		ctx, dbTx, batch.Chain, batch.Network, batch.Address, batch.PreviousCursorSequence,
+		ctx, dbTx, batch.Chain, batch.Network, batch.Address, forkCursor,
 	)
 	if err != nil {
 		return fmt.Errorf("find rewind cursor: %w", err)

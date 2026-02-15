@@ -29,9 +29,11 @@
 26. `I-0145` (`M15-S2`): QA counterexample gate for finality-transition determinism + invariant safety.
 27. `I-0147` (`M16-S1`): rollback/finality convergence dedupe hardening across mandatory-chain runtime recovery paths.
 28. `I-0148` (`M16-S2`): QA counterexample gate for rollback/finality convergence determinism + invariant safety.
+29. `I-0150` (`M17-S1`): cursor-boundary canonical continuity hardening across mandatory-chain runtime replay/resume paths.
+30. `I-0151` (`M17-S2`): QA counterexample gate for cursor-boundary determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -67,6 +69,8 @@ Each slice must be independently releasable:
 24. Before `I-0145`: `I-0144` emits deterministic evidence that mixed-finality replay-equivalent inputs converge to one canonical identity set with zero duplicate canonical IDs and no balance double-apply side effects.
 25. Before `I-0147`: `I-0145` QA report is `PASS` and no unresolved finality-transition determinism blocker remains.
 26. Before `I-0148`: `I-0147` emits deterministic evidence that rollback-invalidated finality-promoted events do not survive as stale canonical IDs and do not induce balance double-apply side effects.
+27. Before `I-0150`: `I-0148` QA report is `PASS` and no unresolved rollback/finality convergence blocker remains.
+28. Before `I-0151`: `I-0150` emits deterministic evidence that boundary-overlap and restart-from-boundary inputs converge to one canonical output set with zero duplicate canonical IDs and zero missing boundary events.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -82,6 +86,7 @@ Each slice must be independently releasable:
 11. If identity alias normalization introduces ambiguous collisions, keep chain-scoped conservative normalization, emit deterministic alias-collision diagnostics, and fail fast until alias contracts are explicitly extended.
 12. If finality-transition unification boundaries are ambiguous, keep chain-scoped conservative transition handling, emit deterministic transition-collision diagnostics, and fail fast until explicit lifecycle contracts are extended.
 13. If rollback reconciliation boundaries are ambiguous after finality promotion, keep reconciliation fork-range scoped, emit deterministic rollback-collision diagnostics, and fail fast until ancestry contracts are explicitly extended.
+14. If cursor-boundary continuity semantics are ambiguous across provider paging behavior, keep boundary handling conservative and deterministic, emit boundary-collision diagnostics, and fail fast until boundary identity contracts are explicitly extended.
 
 ## Completion Evidence
 1. Developer slice output:

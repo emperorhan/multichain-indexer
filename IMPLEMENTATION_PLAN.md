@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -37,6 +37,8 @@ Execution queue (dependency-ordered):
 26. `I-0145` (`M15-S2`) QA counterexample gate for finality-transition determinism + invariant safety
 27. `I-0147` (`M16-S1`) rollback/finality convergence dedupe hardening
 28. `I-0148` (`M16-S2`) QA counterexample gate for rollback/finality convergence determinism + invariant safety
+29. `I-0150` (`M17-S1`) cursor-boundary canonical continuity hardening
+30. `I-0151` (`M17-S2`) QA counterexample gate for cursor-boundary determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -532,7 +534,7 @@ Prevent duplicate canonical emission during finality-state transitions by ensuri
 - Gate: over-aggressive finality unification may collapse legitimately distinct lifecycle events if canonical identity boundaries are underspecified.
 - Fallback: keep finality transition handling chain-scoped and contract-conservative; emit deterministic diagnostics and fail fast on ambiguous transition collisions until model extension is approved.
 
-### M16. Rollback-Finality Convergence Reliability Tranche C0010 (P0, Next)
+### M16. Rollback-Finality Convergence Reliability Tranche C0010 (P0, Completed)
 
 #### Objective
 Preserve deterministic canonical identity and balance correctness when previously finality-promoted events are later invalidated by rollback/reorg and replaced by fork-successor data.
@@ -566,6 +568,41 @@ Preserve deterministic canonical identity and balance correctness when previousl
 #### Risk Gate + Fallback
 - Gate: over-pruning during rollback reconciliation can drop valid post-fork events if fork boundaries are computed incorrectly.
 - Fallback: keep reconciliation strictly fork-range scoped, emit deterministic rollback-collision diagnostics, and fail fast on ambiguous ancestry boundaries until contract extension is approved.
+
+### M17. Cursor-Boundary Continuity Reliability Tranche C0011 (P0, Next)
+
+#### Objective
+Eliminate canonical duplicate/missing-event risk at adjacent cursor boundaries so restart/resume and shifted batch windows preserve one deterministic canonical event set on mandatory chains.
+
+#### Entry Gate
+- `M16` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M17-S1` (`I-0150`): implement deterministic cursor-boundary continuity semantics so adjacent or resumed ranges cannot re-emit or skip boundary events while preserving replay-idempotent canonical outputs.
+2. `M17-S2` (`I-0151`): execute QA counterexample gate for boundary-shift/restart determinism and invariant evidence.
+
+#### Definition Of Done
+1. Adjacent ingestion windows that share a boundary transaction/signature converge to one canonical event set without duplicate canonical IDs.
+2. Restart/resume from a persisted boundary cursor cannot skip in-scope boundary events and cannot double-apply balances.
+3. Replay over equivalent ranges with different deterministic batch/window partitioning yields identical ordered canonical tuples.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject boundary-overlap windows and restart-from-boundary scenarios for both `solana-devnet` and `base-sepolia` and assert stable canonical tuple outputs.
+2. Deterministic tests replay the same logical range with at least two deterministic window partition strategies and assert `0` canonical tuple diffs.
+3. Replay/idempotency/cursor tests remain green with no regressions on `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, and `chain_adapter_runtime_wired`.
+4. QA executes required validation commands plus boundary counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across boundary-overlap and restart-from-boundary replay fixtures on mandatory chains.
+2. `0` missing boundary events in deterministic fixture assertions across shifted window partitions.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-aggressive boundary dedupe can suppress legitimate distinct events when identity boundaries are underspecified.
+- Fallback: use conservative boundary identity keying (`chain + canonical identity + event path + cursor scope`), emit deterministic boundary-collision diagnostics, and fail fast on unresolved ambiguity until contract extension is approved.
 
 ## Decision Register (Major + Fallback)
 
@@ -610,10 +647,12 @@ Completed milestones/slices:
 24. `I-0142`
 25. `I-0144`
 26. `I-0145`
+27. `I-0147`
+28. `I-0148`
 
 Active downstream queue from this plan:
-1. `I-0147`
-2. `I-0148`
+1. `I-0150`
+2. `I-0151`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
