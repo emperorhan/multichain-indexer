@@ -1531,6 +1531,99 @@ func TestAutoTuneController_RollbackCheckpointFencePostQuarantineReleaseWindowRe
 	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFencePostReleaseWindowEpochRolloverRejectsStalePriorEpochFence(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	releaseWindowCfg := quarantineCfg
+	releaseWindowCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=7"
+
+	releaseSeed := 220
+	releaseController := newAutoTuneControllerWithSeed(100, releaseCfg, &releaseSeed)
+	require.NotNil(t, releaseController)
+	releaseController.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:       true,
+		Version:        quarantineCfg.PolicyVersion,
+		ManifestDigest: quarantineCfg.PolicyManifestDigest,
+		Epoch:          quarantineCfg.PolicyManifestRefreshEpoch,
+	})
+	batch, releaseDecision := releaseController.Resolve(highLag)
+	assert.Equal(t, releaseSeed+20, batch)
+	assert.Equal(t, "apply_increase", releaseDecision.Decision)
+
+	releaseWindowSeed := releaseController.currentBatch
+	releaseWindowController := newAutoTuneControllerWithSeed(100, releaseWindowCfg, &releaseWindowSeed)
+	require.NotNil(t, releaseWindowController)
+	releaseWindowController.reconcilePolicyTransition(releaseController.exportPolicyTransition())
+	batch, releaseWindowDecision := releaseWindowController.Resolve(highLag)
+	assert.Equal(t, releaseWindowSeed+20, batch)
+	assert.Equal(t, "apply_increase", releaseWindowDecision.Decision)
+	assert.Equal(t, releaseWindowCfg.PolicyManifestDigest, releaseWindowDecision.PolicyManifestDigest)
+	assert.Equal(t, releaseWindowCfg.PolicyManifestRefreshEpoch, releaseWindowDecision.PolicyEpoch)
+	assert.Equal(t, 0, releaseWindowDecision.PolicyActivationTicks)
+
+	staleRollbackAtRolloverCfg := rollbackCfg
+	staleRollbackAtRolloverCfg.PolicyManifestRefreshEpoch = 3
+	staleRolloverSeed := releaseWindowController.currentBatch
+	staleRolloverController := newAutoTuneControllerWithSeed(100, staleRollbackAtRolloverCfg, &staleRolloverSeed)
+	require.NotNil(t, staleRolloverController)
+	staleRolloverController.reconcilePolicyTransition(releaseWindowController.exportPolicyTransition())
+	batch, staleRolloverDecision := staleRolloverController.Resolve(highLag)
+	assert.Equal(t, staleRolloverSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleRolloverDecision.Decision, "stale prior-epoch rollback fence must be rejected at epoch rollover")
+	assert.Equal(t, releaseWindowCfg.PolicyManifestDigest, staleRolloverDecision.PolicyManifestDigest)
+	assert.Equal(t, releaseWindowCfg.PolicyManifestRefreshEpoch, staleRolloverDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleRolloverDecision.PolicyActivationTicks)
+
+	liveRolloverSeed := staleRolloverController.currentBatch
+	liveRolloverController := newAutoTuneControllerWithSeed(100, segment3Cfg, &liveRolloverSeed)
+	require.NotNil(t, liveRolloverController)
+	liveRolloverController.reconcilePolicyTransition(staleRolloverController.exportPolicyTransition())
+	batch, liveRolloverHold := liveRolloverController.Resolve(highLag)
+	assert.Equal(t, liveRolloverSeed, batch)
+	assert.Equal(t, "hold_policy_transition", liveRolloverHold.Decision)
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, liveRolloverHold.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, liveRolloverHold.PolicyEpoch)
+	assert.Equal(t, 1, liveRolloverHold.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,

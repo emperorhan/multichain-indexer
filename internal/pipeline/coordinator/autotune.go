@@ -582,6 +582,23 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 	}
 
 	if incomingEpoch > previousEpoch {
+		if isDeterministicRollbackFencePostReleaseWindowEpochRolloverStaleTransition(
+			previousEpoch,
+			incomingEpoch,
+			previousDigest,
+			incomingDigest,
+		) {
+			// Reject delayed prior-epoch rollback-fence ownership during
+			// post-release-window epoch rollover; keep verified ownership until
+			// current-epoch lineage is observed.
+			a.policyManifestDigest = previousDigest
+			a.policyEpoch = previousEpoch
+			if normalizedActivationHold > a.policyActivationLeft {
+				a.policyActivationLeft = normalizedActivationHold
+				a.resetAdaptiveControlState()
+			}
+			return
+		}
 		if incomingEpoch == previousEpoch+1 {
 			a.policyManifestDigest = incomingDigest
 			a.policyEpoch = incomingEpoch
@@ -1229,6 +1246,48 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	// Release windows are monotonic ownership markers: only strictly newer
 	// release watermarks can advance verified ownership.
 	return targetReleaseEpoch > sourceReleaseEpoch
+}
+
+func isDeterministicRollbackFencePostReleaseWindowEpochRolloverStaleTransition(
+	previousEpoch int64,
+	incomingEpoch int64,
+	previousDigest string,
+	incomingDigest string,
+) bool {
+	if previousEpoch < 0 {
+		return false
+	}
+	if incomingEpoch != previousEpoch+1 {
+		return false
+	}
+	previousNormalized := normalizePolicyManifestDigest(previousDigest)
+	if !isRollbackFencePostExpiryLateMarkerReleaseDigest(previousEpoch, previousNormalized) {
+		return false
+	}
+	// Once post-release-window ownership is verified, any digest still anchored
+	// to the prior rollback-fence epoch is stale at rollover.
+	return isRollbackFenceDigestAnchoredToEpoch(previousEpoch, incomingDigest)
+}
+
+func isRollbackFenceDigestAnchoredToEpoch(epoch int64, digest string) bool {
+	if epoch < 0 {
+		return false
+	}
+	normalized := normalizePolicyManifestDigest(digest)
+	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(normalized)
+	if !ok {
+		return false
+	}
+	if rollbackToSeq != epoch {
+		return false
+	}
+	if rollbackFromSeq <= rollbackToSeq {
+		return false
+	}
+	if rollbackForwardSeq < rollbackFromSeq {
+		return false
+	}
+	return true
 }
 
 func (a *autoTuneController) resolveOverrideState() autoTuneOverrideState {
