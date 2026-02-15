@@ -6613,6 +6613,477 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostEpochRoll
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePostLateBridgeBacklogDrainPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp59",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcdefff59",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestbacklogdrain000000000000000",
+		},
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  2,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	compactionCfg := rollbackCfg
+	compactionCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone=1"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	releaseWindowCfg := quarantineCfg
+	releaseWindowCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=7"
+	lateBridgeSeq1Cfg := releaseWindowCfg
+	lateBridgeSeq1Cfg.PolicyManifestDigest = releaseWindowCfg.PolicyManifestDigest +
+		"|rollback-fence-late-bridge-seq=1|rollback-fence-late-bridge-release-watermark=70"
+	lateBridgeSeq2Cfg := releaseWindowCfg
+	lateBridgeSeq2Cfg.PolicyManifestDigest = releaseWindowCfg.PolicyManifestDigest +
+		"|rollback-fence-late-bridge-seq=2|rollback-fence-late-bridge-release-watermark=80"
+	drainStage1Cfg := lateBridgeSeq2Cfg
+	drainStage1Cfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=81"
+	drainStage2Cfg := lateBridgeSeq2Cfg
+	drainStage2Cfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=82"
+	liveBridgeSeq3Cfg := quarantineCfg
+	liveBridgeSeq3Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=8|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90"
+	staleDrainedSeq2AfterLiveCfg := lateBridgeSeq2Cfg
+	staleDrainedSeq2AfterLiveCfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=120"
+	staleRollbackAtRolloverCfg := rollbackCfg
+	staleRollbackAtRolloverCfg.PolicyManifestRefreshEpoch = 3
+
+	noBacklogBaselineSchedule := map[int]AutoTuneConfig{
+		2:  segment2Cfg,
+		4:  segment3Cfg,
+		6:  rollbackCfg,
+		8:  compactionCfg,
+		10: expiryCfg,
+		11: quarantineCfg,
+		12: releaseCfg,
+		13: releaseWindowCfg,
+		14: lateBridgeSeq1Cfg,
+		15: lateBridgeSeq2Cfg,
+		16: segment3Cfg,
+		17: segment3Cfg,
+		18: segment3Cfg,
+		19: segment3Cfg,
+		20: segment3Cfg,
+		21: segment3Cfg,
+	}
+	stagedBacklogDrainReplaySchedule := map[int]AutoTuneConfig{
+		2:  segment2Cfg,
+		4:  segment3Cfg,
+		6:  rollbackCfg,
+		8:  compactionCfg,
+		10: expiryCfg,
+		11: quarantineCfg,
+		12: releaseCfg,
+		13: releaseWindowCfg,
+		14: lateBridgeSeq1Cfg,
+		15: lateBridgeSeq2Cfg,
+		16: drainStage1Cfg,
+		17: drainStage2Cfg,
+		18: segment3Cfg,
+		19: segment3Cfg,
+		20: segment3Cfg,
+		21: segment3Cfg,
+	}
+	rollbackReforwardAfterDrainSchedule := map[int]AutoTuneConfig{
+		2:  segment2Cfg,
+		4:  segment3Cfg,
+		6:  rollbackCfg,
+		8:  compactionCfg,
+		10: expiryCfg,
+		11: quarantineCfg,
+		12: releaseCfg,
+		13: releaseWindowCfg,
+		14: lateBridgeSeq1Cfg,
+		15: lateBridgeSeq2Cfg,
+		16: drainStage1Cfg,
+		17: drainStage2Cfg,
+		18: liveBridgeSeq3Cfg,
+		19: staleDrainedSeq2AfterLiveCfg,
+		20: staleRollbackAtRolloverCfg,
+		21: segment3Cfg,
+	}
+
+	heads := []int64{
+		260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270,
+		271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281,
+	}
+	permutations := []struct {
+		name                  string
+		policySchedule        map[int]AutoTuneConfig
+		staleFenceCaptureTick map[int]struct{}
+		crashpoints           []autoTuneCheckpointFenceCrashpoint
+		assertControlParity   bool
+	}{
+		{
+			name:                "staged-backlog-drain-replay",
+			policySchedule:      stagedBacklogDrainReplaySchedule,
+			assertControlParity: false,
+		},
+		{
+			name:           "crash-during-drain-restart",
+			policySchedule: stagedBacklogDrainReplaySchedule,
+			staleFenceCaptureTick: map[int]struct{}{
+				15: {},
+			},
+			crashpoints: []autoTuneCheckpointFenceCrashpoint{
+				{Tick: 17, UseStaleFenceState: true},
+			},
+			assertControlParity: false,
+		},
+		{
+			name:                "rollback-reforward-after-drain",
+			policySchedule:      rollbackReforwardAfterDrainSchedule,
+			assertControlParity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				segment1Cfg,
+				noBacklogBaselineSchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						segment1Cfg,
+						permutation.policySchedule,
+						permutation.staleFenceCaptureTick,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "post-late-bridge backlog-drain permutations must converge to deterministic canonical tuples")
+					if permutation.assertControlParity {
+						assert.Equal(t, baselineBatches, candidateBatches, "post-late-bridge backlog-drain permutations must preserve deterministic control decisions")
+					}
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "post-late-bridge backlog-drain baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLateBridgeBacklogDrainDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  2,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	compactionCfg := rollbackCfg
+	compactionCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone=1"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	releaseWindowCfg := quarantineCfg
+	releaseWindowCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=7"
+	lateBridgeSeq1Cfg := releaseWindowCfg
+	lateBridgeSeq1Cfg.PolicyManifestDigest = releaseWindowCfg.PolicyManifestDigest +
+		"|rollback-fence-late-bridge-seq=1|rollback-fence-late-bridge-release-watermark=70"
+	lateBridgeSeq2Cfg := releaseWindowCfg
+	lateBridgeSeq2Cfg.PolicyManifestDigest = releaseWindowCfg.PolicyManifestDigest +
+		"|rollback-fence-late-bridge-seq=2|rollback-fence-late-bridge-release-watermark=80"
+	drainStage1Cfg := lateBridgeSeq2Cfg
+	drainStage1Cfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=81"
+	drainStage2Cfg := lateBridgeSeq2Cfg
+	drainStage2Cfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=82"
+	staleDrainCfg := lateBridgeSeq2Cfg
+	staleDrainCfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=79"
+	ambiguousDrainCfg := quarantineCfg
+	ambiguousDrainCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=7|rollback-fence-late-bridge-drain-watermark=83"
+	liveBridgeSeq3Cfg := quarantineCfg
+	liveBridgeSeq3Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=8|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90"
+	staleDrainedSeq2AfterLiveCfg := lateBridgeSeq2Cfg
+	staleDrainedSeq2AfterLiveCfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=120"
+
+	noBacklogBaselineSchedule := map[int]AutoTuneConfig{
+		2:  segment2Cfg,
+		4:  segment3Cfg,
+		6:  rollbackCfg,
+		8:  compactionCfg,
+		10: expiryCfg,
+		11: quarantineCfg,
+		12: releaseCfg,
+		13: releaseWindowCfg,
+		14: lateBridgeSeq1Cfg,
+		15: lateBridgeSeq2Cfg,
+		16: segment3Cfg,
+		17: segment3Cfg,
+		18: segment3Cfg,
+		19: segment3Cfg,
+		20: segment3Cfg,
+		21: segment3Cfg,
+		22: segment3Cfg,
+	}
+	backlogDrainReplaySchedule := map[int]AutoTuneConfig{
+		2:  segment2Cfg,
+		4:  segment3Cfg,
+		6:  rollbackCfg,
+		8:  compactionCfg,
+		10: expiryCfg,
+		11: quarantineCfg,
+		12: releaseCfg,
+		13: releaseWindowCfg,
+		14: lateBridgeSeq1Cfg,
+		15: lateBridgeSeq2Cfg,
+		16: drainStage1Cfg,
+		17: drainStage2Cfg,
+		18: staleDrainCfg,
+		19: ambiguousDrainCfg,
+		20: liveBridgeSeq3Cfg,
+		21: staleDrainedSeq2AfterLiveCfg,
+		22: segment3Cfg,
+	}
+
+	const tickCount = 23
+	healthyBaseAddress := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbee59"
+	healthyBTCAddress := "tb1qmanifestbackloghealthy0000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp60"
+
+	healthyHeads := []int64{
+		130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141,
+		142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152,
+	}
+	laggingHeads := []int64{
+		260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271,
+		272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282,
+	}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+		noBacklogBaselineSchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{15: {}}
+	crashpoints := map[int]bool{17: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := backlogDrainReplaySchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 18 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, drainStage2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "lower drain watermark must remain pinned behind verified backlog-drain ownership")
+				assert.Equal(t, drainStage2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 19 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, drainStage2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "ambiguous backlog-drain marker must remain quarantined until bridge ownership tuple is complete")
+				assert.Equal(t, drainStage2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 21 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, liveBridgeSeq3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "delayed drained marker must not reclaim ownership after newer live bridge sequence adoption")
+				assert.Equal(t, liveBridgeSeq3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "stale drain crashpoint requires captured pre-drain state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-late-bridge backlog-drain transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-late-bridge backlog-drain transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-late-bridge backlog-drain transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-late-bridge backlog-drain transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-late-bridge backlog-drain replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-late-bridge backlog-drain replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-late-bridge backlog-drain replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-late-bridge backlog-drain replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
