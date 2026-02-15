@@ -1065,12 +1065,43 @@ func parseRollbackFenceSteadyStateWatermark(digest string) (int64, bool) {
 	return 0, false
 }
 
+func parseRollbackFenceSteadyGeneration(digest string) (int64, bool) {
+	const (
+		steadyGenerationKey = "rollback-fence-steady-generation="
+		baselineGenKey      = "rollback-fence-baseline-generation="
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, steadyGenerationKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, steadyGenerationKey))
+		case strings.HasPrefix(token, baselineGenKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, baselineGenKey))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		generation, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || generation < 0 {
+			return 0, false
+		}
+		return generation, true
+	}
+
+	return 0, false
+}
+
 type rollbackFenceOwnershipOrdering struct {
 	epoch                int64
 	bridgeSequence       int64
 	drainWatermark       int64
 	liveHead             int64
 	steadyStateWatermark int64
+	steadyGeneration     int64
 }
 
 func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
@@ -1090,6 +1121,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	drainWatermark, hasDrainWatermark := parseRollbackFenceLateBridgeDrainWatermark(normalized)
 	liveHead, hasLiveHead := parseRollbackFenceLiveHeadWatermark(normalized)
 	steadyStateWatermark, hasSteadyStateWatermark := parseRollbackFenceSteadyStateWatermark(normalized)
+	steadyGeneration, hasSteadyGeneration := parseRollbackFenceSteadyGeneration(normalized)
 	if hasBridgeSequence != hasExplicitWatermark {
 		// Quarantine ambiguous late-bridge markers until both sequence and
 		// release watermark are present for deterministic ordering.
@@ -1113,6 +1145,12 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if hasSteadyStateWatermark && !hasLiveHead {
 		// Quarantine steady-state rebaseline markers until the corresponding
 		// live-catchup ownership tuple is complete.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	if hasSteadyGeneration && !hasSteadyStateWatermark {
+		// Quarantine baseline-rotation generation markers until explicit
+		// steady-state ownership is present for deterministic cross-generation
+		// ordering.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
 	if !hasBridgeSequence {
@@ -1140,12 +1178,16 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if steadyStateWatermark < liveHead {
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if !hasSteadyGeneration {
+		steadyGeneration = 0
+	}
 	return rollbackFenceOwnershipOrdering{
 		epoch:                epoch,
 		bridgeSequence:       bridgeSequence,
 		drainWatermark:       drainWatermark,
 		liveHead:             liveHead,
 		steadyStateWatermark: steadyStateWatermark,
+		steadyGeneration:     steadyGeneration,
 	}, true
 }
 
@@ -1181,6 +1223,12 @@ func compareRollbackFenceOwnershipOrdering(
 	case left.steadyStateWatermark < right.steadyStateWatermark:
 		return -1
 	case left.steadyStateWatermark > right.steadyStateWatermark:
+		return 1
+	}
+	switch {
+	case left.steadyGeneration < right.steadyGeneration:
+		return -1
+	case left.steadyGeneration > right.steadyGeneration:
 		return 1
 	default:
 		return 0
@@ -1525,7 +1573,8 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 		return false
 	}
 	// Ownership progression is strictly monotonic under explicit
-	// (epoch, bridge_sequence, release_watermark) ordering.
+	// (epoch, bridge_sequence, drain_watermark, live_head,
+	// steady_state_watermark, steady_generation) ordering.
 	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }
 
