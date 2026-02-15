@@ -568,7 +568,168 @@ func collectBaseMetadata(rawEvents []*sidecarv1.BalanceEventInfo) map[string]str
 			out[k] = v
 		}
 	}
+	reconcileBaseFeeComponentMetadata(out, rawEvents)
 	return out
+}
+
+var baseFeePathMetadataKeys = [...]string{
+	"event_path",
+	"log_path",
+	"log_index",
+	"base_log_index",
+	"base_event_path",
+}
+
+var baseFeeComponentMetadataKeys = [...]string{
+	"fee_execution_l2",
+	"fee_data_l1",
+	"data_fee_l1",
+	"l1_data_fee",
+	"l1_fee",
+}
+
+type baseFeeMetadataCandidate struct {
+	metadata      map[string]string
+	hasExecution  bool
+	execution     *big.Int
+	hasData       bool
+	data          *big.Int
+	pathHint      bool
+	metadataCount int
+	fingerprint   string
+}
+
+func newBaseFeeMetadataCandidate(be *sidecarv1.BalanceEventInfo) *baseFeeMetadataCandidate {
+	if be == nil || len(be.Metadata) == 0 {
+		return nil
+	}
+	execution, hasExecution := deriveBaseExecutionFeeFromMetadata(be.Metadata)
+	data, hasData := deriveBaseDataFee(be.Metadata)
+	return &baseFeeMetadataCandidate{
+		metadata:      be.Metadata,
+		hasExecution:  hasExecution,
+		execution:     execution,
+		hasData:       hasData,
+		data:          data,
+		pathHint:      resolveBaseMetadataEventPath(be.Metadata) != "",
+		metadataCount: len(be.Metadata),
+		fingerprint:   decodedEventFingerprint(model.ChainBase, be),
+	}
+}
+
+func shouldPreferBaseFeeMetadataCandidate(existing, incoming *baseFeeMetadataCandidate) bool {
+	if existing == nil {
+		return incoming != nil
+	}
+	if incoming == nil {
+		return false
+	}
+	if existing.pathHint != incoming.pathHint {
+		return incoming.pathHint
+	}
+	if existing.metadataCount != incoming.metadataCount {
+		return incoming.metadataCount > existing.metadataCount
+	}
+	if existing.fingerprint != incoming.fingerprint {
+		return incoming.fingerprint < existing.fingerprint
+	}
+	return false
+}
+
+func pickBestBaseFeeMetadataCandidate(
+	candidates []*baseFeeMetadataCandidate,
+	predicate func(*baseFeeMetadataCandidate) bool,
+) *baseFeeMetadataCandidate {
+	var best *baseFeeMetadataCandidate
+	for _, candidate := range candidates {
+		if candidate == nil {
+			continue
+		}
+		if predicate != nil && !predicate(candidate) {
+			continue
+		}
+		if best == nil || shouldPreferBaseFeeMetadataCandidate(best, candidate) {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func applyBasePathMetadata(out map[string]string, metadata map[string]string) {
+	for _, key := range baseFeePathMetadataKeys {
+		delete(out, key)
+	}
+	if len(metadata) == 0 {
+		return
+	}
+	for _, key := range baseFeePathMetadataKeys {
+		value := strings.TrimSpace(metadata[key])
+		if value == "" {
+			continue
+		}
+		out[key] = value
+	}
+}
+
+func reconcileBaseFeeComponentMetadata(out map[string]string, rawEvents []*sidecarv1.BalanceEventInfo) {
+	candidates := make([]*baseFeeMetadataCandidate, 0, len(rawEvents))
+	for _, be := range rawEvents {
+		candidate := newBaseFeeMetadataCandidate(be)
+		if candidate != nil {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if len(candidates) == 0 {
+		return
+	}
+
+	bestBoth := pickBestBaseFeeMetadataCandidate(candidates, func(candidate *baseFeeMetadataCandidate) bool {
+		return candidate.hasExecution && candidate.hasData
+	})
+	bestExecution := pickBestBaseFeeMetadataCandidate(candidates, func(candidate *baseFeeMetadataCandidate) bool {
+		return candidate.hasExecution
+	})
+	bestData := pickBestBaseFeeMetadataCandidate(candidates, func(candidate *baseFeeMetadataCandidate) bool {
+		return candidate.hasData
+	})
+
+	selected := bestBoth
+	if selected == nil {
+		selected = bestExecution
+	}
+	if selected == nil {
+		selected = bestData
+	}
+	if selected == nil {
+		return
+	}
+
+	for _, key := range baseFeeComponentMetadataKeys {
+		delete(out, key)
+	}
+	executionSource := bestExecution
+	dataSource := bestData
+	if bestBoth != nil {
+		executionSource = bestBoth
+		dataSource = bestBoth
+	}
+	if executionSource != nil && executionSource.execution != nil {
+		out["fee_execution_l2"] = executionSource.execution.String()
+	}
+	if dataSource != nil && dataSource.data != nil {
+		out["fee_data_l1"] = dataSource.data.String()
+	}
+
+	pathSource := selected
+	if bestBoth == nil && resolveBaseMetadataEventPath(pathSource.metadata) == "" {
+		bestPath := pickBestBaseFeeMetadataCandidate(candidates, func(candidate *baseFeeMetadataCandidate) bool {
+			return candidate.pathHint
+		})
+		if bestPath != nil {
+			pathSource = bestPath
+		}
+	}
+	applyBasePathMetadata(out, pathSource.metadata)
 }
 
 func buildBaseFeeBalanceEvent(

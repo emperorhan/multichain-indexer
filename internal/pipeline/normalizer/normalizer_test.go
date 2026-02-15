@@ -1533,6 +1533,136 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_ReplayProducesNoDuplicateFeeEv
 	}
 }
 
+func TestProcessBatch_BaseSepoliaFeeDecomposition_AvailabilityOrderConverges(t *testing.T) {
+	buildResult := func(partialFirst bool) *sidecarv1.TransactionResult {
+		partial := &sidecarv1.BalanceEventInfo{
+			OuterInstructionIndex: 0,
+			InnerInstructionIndex: -1,
+			EventCategory:         string(model.EventCategoryTransfer),
+			EventAction:           "erc20_transfer_partial",
+			ProgramId:             "0xabc",
+			Address:               "0xaaaa1111111111111111111111111111111111111111",
+			ContractAddress:       "ETH",
+			Delta:                 "-1000",
+			CounterpartyAddress:   "0xbbbb2222222222222222222222222222222222222222",
+			TokenSymbol:           "ETH",
+			TokenName:             "Ether",
+			TokenDecimals:         18,
+			TokenType:             string(model.TokenTypeNative),
+			Metadata: map[string]string{
+				"event_path":       "log:10",
+				"fee_execution_l2": "1000",
+			},
+		}
+		recovered := &sidecarv1.BalanceEventInfo{
+			OuterInstructionIndex: 1,
+			InnerInstructionIndex: -1,
+			EventCategory:         string(model.EventCategoryTransfer),
+			EventAction:           "erc20_transfer_recovered",
+			ProgramId:             "0xabc",
+			Address:               "0xaaaa1111111111111111111111111111111111111111",
+			ContractAddress:       "ETH",
+			Delta:                 "0",
+			CounterpartyAddress:   "0xcccc3333333333333333333333333333333333333333",
+			TokenSymbol:           "ETH",
+			TokenName:             "Ether",
+			TokenDecimals:         18,
+			TokenType:             string(model.TokenTypeNative),
+			Metadata: map[string]string{
+				"fee_execution_l2": "600",
+				"fee_data_l1":      "400",
+			},
+		}
+
+		events := []*sidecarv1.BalanceEventInfo{partial, recovered}
+		if !partialFirst {
+			events = []*sidecarv1.BalanceEventInfo{recovered, partial}
+		}
+
+		return &sidecarv1.TransactionResult{
+			TxHash:        "0xBEEF1001",
+			BlockCursor:   1001,
+			BlockTime:     1700000500,
+			Status:        "SUCCESS",
+			FeeAmount:     "1000",
+			FeePayer:      "0x1111111111111111111111111111111111111111",
+			BalanceEvents: events,
+		}
+	}
+
+	runOnce := func(result *sidecarv1.TransactionResult) event.NormalizedBatch {
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockChainDecoderClient(ctrl)
+		normalizedCh := make(chan event.NormalizedBatch, 1)
+		n := &Normalizer{
+			sidecarTimeout: 30_000_000_000, // 30s
+			normalizedCh:   normalizedCh,
+			logger:         slog.Default(),
+		}
+
+		batch := event.RawBatch{
+			Chain:   model.ChainBase,
+			Network: model.NetworkSepolia,
+			Address: "0x1111111111111111111111111111111111111111",
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"base-fee-flap-order"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: "0xBEEF1001", Sequence: 1001},
+			},
+		}
+
+		mockClient.EXPECT().
+			DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: []*sidecarv1.TransactionResult{result},
+			}, nil).
+			Times(1)
+
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+		return <-normalizedCh
+	}
+
+	assertNoDuplicateCanonicalIDs := func(batch event.NormalizedBatch) {
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	assertExpectedFeeSplit := func(batch event.NormalizedBatch) {
+		require.Len(t, batch.Transactions, 1)
+		tx := batch.Transactions[0]
+
+		execEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
+		dataEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+		require.Len(t, execEvents, 1)
+		require.Len(t, dataEvents, 1)
+
+		assert.Equal(t, "-600", execEvents[0].Delta)
+		assert.Equal(t, "-400", dataEvents[0].Delta)
+
+		execChainData := map[string]string{}
+		require.NoError(t, json.Unmarshal(execEvents[0].ChainData, &execChainData))
+		assert.Empty(t, execChainData["fee_total_mismatch"])
+		assert.Empty(t, execChainData["data_fee_l1_unavailable"])
+	}
+
+	partialFirst := runOnce(buildResult(true))
+	recoveredFirst := runOnce(buildResult(false))
+
+	assert.Equal(t, orderedCanonicalTuples(recoveredFirst), orderedCanonicalTuples(partialFirst))
+	assertNoDuplicateCanonicalIDs(partialFirst)
+	assertNoDuplicateCanonicalIDs(recoveredFirst)
+	assertExpectedFeeSplit(partialFirst)
+	assertExpectedFeeSplit(recoveredFirst)
+}
+
 func TestProcessBatch_SolanaFailedTransaction_EmitsFeeWithCompleteMetadata(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockChainDecoderClient(ctrl)
