@@ -1250,6 +1250,116 @@ func TestAutoTuneController_PolicyManifestRollbackLineageRequiresDeterministicFe
 	assert.Equal(t, 0, reapplyDecision.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFenceEpochCompactionRejectsStaleFenceReactivation(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               260,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	compactionCfg := rollbackCfg
+	compactionCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone=1"
+
+	segment1Controller := newAutoTuneController(100, segment1Cfg)
+	require.NotNil(t, segment1Controller)
+	batch, _ := segment1Controller.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+
+	segment2Seed := segment1Controller.currentBatch
+	segment2Controller := newAutoTuneControllerWithSeed(100, segment2Cfg, &segment2Seed)
+	require.NotNil(t, segment2Controller)
+	segment2Controller.reconcilePolicyTransition(segment1Controller.exportPolicyTransition())
+	batch, _ = segment2Controller.Resolve(highLag)
+	assert.Equal(t, segment2Seed, batch)
+	batch, _ = segment2Controller.Resolve(highLag)
+	assert.Equal(t, 140, batch)
+
+	segment3Seed := segment2Controller.currentBatch
+	segment3Controller := newAutoTuneControllerWithSeed(100, segment3Cfg, &segment3Seed)
+	require.NotNil(t, segment3Controller)
+	segment3Controller.reconcilePolicyTransition(segment2Controller.exportPolicyTransition())
+	batch, _ = segment3Controller.Resolve(highLag)
+	assert.Equal(t, segment3Seed, batch)
+	batch, _ = segment3Controller.Resolve(highLag)
+	assert.Equal(t, 160, batch)
+
+	rollbackSeed := segment3Controller.currentBatch
+	rollbackController := newAutoTuneControllerWithSeed(100, rollbackCfg, &rollbackSeed)
+	require.NotNil(t, rollbackController)
+	rollbackController.reconcilePolicyTransition(segment3Controller.exportPolicyTransition())
+	batch, _ = rollbackController.Resolve(highLag)
+	assert.Equal(t, rollbackSeed, batch)
+	batch, rollbackApplied := rollbackController.Resolve(highLag)
+	assert.Equal(t, rollbackSeed+20, batch)
+	assert.Equal(t, "apply_increase", rollbackApplied.Decision)
+	assert.Equal(t, rollbackCfg.PolicyManifestDigest, rollbackApplied.PolicyManifestDigest)
+	assert.Equal(t, int64(2), rollbackApplied.PolicyEpoch)
+
+	compactionSeed := rollbackController.currentBatch
+	compactionController := newAutoTuneControllerWithSeed(100, compactionCfg, &compactionSeed)
+	require.NotNil(t, compactionController)
+	compactionController.reconcilePolicyTransition(rollbackController.exportPolicyTransition())
+
+	batch, compactionDecision := compactionController.Resolve(highLag)
+	assert.Equal(t, compactionSeed+20, batch)
+	assert.Equal(t, "apply_increase", compactionDecision.Decision, "same-epoch rollback fence compaction must not reopen transition hold")
+	assert.Equal(t, compactionCfg.PolicyManifestDigest, compactionDecision.PolicyManifestDigest)
+	assert.Equal(t, compactionCfg.PolicyManifestRefreshEpoch, compactionDecision.PolicyEpoch)
+	assert.Equal(t, 0, compactionDecision.PolicyActivationTicks)
+
+	staleRollbackSeed := compactionController.currentBatch
+	staleRollbackController := newAutoTuneControllerWithSeed(100, rollbackCfg, &staleRollbackSeed)
+	require.NotNil(t, staleRollbackController)
+	staleRollbackController.reconcilePolicyTransition(compactionController.exportPolicyTransition())
+
+	batch, staleRollbackDecision := staleRollbackController.Resolve(highLag)
+	assert.Equal(t, staleRollbackSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleRollbackDecision.Decision, "stale pre-compaction rollback must not reactivate fence ownership")
+	assert.Equal(t, compactionCfg.PolicyManifestDigest, staleRollbackDecision.PolicyManifestDigest)
+	assert.Equal(t, compactionCfg.PolicyManifestRefreshEpoch, staleRollbackDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleRollbackDecision.PolicyActivationTicks)
+
+	reForwardSeed := staleRollbackController.currentBatch
+	reForwardController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reForwardSeed)
+	require.NotNil(t, reForwardController)
+	reForwardController.reconcilePolicyTransition(staleRollbackController.exportPolicyTransition())
+
+	batch, reForwardHold := reForwardController.Resolve(highLag)
+	assert.Equal(t, reForwardSeed, batch)
+	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after compaction must remain deterministic")
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardHold.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardHold.PolicyEpoch)
+	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,
@@ -1304,6 +1414,52 @@ func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguous
 	assert.Equal(t, seed+20, batch)
 	assert.Equal(t, "apply_increase", applied.Decision)
 	assert.Equal(t, 0, applied.PolicyActivationTicks)
+}
+
+func TestAutoTuneController_RollbackCheckpointFenceEpochCompactionWarmRestoreCollapsesHoldToZero(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	compactionCfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               260,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3|rollback-fence-tombstone=1",
+		PolicyManifestRefreshEpoch: 2,
+		PolicyActivationHoldTicks:  2,
+	}
+
+	seed := 140
+	controller := newAutoTuneControllerWithSeed(100, compactionCfg, &seed)
+	require.NotNil(t, controller)
+	controller.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:                true,
+		Version:                 compactionCfg.PolicyVersion,
+		ManifestDigest:          compactionCfg.PolicyManifestDigest,
+		Epoch:                   compactionCfg.PolicyManifestRefreshEpoch,
+		ActivationHoldRemaining: 2,
+		FromWarmCheckpoint:      true,
+	})
+
+	batch, decision := controller.Resolve(highLag)
+	assert.Equal(t, seed+20, batch)
+	assert.Equal(t, "apply_increase", decision.Decision)
+	assert.Equal(t, 0, decision.PolicyActivationTicks)
 }
 
 func intPtr(v int) *int {

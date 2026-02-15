@@ -624,6 +624,22 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 		return
 	}
 
+	if incomingEpoch == previousEpoch {
+		if isDeterministicRollbackFenceEpochCompactionTransition(previousEpoch, previousDigest, incomingDigest) {
+			// Same-epoch rollback fence compaction is metadata ownership only and
+			// must not reopen policy holds from pre-compaction checkpoints.
+			a.policyManifestDigest = incomingDigest
+			a.policyEpoch = incomingEpoch
+			return
+		}
+		if isDeterministicRollbackFenceEpochCompactionTransition(previousEpoch, incomingDigest, previousDigest) {
+			// Reject stale pre-compaction rollback state once compacted ownership is verified.
+			a.policyManifestDigest = previousDigest
+			a.policyEpoch = previousEpoch
+			return
+		}
+	}
+
 	// Reject stale/ambiguous refresh: pin previously verified manifest lineage.
 	a.policyManifestDigest = previousDigest
 	a.policyEpoch = previousEpoch
@@ -637,6 +653,11 @@ func normalizeTransitionActivationHold(transition autoTunePolicyTransition) int 
 	remaining := maxInt(transition.ActivationHoldRemaining, 0)
 	if remaining == 0 || !transition.FromWarmCheckpoint {
 		return remaining
+	}
+	if isRollbackFenceEpochCompactionDigest(transition.Epoch, transition.ManifestDigest) {
+		// Compaction restores can replay pre-compaction hold payloads; collapse to
+		// deterministic no-hold because compaction is same-epoch metadata ownership.
+		return 0
 	}
 	if !isRollbackFenceTransition(transition.Epoch, transition.ManifestDigest) {
 		return remaining
@@ -662,6 +683,87 @@ func isRollbackFenceTransition(epoch int64, digest string) bool {
 		return false
 	}
 	return rollbackFromSeq > rollbackToSeq
+}
+
+func isRollbackFenceEpochCompactionDigest(epoch int64, digest string) bool {
+	if epoch < 0 {
+		return false
+	}
+	normalized := normalizePolicyManifestDigest(digest)
+	if !hasRollbackFenceEpochCompactionTombstone(normalized) {
+		return false
+	}
+	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(normalized)
+	if !ok {
+		return false
+	}
+	if rollbackToSeq != epoch {
+		return false
+	}
+	if rollbackFromSeq <= rollbackToSeq {
+		return false
+	}
+	if rollbackForwardSeq < rollbackFromSeq {
+		return false
+	}
+	return true
+}
+
+func isDeterministicRollbackFenceEpochCompactionTransition(
+	epoch int64,
+	sourceDigest string,
+	targetDigest string,
+) bool {
+	if epoch < 0 {
+		return false
+	}
+	sourceNormalized := normalizePolicyManifestDigest(sourceDigest)
+	targetNormalized := normalizePolicyManifestDigest(targetDigest)
+	if !hasRollbackFenceEpochCompactionTombstone(targetNormalized) {
+		return false
+	}
+	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
+		return false
+	}
+	if sourceToSeq != epoch || targetToSeq != epoch {
+		return false
+	}
+	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
+		return false
+	}
+	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
+		return false
+	}
+	return true
+}
+
+func hasRollbackFenceEpochCompactionTombstone(digest string) bool {
+	const (
+		tombstoneKey      = "rollback-fence-tombstone"
+		tombstoneValueKey = tombstoneKey + "="
+	)
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		switch {
+		case token == tombstoneKey:
+			return true
+		case strings.HasPrefix(token, tombstoneValueKey):
+			value := strings.TrimSpace(strings.TrimPrefix(token, tombstoneValueKey))
+			switch value {
+			case "1", "true", "yes", "on":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (a *autoTuneController) resolveOverrideState() autoTuneOverrideState {
