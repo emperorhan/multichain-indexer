@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -3507,4 +3508,524 @@ func TestProcessBatch_ErrorField(t *testing.T) {
 	assert.Equal(t, model.TxStatusFailed, result.Transactions[0].Status)
 	require.NotNil(t, result.Transactions[0].Err)
 	assert.Equal(t, "instruction error", *result.Transactions[0].Err)
+}
+
+func TestProcessBatch_DecoderVersionPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name           string
+		chain          model.Chain
+		network        model.Network
+		address        string
+		signature      string
+		expectedTxHash string
+		buildLegacy    func() *sidecarv1.TransactionResult
+		buildUpgraded  func() *sidecarv1.TransactionResult
+	}
+
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	testCases := []testCase{
+		{
+			name:           "solana-devnet",
+			chain:          model.ChainSolana,
+			network:        model.NetworkDevnet,
+			address:        "sol-decoder-owner",
+			signature:      "sol-decoder-transition-1",
+			expectedTxHash: "sol-decoder-transition-1",
+			buildLegacy: func() *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      "sol-decoder-transition-1",
+					BlockCursor: 8101,
+					FeeAmount:   "1000",
+					FeePayer:    "sol-decoder-owner",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "legacy_transfer",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-decoder-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-10",
+							CounterpartyAddress:   "sol-counterparty-1",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"decoder_version": "solana-decoder-v0",
+							},
+						},
+					},
+				}
+			},
+			buildUpgraded: func() *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      "sol-decoder-transition-1",
+					BlockCursor: 8101,
+					FeeAmount:   "1000",
+					FeePayer:    "sol-decoder-owner",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 7,
+							InnerInstructionIndex: 5,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "upgraded_transfer",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-decoder-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-10",
+							CounterpartyAddress:   "sol-counterparty-1",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"event_path":      "outer:0|inner:-1",
+								"decoder_version": "solana-decoder-v1",
+								"schema_version":  "v2",
+							},
+						},
+					},
+				}
+			},
+		},
+		{
+			name:           "base-sepolia",
+			chain:          model.ChainBase,
+			network:        model.NetworkSepolia,
+			address:        "0xABCD000000000000000000000000000000000001",
+			signature:      "A0B1C2D4",
+			expectedTxHash: "0xa0b1c2d4",
+			buildLegacy: func() *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      "A0B1C2D4",
+					BlockCursor: 9101,
+					FeeAmount:   "1000",
+					FeePayer:    "0xABCD000000000000000000000000000000000001",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "legacy_erc20_transfer",
+							ProgramId:             "0xABCDEF0000000000000000000000000000000000",
+							Address:               "0xABCD000000000000000000000000000000000001",
+							ContractAddress:       "0xABCDEF0000000000000000000000000000000000",
+							Delta:                 "-25",
+							CounterpartyAddress:   "0xDCBA000000000000000000000000000000000001",
+							TokenSymbol:           "",
+							TokenName:             "",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"log_index":       "12",
+								"decoder_version": "base-decoder-v0",
+							},
+						},
+					},
+				}
+			},
+			buildUpgraded: func() *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      "0xa0b1c2d4",
+					BlockCursor: 9101,
+					FeeAmount:   "1000",
+					FeePayer:    "0xabcd000000000000000000000000000000000001",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 14,
+							InnerInstructionIndex: 2,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "upgraded_erc20_transfer",
+							ProgramId:             "0xabcdef0000000000000000000000000000000000",
+							Address:               "0xabcd000000000000000000000000000000000001",
+							ContractAddress:       "0xabcdef0000000000000000000000000000000000",
+							Delta:                 "-25",
+							CounterpartyAddress:   "0xdcba000000000000000000000000000000000001",
+							TokenSymbol:           "",
+							TokenName:             "",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"event_path":      "log:12",
+								"base_event_path": "log:12",
+								"log_index":       "12",
+								"decoder_version": "base-decoder-v1",
+								"schema_version":  "v2",
+							},
+						},
+					},
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+			normalizedCh := make(chan event.NormalizedBatch, 4)
+			n := &Normalizer{
+				sidecarTimeout: 30 * time.Second,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			batch := event.RawBatch{
+				Chain:   tc.chain,
+				Network: tc.network,
+				Address: tc.address,
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":"decoder-transition"}`),
+				},
+				Signatures: []event.SignatureInfo{
+					{Hash: tc.signature, Sequence: 101},
+				},
+			}
+
+			responses := []*sidecarv1.DecodeSolanaTransactionBatchResponse{
+				{Results: []*sidecarv1.TransactionResult{tc.buildLegacy()}},
+				{Results: []*sidecarv1.TransactionResult{tc.buildUpgraded()}},
+				{Results: []*sidecarv1.TransactionResult{tc.buildLegacy(), tc.buildUpgraded()}},
+				{Results: []*sidecarv1.TransactionResult{tc.buildUpgraded(), tc.buildLegacy()}},
+			}
+
+			call := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(len(responses)).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					resp := responses[call]
+					call++
+					return resp, nil
+				})
+
+			outputs := make([]event.NormalizedBatch, 0, len(responses))
+			for range responses {
+				require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+				outputs = append(outputs, <-normalizedCh)
+			}
+
+			legacyOnly := outputs[0]
+			upgradedOnly := outputs[1]
+			mixedLegacyFirst := outputs[2]
+			mixedUpgradedFirst := outputs[3]
+
+			require.Len(t, legacyOnly.Transactions, 1)
+			require.Len(t, upgradedOnly.Transactions, 1)
+			require.Len(t, mixedLegacyFirst.Transactions, 1)
+			require.Len(t, mixedUpgradedFirst.Transactions, 1)
+			assert.Equal(t, tc.expectedTxHash, legacyOnly.Transactions[0].TxHash)
+			assert.Equal(t, tc.expectedTxHash, upgradedOnly.Transactions[0].TxHash)
+			assert.Equal(t, tc.expectedTxHash, mixedLegacyFirst.Transactions[0].TxHash)
+			assert.Equal(t, tc.expectedTxHash, mixedUpgradedFirst.Transactions[0].TxHash)
+
+			assert.Equal(t, orderedCanonicalTuples(legacyOnly), orderedCanonicalTuples(upgradedOnly))
+			assert.Equal(t, orderedCanonicalTuples(upgradedOnly), orderedCanonicalTuples(mixedLegacyFirst))
+			assert.Equal(t, orderedCanonicalTuples(mixedLegacyFirst), orderedCanonicalTuples(mixedUpgradedFirst))
+
+			assertNoDuplicateCanonicalIDs(t, legacyOnly)
+			assertNoDuplicateCanonicalIDs(t, upgradedOnly)
+			assertNoDuplicateCanonicalIDs(t, mixedLegacyFirst)
+			assertNoDuplicateCanonicalIDs(t, mixedUpgradedFirst)
+		})
+	}
+}
+
+func TestProcessBatch_DecoderVersionTransitionReplayResumeIdempotentAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		address         string
+		firstSig        string
+		secondSig       string
+		firstSeq        int64
+		secondSeq       int64
+		expectedCursor  string
+		buildLegacyTx   func(signature string, sequence int64) *sidecarv1.TransactionResult
+		buildUpgradedTx func(signature string, sequence int64) *sidecarv1.TransactionResult
+	}
+
+	canonicalEventIDSet := func(batch event.NormalizedBatch) map[string]struct{} {
+		out := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				out[be.EventID] = struct{}{}
+			}
+		}
+		return out
+	}
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	testCases := []testCase{
+		{
+			name:           "solana-devnet",
+			chain:          model.ChainSolana,
+			network:        model.NetworkDevnet,
+			address:        "sol-resume-owner",
+			firstSig:       "sol-resume-1",
+			secondSig:      "sol-resume-2",
+			firstSeq:       1201,
+			secondSeq:      1202,
+			expectedCursor: "sol-resume-2",
+			buildLegacyTx: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					FeeAmount:   "500",
+					FeePayer:    "sol-resume-owner",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "legacy_transfer",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-resume-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-3",
+							CounterpartyAddress:   "sol-resume-counterparty",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"decoder_version": "solana-decoder-v0",
+							},
+						},
+					},
+				}
+			},
+			buildUpgradedTx: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					FeeAmount:   "500",
+					FeePayer:    "sol-resume-owner",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 5,
+							InnerInstructionIndex: 4,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "upgraded_transfer",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-resume-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-3",
+							CounterpartyAddress:   "sol-resume-counterparty",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"event_path":      "outer:0|inner:-1",
+								"decoder_version": "solana-decoder-v1",
+							},
+						},
+					},
+				}
+			},
+		},
+		{
+			name:           "base-sepolia",
+			chain:          model.ChainBase,
+			network:        model.NetworkSepolia,
+			address:        "0xABCD0000000000000000000000000000000000AA",
+			firstSig:       "ABCD1201",
+			secondSig:      "ABCD1202",
+			firstSeq:       2201,
+			secondSeq:      2202,
+			expectedCursor: "0xabcd1202",
+			buildLegacyTx: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					FeeAmount:   "750",
+					FeePayer:    "0xABCD0000000000000000000000000000000000AA",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "legacy_erc20_transfer",
+							ProgramId:             "0xABCDEF00000000000000000000000000000000AA",
+							Address:               "0xABCD0000000000000000000000000000000000AA",
+							ContractAddress:       "0xABCDEF00000000000000000000000000000000AA",
+							Delta:                 "-7",
+							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000AA",
+							TokenSymbol:           "",
+							TokenName:             "",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"log_index":       "33",
+								"decoder_version": "base-decoder-v0",
+							},
+						},
+					},
+				}
+			},
+			buildUpgradedTx: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      "0x" + strings.ToLower(signature),
+					BlockCursor: sequence,
+					FeeAmount:   "750",
+					FeePayer:    "0xabcd0000000000000000000000000000000000aa",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 20,
+							InnerInstructionIndex: 3,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "upgraded_erc20_transfer",
+							ProgramId:             "0xabcdef00000000000000000000000000000000aa",
+							Address:               "0xabcd0000000000000000000000000000000000aa",
+							ContractAddress:       "0xabcdef00000000000000000000000000000000aa",
+							Delta:                 "-7",
+							CounterpartyAddress:   "0xdcba0000000000000000000000000000000000aa",
+							TokenSymbol:           "",
+							TokenName:             "",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"event_path":      "log:33",
+								"base_event_path": "log:33",
+								"log_index":       "33",
+								"decoder_version": "base-decoder-v1",
+							},
+						},
+					},
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+			normalizedCh := make(chan event.NormalizedBatch, 3)
+			n := &Normalizer{
+				sidecarTimeout: 30 * time.Second,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			batch := event.RawBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorValue:    strPtr("prior"),
+				PreviousCursorSequence: tc.firstSeq - 1,
+				NewCursorValue:         strPtr(tc.secondSig),
+				NewCursorSequence:      tc.secondSeq,
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":"one"}`),
+					json.RawMessage(`{"tx":"two"}`),
+				},
+				Signatures: []event.SignatureInfo{
+					{Hash: tc.firstSig, Sequence: tc.firstSeq},
+					{Hash: tc.secondSig, Sequence: tc.secondSeq},
+				},
+			}
+
+			responses := []*sidecarv1.DecodeSolanaTransactionBatchResponse{
+				{
+					Results: []*sidecarv1.TransactionResult{
+						tc.buildUpgradedTx(tc.firstSig, tc.firstSeq),
+						tc.buildUpgradedTx(tc.secondSig, tc.secondSeq),
+					},
+				},
+				{
+					Results: []*sidecarv1.TransactionResult{
+						tc.buildLegacyTx(tc.firstSig, tc.firstSeq),
+						tc.buildUpgradedTx(tc.secondSig, tc.secondSeq),
+					},
+				},
+				{
+					Results: []*sidecarv1.TransactionResult{
+						tc.buildUpgradedTx(tc.firstSig, tc.firstSeq),
+						tc.buildLegacyTx(tc.secondSig, tc.secondSeq),
+					},
+				},
+			}
+
+			call := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(len(responses)).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					resp := responses[call]
+					call++
+					return resp, nil
+				})
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			baseline := <-normalizedCh
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			firstReplay := <-normalizedCh
+
+			replayBatch := batch
+			replayBatch.PreviousCursorValue = firstReplay.NewCursorValue
+			replayBatch.PreviousCursorSequence = firstReplay.NewCursorSequence
+			replayBatch.NewCursorValue = firstReplay.NewCursorValue
+			replayBatch.NewCursorSequence = firstReplay.NewCursorSequence
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, replayBatch))
+			secondReplay := <-normalizedCh
+
+			assert.Equal(t, orderedCanonicalTuples(baseline), orderedCanonicalTuples(firstReplay))
+			assert.Equal(t, orderedCanonicalTuples(firstReplay), orderedCanonicalTuples(secondReplay))
+			assert.Equal(t, canonicalEventIDSet(baseline), canonicalEventIDSet(firstReplay))
+			assert.Equal(t, canonicalEventIDSet(firstReplay), canonicalEventIDSet(secondReplay))
+
+			assertNoDuplicateCanonicalIDs(t, baseline)
+			assertNoDuplicateCanonicalIDs(t, firstReplay)
+			assertNoDuplicateCanonicalIDs(t, secondReplay)
+
+			require.NotNil(t, firstReplay.NewCursorValue)
+			require.NotNil(t, secondReplay.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *firstReplay.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *secondReplay.NewCursorValue)
+			assert.GreaterOrEqual(t, firstReplay.NewCursorSequence, firstReplay.PreviousCursorSequence)
+			assert.GreaterOrEqual(t, secondReplay.NewCursorSequence, secondReplay.PreviousCursorSequence)
+			assert.GreaterOrEqual(t, secondReplay.NewCursorSequence, firstReplay.NewCursorSequence)
+		})
+	}
 }

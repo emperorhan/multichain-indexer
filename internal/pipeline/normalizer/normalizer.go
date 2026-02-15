@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -598,6 +599,16 @@ func buildBaseFeeBalanceEvent(
 }
 
 func resolveBaseFeeEventPath(metadata map[string]string) string {
+	if p := resolveBaseMetadataEventPath(metadata); p != "" {
+		return p
+	}
+	return "log:0"
+}
+
+func resolveBaseMetadataEventPath(metadata map[string]string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
 	if p := metadata["event_path"]; p != "" {
 		return p
 	}
@@ -613,7 +624,7 @@ func resolveBaseFeeEventPath(metadata map[string]string) string {
 	if p := metadata["base_event_path"]; p != "" {
 		return p
 	}
-	return "log:0"
+	return ""
 }
 
 func shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount string) bool {
@@ -727,8 +738,20 @@ func canonicalizeBaseBalanceEvents(
 			be.EventAction = string(be.EventCategory)
 			be.Delta = canonicalFeeDelta(be.Delta)
 		}
+		if metadataPath := resolveBaseMetadataEventPath(metadataFromChainData(be.ChainData)); metadataPath != "" {
+			be.EventPath = metadataPath
+		}
+		be.EventPath = strings.TrimSpace(be.EventPath)
 		if be.EventPath == "" {
 			be.EventPath = balanceEventPath(int32(be.OuterInstructionIndex), int32(be.InnerInstructionIndex))
+		}
+
+		be.Address = canonicalizeAddressIdentity(chain, be.Address)
+		be.CounterpartyAddress = canonicalizeAddressIdentity(chain, be.CounterpartyAddress)
+		be.ContractAddress = canonicalizeAddressIdentity(chain, be.ContractAddress)
+		be.AssetID = canonicalizeAddressIdentity(chain, be.AssetID)
+		if be.AssetID == "" {
+			be.AssetID = be.ContractAddress
 		}
 
 		assetType := mapTokenTypeToAssetType(be.TokenType)
@@ -736,7 +759,7 @@ func canonicalizeBaseBalanceEvents(
 			assetType = "fee"
 		}
 
-		be.ActorAddress = be.Address
+		be.ActorAddress = canonicalizeAddressIdentity(chain, be.Address)
 		be.AssetType = assetType
 		be.EventPathType = "base_log"
 		be.FinalityState = finalityState
@@ -871,6 +894,16 @@ func canonicalizeSolanaBalanceEvents(
 		Address          string
 		AssetID          string
 		Category         model.EventCategory
+	}
+
+	for idx := range normalizedEvents {
+		if normalizedEvents[idx].EventCategory == model.EventCategoryFee {
+			continue
+		}
+		if outer, inner, ok := solanaInstructionPathFromChainData(normalizedEvents[idx].ChainData); ok {
+			normalizedEvents[idx].OuterInstructionIndex = outer
+			normalizedEvents[idx].InnerInstructionIndex = inner
+		}
 	}
 
 	outerHasOwner := make(map[solanaInstructionOwnerKey]struct{})
@@ -1095,6 +1128,85 @@ func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
 	return trimmed
 }
 
+func canonicalizeAddressIdentity(chainID model.Chain, value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if !isEVMChain(chainID) {
+		return trimmed
+	}
+	identity := canonicalSignatureIdentity(chainID, trimmed)
+	if identity == "" {
+		return trimmed
+	}
+	return identity
+}
+
+func metadataFromChainData(chainData json.RawMessage) map[string]string {
+	metadata := map[string]string{}
+	if len(chainData) == 0 || string(chainData) == "null" {
+		return metadata
+	}
+	_ = json.Unmarshal(chainData, &metadata)
+	return metadata
+}
+
+func solanaInstructionPathFromChainData(chainData json.RawMessage) (int, int, bool) {
+	metadata := metadataFromChainData(chainData)
+	if len(metadata) == 0 {
+		return 0, 0, false
+	}
+	for _, key := range []string{"event_path", "instruction_path", "solana_event_path"} {
+		if outer, inner, ok := parseSolanaInstructionPath(metadata[key]); ok {
+			return outer, inner, true
+		}
+	}
+	return 0, 0, false
+}
+
+func parseSolanaInstructionPath(path string) (int, int, bool) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return 0, 0, false
+	}
+	compact := strings.ReplaceAll(strings.ToLower(trimmed), " ", "")
+	parts := strings.Split(compact, "|")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+
+	outer, okOuter := parsePathIndexPart(parts[0], "outer")
+	inner, okInner := parsePathIndexPart(parts[1], "inner")
+	if !okOuter || !okInner {
+		return 0, 0, false
+	}
+	return outer, inner, true
+}
+
+func parsePathIndexPart(part, key string) (int, bool) {
+	if part == "" {
+		return 0, false
+	}
+	var raw string
+	switch {
+	case strings.HasPrefix(part, key+":"):
+		raw = strings.TrimPrefix(part, key+":")
+	case strings.HasPrefix(part, key+"="):
+		raw = strings.TrimPrefix(part, key+"=")
+	default:
+		return 0, false
+	}
+	if raw == "" {
+		return 0, false
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
+}
+
 func shouldReplaceDecodedResult(chainID model.Chain, existing, incoming *sidecarv1.TransactionResult) bool {
 	if existing == nil {
 		return incoming != nil
@@ -1137,7 +1249,104 @@ func shouldReplaceDecodedResult(chainID model.Chain, existing, incoming *sidecar
 
 	incomingHash := canonicalSignatureIdentity(chainID, incoming.TxHash)
 	existingHash := canonicalSignatureIdentity(chainID, existing.TxHash)
-	return incomingHash < existingHash
+	if incomingHash != existingHash {
+		return incomingHash < existingHash
+	}
+
+	existingScore := decodedResultSelectionScore(chainID, existing)
+	incomingScore := decodedResultSelectionScore(chainID, incoming)
+	if existingScore.eventCount != incomingScore.eventCount {
+		return incomingScore.eventCount > existingScore.eventCount
+	}
+	if existingScore.pathHintCount != incomingScore.pathHintCount {
+		return incomingScore.pathHintCount > existingScore.pathHintCount
+	}
+	if existingScore.metadataCount != incomingScore.metadataCount {
+		return incomingScore.metadataCount > existingScore.metadataCount
+	}
+	if existingScore.fingerprint != incomingScore.fingerprint {
+		return incomingScore.fingerprint < existingScore.fingerprint
+	}
+	return false
+}
+
+type decodedResultScore struct {
+	eventCount    int
+	metadataCount int
+	pathHintCount int
+	fingerprint   string
+}
+
+func decodedResultSelectionScore(chainID model.Chain, result *sidecarv1.TransactionResult) decodedResultScore {
+	if result == nil {
+		return decodedResultScore{}
+	}
+	score := decodedResultScore{}
+	eventFingerprints := make([]string, 0, len(result.BalanceEvents))
+	for _, be := range result.BalanceEvents {
+		if be == nil {
+			continue
+		}
+		score.eventCount++
+		score.metadataCount += len(be.Metadata)
+		if resolveBaseMetadataEventPath(be.Metadata) != "" || hasSolanaInstructionPathHint(be.Metadata) {
+			score.pathHintCount++
+		}
+		eventFingerprints = append(eventFingerprints, decodedEventFingerprint(chainID, be))
+	}
+	sort.Strings(eventFingerprints)
+	score.fingerprint = strings.Join(eventFingerprints, ";")
+	return score
+}
+
+func hasSolanaInstructionPathHint(metadata map[string]string) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+	for _, key := range []string{"event_path", "instruction_path", "solana_event_path"} {
+		if _, _, ok := parseSolanaInstructionPath(metadata[key]); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func decodedEventFingerprint(chainID model.Chain, be *sidecarv1.BalanceEventInfo) string {
+	if be == nil {
+		return ""
+	}
+	address := canonicalizeAddressIdentity(chainID, be.Address)
+	assetID := canonicalizeAddressIdentity(chainID, be.ContractAddress)
+	if assetID == "" {
+		assetID = strings.TrimSpace(be.ContractAddress)
+	}
+	path := decodedEventPath(chainID, be)
+	category := strings.ToUpper(strings.TrimSpace(be.EventCategory))
+	delta := strings.TrimSpace(be.Delta)
+	if strings.EqualFold(category, string(model.EventCategoryFee)) ||
+		strings.EqualFold(category, string(model.EventCategoryFeeExecutionL2)) ||
+		strings.EqualFold(category, string(model.EventCategoryFeeDataL1)) {
+		delta = canonicalFeeDelta(delta)
+	}
+	return fmt.Sprintf("%s|%s|%s|%s", path, address, assetID, delta)
+}
+
+func decodedEventPath(chainID model.Chain, be *sidecarv1.BalanceEventInfo) string {
+	if be == nil {
+		return ""
+	}
+	if isEVMChain(chainID) {
+		if metadataPath := resolveBaseMetadataEventPath(be.Metadata); metadataPath != "" {
+			return metadataPath
+		}
+	} else {
+		for _, key := range []string{"event_path", "instruction_path", "solana_event_path"} {
+			if outer, inner, ok := parseSolanaInstructionPath(be.Metadata[key]); ok {
+				return balanceEventPath(int32(outer), int32(inner))
+			}
+		}
+	}
+	return balanceEventPath(be.OuterInstructionIndex, be.InnerInstructionIndex)
 }
 
 func sortedSignatureKeys(values map[string]struct{}) []string {

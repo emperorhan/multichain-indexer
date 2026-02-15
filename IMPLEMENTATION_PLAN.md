@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -65,6 +65,8 @@ Execution queue (dependency-ordered):
 54. `I-0205` (`M29-S2`) QA counterexample gate for live/backfill overlap determinism + invariant safety
 55. `I-0209` (`M30-S1`) decoder-version transition canonical convergence determinism hardening
 56. `I-0210` (`M30-S2`) QA counterexample gate for decoder-version transition determinism + invariant safety
+57. `I-0214` (`M31-S1`) incremental decode-coverage canonical convergence determinism hardening
+58. `I-0215` (`M31-S2`) QA counterexample gate for incremental decode-coverage determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1058,7 +1060,7 @@ Eliminate duplicate/missing-event risk when equivalent logical events are observ
 - Gate: incorrect live/backfill overlap precedence can suppress valid backfill-only corrections or re-emit already-committed logical events.
 - Fallback: keep deterministic conservative overlap reconciliation with explicit source-conflict diagnostics, fail fast on unresolved overlap ambiguity, and replay from last-safe cursor until overlap contracts are extended.
 
-### M30. Decoder-Version Transition Canonical Convergence Determinism Reliability Tranche C0024 (P0, Next)
+### M30. Decoder-Version Transition Canonical Convergence Determinism Reliability Tranche C0024 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when decoder output shape or metadata fidelity changes across decoder-version upgrades, so equivalent logical events converge to one deterministic canonical output set during mixed-version live/replay/backfill operation.
@@ -1093,6 +1095,42 @@ Eliminate duplicate/missing-event risk when decoder output shape or metadata fid
 #### Risk Gate + Fallback
 - Gate: over-aggressive cross-version equivalence matching can collapse truly distinct logical events, while under-constrained matching can re-emit duplicate canonical events across upgrade boundaries.
 - Fallback: keep deterministic conservative version-bridge reconciliation with explicit version-conflict diagnostics, fail fast on unresolved equivalence ambiguity, and replay from last-safe cursor until decoder transition contracts are extended.
+
+### M31. Incremental Decode-Coverage Canonical Convergence Determinism Reliability Tranche C0025 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when decoder coverage evolves from partial extraction to enriched extraction for the same transaction/signature, so all economically meaningful asset-volatility events are indexed exactly once under mixed live/replay/backfill operation.
+
+#### Entry Gate
+- `M30` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M31-S1` (`I-0214`): implement deterministic incremental decode-coverage reconciliation semantics so sparse-vs-enriched decode permutations cannot induce duplicate canonical IDs, missing logical events, or signed-delta/fee-event drift.
+2. `M31-S2` (`I-0215`): execute QA counterexample gate for incremental decode-coverage determinism and invariant evidence across mandatory chains.
+
+#### Definition Of Done
+1. Equivalent logical ranges processed with sparse decoder outputs, enriched decoder outputs, and mixed sparse/enriched interleaving converge to one canonical tuple output set on both mandatory chains.
+2. Incremental coverage reconciliation emits newly discoverable logical events exactly once while preserving canonical identity stability for already-materialized logical events.
+3. Replay/resume from incremental-coverage boundaries remains idempotent with `0` missing logical events, chain-scoped cursor monotonicity, and no balance double-apply side effects.
+4. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject equivalent Solana/Base logical ranges under sparse, enriched, and mixed decode-coverage permutations and assert one canonical output set against enriched-baseline expectations.
+2. Deterministic tests inject incremental-coverage replay permutations and assert `0` duplicate canonical IDs for already-emitted logical events plus deterministic one-time emission for newly discovered logical events.
+3. Deterministic replay/resume tests from incremental-coverage boundaries assert chain-scoped cursor monotonicity, signed-delta conservation, and explicit fee-event coexistence with `0` balance drift.
+4. QA executes required validation commands plus incremental-coverage counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across incremental decode-coverage permutation fixtures on mandatory chains.
+2. `0` missing logical events when comparing sparse/enriched mixed fixtures against deterministic enriched baseline fixtures.
+3. `0` cursor monotonicity regressions across incremental decode-coverage replay/resume fixtures.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-aggressive sparse-vs-enriched equivalence matching can suppress legitimate newly discovered logical events, while under-constrained matching can re-emit already-materialized events as duplicates.
+- Fallback: keep deterministic conservative coverage-lineage reconciliation with explicit coverage-conflict diagnostics, fail fast on unresolved sparse/enriched ambiguity, and replay from last-safe cursor until incremental-coverage contracts are extended.
 
 ## Decision Register (Major + Fallback)
 
@@ -1165,10 +1203,12 @@ Completed milestones/slices:
 52. `I-0200`
 53. `I-0204`
 54. `I-0205`
+55. `I-0209`
+56. `I-0210`
 
 Active downstream queue from this plan:
-1. `I-0209`
-2. `I-0210`
+1. `I-0214`
+2. `I-0215`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -1183,3 +1223,4 @@ Superseded issues:
 - `I-0197` and `I-0198` are superseded by `I-0199` and `I-0200` to replace generic cycle placeholders with executable deferred sidecar-recovery backfill determinism slices.
 - `I-0202` and `I-0203` are superseded by `I-0204` and `I-0205` to replace generic cycle placeholders with executable live/backfill overlap canonical convergence determinism slices.
 - `I-0207` and `I-0208` are superseded by `I-0209` and `I-0210` to replace generic cycle placeholders with executable decoder-version transition canonical convergence determinism slices.
+- `I-0212` and `I-0213` are superseded by `I-0214` and `I-0215` to replace generic cycle placeholders with executable incremental decode-coverage canonical convergence determinism slices.
