@@ -9637,6 +9637,360 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostSettleWin
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+type autoTunePostLateSpilloverRejoinWindowFixtures struct {
+	segment1Cfg                          AutoTuneConfig
+	settleWindow2Cfg                     AutoTuneConfig
+	spillover2Cfg                        AutoTuneConfig
+	rejoin1Cfg                           AutoTuneConfig
+	rejoin2Cfg                           AutoTuneConfig
+	segment3Cfg                          AutoTuneConfig
+	spilloverBaselineSchedule            map[int]AutoTuneConfig
+	rejoinReplaySchedule                 map[int]AutoTuneConfig
+	rollbackReforwardAfterRejoinSchedule map[int]AutoTuneConfig
+}
+
+func buildAutoTunePostLateSpilloverRejoinWindowFixtures() autoTunePostLateSpilloverRejoinWindowFixtures {
+	base := buildAutoTunePostSettleWindowLateSpilloverFixtures()
+
+	rejoin1Cfg := base.spillover2Cfg
+	rejoin1Cfg.PolicyManifestDigest = base.spillover2Cfg.PolicyManifestDigest + "|rollback-fence-spillover-rejoin-epoch=1"
+	rejoin2Cfg := base.spillover2Cfg
+	rejoin2Cfg.PolicyManifestDigest = base.spillover2Cfg.PolicyManifestDigest + "|rollback-fence-spillover-rejoin-epoch=2"
+	ambiguousRejoinCfg := base.settleWindow2Cfg
+	ambiguousRejoinCfg.PolicyManifestDigest = base.settleWindow2Cfg.PolicyManifestDigest + "|rollback-fence-spillover-rejoin-epoch=3"
+	stalePreRejoinCfg := base.spillover2Cfg
+
+	spilloverBaselineSchedule := cloneAutoTunePolicySchedule(base.spilloverReplaySchedule)
+	for i := 34; i <= 42; i++ {
+		spilloverBaselineSchedule[i] = base.spillover2Cfg
+	}
+
+	rejoinReplaySchedule := cloneAutoTunePolicySchedule(spilloverBaselineSchedule)
+	rejoinReplaySchedule[34] = rejoin1Cfg
+	rejoinReplaySchedule[35] = rejoin2Cfg
+	for i := 36; i <= 42; i++ {
+		rejoinReplaySchedule[i] = rejoin2Cfg
+	}
+
+	rollbackReforwardAfterRejoinSchedule := cloneAutoTunePolicySchedule(spilloverBaselineSchedule)
+	rollbackReforwardAfterRejoinSchedule[34] = rejoin1Cfg
+	rollbackReforwardAfterRejoinSchedule[35] = rejoin2Cfg
+	rollbackReforwardAfterRejoinSchedule[36] = rejoin1Cfg
+	rollbackReforwardAfterRejoinSchedule[37] = ambiguousRejoinCfg
+	rollbackReforwardAfterRejoinSchedule[38] = stalePreRejoinCfg
+	rollbackReforwardAfterRejoinSchedule[39] = base.segment3Cfg
+	rollbackReforwardAfterRejoinSchedule[40] = base.segment3Cfg
+	rollbackReforwardAfterRejoinSchedule[41] = base.segment3Cfg
+	rollbackReforwardAfterRejoinSchedule[42] = base.segment3Cfg
+
+	return autoTunePostLateSpilloverRejoinWindowFixtures{
+		segment1Cfg:                          base.segment1Cfg,
+		settleWindow2Cfg:                     base.settleWindow2Cfg,
+		spillover2Cfg:                        base.spillover2Cfg,
+		rejoin1Cfg:                           rejoin1Cfg,
+		rejoin2Cfg:                           rejoin2Cfg,
+		segment3Cfg:                          base.segment3Cfg,
+		spilloverBaselineSchedule:            spilloverBaselineSchedule,
+		rejoinReplaySchedule:                 rejoinReplaySchedule,
+		rollbackReforwardAfterRejoinSchedule: rollbackReforwardAfterRejoinSchedule,
+	}
+}
+
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePostLateSpilloverRejoinWindowPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp73",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcdefff73",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestrejoin0000000000000000000",
+		},
+	}
+
+	fixture := buildAutoTunePostLateSpilloverRejoinWindowFixtures()
+	const tickCount = 43
+	heads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		heads = append(heads, 260+int64(i))
+	}
+
+	permutations := []struct {
+		name                  string
+		policySchedule        map[int]AutoTuneConfig
+		staleFenceCaptureTick map[int]struct{}
+		crashpoints           []autoTuneCheckpointFenceCrashpoint
+		assertControlParity   bool
+	}{
+		{
+			name:                "rejoin-window-replay",
+			policySchedule:      fixture.rejoinReplaySchedule,
+			assertControlParity: false,
+		},
+		{
+			name:           "crash-during-rejoin-window-restart",
+			policySchedule: fixture.rejoinReplaySchedule,
+			staleFenceCaptureTick: map[int]struct{}{
+				34: {},
+			},
+			crashpoints: []autoTuneCheckpointFenceCrashpoint{
+				{Tick: 35, UseStaleFenceState: true},
+			},
+			assertControlParity: false,
+		},
+		{
+			name:                "rollback-reforward-after-rejoin-window",
+			policySchedule:      fixture.rollbackReforwardAfterRejoinSchedule,
+			assertControlParity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				fixture.segment1Cfg,
+				fixture.spilloverBaselineSchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						fixture.segment1Cfg,
+						permutation.policySchedule,
+						permutation.staleFenceCaptureTick,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "post-late-spillover rejoin-window permutations must converge to deterministic canonical tuples")
+					if permutation.assertControlParity {
+						assert.Equal(t, baselineBatches, candidateBatches, "post-late-spillover rejoin-window permutations must preserve deterministic control decisions")
+					}
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "post-late-spillover rejoin-window baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLateSpilloverRejoinWindowDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	fixture := buildAutoTunePostLateSpilloverRejoinWindowFixtures()
+
+	const tickCount = 43
+	healthyBaseAddress := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebb73"
+	healthyBTCAddress := "tb1qmanifestrejoinhealthy0000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp74"
+
+	healthyHeads := make([]int64, 0, tickCount)
+	laggingHeads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		healthyHeads = append(healthyHeads, 130+int64(i))
+		laggingHeads = append(laggingHeads, 260+int64(i))
+	}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+		fixture.spilloverBaselineSchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := fixture.segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{34: {}}
+	crashpoints := map[int]bool{35: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := fixture.rollbackReforwardAfterRejoinSchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 33 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.spillover2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-late-spillover baseline must converge to latest spillover ownership before rejoin progression")
+				assert.Equal(t, fixture.spillover2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 34 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.rejoin1Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rejoin-window replay must adopt first rejoin epoch deterministically")
+				assert.Equal(t, fixture.rejoin1Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 35 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rejoin-window replay must advance to deterministic second rejoin ownership")
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 36 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "lower rejoin-window epochs must remain pinned behind latest rejoin ownership")
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 37 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rejoin-window markers must remain quarantined until spillover ownership is explicit")
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 38 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-rejoin stale pre-rejoin markers must not reclaim ownership")
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 39 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rollback+re-forward after rejoin-window must deterministically promote forward lineage")
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "rejoin-window crashpoint requires captured pre-restart state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-late-spillover rejoin-window transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-late-spillover rejoin-window transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-late-spillover rejoin-window transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-late-spillover rejoin-window transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-late-spillover rejoin-window replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-late-spillover rejoin-window replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-late-spillover rejoin-window replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-late-spillover rejoin-window replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
