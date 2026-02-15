@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -57,6 +57,8 @@ Execution queue (dependency-ordered):
 46. `I-0189` (`M25-S2`) QA counterexample gate for batch-partition replay determinism + invariant safety
 47. `I-0191` (`M26-S1`) moving-head fetch cutoff determinism hardening
 48. `I-0192` (`M26-S2`) QA counterexample gate for moving-head fetch determinism + invariant safety
+49. `I-0194` (`M27-S1`) volatility-burst normalizer canonical fold determinism hardening
+50. `I-0195` (`M27-S2`) QA counterexample gate for volatility-burst normalizer determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -906,7 +908,7 @@ Eliminate duplicate/missing-event risk when equivalent logical ranges are proces
 - Gate: incorrect partition-boundary identity reconciliation can either suppress valid events (over-dedupe) or duplicate seam events (under-dedupe).
 - Fallback: preserve deterministic fail-fast on unresolved seam-identity ambiguity, emit explicit boundary diagnostics, and replay from last-safe cursor until partition-boundary contracts are fully proven.
 
-### M26. Moving-Head Fetch Cutoff Determinism Reliability Tranche C0020 (P0, Next)
+### M26. Moving-Head Fetch Cutoff Determinism Reliability Tranche C0020 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when chain heads advance during fetch pagination, so each mandatory-chain tick processes a deterministic closed range and replay/resume converges to one canonical output and cursor progression.
@@ -941,6 +943,42 @@ Eliminate duplicate/missing-event risk when chain heads advance during fetch pag
 #### Risk Gate + Fallback
 - Gate: strict fetch-cutoff pinning can increase backlog/lag under rapid head growth or provider latency skew.
 - Fallback: keep deterministic cutoff pinning with bounded lag-window guardrails, emit explicit cutoff-lag diagnostics, and fail fast on unresolved head-boundary ambiguity until fetch-cutoff contracts are extended.
+
+### M27. Volatility-Burst Normalizer Canonical Fold Determinism Reliability Tranche C0021 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing signed-delta risk when high-volatility transactions emit dense multi-actor/multi-asset balance deltas, so equivalent logical inputs converge to one canonical event set with deterministic fee coverage and replay-safe cursor progression.
+
+#### Entry Gate
+- `M26` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M27-S1` (`I-0194`): implement deterministic volatility-burst canonical fold and event-path disambiguation semantics so decode/order variance cannot induce duplicate canonical IDs, missing logical events, or signed-delta drift.
+2. `M27-S2` (`I-0195`): execute QA counterexample gate for volatility-burst normalizer determinism and invariant evidence across mandatory chains.
+
+#### Definition Of Done
+1. Equivalent high-volatility logical inputs (inner-op reorder, repeated transfer legs, mixed fee+transfer deltas) converge to one canonical tuple output on both mandatory chains.
+2. Per-transaction actor/asset signed-delta conservation is preserved with deterministic explicit fee-event coexistence (Solana transaction fee and Base L2/L1 fee components where source fields exist), without duplicate canonical IDs.
+3. Replay/resume from volatility-burst boundaries remains idempotent with `0` duplicate canonical IDs, `0` missing logical events, and no balance double-apply side effects.
+4. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject high-volatility Solana/Base fixtures with operation-order and decode-order permutations and assert one canonical output set for equivalent logical ranges.
+2. Deterministic tests inject mixed fee+transfer same-transaction permutations and assert actor/asset signed-delta conservation plus explicit fee-event coverage expectations.
+3. Deterministic replay/resume tests from volatility-burst boundaries assert chain-scoped cursor monotonicity and `0` balance drift.
+4. QA executes required validation commands plus volatility-burst counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across volatility-burst permutation fixtures on mandatory chains.
+2. `0` signed-delta conservation violations across actor/asset transaction aggregates in volatility-burst fixtures.
+3. `0` cursor monotonicity regressions across volatility-burst replay/resume fixtures.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-aggressive fold/collapse logic can accidentally merge distinct logical events, while under-constrained fold boundaries can re-emit duplicate canonical events.
+- Fallback: keep deterministic conservative folding boundaries with explicit collision diagnostics, fail fast on unresolved fold ambiguity, and replay from last-safe cursor until fold contracts are extended.
 
 ## Decision Register (Major + Fallback)
 
@@ -1005,10 +1043,12 @@ Completed milestones/slices:
 44. `I-0184`
 45. `I-0188`
 46. `I-0189`
+47. `I-0191`
+48. `I-0192`
 
 Active downstream queue from this plan:
-1. `I-0191`
-2. `I-0192`
+1. `I-0194`
+2. `I-0195`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
