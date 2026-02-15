@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -113,6 +113,8 @@ Execution queue (dependency-ordered):
 102. `I-0309` (`M53-S2`) QA counterexample gate for auto-tune rollback checkpoint-fence epoch-compaction determinism + invariant safety
 103. `I-0313` (`M54-S1`) auto-tune policy-manifest rollback checkpoint-fence tombstone-expiry determinism hardening
 104. `I-0314` (`M54-S2`) QA counterexample gate for auto-tune rollback checkpoint-fence tombstone-expiry determinism + invariant safety
+105. `I-0318` (`M55-S1`) auto-tune policy-manifest rollback checkpoint-fence post-expiry late-marker quarantine determinism hardening
+106. `I-0319` (`M55-S2`) QA counterexample gate for auto-tune rollback checkpoint-fence post-expiry late-marker quarantine determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -2030,7 +2032,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when long-running rollb
 - Gate: epoch-compaction pruning can race with rollback fence replay markers and create non-deterministic stale-fence reactivation near restart boundaries.
 - Fallback: enforce deterministic fence-epoch tombstones with explicit compaction-lineage diagnostics, pin last verified rollback-safe compaction boundary on ambiguity, and fail fast on unresolved stale-fence ownership conflicts.
 
-### M54. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Tombstone-Expiry Determinism Tranche C0048 (P0, Next)
+### M54. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Tombstone-Expiry Determinism Tranche C0048 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when rollback checkpoint-fence tombstones are age-pruned after epoch compaction, so tombstone-retained baseline, tombstone-expiry sweep, crash-during-expiry restart, and rollback+re-forward after-expiry permutations converge to one deterministic canonical output set per chain.
@@ -2068,6 +2070,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when rollback checkpoin
 #### Risk Gate + Fallback
 - Gate: tombstone-expiry windows can race with late rollback replay markers and create non-deterministic post-expiry stale-fence ownership reactivation near restart boundaries.
 - Fallback: enforce deterministic minimum-retention expiry epochs with explicit tombstone-expiry lineage diagnostics, pin last verified rollback-safe pre-expiry boundary on ambiguity, and fail fast on unresolved post-expiry ownership conflicts.
+
+### M55. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Expiry Late-Marker Quarantine Determinism Tranche C0049 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when rollback markers arrive after tombstone expiry, so on-time marker baseline, late-marker quarantine, crash-during-quarantine restart, and rollback+re-forward after-quarantine-release permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M54` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M55-S1` (`I-0318`): harden deterministic rollback checkpoint-fence post-expiry late-marker quarantine reconciliation so delayed rollback markers cannot reopen stale ownership, re-emit canonical IDs, suppress valid logical events, or regress cursor monotonicity.
+2. `M55-S2` (`I-0319`): execute QA counterexample gate for rollback checkpoint-fence post-expiry late-marker quarantine determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under on-time marker baseline, late-marker quarantine, crash-during-quarantine restart, and rollback+re-forward after-quarantine-release permutations converge to one canonical tuple output set per chain.
+2. Post-expiry late-marker quarantine transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under rollback checkpoint-fence post-expiry late-marker replay/resume permutations.
+4. Replay/resume from rollback checkpoint-fence post-expiry late-marker quarantine boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject on-time marker baseline, late-marker quarantine, crash-during-quarantine restart, and rollback+re-forward after-quarantine-release permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain rollback checkpoint-fence post-expiry late-marker quarantine transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from rollback checkpoint-fence post-expiry late-marker quarantine boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus rollback checkpoint-fence post-expiry late-marker quarantine counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic on-time marker baseline, late-marker quarantine, crash-during-quarantine restart, and rollback+re-forward after-quarantine-release fixtures.
+2. `0` cross-chain control-coupling violations under one-chain rollback checkpoint-fence post-expiry late-marker quarantine counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under rollback checkpoint-fence post-expiry late-marker replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in rollback checkpoint-fence post-expiry late-marker quarantine fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: late rollback markers can arrive after expiry pruning and race with quarantine-release checkpoints, creating non-deterministic stale-ownership resurrection near restart boundaries.
+- Fallback: enforce deterministic late-marker quarantine epochs with explicit post-expiry lineage diagnostics, pin last verified rollback-safe pre-release boundary on ambiguity, and fail fast on unresolved post-expiry marker ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -2146,6 +2187,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when rollback checkpoin
 19. `DP-0101-S`: auto-tune policy-manifest rollback checkpoint-fence tombstone-expiry policy.
 - Preferred: deterministic chain-local tombstone-retention and expiry state machine with explicit expiry-epoch lineage markers, replay-stable post-expiry boundaries, and stale post-expiry ownership rejection.
 - Fallback: pin last verified rollback-safe pre-expiry boundary during expiry ambiguity, reject expiry windows with unresolved late rollback marker overlap, and resume expiry only after replay-safe boundary confirmation is proven.
+
+20. `DP-0101-T`: auto-tune policy-manifest rollback checkpoint-fence post-expiry late-marker quarantine policy.
+- Preferred: deterministic chain-local late-marker quarantine state machine with explicit post-expiry marker-hold epochs, replay-stable quarantine-release boundaries, and stale post-expiry marker ownership rejection.
+- Fallback: pin last verified rollback-safe pre-release boundary during late-marker ambiguity, reject quarantine-release windows with unresolved delayed marker overlap, and resume post-expiry marker release only after replay-safe boundary confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -2253,13 +2298,15 @@ Completed milestones/slices:
 101. `I-0306`
 102. `I-0308`
 103. `I-0309`
+104. `I-0313`
+105. `I-0314`
 
 Active downstream queue from this plan:
-1. `I-0313`
-2. `I-0314`
+1. `I-0318`
+2. `I-0319`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M54-S2`
+1. `TBD by next planner slice after M55-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -2289,3 +2336,4 @@ Superseded issues:
 - `I-0295` and `I-0296` are superseded by `I-0297` and `I-0298` to replace generic cycle placeholders with executable auto-tune policy-manifest rollback-lineage determinism slices.
 - `I-0303` and `I-0304` are superseded by `I-0305` and `I-0306` to replace generic cycle placeholders with executable auto-tune policy-manifest rollback checkpoint-fence determinism slices.
 - `I-0311` and `I-0312` are superseded by `I-0313` and `I-0314` to replace generic cycle placeholders with executable auto-tune policy-manifest rollback checkpoint-fence tombstone-expiry determinism slices.
+- `I-0316` and `I-0317` are superseded by `I-0318` and `I-0319` to replace generic cycle placeholders with executable post-expiry late-marker quarantine determinism slices.
