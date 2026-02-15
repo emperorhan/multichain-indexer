@@ -999,10 +999,44 @@ func parseRollbackFenceLateBridgeDrainWatermark(digest string) (int64, bool) {
 	return 0, false
 }
 
+func parseRollbackFenceLiveHeadWatermark(digest string) (int64, bool) {
+	const (
+		liveHeadKeyHyphen  = "rollback-fence-live-head="
+		liveHeadKeyCatchup = "rollback-fence-live-catchup-head="
+		liveHeadKeyGeneric = "rollback-fence-live-watermark="
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, liveHeadKeyHyphen):
+			value = strings.TrimSpace(strings.TrimPrefix(token, liveHeadKeyHyphen))
+		case strings.HasPrefix(token, liveHeadKeyCatchup):
+			value = strings.TrimSpace(strings.TrimPrefix(token, liveHeadKeyCatchup))
+		case strings.HasPrefix(token, liveHeadKeyGeneric):
+			value = strings.TrimSpace(strings.TrimPrefix(token, liveHeadKeyGeneric))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		liveHead, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || liveHead < 0 {
+			return 0, false
+		}
+		return liveHead, true
+	}
+
+	return 0, false
+}
+
 type rollbackFenceOwnershipOrdering struct {
 	epoch          int64
 	bridgeSequence int64
 	drainWatermark int64
+	liveHead       int64
 }
 
 func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
@@ -1020,6 +1054,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	bridgeSequence, hasBridgeSequence := parseRollbackFenceLateBridgeSequence(normalized)
 	releaseWatermark, hasExplicitWatermark := parseRollbackFenceLateBridgeReleaseWatermark(normalized)
 	drainWatermark, hasDrainWatermark := parseRollbackFenceLateBridgeDrainWatermark(normalized)
+	liveHead, hasLiveHead := parseRollbackFenceLiveHeadWatermark(normalized)
 	if hasBridgeSequence != hasExplicitWatermark {
 		// Quarantine ambiguous late-bridge markers until both sequence and
 		// release watermark are present for deterministic ordering.
@@ -1028,6 +1063,16 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if hasDrainWatermark && !hasBridgeSequence {
 		// Quarantine ambiguous backlog-drain markers until the corresponding
 		// late-bridge ownership tuple is complete.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	if hasLiveHead && !hasBridgeSequence {
+		// Quarantine ambiguous live-catchup markers until the corresponding
+		// late-bridge ownership tuple is complete.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	if hasLiveHead && !hasDrainWatermark {
+		// Quarantine drain-to-live handoff markers until an explicit
+		// backlog-drain watermark is present in the ownership tuple.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
 	if !hasBridgeSequence {
@@ -1043,10 +1088,17 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if drainWatermark < releaseWatermark {
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if !hasLiveHead {
+		liveHead = drainWatermark
+	}
+	if liveHead < drainWatermark {
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	return rollbackFenceOwnershipOrdering{
 		epoch:          epoch,
 		bridgeSequence: bridgeSequence,
 		drainWatermark: drainWatermark,
+		liveHead:       liveHead,
 	}, true
 }
 
@@ -1070,6 +1122,12 @@ func compareRollbackFenceOwnershipOrdering(
 	case left.drainWatermark < right.drainWatermark:
 		return -1
 	case left.drainWatermark > right.drainWatermark:
+		return 1
+	}
+	switch {
+	case left.liveHead < right.liveHead:
+		return -1
+	case left.liveHead > right.liveHead:
 		return 1
 	default:
 		return 0
