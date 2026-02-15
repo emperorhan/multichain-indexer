@@ -400,6 +400,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of lag-aware fan-in completeness and churn-variance determinism on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0165 (M20-S1)
+Assertions:
+1. Equivalent dual-chain logical input ranges produce deterministic canonical tuple equivalence when Solana/Base completion order is permuted.
+2. One-chain lag/transient-failure counterexamples do not introduce cross-chain cursor regression or logical-event loss on the non-failing chain.
+3. Replay/resume over mixed interleaving outcomes remains idempotent with no duplicate canonical IDs and no balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject opposite Solana/Base completion-order permutations and show `0` canonical tuple diffs on equivalent logical ranges.
+- Deterministic one-chain-lag counterexample tests show chain-scoped cursor monotonicity with `0` cross-chain cursor bleed and `0` missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0166 (M20-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M20 invariants.
+2. QA executes at least one counterexample with dual-chain completion-order permutations and verifies deterministic canonical tuple equivalence.
+3. QA executes at least one counterexample with one-chain lag/transient failure and verifies chain-scoped cursor isolation (no cross-chain cursor bleed) plus completeness.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of dual-chain interleaving determinism and one-chain-lag cursor-isolation behavior on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -418,3 +442,4 @@ Release recommendation must be `fail` if any condition holds:
 14. Cursor-boundary continuity determinism cannot be proven (boundary-overlap convergence, restart-from-boundary completeness, partition-variance equivalence, and no duplicate/missing boundary events not evidenced for both mandatory chains).
 15. Watched-address fan-in determinism cannot be proven (overlap convergence, watched-address partition/order variance equivalence, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
 16. Lag-aware fan-in cursor continuity determinism cannot be proven (divergent-cursor completeness parity to union baseline, fan-in membership-churn permutation equivalence, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
+17. Dual-chain tick interleaving determinism cannot be proven (completion-order permutation equivalence, one-chain-lag cursor isolation, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).

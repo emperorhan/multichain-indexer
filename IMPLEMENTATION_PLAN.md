@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -43,6 +43,8 @@ Execution queue (dependency-ordered):
 32. `I-0156` (`M18-S2`) QA counterexample gate for watched-address fan-in determinism + invariant safety
 33. `I-0160` (`M19-S1`) lag-aware watched-address fan-in cursor continuity hardening
 34. `I-0161` (`M19-S2`) QA counterexample gate for lag-aware fan-in cursor continuity + invariant safety
+35. `I-0165` (`M20-S1`) dual-chain tick interleaving determinism hardening
+36. `I-0166` (`M20-S2`) QA counterexample gate for dual-chain interleaving determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -643,7 +645,7 @@ Eliminate duplicate and missing-event risk when the same logical transaction/sig
 - Gate: over-aggressive fan-in dedupe may collapse legitimately distinct per-actor balance deltas that share transaction identity.
 - Fallback: use conservative fan-in identity keying (`chain + canonical identity + actor + asset_id + event_path`), emit deterministic fan-in-collision diagnostics, and fail fast on unresolved ambiguity until contract extension is approved.
 
-### M19. Lag-Aware Fan-In Cursor Continuity Reliability Tranche C0013 (P0, Next)
+### M19. Lag-Aware Fan-In Cursor Continuity Reliability Tranche C0013 (P0, Completed)
 
 #### Objective
 Eliminate missing-event risk when overlapping watched-address groups have divergent cursor progress or membership churn across ticks, while preserving deterministic duplicate suppression on mandatory chains.
@@ -677,6 +679,41 @@ Eliminate missing-event risk when overlapping watched-address groups have diverg
 #### Risk Gate + Fallback
 - Gate: overly conservative lag-aware cursor reconciliation can widen replay windows and increase duplicate-pressure/performance cost.
 - Fallback: keep lag reconciliation deterministic with bounded replay-window guardrails, emit explicit lag-merge diagnostics on ambiguous overlap ranges, and fail fast until fan-in lag-window contracts are extended.
+
+### M20. Dual-Chain Tick Interleaving Determinism Reliability Tranche C0014 (P0, Next)
+
+#### Objective
+Eliminate missing/duplicate-event risk from nondeterministic mandatory-chain tick completion order so equivalent dual-chain runs converge to one deterministic canonical output and cursor state.
+
+#### Entry Gate
+- `M19` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M20-S1` (`I-0165`): implement deterministic dual-chain tick interleaving/commit semantics so latency-order variance between Solana/Base cannot change canonical output sets or induce cross-chain cursor drift.
+2. `M20-S2` (`I-0166`): execute QA counterexample gate for latency-permuted interleaving determinism and cross-chain cursor isolation with invariant evidence.
+
+#### Definition Of Done
+1. Equivalent dual-chain logical input ranges produce identical canonical outputs regardless of chain job completion order.
+2. A transient stall/failure on one mandatory chain does not cause missing logical events or cursor regression on the other chain.
+3. Replay/resume of mixed interleaving outcomes remains idempotent with stable canonical tuple ordering and no balance double-apply side effects.
+4. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject opposite Solana/Base completion-order permutations and assert `0` canonical tuple diffs for equivalent logical ranges.
+2. Deterministic tests inject one-chain lag/transient failure while the other chain succeeds and assert chain-scoped cursor monotonicity plus no missing logical events.
+3. Replay/idempotency/cursor tests remain green with no regressions on `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, and `chain_adapter_runtime_wired`.
+4. QA executes required validation commands plus dual-chain interleaving counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across latency-permuted dual-chain completion-order fixtures on mandatory chains.
+2. `0` cross-chain cursor bleed/regression events in one-chain-lag counterexample fixtures.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: deterministic interleaving barriers can reduce throughput or increase tick latency under asymmetric provider delay.
+- Fallback: keep ordering rules chain-scoped with bounded skew guardrails, emit explicit interleaving-skew diagnostics, and fail fast on ambiguous commit ordering until the contract is extended.
 
 ## Decision Register (Major + Fallback)
 
@@ -727,13 +764,16 @@ Completed milestones/slices:
 30. `I-0151`
 31. `I-0155`
 32. `I-0156`
+33. `I-0160`
+34. `I-0161`
 
 Active downstream queue from this plan:
-1. `I-0160`
-2. `I-0161`
+1. `I-0165`
+2. `I-0166`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
 - `I-0133` and `I-0134` are superseded by `I-0135` and `I-0136` for a clean planner-only handoff after prior scope-violation execution.
 - `I-0153` and `I-0154` are superseded by `I-0155` and `I-0156` to replace generic cycle placeholders with executable watched-address fan-in reliability slices.
 - `I-0158` and `I-0159` are superseded by `I-0160` and `I-0161` to replace generic cycle placeholders with executable lag-aware fan-in cursor continuity reliability slices.
+- `I-0163` and `I-0164` are superseded by `I-0165` and `I-0166` to replace generic cycle placeholders with executable dual-chain tick interleaving reliability slices.

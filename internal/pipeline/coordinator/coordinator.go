@@ -93,8 +93,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			})
 		}
 
-		representative := selectRepresentativeCandidate(c.chain, group.identity, candidates)
-		cursorValue, cursorSequence := resolveGroupCursor(c.chain, candidates)
+		representative, cursorValue, cursorSequence := resolveLagAwareCandidate(c.chain, group.identity, candidates)
 
 		job := event.FetchJob{
 			Chain:          c.chain,
@@ -156,7 +155,12 @@ func groupWatchedAddresses(chain model.Chain, addresses []model.WatchedAddress) 
 			if leftKey != rightKey {
 				return leftKey < rightKey
 			}
-			return strings.TrimSpace(members[i].Address) < strings.TrimSpace(members[j].Address)
+			leftTrimmed := strings.TrimSpace(members[i].Address)
+			rightTrimmed := strings.TrimSpace(members[j].Address)
+			if leftTrimmed != rightTrimmed {
+				return leftTrimmed < rightTrimmed
+			}
+			return members[i].Address < members[j].Address
 		})
 		groups = append(groups, watchedAddressGroup{
 			identity: identity,
@@ -167,46 +171,46 @@ func groupWatchedAddresses(chain model.Chain, addresses []model.WatchedAddress) 
 	return groups
 }
 
-func selectRepresentativeCandidate(
+func resolveLagAwareCandidate(
 	chain model.Chain,
 	identity string,
 	candidates []watchedAddressCandidate,
-) watchedAddressCandidate {
+) (watchedAddressCandidate, *string, int64) {
 	if len(candidates) == 0 {
-		return watchedAddressCandidate{}
+		return watchedAddressCandidate{}, nil, 0
 	}
 
 	best := candidates[0]
 	for _, candidate := range candidates[1:] {
-		if shouldReplaceRepresentative(chain, identity, best, candidate) {
+		if shouldReplaceLagAwareCandidate(chain, identity, best, candidate) {
 			best = candidate
 		}
 	}
-	return best
+
+	cursorValue, cursorSequence := resolveCandidateCursor(chain, best)
+	return best, cursorValue, cursorSequence
 }
 
-func shouldReplaceRepresentative(
+func shouldReplaceLagAwareCandidate(
 	chain model.Chain,
 	identity string,
 	existing watchedAddressCandidate,
 	incoming watchedAddressCandidate,
 ) bool {
-	existingSeq := int64(-1)
-	if existing.cursor != nil {
-		existingSeq = existing.cursor.CursorSequence
-	}
-	incomingSeq := int64(-1)
-	if incoming.cursor != nil {
-		incomingSeq = incoming.cursor.CursorSequence
-	}
+	existingSeq := lagAwareCursorSequence(existing.cursor)
+	incomingSeq := lagAwareCursorSequence(incoming.cursor)
 	if existingSeq != incomingSeq {
-		return incomingSeq > existingSeq
+		return incomingSeq < existingSeq
 	}
 
-	existingCanonical := canonicalWatchedAddressIdentity(chain, existing.address.Address) == identity &&
-		strings.TrimSpace(existing.address.Address) == identity
-	incomingCanonical := canonicalWatchedAddressIdentity(chain, incoming.address.Address) == identity &&
-		strings.TrimSpace(incoming.address.Address) == identity
+	existingCursor := lagAwareCursorValue(chain, existing.cursor)
+	incomingCursor := lagAwareCursorValue(chain, incoming.cursor)
+	if cmp := compareLagAwareCursorValue(incomingCursor, existingCursor); cmp != 0 {
+		return cmp < 0
+	}
+
+	existingCanonical := isCanonicalAddressForm(chain, identity, existing.address.Address)
+	incomingCanonical := isCanonicalAddressForm(chain, identity, incoming.address.Address)
 	if existingCanonical != incomingCanonical {
 		return incomingCanonical
 	}
@@ -217,43 +221,52 @@ func shouldReplaceRepresentative(
 		return incomingKey < existingKey
 	}
 
-	return strings.TrimSpace(incoming.address.Address) < strings.TrimSpace(existing.address.Address)
+	existingTrimmed := strings.TrimSpace(existing.address.Address)
+	incomingTrimmed := strings.TrimSpace(incoming.address.Address)
+	if existingTrimmed != incomingTrimmed {
+		return incomingTrimmed < existingTrimmed
+	}
+	return incoming.address.Address < existing.address.Address
 }
 
-func resolveGroupCursor(chain model.Chain, candidates []watchedAddressCandidate) (*string, int64) {
-	var (
-		cursorValue *string
-		cursorSeq   int64
-		set         bool
-	)
-
-	for _, candidate := range candidates {
-		if candidate.cursor == nil {
-			continue
-		}
-		candidateValue := canonicalizeCursorValue(chain, candidate.cursor.CursorValue)
-		candidateSeq := candidate.cursor.CursorSequence
-
-		if !set || candidateSeq > cursorSeq || (candidateSeq == cursorSeq && shouldReplaceCursorValue(cursorValue, candidateValue)) {
-			cursorValue = candidateValue
-			cursorSeq = candidateSeq
-			set = true
-		}
+func lagAwareCursorSequence(cursor *model.AddressCursor) int64 {
+	if cursor == nil || cursor.CursorSequence < 0 {
+		return 0
 	}
-	if !set {
-		return nil, 0
-	}
-	return cursorValue, cursorSeq
+	return cursor.CursorSequence
 }
 
-func shouldReplaceCursorValue(existing, incoming *string) bool {
-	if existing == nil {
-		return incoming != nil
+func lagAwareCursorValue(chain model.Chain, cursor *model.AddressCursor) *string {
+	if cursor == nil {
+		return nil
 	}
-	if incoming == nil {
-		return false
+	return canonicalizeCursorValue(chain, cursor.CursorValue)
+}
+
+func resolveCandidateCursor(chain model.Chain, candidate watchedAddressCandidate) (*string, int64) {
+	return lagAwareCursorValue(chain, candidate.cursor), lagAwareCursorSequence(candidate.cursor)
+}
+
+func compareLagAwareCursorValue(left, right *string) int {
+	switch {
+	case left == nil && right == nil:
+		return 0
+	case left == nil:
+		return -1
+	case right == nil:
+		return 1
+	case *left < *right:
+		return -1
+	case *left > *right:
+		return 1
+	default:
+		return 0
 	}
-	return *incoming < *existing
+}
+
+func isCanonicalAddressForm(chain model.Chain, identity, address string) bool {
+	return canonicalWatchedAddressIdentity(chain, address) == identity &&
+		strings.TrimSpace(address) == identity
 }
 
 func stableAddressOrderKey(chain model.Chain, address string) string {

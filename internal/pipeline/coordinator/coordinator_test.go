@@ -2,7 +2,9 @@ package coordinator
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -218,7 +220,9 @@ func TestTick_FanInOverlapDedupesAcrossMandatoryChains(t *testing.T) {
 	baseCursorB := "abcdef"
 
 	solanaAddr := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
-	solCursorB := "sig-sol-12"
+	solanaAddrLag := " " + solanaAddr
+	solCursorA := "sig-sol-12"
+	solCursorB := " sig-sol-10 "
 
 	tests := []testCase{
 		{
@@ -244,38 +248,43 @@ func TestTick_FanInOverlapDedupesAcrossMandatoryChains(t *testing.T) {
 			expectedJob: event.FetchJob{
 				Chain:          model.ChainBase,
 				Network:        model.NetworkSepolia,
-				Address:        baseLower,
+				Address:        baseUpper,
 				CursorValue:    strPtr("0xabcdef"),
-				CursorSequence: 12,
+				CursorSequence: 10,
 				BatchSize:      100,
-				WalletID:       &walletB,
-				OrgID:          &orgB,
+				WalletID:       &walletA,
+				OrgID:          &orgA,
 			},
 		},
 		{
-			name:    "solana-devnet-duplicate-row-fanin",
+			name:    "solana-devnet-lagging-overlap",
 			chain:   model.ChainSolana,
 			network: model.NetworkDevnet,
 			addresses: []model.WatchedAddress{
 				{Address: solanaAddr, WalletID: &walletA, OrganizationID: &orgA},
-				{Address: solanaAddr, WalletID: &walletB, OrganizationID: &orgB},
+				{Address: solanaAddrLag, WalletID: &walletB, OrganizationID: &orgB},
 			},
 			cursorByKey: map[string]*model.AddressCursor{
 				solanaAddr: {
 					Address:        solanaAddr,
-					CursorValue:    &solCursorB,
+					CursorValue:    &solCursorA,
 					CursorSequence: 12,
+				},
+				solanaAddrLag: {
+					Address:        solanaAddrLag,
+					CursorValue:    &solCursorB,
+					CursorSequence: 10,
 				},
 			},
 			expectedJob: event.FetchJob{
 				Chain:          model.ChainSolana,
 				Network:        model.NetworkDevnet,
-				Address:        solanaAddr,
-				CursorValue:    &solCursorB,
-				CursorSequence: 12,
+				Address:        solanaAddrLag,
+				CursorValue:    strPtr("sig-sol-10"),
+				CursorSequence: 10,
 				BatchSize:      100,
-				WalletID:       &walletA,
-				OrgID:          &orgA,
+				WalletID:       &walletB,
+				OrgID:          &orgB,
 			},
 		},
 	}
@@ -460,6 +469,92 @@ func TestTick_FanInOrderVarianceDeterministicAcrossMandatoryChains(t *testing.T)
 	}
 }
 
+func TestTick_FanInLagAwareMembershipChurnReplayResumeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name        string
+		chain       model.Chain
+		network     model.Network
+		ticksA      [][]model.WatchedAddress
+		ticksB      [][]model.WatchedAddress
+		initialByKey map[string]*model.AddressCursor
+	}
+
+	baseUpper := "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	baseLower := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	basePlain := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	solBase := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+	solLag := " " + solBase
+	solNew := solBase + " "
+
+	tests := []testCase{
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			ticksA: [][]model.WatchedAddress{
+				{{Address: baseUpper}, {Address: baseLower}},
+				{{Address: baseUpper}, {Address: baseLower}, {Address: basePlain}},
+				{{Address: baseLower}, {Address: basePlain}},
+				{{Address: basePlain}, {Address: baseLower}},
+			},
+			ticksB: [][]model.WatchedAddress{
+				{{Address: baseLower}, {Address: baseUpper}},
+				{{Address: basePlain}, {Address: baseUpper}, {Address: baseLower}},
+				{{Address: basePlain}, {Address: baseLower}},
+				{{Address: baseLower}, {Address: basePlain}},
+			},
+			initialByKey: map[string]*model.AddressCursor{
+				baseUpper: {Address: baseUpper, CursorValue: strPtr("0x0000000000000000000000000000000000000000000000000000000000000040"), CursorSequence: 40},
+				baseLower: {Address: baseLower, CursorValue: strPtr("0x0000000000000000000000000000000000000000000000000000000000000035"), CursorSequence: 35},
+			},
+		},
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			ticksA: [][]model.WatchedAddress{
+				{{Address: solBase}, {Address: solLag}},
+				{{Address: solBase}, {Address: solLag}, {Address: solNew}},
+				{{Address: solLag}, {Address: solNew}},
+				{{Address: solNew}, {Address: solLag}},
+			},
+			ticksB: [][]model.WatchedAddress{
+				{{Address: solLag}, {Address: solBase}},
+				{{Address: solNew}, {Address: solBase}, {Address: solLag}},
+				{{Address: solNew}, {Address: solLag}},
+				{{Address: solLag}, {Address: solNew}},
+			},
+			initialByKey: map[string]*model.AddressCursor{
+				solBase: {Address: solBase, CursorValue: strPtr("sig-sol-40"), CursorSequence: 40},
+				solLag:  {Address: solLag, CursorValue: strPtr("sig-sol-35"), CursorSequence: 35},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			fullA, _ := runLagAwareTickScenario(t, tc.chain, tc.network, tc.ticksA, tc.initialByKey)
+			fullB, _ := runLagAwareTickScenario(t, tc.chain, tc.network, tc.ticksB, tc.initialByKey)
+			assert.Equal(t, fullA, fullB)
+
+			seen := make(map[lagAwareJobSnapshot]struct{}, len(fullA))
+			for _, snapshot := range fullA {
+				_, exists := seen[snapshot]
+				assert.False(t, exists, "duplicate lag-aware cursor tuple: %+v", snapshot)
+				seen[snapshot] = struct{}{}
+			}
+
+			require.Len(t, tc.ticksA, 4)
+			partA, stateAfterPartA := runLagAwareTickScenario(t, tc.chain, tc.network, tc.ticksA[:2], tc.initialByKey)
+			partB, _ := runLagAwareTickScenario(t, tc.chain, tc.network, tc.ticksA[2:], stateAfterPartA)
+			assert.Equal(t, fullA[:2], partA)
+			assert.Equal(t, fullA[2:], partB)
+		})
+	}
+}
+
 func TestTick_FanInDoesNotCollapseDistinctSolanaAddresses(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
@@ -505,6 +600,161 @@ func TestTick_FanInDoesNotCollapseDistinctSolanaAddresses(t *testing.T) {
 	job1 := <-jobCh
 	job2 := <-jobCh
 	assert.NotEqual(t, job1.Address, job2.Address)
+}
+
+type lagAwareJobSnapshot struct {
+	Address        string
+	CursorValue    string
+	CursorSequence int64
+}
+
+type scriptedWatchedAddressRepo struct {
+	ticks [][]model.WatchedAddress
+	index int
+}
+
+func (r *scriptedWatchedAddressRepo) GetActive(context.Context, model.Chain, model.Network) ([]model.WatchedAddress, error) {
+	if r.index >= len(r.ticks) {
+		return []model.WatchedAddress{}, nil
+	}
+	active := make([]model.WatchedAddress, len(r.ticks[r.index]))
+	copy(active, r.ticks[r.index])
+	r.index++
+	return active, nil
+}
+
+func (*scriptedWatchedAddressRepo) Upsert(context.Context, *model.WatchedAddress) error {
+	return nil
+}
+
+func (*scriptedWatchedAddressRepo) FindByAddress(context.Context, model.Chain, model.Network, string) (*model.WatchedAddress, error) {
+	return nil, nil
+}
+
+type inMemoryCursorRepo struct {
+	state map[string]*model.AddressCursor
+}
+
+func (r *inMemoryCursorRepo) Get(_ context.Context, _ model.Chain, _ model.Network, address string) (*model.AddressCursor, error) {
+	return r.GetByAddress(address), nil
+}
+
+func (r *inMemoryCursorRepo) GetByAddress(address string) *model.AddressCursor {
+	cursor, ok := r.state[address]
+	if !ok || cursor == nil {
+		return nil
+	}
+	return cloneAddressCursor(cursor)
+}
+
+func (r *inMemoryCursorRepo) UpsertTx(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
+	return nil
+}
+
+func (r *inMemoryCursorRepo) EnsureExists(context.Context, model.Chain, model.Network, string) error {
+	return nil
+}
+
+func runLagAwareTickScenario(
+	t *testing.T,
+	chain model.Chain,
+	network model.Network,
+	ticks [][]model.WatchedAddress,
+	initialByKey map[string]*model.AddressCursor,
+) ([]lagAwareJobSnapshot, map[string]*model.AddressCursor) {
+	t.Helper()
+
+	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
+	cursorRepo := &inMemoryCursorRepo{state: cloneCursorState(initialByKey)}
+	jobCh := make(chan event.FetchJob, len(ticks)+1)
+	c := New(chain, network, watchedRepo, cursorRepo, 100, time.Second, jobCh, slog.Default())
+
+	snapshots := make([]lagAwareJobSnapshot, 0, len(ticks))
+	lastByAddress := make(map[string]int64, len(ticks))
+
+	for _, active := range ticks {
+		expectedMinSeq := lagAwareMinSequence(active, cursorRepo)
+
+		require.NoError(t, c.tick(context.Background()))
+		require.Len(t, jobCh, 1)
+
+		job := <-jobCh
+		assert.Equal(t, expectedMinSeq, job.CursorSequence)
+
+		if last, ok := lastByAddress[job.Address]; ok {
+			assert.GreaterOrEqual(t, job.CursorSequence, last)
+		}
+		lastByAddress[job.Address] = job.CursorSequence
+
+		cursorValue := ""
+		if job.CursorValue != nil {
+			cursorValue = *job.CursorValue
+		}
+		snapshots = append(snapshots, lagAwareJobSnapshot{
+			Address:        job.Address,
+			CursorValue:    cursorValue,
+			CursorSequence: job.CursorSequence,
+		})
+
+		nextSeq := job.CursorSequence + 5
+		nextCursor := syntheticCursorValue(chain, nextSeq)
+		cursorRepo.state[job.Address] = &model.AddressCursor{
+			Address:        job.Address,
+			CursorValue:    &nextCursor,
+			CursorSequence: nextSeq,
+		}
+	}
+
+	return snapshots, cloneCursorState(cursorRepo.state)
+}
+
+func lagAwareMinSequence(active []model.WatchedAddress, cursorRepo *inMemoryCursorRepo) int64 {
+	var (
+		minSeq int64
+		set    bool
+	)
+	for _, watched := range active {
+		cursor := cursorRepo.GetByAddress(watched.Address)
+		seq := int64(0)
+		if cursor != nil && cursor.CursorSequence > 0 {
+			seq = cursor.CursorSequence
+		}
+		if !set || seq < minSeq {
+			minSeq = seq
+			set = true
+		}
+	}
+	if !set {
+		return 0
+	}
+	return minSeq
+}
+
+func syntheticCursorValue(chain model.Chain, seq int64) string {
+	if isEVMChain(chain) {
+		return fmt.Sprintf("0x%064x", seq)
+	}
+	return fmt.Sprintf("sig-%d", seq)
+}
+
+func cloneCursorState(state map[string]*model.AddressCursor) map[string]*model.AddressCursor {
+	cloned := make(map[string]*model.AddressCursor, len(state))
+	for address, cursor := range state {
+		cloned[address] = cloneAddressCursor(cursor)
+	}
+	return cloned
+}
+
+func cloneAddressCursor(cursor *model.AddressCursor) *model.AddressCursor {
+	if cursor == nil {
+		return nil
+	}
+	cloned := *cursor
+	if cursor.CursorValue != nil {
+		value := *cursor.CursorValue
+		cloned.CursorValue = &value
+	}
+	return &cloned
 }
 
 func strPtr(v string) *string {
