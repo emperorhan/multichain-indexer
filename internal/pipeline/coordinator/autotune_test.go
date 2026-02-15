@@ -1017,6 +1017,92 @@ func TestAutoTuneController_PolicyManifestSequenceGapRequiresContiguousEpochProg
 	assert.Equal(t, 0, duplicateDecision.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_PolicyManifestSnapshotCutoverRequiresLineageFence(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	baseCfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               260,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-v2tail-a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	baseController := newAutoTuneController(100, baseCfg)
+	require.NotNil(t, baseController)
+
+	batch, baselineDecision := baseController.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "apply_increase", baselineDecision.Decision)
+	assert.Equal(t, "manifest-v2tail-a", baselineDecision.PolicyManifestDigest)
+	assert.Equal(t, int64(1), baselineDecision.PolicyEpoch)
+
+	snapshotCfg := baseCfg
+	snapshotCfg.PolicyManifestDigest = "manifest-v2snapshot|snapshot-base-seq=1|snapshot-tail-seq=3"
+	snapshotCfg.PolicyManifestRefreshEpoch = 3
+	snapshotSeed := baseController.currentBatch
+	snapshotController := newAutoTuneControllerWithSeed(100, snapshotCfg, &snapshotSeed)
+	require.NotNil(t, snapshotController)
+	snapshotController.reconcilePolicyTransition(baseController.exportPolicyTransition())
+
+	batch, snapshotHold := snapshotController.Resolve(highLag)
+	assert.Equal(t, snapshotSeed, batch)
+	assert.Equal(t, "hold_policy_transition", snapshotHold.Decision, "snapshot cutover must apply deterministic transition hold")
+	assert.Equal(t, snapshotCfg.PolicyManifestDigest, snapshotHold.PolicyManifestDigest)
+	assert.Equal(t, snapshotCfg.PolicyManifestRefreshEpoch, snapshotHold.PolicyEpoch)
+	assert.Equal(t, 1, snapshotHold.PolicyActivationTicks)
+
+	batch, snapshotApplied := snapshotController.Resolve(highLag)
+	assert.Equal(t, snapshotSeed+20, batch)
+	assert.Equal(t, "apply_increase", snapshotApplied.Decision)
+	assert.Equal(t, snapshotCfg.PolicyManifestDigest, snapshotApplied.PolicyManifestDigest)
+	assert.Equal(t, snapshotCfg.PolicyManifestRefreshEpoch, snapshotApplied.PolicyEpoch)
+	assert.Equal(t, 0, snapshotApplied.PolicyActivationTicks)
+
+	staleSnapshotCfg := baseCfg
+	staleSnapshotCfg.PolicyManifestDigest = "manifest-v2snapshot-stale|snapshot-base-seq=0|snapshot-tail-seq=2"
+	staleSnapshotCfg.PolicyManifestRefreshEpoch = 2
+	staleSeed := snapshotController.currentBatch
+	staleController := newAutoTuneControllerWithSeed(100, staleSnapshotCfg, &staleSeed)
+	require.NotNil(t, staleController)
+	staleController.reconcilePolicyTransition(snapshotController.exportPolicyTransition())
+
+	batch, staleDecision := staleController.Resolve(highLag)
+	assert.Equal(t, staleSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleDecision.Decision, "stale snapshot must not reopen transition hold")
+	assert.Equal(t, snapshotCfg.PolicyManifestDigest, staleDecision.PolicyManifestDigest, "stale snapshot must pin last verified snapshot digest")
+	assert.Equal(t, snapshotCfg.PolicyManifestRefreshEpoch, staleDecision.PolicyEpoch, "stale snapshot must preserve last verified snapshot epoch")
+	assert.Equal(t, 0, staleDecision.PolicyActivationTicks)
+
+	reapplySeed := staleController.currentBatch
+	reapplyController := newAutoTuneControllerWithSeed(100, snapshotCfg, &reapplySeed)
+	require.NotNil(t, reapplyController)
+	reapplyController.reconcilePolicyTransition(staleController.exportPolicyTransition())
+
+	batch, reapplyDecision := reapplyController.Resolve(highLag)
+	assert.Equal(t, reapplySeed+20, batch)
+	assert.Equal(t, "apply_increase", reapplyDecision.Decision, "snapshot+tail re-apply must remain replay-stable")
+	assert.Equal(t, snapshotCfg.PolicyManifestDigest, reapplyDecision.PolicyManifestDigest)
+	assert.Equal(t, snapshotCfg.PolicyManifestRefreshEpoch, reapplyDecision.PolicyEpoch)
+	assert.Equal(t, 0, reapplyDecision.PolicyActivationTicks)
+}
+
 func intPtr(v int) *int {
 	return &v
 }

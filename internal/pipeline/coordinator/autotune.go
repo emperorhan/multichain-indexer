@@ -1,6 +1,9 @@
 package coordinator
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 type AutoTuneConfig struct {
 	Enabled bool
@@ -584,6 +587,13 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 			a.resetAdaptiveControlState()
 			return
 		}
+		if isDeterministicSnapshotCutover(previousEpoch, incomingEpoch, incomingDigest) {
+			a.policyManifestDigest = incomingDigest
+			a.policyEpoch = incomingEpoch
+			a.policyActivationLeft = a.policyActivationHold
+			a.resetAdaptiveControlState()
+			return
+		}
 		// Reject sequence-gap transitions: pin previously verified contiguous lineage.
 		a.policyManifestDigest = previousDigest
 		a.policyEpoch = previousEpoch
@@ -793,4 +803,52 @@ func normalizePolicyManifestDigest(digest string) string {
 		return defaultAutoTunePolicyManifestDigest
 	}
 	return trimmed
+}
+
+func isDeterministicSnapshotCutover(previousEpoch, incomingEpoch int64, incomingDigest string) bool {
+	if incomingEpoch <= previousEpoch+1 {
+		return false
+	}
+	baseSeq, tailSeq, ok := parseSnapshotCutoverLineage(incomingDigest)
+	if !ok {
+		return false
+	}
+	if baseSeq != previousEpoch {
+		return false
+	}
+	if tailSeq != incomingEpoch {
+		return false
+	}
+	return tailSeq > baseSeq
+}
+
+func parseSnapshotCutoverLineage(digest string) (int64, int64, bool) {
+	const baseKey = "snapshot-base-seq="
+	const tailKey = "snapshot-tail-seq="
+
+	var (
+		baseValue string
+		tailValue string
+	)
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		switch {
+		case strings.HasPrefix(token, baseKey):
+			baseValue = strings.TrimSpace(strings.TrimPrefix(token, baseKey))
+		case strings.HasPrefix(token, tailKey):
+			tailValue = strings.TrimSpace(strings.TrimPrefix(token, tailKey))
+		}
+	}
+	if baseValue == "" || tailValue == "" {
+		return 0, 0, false
+	}
+	baseSeq, err := strconv.ParseInt(baseValue, 10, 64)
+	if err != nil || baseSeq < 0 {
+		return 0, 0, false
+	}
+	tailSeq, err := strconv.ParseInt(tailValue, 10, 64)
+	if err != nil || tailSeq < 0 {
+		return 0, 0, false
+	}
+	return baseSeq, tailSeq, true
 }

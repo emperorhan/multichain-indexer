@@ -3230,6 +3230,432 @@ func TestTick_AutoTunePolicyManifestSequenceGapReplayResumeConvergesAcrossMandat
 	}
 }
 
+func TestTick_AutoTunePolicyManifestSnapshotCutoverPermutationsConvergeCanonicalTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKsnapcut",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x4444444444444444444444444444444444444444",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestsnapshotcut0000000000000000000",
+		},
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               400,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+
+	snapshotCutoverCfg := segment1Cfg
+	snapshotCutoverCfg.PolicyManifestDigest = "manifest-snapshot-v2c|snapshot-base-seq=1|snapshot-tail-seq=3"
+	snapshotCutoverCfg.PolicyManifestRefreshEpoch = 3
+	staleSnapshotCfg := segment1Cfg
+	staleSnapshotCfg.PolicyManifestDigest = "manifest-snapshot-stale|snapshot-base-seq=0|snapshot-tail-seq=2"
+	staleSnapshotCfg.PolicyManifestRefreshEpoch = 2
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, segment1Cfg)
+			baselineSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			baselineBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					baselineHarness.coordinator.WithAutoTune(segment2Cfg)
+				}
+				if i == 4 {
+					baselineHarness.coordinator.WithAutoTune(segment3Cfg)
+				}
+				job := baselineHarness.tickAndAdvance(t)
+				baselineSnapshots = append(baselineSnapshots, snapshotFromFetchJob(job))
+				baselineBatches = append(baselineBatches, job.BatchSize)
+			}
+
+			snapshotHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, segment1Cfg)
+			snapshotCutoverSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			snapshotCutoverBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					snapshotHarness.coordinator.WithAutoTune(snapshotCutoverCfg)
+					state := snapshotHarness.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, state.PolicyManifestDigest, "snapshot cutover must become active at deterministic boundary")
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				if i == 5 {
+					snapshotHarness.coordinator.WithAutoTune(staleSnapshotCfg)
+					state := snapshotHarness.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, state.PolicyManifestDigest, "stale snapshot must pin last verified snapshot+tail digest")
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch, "stale snapshot must preserve last verified snapshot+tail epoch")
+				}
+				if i == 7 {
+					snapshotHarness.coordinator.WithAutoTune(snapshotCutoverCfg)
+					state := snapshotHarness.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, state.PolicyManifestDigest, "snapshot+tail re-apply must be replay-stable")
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				job := snapshotHarness.tickAndAdvance(t)
+				snapshotCutoverSnapshots = append(snapshotCutoverSnapshots, snapshotFromFetchJob(job))
+				snapshotCutoverBatches = append(snapshotCutoverBatches, job.BatchSize)
+			}
+
+			assert.Equal(t, baselineSnapshots, snapshotCutoverSnapshots, "sequence-tail baseline and snapshot-cutover permutations must converge to one canonical tuple output set")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, snapshotCutoverSnapshots, "sequence-tail baseline vs snapshot-cutover/stale-reject/re-apply")
+			assertCursorMonotonicByAddress(t, baselineSnapshots)
+			assertCursorMonotonicByAddress(t, snapshotCutoverSnapshots)
+
+			assert.NotEqual(t, baselineBatches, snapshotCutoverBatches, "snapshot-cutover permutations should alter control decisions only at transition boundaries")
+			assert.Equal(t, snapshotCutoverBatches[1], snapshotCutoverBatches[2], "snapshot-cutover boundary must apply deterministic activation hold")
+			assert.NotEqual(t, snapshotCutoverBatches[4], snapshotCutoverBatches[5], "stale snapshot reject must not open an additional hold")
+			assert.NotEqual(t, snapshotCutoverBatches[6], snapshotCutoverBatches[7], "snapshot+tail re-apply at same boundary must not reopen activation hold")
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestSnapshotCutoverDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               320,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	snapshotCutoverCfg := segment1Cfg
+	snapshotCutoverCfg.PolicyManifestDigest = "manifest-snapshot-v2c|snapshot-base-seq=1|snapshot-tail-seq=3"
+	snapshotCutoverCfg.PolicyManifestRefreshEpoch = 3
+	staleSnapshotCfg := segment1Cfg
+	staleSnapshotCfg.PolicyManifestDigest = "manifest-snapshot-stale|snapshot-base-seq=0|snapshot-tail-seq=2"
+	staleSnapshotCfg.PolicyManifestRefreshEpoch = 2
+
+	const tickCount = 10
+	healthyBaseAddress := "0x5555555555555555555555555555555555555555"
+	healthyBTCAddress := "tb1qmanifestsnapshothealthy00000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKsnapcut"
+
+	healthyHeads := []int64{130, 131, 132, 133, 134, 135, 136, 137, 138, 139}
+	laggingHeads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+	)
+	laggingBaselineSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBaselineBatches := make([]int, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		if i == 2 {
+			laggingBaseline.coordinator.WithAutoTune(segment2Cfg)
+		}
+		if i == 4 {
+			laggingBaseline.coordinator.WithAutoTune(segment3Cfg)
+		}
+		job := laggingBaseline.tickAndAdvance(t)
+		laggingBaselineSnapshots = append(laggingBaselineSnapshots, snapshotFromFetchJob(job))
+		laggingBaselineBatches = append(laggingBaselineBatches, job.BatchSize)
+	}
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBatches := make([]int, 0, tickCount)
+
+	for i := 0; i < tickCount; i++ {
+		if i == 2 {
+			laggingInterleaved.coordinator.WithAutoTune(snapshotCutoverCfg)
+			state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, state)
+			assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, state.PolicyManifestDigest, "one-chain snapshot cutover must become active deterministically")
+			assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+		}
+		if i == 5 {
+			laggingInterleaved.coordinator.WithAutoTune(staleSnapshotCfg)
+			state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, state)
+			assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, state.PolicyManifestDigest, "one-chain stale snapshot must pin verified snapshot+tail digest")
+			assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch, "one-chain stale snapshot must preserve verified snapshot+tail epoch")
+		}
+		if i == 7 {
+			laggingInterleaved.coordinator.WithAutoTune(snapshotCutoverCfg)
+			state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, state)
+			assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, state.PolicyManifestDigest, "one-chain snapshot+tail re-apply must remain deterministic")
+			assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+		laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana snapshot-cutover transition must not alter base canonical tuples")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana snapshot-cutover transition must not alter base control decisions")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana snapshot-cutover transition must not alter btc canonical tuples")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana snapshot-cutover transition must not alter btc control decisions")
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "snapshot-cutover transition must preserve lagging-chain canonical tuples")
+	assert.NotEqual(t, laggingBaselineBatches, laggingBatches, "snapshot-cutover permutations should alter only lagging-chain control decisions at transition boundaries")
+	assert.Equal(t, laggingBatches[1], laggingBatches[2], "one-chain snapshot-cutover boundary must apply deterministic activation hold")
+	assert.NotEqual(t, laggingBatches[4], laggingBatches[5], "one-chain stale snapshot reject must not open additional hold")
+	assert.NotEqual(t, laggingBatches[6], laggingBatches[7], "one-chain snapshot+tail re-apply must not reopen activation hold")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs one-chain snapshot-cutover transition")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs one-chain snapshot-cutover transition")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs one-chain snapshot-cutover transition")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
+func TestTick_AutoTunePolicyManifestSnapshotCutoverReplayResumeConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKsnapreplay",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x6666666666666666666666666666666666666666",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestsnapshotreplay00000000000000000",
+		},
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               320,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  2,
+	}
+	snapshotCutoverCfg := segment1Cfg
+	snapshotCutoverCfg.PolicyManifestDigest = "manifest-snapshot-v2c|snapshot-base-seq=1|snapshot-tail-seq=3"
+	snapshotCutoverCfg.PolicyManifestRefreshEpoch = 3
+	staleSnapshotCfg := segment1Cfg
+	staleSnapshotCfg.PolicyManifestDigest = "manifest-snapshot-stale|snapshot-base-seq=0|snapshot-tail-seq=2"
+	staleSnapshotCfg.PolicyManifestRefreshEpoch = 2
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269}
+	const splitTick = 3
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			coldHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, segment1Cfg)
+			coldSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			coldBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					coldHarness.coordinator.WithAutoTune(snapshotCutoverCfg)
+				}
+				if i == 5 {
+					coldHarness.coordinator.WithAutoTune(staleSnapshotCfg)
+				}
+				if i == 7 {
+					coldHarness.coordinator.WithAutoTune(snapshotCutoverCfg)
+				}
+				job := coldHarness.tickAndAdvance(t)
+				coldSnapshots = append(coldSnapshots, snapshotFromFetchJob(job))
+				coldBatches = append(coldBatches, job.BatchSize)
+			}
+
+			warmFirst := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads[:splitTick], segment1Cfg)
+			warmSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			warmBatches := make([]int, 0, len(heads))
+			for i := 0; i < splitTick; i++ {
+				if i == 2 {
+					warmFirst.coordinator.WithAutoTune(snapshotCutoverCfg)
+				}
+				job := warmFirst.tickAndAdvance(t)
+				warmSnapshots = append(warmSnapshots, snapshotFromFetchJob(job))
+				warmBatches = append(warmBatches, job.BatchSize)
+			}
+
+			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, restartState)
+			assert.Equal(t, snapshotCutoverCfg.PolicyVersion, restartState.PolicyVersion)
+			assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, restartState.PolicyManifestDigest)
+			assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, restartState.PolicyEpoch)
+			assert.Greater(t, restartState.PolicyActivationRemaining, 0, "restart state must preserve snapshot-cutover activation hold countdown at boundary")
+			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
+			require.NotNil(t, resumeCursor)
+
+			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				resumeCursor.CursorSequence,
+				heads[splitTick:],
+				snapshotCutoverCfg,
+				restartState,
+			)
+
+			for i := splitTick; i < len(heads); i++ {
+				if i == 5 {
+					warmSecond.coordinator.WithAutoTune(staleSnapshotCfg)
+					state := warmSecond.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, state.PolicyManifestDigest, "replay stale snapshot must be rejected deterministically")
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				if i == 7 {
+					warmSecond.coordinator.WithAutoTune(snapshotCutoverCfg)
+					state := warmSecond.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, state.PolicyManifestDigest, "replay snapshot+tail re-apply must remain deterministic")
+					assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				job := warmSecond.tickAndAdvance(t)
+				warmSnapshots = append(warmSnapshots, snapshotFromFetchJob(job))
+				warmBatches = append(warmBatches, job.BatchSize)
+			}
+
+			assert.Equal(t, coldSnapshots, warmSnapshots, "policy-manifest snapshot-cutover replay/resume must converge to deterministic canonical tuples")
+			assert.Equal(t, coldBatches, warmBatches, "policy-manifest snapshot-cutover replay/resume must preserve deterministic control decisions")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, coldSnapshots, warmSnapshots, "cold vs warm snapshot-cutover replay")
+			assertCursorMonotonicByAddress(t, warmSnapshots)
+		})
+	}
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
