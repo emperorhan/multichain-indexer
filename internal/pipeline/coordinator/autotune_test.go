@@ -1360,6 +1360,153 @@ func TestAutoTuneController_RollbackCheckpointFenceEpochCompactionRejectsStaleFe
 	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFencePostExpiryLateMarkerQuarantineRejectsStaleReactivation(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	compactionCfg := rollbackCfg
+	compactionCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone=1"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+
+	segment1Controller := newAutoTuneController(100, segment1Cfg)
+	require.NotNil(t, segment1Controller)
+	batch, _ := segment1Controller.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+
+	segment2Seed := segment1Controller.currentBatch
+	segment2Controller := newAutoTuneControllerWithSeed(100, segment2Cfg, &segment2Seed)
+	require.NotNil(t, segment2Controller)
+	segment2Controller.reconcilePolicyTransition(segment1Controller.exportPolicyTransition())
+	batch, _ = segment2Controller.Resolve(highLag)
+	assert.Equal(t, segment2Seed, batch)
+	batch, _ = segment2Controller.Resolve(highLag)
+	assert.Equal(t, 140, batch)
+
+	segment3Seed := segment2Controller.currentBatch
+	segment3Controller := newAutoTuneControllerWithSeed(100, segment3Cfg, &segment3Seed)
+	require.NotNil(t, segment3Controller)
+	segment3Controller.reconcilePolicyTransition(segment2Controller.exportPolicyTransition())
+	batch, _ = segment3Controller.Resolve(highLag)
+	assert.Equal(t, segment3Seed, batch)
+	batch, _ = segment3Controller.Resolve(highLag)
+	assert.Equal(t, 160, batch)
+
+	rollbackSeed := segment3Controller.currentBatch
+	rollbackController := newAutoTuneControllerWithSeed(100, rollbackCfg, &rollbackSeed)
+	require.NotNil(t, rollbackController)
+	rollbackController.reconcilePolicyTransition(segment3Controller.exportPolicyTransition())
+	batch, _ = rollbackController.Resolve(highLag)
+	assert.Equal(t, rollbackSeed, batch)
+	batch, rollbackApplied := rollbackController.Resolve(highLag)
+	assert.Equal(t, rollbackSeed+20, batch)
+	assert.Equal(t, "apply_increase", rollbackApplied.Decision)
+	assert.Equal(t, rollbackCfg.PolicyManifestDigest, rollbackApplied.PolicyManifestDigest)
+	assert.Equal(t, int64(2), rollbackApplied.PolicyEpoch)
+	assert.Equal(t, 0, rollbackApplied.PolicyActivationTicks)
+
+	compactionSeed := rollbackController.currentBatch
+	compactionController := newAutoTuneControllerWithSeed(100, compactionCfg, &compactionSeed)
+	require.NotNil(t, compactionController)
+	compactionController.reconcilePolicyTransition(rollbackController.exportPolicyTransition())
+	batch, compactionDecision := compactionController.Resolve(highLag)
+	assert.Equal(t, compactionSeed+20, batch)
+	assert.Equal(t, "apply_increase", compactionDecision.Decision)
+	assert.Equal(t, compactionCfg.PolicyManifestDigest, compactionDecision.PolicyManifestDigest)
+	assert.Equal(t, compactionCfg.PolicyManifestRefreshEpoch, compactionDecision.PolicyEpoch)
+	assert.Equal(t, 0, compactionDecision.PolicyActivationTicks)
+
+	expirySeed := compactionController.currentBatch
+	expiryController := newAutoTuneControllerWithSeed(100, expiryCfg, &expirySeed)
+	require.NotNil(t, expiryController)
+	expiryController.reconcilePolicyTransition(compactionController.exportPolicyTransition())
+	batch, expiryDecision := expiryController.Resolve(highLag)
+	assert.Equal(t, expirySeed+20, batch)
+	assert.Equal(t, "apply_increase", expiryDecision.Decision)
+	assert.Equal(t, expiryCfg.PolicyManifestDigest, expiryDecision.PolicyManifestDigest)
+	assert.Equal(t, expiryCfg.PolicyManifestRefreshEpoch, expiryDecision.PolicyEpoch)
+	assert.Equal(t, 0, expiryDecision.PolicyActivationTicks)
+
+	quarantineSeed := expiryController.currentBatch
+	quarantineController := newAutoTuneControllerWithSeed(100, quarantineCfg, &quarantineSeed)
+	require.NotNil(t, quarantineController)
+	quarantineController.reconcilePolicyTransition(expiryController.exportPolicyTransition())
+	batch, quarantineDecision := quarantineController.Resolve(highLag)
+	assert.Equal(t, quarantineSeed+20, batch)
+	assert.Equal(t, "apply_increase", quarantineDecision.Decision)
+	assert.Equal(t, quarantineCfg.PolicyManifestDigest, quarantineDecision.PolicyManifestDigest)
+	assert.Equal(t, quarantineCfg.PolicyManifestRefreshEpoch, quarantineDecision.PolicyEpoch)
+	assert.Equal(t, 0, quarantineDecision.PolicyActivationTicks)
+
+	releaseSeed := quarantineController.currentBatch
+	releaseController := newAutoTuneControllerWithSeed(100, releaseCfg, &releaseSeed)
+	require.NotNil(t, releaseController)
+	releaseController.reconcilePolicyTransition(quarantineController.exportPolicyTransition())
+	batch, releaseDecision := releaseController.Resolve(highLag)
+	assert.Equal(t, releaseSeed+20, batch)
+	assert.Equal(t, "apply_increase", releaseDecision.Decision)
+	assert.Equal(t, releaseCfg.PolicyManifestDigest, releaseDecision.PolicyManifestDigest)
+	assert.Equal(t, releaseCfg.PolicyManifestRefreshEpoch, releaseDecision.PolicyEpoch)
+	assert.Equal(t, 0, releaseDecision.PolicyActivationTicks)
+
+	staleQuarantineSeed := releaseController.currentBatch
+	staleQuarantineController := newAutoTuneControllerWithSeed(100, quarantineCfg, &staleQuarantineSeed)
+	require.NotNil(t, staleQuarantineController)
+	staleQuarantineController.reconcilePolicyTransition(releaseController.exportPolicyTransition())
+	batch, staleQuarantineDecision := staleQuarantineController.Resolve(highLag)
+	assert.Equal(t, staleQuarantineSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleQuarantineDecision.Decision)
+	assert.Equal(t, releaseCfg.PolicyManifestDigest, staleQuarantineDecision.PolicyManifestDigest, "stale post-release quarantine marker must not reactivate")
+	assert.Equal(t, releaseCfg.PolicyManifestRefreshEpoch, staleQuarantineDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleQuarantineDecision.PolicyActivationTicks)
+
+	reForwardSeed := staleQuarantineController.currentBatch
+	reForwardController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reForwardSeed)
+	require.NotNil(t, reForwardController)
+	reForwardController.reconcilePolicyTransition(staleQuarantineController.exportPolicyTransition())
+	batch, reForwardHold := reForwardController.Resolve(highLag)
+	assert.Equal(t, reForwardSeed, batch)
+	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after late-marker release must remain deterministic")
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardHold.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardHold.PolicyEpoch)
+	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,

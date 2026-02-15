@@ -639,6 +639,34 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 			a.policyEpoch = incomingEpoch
 			return
 		}
+		if isDeterministicRollbackFencePostExpiryLateMarkerQuarantineTransition(previousEpoch, previousDigest, incomingDigest) {
+			// Same-epoch post-expiry late-marker quarantine is metadata ownership
+			// only and must converge deterministically at marker-hold boundaries.
+			a.policyManifestDigest = incomingDigest
+			a.policyEpoch = incomingEpoch
+			return
+		}
+		if isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(previousEpoch, previousDigest, incomingDigest) {
+			// Same-epoch post-expiry late-marker release is metadata ownership only
+			// and must converge deterministically at quarantine-release boundaries.
+			a.policyManifestDigest = incomingDigest
+			a.policyEpoch = incomingEpoch
+			return
+		}
+		if isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(previousEpoch, incomingDigest, previousDigest) {
+			// Reject stale post-release quarantine ownership reactivation once
+			// quarantine-release ownership is verified for this lineage.
+			a.policyManifestDigest = previousDigest
+			a.policyEpoch = previousEpoch
+			return
+		}
+		if isDeterministicRollbackFencePostExpiryLateMarkerQuarantineTransition(previousEpoch, incomingDigest, previousDigest) {
+			// Reject stale post-quarantine expiry ownership reactivation once
+			// late-marker quarantine ownership is verified for this lineage.
+			a.policyManifestDigest = previousDigest
+			a.policyEpoch = previousEpoch
+			return
+		}
 		if isDeterministicRollbackFenceTombstoneExpiryTransition(previousEpoch, incomingDigest, previousDigest) {
 			// Reject stale post-expiry ownership reactivation once expiry ownership
 			// is verified for this rollback fence lineage.
@@ -802,12 +830,62 @@ func parseRollbackFenceTombstoneExpiryEpoch(digest string) (int64, bool) {
 	return 0, false
 }
 
+func parseRollbackFenceLateMarkerHoldEpoch(digest string) (int64, bool) {
+	const holdKey = "rollback-fence-late-marker-hold-epoch="
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		if !strings.HasPrefix(token, holdKey) {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(token, holdKey))
+		if value == "" {
+			return 0, false
+		}
+		holdEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || holdEpoch < 0 {
+			return 0, false
+		}
+		return holdEpoch, true
+	}
+
+	return 0, false
+}
+
+func parseRollbackFenceLateMarkerReleaseEpoch(digest string) (int64, bool) {
+	const releaseKey = "rollback-fence-late-marker-release-epoch="
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		if !strings.HasPrefix(token, releaseKey) {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(token, releaseKey))
+		if value == "" {
+			return 0, false
+		}
+		releaseEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || releaseEpoch < 0 {
+			return 0, false
+		}
+		return releaseEpoch, true
+	}
+
+	return 0, false
+}
+
 func isRollbackFenceTombstoneExpiryDigest(epoch int64, digest string) bool {
 	if epoch < 0 {
 		return false
 	}
 	normalized := normalizePolicyManifestDigest(digest)
 	if hasRollbackFenceEpochCompactionTombstone(normalized) {
+		return false
+	}
+	if _, hasHold := parseRollbackFenceLateMarkerHoldEpoch(normalized); hasHold {
+		return false
+	}
+	if _, hasRelease := parseRollbackFenceLateMarkerReleaseEpoch(normalized); hasRelease {
 		return false
 	}
 	expiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(normalized)
@@ -830,6 +908,90 @@ func isRollbackFenceTombstoneExpiryDigest(epoch int64, digest string) bool {
 	// Expiry must be explicitly post-fence to avoid accepting ambiguous
 	// same-epoch markers that can re-open stale ownership.
 	return expiryEpoch > epoch
+}
+
+func isRollbackFencePostExpiryLateMarkerQuarantineDigest(epoch int64, digest string) bool {
+	if epoch < 0 {
+		return false
+	}
+	normalized := normalizePolicyManifestDigest(digest)
+	if hasRollbackFenceEpochCompactionTombstone(normalized) {
+		return false
+	}
+	if _, hasRelease := parseRollbackFenceLateMarkerReleaseEpoch(normalized); hasRelease {
+		return false
+	}
+	expiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(normalized)
+	if !ok {
+		return false
+	}
+	holdEpoch, ok := parseRollbackFenceLateMarkerHoldEpoch(normalized)
+	if !ok {
+		return false
+	}
+	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(normalized)
+	if !ok {
+		return false
+	}
+	if rollbackToSeq != epoch {
+		return false
+	}
+	if rollbackFromSeq <= rollbackToSeq {
+		return false
+	}
+	if rollbackForwardSeq < rollbackFromSeq {
+		return false
+	}
+	if expiryEpoch <= epoch {
+		return false
+	}
+	// Quarantine hold epochs must be explicitly post-expiry to avoid ambiguous
+	// same-epoch marker ownership.
+	return holdEpoch > expiryEpoch
+}
+
+func isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch int64, digest string) bool {
+	if epoch < 0 {
+		return false
+	}
+	normalized := normalizePolicyManifestDigest(digest)
+	if hasRollbackFenceEpochCompactionTombstone(normalized) {
+		return false
+	}
+	expiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(normalized)
+	if !ok {
+		return false
+	}
+	holdEpoch, ok := parseRollbackFenceLateMarkerHoldEpoch(normalized)
+	if !ok {
+		return false
+	}
+	releaseEpoch, ok := parseRollbackFenceLateMarkerReleaseEpoch(normalized)
+	if !ok {
+		return false
+	}
+	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(normalized)
+	if !ok {
+		return false
+	}
+	if rollbackToSeq != epoch {
+		return false
+	}
+	if rollbackFromSeq <= rollbackToSeq {
+		return false
+	}
+	if rollbackForwardSeq < rollbackFromSeq {
+		return false
+	}
+	if expiryEpoch <= epoch {
+		return false
+	}
+	if holdEpoch <= expiryEpoch {
+		return false
+	}
+	// Release boundaries must be explicitly post-hold to avoid accepting
+	// ambiguous release ownership.
+	return releaseEpoch > holdEpoch
 }
 
 func isDeterministicRollbackFenceTombstoneExpiryTransition(
@@ -869,6 +1031,118 @@ func isDeterministicRollbackFenceTombstoneExpiryTransition(
 		return false
 	}
 	return true
+}
+
+func isDeterministicRollbackFencePostExpiryLateMarkerQuarantineTransition(
+	epoch int64,
+	sourceDigest string,
+	targetDigest string,
+) bool {
+	if epoch < 0 {
+		return false
+	}
+	sourceNormalized := normalizePolicyManifestDigest(sourceDigest)
+	targetNormalized := normalizePolicyManifestDigest(targetDigest)
+	if !isRollbackFenceTombstoneExpiryDigest(epoch, sourceNormalized) {
+		return false
+	}
+	if !isRollbackFencePostExpiryLateMarkerQuarantineDigest(epoch, targetNormalized) {
+		return false
+	}
+	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
+		return false
+	}
+	if sourceToSeq != epoch || targetToSeq != epoch {
+		return false
+	}
+	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
+		return false
+	}
+	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
+		return false
+	}
+	sourceExpiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetExpiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(targetNormalized)
+	if !ok {
+		return false
+	}
+	return sourceExpiryEpoch == targetExpiryEpoch
+}
+
+func isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(
+	epoch int64,
+	sourceDigest string,
+	targetDigest string,
+) bool {
+	if epoch < 0 {
+		return false
+	}
+	sourceNormalized := normalizePolicyManifestDigest(sourceDigest)
+	targetNormalized := normalizePolicyManifestDigest(targetDigest)
+	if !isRollbackFencePostExpiryLateMarkerQuarantineDigest(epoch, sourceNormalized) {
+		return false
+	}
+	if !isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch, targetNormalized) {
+		return false
+	}
+	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
+		return false
+	}
+	if sourceToSeq != epoch || targetToSeq != epoch {
+		return false
+	}
+	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
+		return false
+	}
+	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
+		return false
+	}
+	sourceExpiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetExpiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceExpiryEpoch != targetExpiryEpoch {
+		return false
+	}
+	sourceHoldEpoch, ok := parseRollbackFenceLateMarkerHoldEpoch(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetHoldEpoch, ok := parseRollbackFenceLateMarkerHoldEpoch(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceHoldEpoch != targetHoldEpoch {
+		return false
+	}
+	targetReleaseEpoch, ok := parseRollbackFenceLateMarkerReleaseEpoch(targetNormalized)
+	if !ok {
+		return false
+	}
+	return targetReleaseEpoch > targetHoldEpoch
 }
 
 func (a *autoTuneController) resolveOverrideState() autoTuneOverrideState {
