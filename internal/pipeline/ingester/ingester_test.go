@@ -49,7 +49,7 @@ func (tx *fakeTxImpl) Commit() error {
 	fakeCommitErrors = fakeCommitErrors[1:]
 	return err
 }
-func (tx *fakeTxImpl) Rollback() error        { return nil }
+func (tx *fakeTxImpl) Rollback() error { return nil }
 
 func init() {
 	sql.Register("fake_ingester", &fakeDriver{})
@@ -189,6 +189,15 @@ func Test_isCanonicalityDrift(t *testing.T) {
 		NewCursorValue:         &newSig,
 		PreviousCursorSequence: 10,
 		NewCursorSequence:      10,
+	}))
+	assert.False(t, isCanonicalityDrift(event.NormalizedBatch{
+		PreviousCursorValue:    &oldSig,
+		NewCursorValue:         &newSig,
+		PreviousCursorSequence: 10,
+		NewCursorSequence:      10,
+		Transactions: []event.NormalizedTransaction{
+			{TxHash: "sig-overlap-1", BlockCursor: 10},
+		},
 	}))
 	assert.True(t, isCanonicalityDrift(event.NormalizedBatch{
 		PreviousCursorValue:    &oldSig,
@@ -629,6 +638,318 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 			assert.Equal(t, 3, adjustments, "already-decoded replay events must not double-apply balances")
 			require.Len(t, cursorWrites, 2)
 			assert.GreaterOrEqual(t, cursorWrites[1], cursorWrites[0], "cursor progression must remain monotonic across deferred-recovery boundary")
+		})
+	}
+}
+
+func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type eventBlueprint struct {
+		category model.EventCategory
+		action   string
+		delta    string
+	}
+
+	type testCase struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		address         string
+		contractAddress string
+		programID       string
+		counterparty    string
+		tokenType       model.TokenType
+
+		oldCursor string
+		oldSeq    int64
+		tx1Seq    int64
+		tx2Seq    int64
+
+		tx1Primary  string
+		tx1Alias    string
+		tx2APrimary string
+		tx2AAlias   string
+		tx2BPrimary string
+		tx2BAlias   string
+
+		events []eventBlueprint
+	}
+
+	type overlapResult struct {
+		tupleKeys      map[string]struct{}
+		eventIDs       map[string]struct{}
+		categoryCounts map[model.EventCategory]int
+		balanceByActor map[string]string
+
+		cursorValue    string
+		cursorSequence int64
+		watermark      int64
+
+		insertedCount  int
+		upsertAttempts int
+
+		cursorWrites    []int64
+		watermarkWrites []int64
+	}
+
+	testCases := []testCase{
+		{
+			name:            "solana-devnet",
+			chain:           model.ChainSolana,
+			network:         model.NetworkDevnet,
+			address:         "addr-live-backfill-sol",
+			contractAddress: "11111111111111111111111111111111",
+			programID:       "11111111111111111111111111111111",
+			counterparty:    "addr-counterparty-sol",
+			tokenType:       model.TokenTypeNative,
+			oldCursor:       "sol-cursor-900",
+			oldSeq:          900,
+			tx1Seq:          901,
+			tx2Seq:          902,
+			tx1Primary:      "sol-lb-901",
+			tx1Alias:        "sol-lb-901",
+			tx2APrimary:     "sol-lb-902-a",
+			tx2AAlias:       " sol-lb-902-a ",
+			tx2BPrimary:     "sol-lb-902-b",
+			tx2BAlias:       "sol-lb-902-b",
+			events: []eventBlueprint{
+				{category: model.EventCategoryTransfer, action: "transfer", delta: "-10"},
+				{category: model.EventCategoryFee, action: "fee", delta: "-1"},
+			},
+		},
+		{
+			name:            "base-sepolia",
+			chain:           model.ChainBase,
+			network:         model.NetworkSepolia,
+			address:         "0x1111111111111111111111111111111111111111",
+			contractAddress: "ETH",
+			programID:       "0xbase-program",
+			counterparty:    "0x2222222222222222222222222222222222222222",
+			tokenType:       model.TokenTypeNative,
+			oldCursor:       "0xaaa1200",
+			oldSeq:          1200,
+			tx1Seq:          1201,
+			tx2Seq:          1202,
+			tx1Primary:      "0xAAA1201",
+			tx1Alias:        "aaa1201",
+			tx2APrimary:     "0xBBB1202",
+			tx2AAlias:       "bbb1202",
+			tx2BPrimary:     "0xCCC1202",
+			tx2BAlias:       "ccc1202",
+			events: []eventBlueprint{
+				{category: model.EventCategoryTransfer, action: "native_transfer", delta: "-100"},
+				{category: model.EventCategoryFeeExecutionL2, action: "fee_execution_l2", delta: "-3"},
+				{category: model.EventCategoryFeeDataL1, action: "fee_data_l1", delta: "-1"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			canonicalHash := func(hash string) string {
+				canonical := canonicalSignatureIdentity(tc.chain, hash)
+				if canonical != "" {
+					return canonical
+				}
+				return strings.TrimSpace(hash)
+			}
+
+			buildTx := func(hash string, sequence int64) event.NormalizedTransaction {
+				canonicalTx := canonicalHash(hash)
+				events := make([]event.NormalizedBalanceEvent, 0, len(tc.events))
+				for _, spec := range tc.events {
+					eventID := strings.Join([]string{
+						string(tc.chain),
+						string(tc.network),
+						canonicalTx,
+						string(spec.category),
+					}, "|")
+					events = append(events, event.NormalizedBalanceEvent{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         spec.category,
+						EventAction:           spec.action,
+						ProgramID:             tc.programID,
+						ContractAddress:       tc.contractAddress,
+						Address:               tc.address,
+						CounterpartyAddress:   tc.counterparty,
+						Delta:                 spec.delta,
+						EventID:               eventID,
+						TokenType:             tc.tokenType,
+					})
+				}
+
+				return event.NormalizedTransaction{
+					TxHash:        hash,
+					BlockCursor:   sequence,
+					FeeAmount:     "0",
+					FeePayer:      tc.address,
+					Status:        model.TxStatusSuccess,
+					ChainData:     json.RawMessage("{}"),
+					BalanceEvents: events,
+				}
+			}
+
+			buildBatch := func(prevCursor string, prevSeq int64, newCursor string, newSeq int64, txs ...event.NormalizedTransaction) event.NormalizedBatch {
+				prev := prevCursor
+				next := newCursor
+				return event.NormalizedBatch{
+					Chain:                  tc.chain,
+					Network:                tc.network,
+					Address:                tc.address,
+					PreviousCursorValue:    &prev,
+					PreviousCursorSequence: prevSeq,
+					NewCursorValue:         &next,
+					NewCursorSequence:      newSeq,
+					Transactions:           txs,
+				}
+			}
+
+			runScenario := func(t *testing.T, batches []event.NormalizedBatch) overlapResult {
+				t.Helper()
+
+				state := newInterleaveState(nil)
+				db := openFakeDB()
+				t.Cleanup(func() {
+					_ = db.Close()
+				})
+
+				ing := New(
+					&interleaveTxBeginner{db: db},
+					&interleaveTxRepo{state: state},
+					&interleaveBalanceEventRepo{state: state},
+					&interleaveBalanceRepo{state: state},
+					&interleaveTokenRepo{state: state},
+					&interleaveCursorRepo{state: state},
+					&interleaveConfigRepo{state: state},
+					nil,
+					slog.Default(),
+				)
+
+				for _, batch := range batches {
+					require.NoError(t, ing.processBatch(context.Background(), batch))
+				}
+
+				tuples := state.snapshotTuples()
+				tupleKeys := make(map[string]struct{}, len(tuples))
+				eventIDs := make(map[string]struct{}, len(tuples))
+				categoryCounts := make(map[model.EventCategory]int)
+				balanceByActor := make(map[string]string)
+				for _, tuple := range tuples {
+					tupleKeys[interleaveTupleKey(tuple)] = struct{}{}
+					eventIDs[tuple.EventID] = struct{}{}
+					categoryCounts[tuple.Category]++
+
+					next, err := addDecimalStringsForTest(balanceByActor[tuple.Address], tuple.Delta)
+					require.NoError(t, err)
+					balanceByActor[tuple.Address] = next
+				}
+
+				chainKey := interleaveKey(tc.chain, tc.network)
+				cursorKey := chainKey + "|" + tc.address
+
+				cursors := state.snapshotCursors()
+				watermarks := state.snapshotWatermarks()
+
+				state.mu.Lock()
+				insertedCount := len(state.insertedEvents)
+				upsertAttempts := state.upsertAttempts
+				cursorWrites := append([]int64(nil), state.cursorWrites[cursorKey]...)
+				watermarkWrites := append([]int64(nil), state.watermarkWrites[chainKey]...)
+				state.mu.Unlock()
+
+				require.Len(t, cursors, 1)
+				cursor, exists := cursors[cursorKey]
+				require.True(t, exists)
+				require.NotNil(t, cursor)
+				require.NotNil(t, cursor.CursorValue)
+
+				return overlapResult{
+					tupleKeys:       tupleKeys,
+					eventIDs:        eventIDs,
+					categoryCounts:  categoryCounts,
+					balanceByActor:  balanceByActor,
+					cursorValue:     *cursor.CursorValue,
+					cursorSequence:  cursor.CursorSequence,
+					watermark:       watermarks[chainKey],
+					insertedCount:   insertedCount,
+					upsertAttempts:  upsertAttempts,
+					cursorWrites:    cursorWrites,
+					watermarkWrites: watermarkWrites,
+				}
+			}
+
+			tx1Primary := buildTx(tc.tx1Primary, tc.tx1Seq)
+			tx1Alias := buildTx(tc.tx1Alias, tc.tx1Seq)
+			tx2APrimary := buildTx(tc.tx2APrimary, tc.tx2Seq)
+			tx2AAlias := buildTx(tc.tx2AAlias, tc.tx2Seq)
+			tx2BPrimary := buildTx(tc.tx2BPrimary, tc.tx2Seq)
+			tx2BAlias := buildTx(tc.tx2BAlias, tc.tx2Seq)
+
+			baseline := runScenario(t, []event.NormalizedBatch{
+				buildBatch(tc.oldCursor, tc.oldSeq, tc.tx2BPrimary, tc.tx2Seq, tx1Primary, tx2APrimary, tx2BPrimary),
+			})
+
+			liveFirst := runScenario(t, []event.NormalizedBatch{
+				buildBatch(tc.oldCursor, tc.oldSeq, tc.tx2APrimary, tc.tx2Seq, tx2APrimary),
+				buildBatch(tc.tx2APrimary, tc.tx2Seq, tc.tx2BPrimary, tc.tx2Seq, tx1Alias, tx2AAlias, tx2BPrimary),
+				buildBatch(tc.tx2BPrimary, tc.tx2Seq, tc.tx2BPrimary, tc.tx2Seq, tx2BAlias),
+			})
+			backfillFirst := runScenario(t, []event.NormalizedBatch{
+				buildBatch(tc.oldCursor, tc.oldSeq, tc.tx2BPrimary, tc.tx2Seq, tx1Alias, tx2BPrimary),
+				buildBatch(tc.tx2BPrimary, tc.tx2Seq, tc.tx2BPrimary, tc.tx2Seq, tx2AAlias, tx2BAlias),
+				buildBatch(tc.tx2BPrimary, tc.tx2Seq, tc.tx2BPrimary, tc.tx2Seq, tx1Primary, tx2AAlias),
+			})
+			interleaved := runScenario(t, []event.NormalizedBatch{
+				buildBatch(tc.oldCursor, tc.oldSeq, tc.tx2APrimary, tc.tx2Seq, tx2APrimary),
+				buildBatch(tc.tx2APrimary, tc.tx2Seq, tc.tx2APrimary, tc.tx2Seq, tx1Alias),
+				buildBatch(tc.tx2APrimary, tc.tx2Seq, tc.tx2BPrimary, tc.tx2Seq, tx2AAlias, tx2BPrimary),
+				buildBatch(tc.tx2BPrimary, tc.tx2Seq, tc.tx2BPrimary, tc.tx2Seq, tx1Primary, tx2BAlias),
+			})
+
+			assert.Equal(t, baseline.tupleKeys, liveFirst.tupleKeys)
+			assert.Equal(t, baseline.tupleKeys, backfillFirst.tupleKeys)
+			assert.Equal(t, baseline.tupleKeys, interleaved.tupleKeys)
+
+			assert.Equal(t, baseline.eventIDs, liveFirst.eventIDs)
+			assert.Equal(t, baseline.eventIDs, backfillFirst.eventIDs)
+			assert.Equal(t, baseline.eventIDs, interleaved.eventIDs)
+
+			assert.Equal(t, baseline.categoryCounts, liveFirst.categoryCounts)
+			assert.Equal(t, baseline.categoryCounts, backfillFirst.categoryCounts)
+			assert.Equal(t, baseline.categoryCounts, interleaved.categoryCounts)
+
+			assert.Equal(t, baseline.balanceByActor, liveFirst.balanceByActor)
+			assert.Equal(t, baseline.balanceByActor, backfillFirst.balanceByActor)
+			assert.Equal(t, baseline.balanceByActor, interleaved.balanceByActor)
+
+			assert.Equal(t, baseline.cursorValue, liveFirst.cursorValue)
+			assert.Equal(t, baseline.cursorValue, backfillFirst.cursorValue)
+			assert.Equal(t, baseline.cursorValue, interleaved.cursorValue)
+			assert.Equal(t, baseline.cursorSequence, liveFirst.cursorSequence)
+			assert.Equal(t, baseline.cursorSequence, backfillFirst.cursorSequence)
+			assert.Equal(t, baseline.cursorSequence, interleaved.cursorSequence)
+			assert.Equal(t, baseline.watermark, liveFirst.watermark)
+			assert.Equal(t, baseline.watermark, backfillFirst.watermark)
+			assert.Equal(t, baseline.watermark, interleaved.watermark)
+
+			assert.Equal(t, len(baseline.eventIDs), baseline.insertedCount)
+			assert.Equal(t, len(baseline.eventIDs), liveFirst.insertedCount)
+			assert.Equal(t, len(baseline.eventIDs), backfillFirst.insertedCount)
+			assert.Equal(t, len(baseline.eventIDs), interleaved.insertedCount)
+
+			assert.GreaterOrEqual(t, liveFirst.upsertAttempts, liveFirst.insertedCount)
+			assert.GreaterOrEqual(t, backfillFirst.upsertAttempts, backfillFirst.insertedCount)
+			assert.GreaterOrEqual(t, interleaved.upsertAttempts, interleaved.insertedCount)
+
+			assertMonotonicWrites(t, map[string][]int64{"cursor": baseline.cursorWrites}, tc.name+" baseline cursor")
+			assertMonotonicWrites(t, map[string][]int64{"cursor": liveFirst.cursorWrites}, tc.name+" live-first cursor")
+			assertMonotonicWrites(t, map[string][]int64{"cursor": backfillFirst.cursorWrites}, tc.name+" backfill-first cursor")
+			assertMonotonicWrites(t, map[string][]int64{"cursor": interleaved.cursorWrites}, tc.name+" interleaved cursor")
+			assertMonotonicWrites(t, map[string][]int64{"watermark": baseline.watermarkWrites}, tc.name+" baseline watermark")
+			assertMonotonicWrites(t, map[string][]int64{"watermark": liveFirst.watermarkWrites}, tc.name+" live-first watermark")
+			assertMonotonicWrites(t, map[string][]int64{"watermark": backfillFirst.watermarkWrites}, tc.name+" backfill-first watermark")
+			assertMonotonicWrites(t, map[string][]int64{"watermark": interleaved.watermarkWrites}, tc.name+" interleaved watermark")
 		})
 	}
 }

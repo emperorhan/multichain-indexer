@@ -174,7 +174,10 @@ func isCanonicalityDrift(batch event.NormalizedBatch) bool {
 	}
 	if batch.NewCursorSequence == batch.PreviousCursorSequence &&
 		prevIdentity != newIdentity {
-		return true
+		// Same-sequence cursor identity changes can occur during legitimate
+		// live/backfill overlap reconciliation. Treat these as reorg drift
+		// only for explicit rollback marker batches (no decoded transactions).
+		return len(batch.Transactions) == 0
 	}
 	return false
 }

@@ -640,6 +640,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of live/backfill overlap determinism and replay/resume invariant safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0209 (M30-S1)
+Assertions:
+1. Equivalent logical ranges under legacy-decoder, upgraded-decoder, and mixed-version interleaving permutations converge to one deterministic canonical output set on both mandatory chains.
+2. Decoder-version transition reconciliation preserves deterministic canonical identity boundaries with `0` duplicate canonical IDs and `0` missing logical events.
+3. Mixed-version permutations preserve signed-delta conservation and explicit fee-event coexistence expectations where source fields exist.
+4. Replay/resume from decoder-version transition boundaries remains idempotent with cursor monotonicity and no balance double-apply side effects.
+
+Pass Evidence:
+- Deterministic tests inject legacy-decoder, upgraded-decoder, and mixed-version permutations on `solana-devnet` and `base-sepolia` and show canonical tuple equivalence against stable single-version baselines.
+- Deterministic mixed-version reconciliation tests show `0` duplicate canonical IDs and `0` missing logical events while signed-delta and explicit fee-event checks remain satisfied.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0210 (M30-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M30 invariants.
+2. QA executes at least one counterexample with legacy-vs-upgraded decoder-version permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample validating mixed-version replay/resume safety with no duplicate canonical IDs, no missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of decoder-version transition determinism and mixed-version replay/resume invariant safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -668,3 +692,4 @@ Release recommendation must be `fail` if any condition holds:
 24. Volatility-burst normalizer determinism cannot be proven (dense same-transaction permutation convergence, actor/asset signed-delta conservation, and explicit fee-event coexistence with no duplicate/missing logical canonical outputs and cursor monotonicity not evidenced for both mandatory chains).
 25. Deferred sidecar-recovery backfill determinism cannot be proven (degradation->recovery permutation convergence, recovered-signature canonical identity reconciliation against prior ranges, and no duplicate/missing logical canonical outputs with cursor monotonicity not evidenced for both mandatory chains).
 26. Live/backfill overlap canonical convergence determinism cannot be proven (source-order permutation convergence, overlap reconciliation stability, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
+27. Decoder-version transition canonical convergence determinism cannot be proven (legacy-vs-upgraded decode permutation convergence, mixed-version reconciliation stability, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
