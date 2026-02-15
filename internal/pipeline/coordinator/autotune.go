@@ -59,13 +59,14 @@ type autoTuneController struct {
 	queueHighWatermarkPct int
 	queueLowWatermarkPct  int
 
-	hysteresisTicks int
-	cooldownTicks   int
-	cooldownLeft    int
-	currentBatch    int
-	lastSignal      autoTuneSignal
-	lastApplied     autoTuneSignal
-	streak          int
+	hysteresisTicks  int
+	cooldownTicks    int
+	cooldownLeft     int
+	currentBatch     int
+	lastSignal       autoTuneSignal
+	lastApplied      autoTuneSignal
+	saturationSignal autoTuneSignal
+	streak           int
 }
 
 func newAutoTuneController(baseBatchSize int, cfg AutoTuneConfig) *autoTuneController {
@@ -185,6 +186,7 @@ func newAutoTuneControllerWithSeedMode(
 		currentBatch:          startBatch,
 		lastSignal:            autoTuneSignalHold,
 		lastApplied:           autoTuneSignalHold,
+		saturationSignal:      autoTuneSignalHold,
 	}
 }
 
@@ -202,6 +204,9 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 	before := a.currentBatch
 	appliedControl := false
 	blockedByCooldown := a.cooldownLeft > 0 && isOppositeSignal(signal, a.lastApplied)
+	if signal != a.saturationSignal || !a.isSaturatedBoundary(signal) {
+		a.saturationSignal = autoTuneSignalHold
+	}
 
 	if blockedByCooldown {
 		decision = "defer_cooldown"
@@ -217,6 +222,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		switch signal {
 		case autoTuneSignalHold:
 			a.lastSignal = autoTuneSignalHold
+			a.saturationSignal = autoTuneSignalHold
 			a.streak = 0
 		case autoTuneSignalIncrease, autoTuneSignalDecrease:
 			if a.lastSignal == signal {
@@ -226,12 +232,17 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 				a.streak = 1
 			}
 
-			if a.streak >= a.hysteresisTicks {
+			if a.saturationSignal == signal && a.isSaturatedBoundary(signal) {
+				decision = clampedDecisionForSignal(signal)
+				a.streak = 0
+			} else if a.streak >= a.hysteresisTicks {
+				batchChanged := false
 				switch signal {
 				case autoTuneSignalIncrease:
 					next := clampInt(a.currentBatch+a.stepUp, a.minBatchSize, a.maxBatchSize)
 					if next > a.currentBatch {
 						decision = "apply_increase"
+						batchChanged = true
 					} else {
 						decision = "clamped_increase"
 					}
@@ -240,15 +251,25 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 					next := clampInt(a.currentBatch-a.stepDown, a.minBatchSize, a.maxBatchSize)
 					if next < a.currentBatch {
 						decision = "apply_decrease"
+						batchChanged = true
 					} else {
 						decision = "clamped_decrease"
 					}
 					a.currentBatch = next
 				}
 				a.streak = 0
-				a.lastApplied = signal
-				a.cooldownLeft = a.cooldownTicks
-				appliedControl = true
+				if batchChanged {
+					a.lastApplied = signal
+					a.cooldownLeft = a.cooldownTicks
+					appliedControl = true
+					if a.isSaturatedBoundary(signal) {
+						a.saturationSignal = signal
+					} else {
+						a.saturationSignal = autoTuneSignalHold
+					}
+				} else {
+					a.saturationSignal = signal
+				}
 			} else {
 				decision = "defer_hysteresis"
 			}
@@ -269,6 +290,28 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		BatchAfter:    a.currentBatch,
 		Streak:        a.streak,
 		Cooldown:      a.cooldownLeft,
+	}
+}
+
+func (a *autoTuneController) isSaturatedBoundary(signal autoTuneSignal) bool {
+	switch signal {
+	case autoTuneSignalIncrease:
+		return a.currentBatch >= a.maxBatchSize
+	case autoTuneSignalDecrease:
+		return a.currentBatch <= a.minBatchSize
+	default:
+		return false
+	}
+}
+
+func clampedDecisionForSignal(signal autoTuneSignal) string {
+	switch signal {
+	case autoTuneSignalIncrease:
+		return "clamped_increase"
+	case autoTuneSignalDecrease:
+		return "clamped_decrease"
+	default:
+		return "hold"
 	}
 }
 

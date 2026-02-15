@@ -1506,6 +1506,280 @@ func TestTick_AutoTuneOneChainOscillationDoesNotBleedControlAcrossOtherMandatory
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+func TestTick_AutoTuneSaturationPermutationsConvergeCanonicalTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qsaturationperm000000000000000000000000",
+		},
+	}
+
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          140,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+		CooldownTicks:         2,
+	}
+
+	saturationEntryHeads := []int64{300, 110, 110, 110, 110, 110}
+	sustainedSaturationHeads := []int64{300, 300, 300, 110, 110, 110}
+	deSaturationRecoveryHeads := []int64{300, 300, 300, 300, 110, 110}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			entryHarness := newAutoTuneHarnessWithHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				saturationEntryHeads,
+				autoTuneCfg,
+			)
+			entrySnapshots, entryBatches := collectAutoTuneTrace(t, entryHarness, len(saturationEntryHeads))
+
+			sustainedHarness := newAutoTuneHarnessWithHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				sustainedSaturationHeads,
+				autoTuneCfg,
+			)
+			sustainedSnapshots, sustainedBatches := collectAutoTuneTrace(t, sustainedHarness, len(sustainedSaturationHeads))
+
+			recoveryHarness := newAutoTuneHarnessWithHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				deSaturationRecoveryHeads,
+				autoTuneCfg,
+			)
+			recoverySnapshots, recoveryBatches := collectAutoTuneTrace(t, recoveryHarness, len(deSaturationRecoveryHeads))
+
+			assert.Equal(t, entrySnapshots, sustainedSnapshots, "saturation-entry and sustained-saturation permutations must converge to one canonical tuple output set")
+			assert.Equal(t, entrySnapshots, recoverySnapshots, "saturation-entry and de-saturation-recovery permutations must converge to one canonical tuple output set")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, entrySnapshots, sustainedSnapshots, "saturation-entry vs sustained-saturation")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, entrySnapshots, recoverySnapshots, "saturation-entry vs de-saturation-recovery")
+			assert.NotEqual(t, entryBatches, sustainedBatches, "saturation permutations must exercise different control decisions")
+			assert.NotEqual(t, entryBatches, recoveryBatches, "saturation permutations must exercise different control decisions")
+
+			assertCursorMonotonicByAddress(t, entrySnapshots)
+			assertCursorMonotonicByAddress(t, sustainedSnapshots)
+			assertCursorMonotonicByAddress(t, recoverySnapshots)
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainSustainedSaturationDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          140,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+		CooldownTicks:         2,
+	}
+
+	const tickCount = 6
+	healthyBaseAddress := "0x1111111111111111111111111111111111111111"
+	healthyBTCAddress := "tb1qsaturationhealthy00000000000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+
+	healthyHeads := []int64{130, 130, 130, 130, 130, 130}
+	sustainedSaturationHeads := []int64{300, 300, 300, 300, 110, 110}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		sustainedSaturationHeads,
+		autoTuneCfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBatches := make([]int, 0, tickCount)
+
+	for i := 0; i < tickCount; i++ {
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+		laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "sustained solana saturation pressure must not alter base canonical tuples")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "sustained solana saturation pressure must not alter base control decisions")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "sustained solana saturation pressure must not alter btc canonical tuples")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "sustained solana saturation pressure must not alter btc control decisions")
+	assert.Equal(t, autoTuneCfg.MaxBatchSize, maxIntSlice(laggingBatches), "lagging chain should independently reach deterministic saturation cap under sustained pressure")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved sustained saturation")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved sustained saturation")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
+func TestTick_AutoTuneSaturationReplayResumeConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qsaturationreplay0000000000000000000000",
+		},
+	}
+
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          140,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+		CooldownTicks:         2,
+	}
+
+	heads := []int64{300, 300, 300, 110, 110, 110}
+	const splitTick = 3
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			coldHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, autoTuneCfg)
+			coldSnapshots, _ := collectAutoTuneTrace(t, coldHarness, len(heads))
+
+			warmFirst := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads[:splitTick], autoTuneCfg)
+			warmSnapshots, _ := collectAutoTuneTrace(t, warmFirst, splitTick)
+			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, restartState)
+			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
+			require.NotNil(t, resumeCursor)
+
+			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				resumeCursor.CursorSequence,
+				heads[splitTick:],
+				autoTuneCfg,
+				restartState,
+			)
+			warmTailSnapshots, _ := collectAutoTuneTrace(t, warmSecond, len(heads)-splitTick)
+			warmSnapshots = append(warmSnapshots, warmTailSnapshots...)
+
+			assert.Equal(t, coldSnapshots, warmSnapshots, "saturation-boundary replay/resume must converge to deterministic canonical tuples")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, coldSnapshots, warmSnapshots, "cold vs warm saturation replay")
+			assertCursorMonotonicByAddress(t, warmSnapshots)
+		})
+	}
+}
+
 type lagAwareJobSnapshot struct {
 	Address        string
 	CursorValue    string
@@ -1842,6 +2116,29 @@ func newAutoTuneHarnessWithHeadSeries(
 		0,
 		len(headSeries),
 		autoTuneCfg,
+	)
+	harness.coordinator.WithHeadProvider(&stubHeadProvider{heads: append([]int64(nil), headSeries...)})
+	return harness
+}
+
+func newAutoTuneHarnessWithWarmStartAndHeadSeries(
+	chain model.Chain,
+	network model.Network,
+	address string,
+	initialSequence int64,
+	headSeries []int64,
+	autoTuneCfg AutoTuneConfig,
+	warmState *AutoTuneRestartState,
+) *autoTuneHarness {
+	harness := newAutoTuneHarnessWithWarmStart(
+		chain,
+		network,
+		address,
+		initialSequence,
+		0,
+		len(headSeries),
+		autoTuneCfg,
+		warmState,
 	)
 	harness.coordinator.WithHeadProvider(&stubHeadProvider{heads: append([]int64(nil), headSeries...)})
 	return harness

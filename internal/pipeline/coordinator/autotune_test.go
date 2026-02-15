@@ -243,6 +243,107 @@ func TestAutoTuneController_CooldownAllowsSustainedSameDirectionPressure(t *test
 	assert.Equal(t, "apply_increase", d2.Decision)
 }
 
+func TestAutoTuneController_ClampedBoundaryDoesNotRefreshCooldown(t *testing.T) {
+	controller := newAutoTuneController(60, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          40,
+		MaxBatchSize:          100,
+		StepUp:                20,
+		StepDown:              20,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+		CooldownTicks:         2,
+	})
+	require.NotNil(t, controller)
+
+	saturation := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       120,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         9,
+		QueueCapacity:      10,
+	}
+	recovery := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       320,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	batch, d1 := controller.Resolve(saturation)
+	assert.Equal(t, 40, batch)
+	assert.Equal(t, "apply_decrease", d1.Decision)
+
+	batch, d2 := controller.Resolve(saturation)
+	assert.Equal(t, 40, batch)
+	assert.Equal(t, "clamped_decrease", d2.Decision)
+	assert.Equal(t, 1, d2.Cooldown)
+
+	batch, d3 := controller.Resolve(saturation)
+	assert.Equal(t, 40, batch)
+	assert.Equal(t, "clamped_decrease", d3.Decision)
+	assert.Equal(t, 0, d3.Cooldown)
+
+	batch, d4 := controller.Resolve(recovery)
+	assert.Equal(t, 60, batch)
+	assert.Equal(t, "apply_increase", d4.Decision)
+}
+
+func TestAutoTuneController_SustainedSaturationBypassesHysteresisPhaseOscillation(t *testing.T) {
+	controller := newAutoTuneController(80, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          40,
+		MaxBatchSize:          100,
+		StepUp:                20,
+		StepDown:              20,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       2,
+		CooldownTicks:         2,
+	})
+	require.NotNil(t, controller)
+
+	saturation := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       320,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	batch, d1 := controller.Resolve(saturation)
+	assert.Equal(t, 80, batch)
+	assert.Equal(t, "defer_hysteresis", d1.Decision)
+
+	batch, d2 := controller.Resolve(saturation)
+	assert.Equal(t, 100, batch)
+	assert.Equal(t, "apply_increase", d2.Decision)
+
+	batch, d3 := controller.Resolve(saturation)
+	assert.Equal(t, 100, batch)
+	assert.Equal(t, "clamped_increase", d3.Decision)
+	assert.Equal(t, 1, d3.Cooldown)
+
+	batch, d4 := controller.Resolve(saturation)
+	assert.Equal(t, 100, batch)
+	assert.Equal(t, "clamped_increase", d4.Decision)
+	assert.Equal(t, 0, d4.Cooldown)
+
+	batch, d5 := controller.Resolve(saturation)
+	assert.Equal(t, 100, batch)
+	assert.Equal(t, "clamped_increase", d5.Decision)
+	assert.Equal(t, 0, d5.Cooldown)
+}
+
 func TestAutoTuneController_ProfileTransitionSeedsCurrentBatch(t *testing.T) {
 	ramp := newAutoTuneController(80, AutoTuneConfig{
 		Enabled:               true,
