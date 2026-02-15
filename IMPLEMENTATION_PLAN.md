@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -132,6 +132,8 @@ Execution queue (dependency-ordered):
 121. `I-0348` (`M62-S2`) QA counterexample gate for post-rebaseline baseline-rotation determinism + invariant safety
 122. `I-0352` (`M63-S1`) auto-tune policy-manifest rollback checkpoint-fence post-baseline-rotation generation-prune determinism hardening
 123. `I-0353` (`M63-S2`) QA counterexample gate for post-baseline-rotation generation-prune determinism + invariant safety
+124. `I-0357` (`M64-S1`) auto-tune policy-manifest rollback checkpoint-fence post-generation-prune retention-floor-lift determinism hardening
+125. `I-0358` (`M64-S2`) QA counterexample gate for post-generation-prune retention-floor-lift determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -2401,7 +2403,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when steady-state basel
 - Gate: baseline-rotation activation can race with late pre-rotation markers and create non-deterministic steady-generation ownership arbitration near restart boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation)` rotation ordering with explicit baseline-rotation lineage diagnostics, pin last verified rollback-safe pre-rotation boundary on ambiguity, and fail fast on unresolved cross-generation ownership conflicts.
 
-### M63. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Baseline-Rotation Generation-Prune Determinism Tranche C0057 (P0, Next)
+### M63. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Baseline-Rotation Generation-Prune Determinism Tranche C0057 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when retired steady generations are pruned, so two-generation steady baseline, generation-prune replay, crash-during-prune restart, and rollback+re-forward after-prune permutations converge to one deterministic canonical output set per chain.
@@ -2439,6 +2441,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when retired steady gen
 #### Risk Gate + Fallback
 - Gate: generation-prune activation can race with delayed post-rotation markers that still reference retired generations and create non-deterministic ownership arbitration near restart boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor)` prune ordering with explicit generation-prune lineage diagnostics, pin last verified rollback-safe pre-prune boundary on ambiguity, quarantine unresolved retired-generation markers, and fail fast on unresolved ownership conflicts.
+
+### M64. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Generation-Prune Retention-Floor Lift Determinism Tranche C0058 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when `generation_retention_floor` advances after prune, so two-step floor-lift progression, floor-lift replay, crash-during-floor-lift restart, and rollback+re-forward across floor-lift permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M63` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M64-S1` (`I-0357`): harden deterministic post-generation-prune retention-floor-lift reconciliation so floor advancement and delayed markers straddling retired generations cannot reopen stale ownership, re-emit canonical IDs, suppress valid logical events, or regress cursor monotonicity.
+2. `M64-S2` (`I-0358`): execute QA counterexample gate for post-generation-prune retention-floor-lift determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under two-step floor-lift progression, floor-lift replay, crash-during-floor-lift restart, and rollback+re-forward across floor-lift permutations converge to one canonical tuple output set per chain.
+2. Post-generation-prune retention-floor-lift transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under post-generation-prune retention-floor-lift replay/resume permutations.
+4. Replay/resume from post-generation-prune retention-floor-lift boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject two-step floor-lift progression, floor-lift replay, crash-during-floor-lift restart, and rollback+re-forward across floor-lift permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain post-generation-prune retention-floor-lift transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from post-generation-prune retention-floor-lift boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus post-generation-prune retention-floor-lift counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic two-step floor-lift progression, floor-lift replay, crash-during-floor-lift restart, and rollback+re-forward across floor-lift fixtures.
+2. `0` cross-chain control-coupling violations under one-chain post-generation-prune retention-floor-lift counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under post-generation-prune retention-floor-lift replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in post-generation-prune retention-floor-lift fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: retention-floor lift can race with delayed markers that reference newly retired generations and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
+- Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch)` floor-lift ordering with explicit floor-lift lineage diagnostics, pin last verified rollback-safe pre-lift boundary on ambiguity, quarantine unresolved pre-lift generation markers, and fail fast on unresolved ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -2553,6 +2594,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when retired steady gen
 28. `DP-0101-AB`: auto-tune policy-manifest rollback checkpoint-fence post-baseline-rotation generation-prune policy.
 - Preferred: deterministic chain-local generation-prune state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor)` ownership fences, replay-stable prune lineage markers, and stale retired-generation marker ownership rejection.
 - Fallback: pin last verified rollback-safe pre-prune boundary during prune ambiguity, quarantine unresolved retired-generation markers, and resume generation prune only after replay-safe lineage confirmation is proven.
+
+29. `DP-0101-AC`: auto-tune policy-manifest rollback checkpoint-fence post-generation-prune retention-floor-lift policy.
+- Preferred: deterministic chain-local retention-floor-lift state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch)` ownership fences, replay-stable floor-lift lineage markers, and stale pre-lift generation marker ownership rejection.
+- Fallback: pin last verified rollback-safe pre-lift boundary during floor-lift ambiguity, quarantine unresolved pre-lift generation markers, and resume floor-lift progression only after replay-safe lineage confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -2679,13 +2724,15 @@ Completed milestones/slices:
 120. `I-0345`
 121. `I-0347`
 122. `I-0348`
+123. `I-0352`
+124. `I-0353`
 
 Active downstream queue from this plan:
-1. `I-0352`
-2. `I-0353`
+1. `I-0357`
+2. `I-0358`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M63-S2`
+1. `TBD by next planner slice after M64-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -2718,3 +2765,4 @@ Superseded issues:
 - `I-0316` and `I-0317` are superseded by `I-0318` and `I-0319` to replace generic cycle placeholders with executable post-expiry late-marker quarantine determinism slices.
 - `I-0324` and `I-0325` are superseded by `I-0326` and `I-0327` to replace generic cycle placeholders with executable post-release-window epoch-rollover determinism slices.
 - `I-0350` and `I-0351` are superseded by `I-0352` and `I-0353` to replace generic cycle placeholders with an executable post-baseline-rotation generation-prune reliability tranche.
+- `I-0355` and `I-0356` are superseded by `I-0357` and `I-0358` to replace generic cycle placeholders with an executable post-generation-prune retention-floor-lift reliability tranche.
