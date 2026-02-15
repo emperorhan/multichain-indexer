@@ -43,6 +43,8 @@ type Normalizer struct {
 	retryDelayStart  time.Duration
 	retryDelayMax    time.Duration
 	sleepFn          func(context.Context, time.Duration) error
+	coverageFloorMu  sync.Mutex
+	coverageFloor    map[string]*sidecarv1.TransactionResult
 }
 
 func New(
@@ -325,6 +327,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 			})
 			continue
 		}
+		result = n.reconcileCoverageRegressionFlap(log, batch, signatureKey, result)
 
 		normalized.Transactions = append(normalized.Transactions, n.normalizedTxFromResult(batch, result))
 		if shouldAdvanceCanonicalCursor(normalized.NewCursorSequence, normalized.NewCursorValue, sig.Sequence, signatureKey) {
@@ -1282,6 +1285,89 @@ func reconcileDecodedResultCoverage(chainID model.Chain, existing, incoming *sid
 
 	out := cloneDecodedResult(preferred)
 	out.BalanceEvents = mergeDecodedBalanceEvents(chainID, preferred.BalanceEvents, secondary.BalanceEvents)
+	return out
+}
+
+func (n *Normalizer) reconcileCoverageRegressionFlap(
+	log *slog.Logger,
+	batch event.RawBatch,
+	signatureKey string,
+	incoming *sidecarv1.TransactionResult,
+) *sidecarv1.TransactionResult {
+	if incoming == nil || signatureKey == "" {
+		return incoming
+	}
+
+	floorKey := coverageFloorKey(batch.Chain, batch.Network, batch.Address, signatureKey)
+
+	n.coverageFloorMu.Lock()
+	if n.coverageFloor == nil {
+		n.coverageFloor = make(map[string]*sidecarv1.TransactionResult)
+	}
+
+	existing := n.coverageFloor[floorKey]
+	missingFromIncoming, newlyObserved := decodedCoverageDelta(batch.Chain, existing, incoming)
+	reconciled := reconcileDecodedResultCoverage(batch.Chain, existing, incoming)
+	n.coverageFloor[floorKey] = cloneDecodedResult(reconciled)
+	n.coverageFloorMu.Unlock()
+
+	if missingFromIncoming > 0 {
+		log.Warn("decode coverage regression floor applied",
+			"stage", "normalizer.decode_batch",
+			"address", batch.Address,
+			"signature", signatureKey,
+			"missing_events", missingFromIncoming,
+			"new_events", newlyObserved,
+		)
+	}
+
+	return reconciled
+}
+
+func coverageFloorKey(chainID model.Chain, network model.Network, address, signature string) string {
+	canonicalAddress := canonicalizeAddressIdentity(chainID, address)
+	if canonicalAddress == "" {
+		canonicalAddress = strings.TrimSpace(address)
+	}
+	return fmt.Sprintf("%s|%s|%s|%s", chainID, network, canonicalAddress, signature)
+}
+
+func decodedCoverageDelta(chainID model.Chain, floor, incoming *sidecarv1.TransactionResult) (missingFromIncoming, newlyObserved int) {
+	floorEvents := decodedCoverageEventSet(chainID, floor)
+	incomingEvents := decodedCoverageEventSet(chainID, incoming)
+
+	for key := range floorEvents {
+		if _, ok := incomingEvents[key]; !ok {
+			missingFromIncoming++
+		}
+	}
+	for key := range incomingEvents {
+		if _, ok := floorEvents[key]; !ok {
+			newlyObserved++
+		}
+	}
+	return missingFromIncoming, newlyObserved
+}
+
+func decodedCoverageEventSet(chainID model.Chain, result *sidecarv1.TransactionResult) map[string]struct{} {
+	if result == nil || len(result.BalanceEvents) == 0 {
+		return map[string]struct{}{}
+	}
+
+	out := make(map[string]struct{}, len(result.BalanceEvents))
+	for _, be := range result.BalanceEvents {
+		if be == nil {
+			continue
+		}
+		key := decodedCoverageEventKey(chainID, be)
+		if key == "" {
+			key = decodedEventFingerprint(chainID, be)
+		}
+		if key == "" {
+			continue
+		}
+		out[key] = struct{}{}
+	}
 	return out
 }
 
