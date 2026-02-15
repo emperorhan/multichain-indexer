@@ -199,7 +199,7 @@ create_continuous_quality_cycle() {
   developer_key="auto-quality-cycle-${cycle_id}-build"
   qa_key="auto-quality-cycle-${cycle_id}-qa"
 
-  planner_path="$("${NEW_ISSUE_SCRIPT}" planner "CQ ${cycle_id} planner: next reliability tranche" "" p0 high high 15 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,chain_adapter_runtime_wired")"
+  planner_path="$("${NEW_ISSUE_SCRIPT}" planner "CQ ${cycle_id} planner: next reliability tranche" "" p0 high high 15 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired")"
   planner_issue_id="$(basename "${planner_path}" .md)"
   cat > "${planner_path}" <<EOF
 id: ${planner_issue_id}
@@ -214,7 +214,7 @@ max_diff_scope: 15
 allowed_paths: IMPLEMENTATION_PLAN.md,specs/,docs/,PROMPT_plan.md,.agent/,.ralph/
 denied_paths: .github/workflows/,deployments/,.git/
 acceptance_tests: make test,make test-sidecar,make lint
-invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic,chain_adapter_runtime_wired
+invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired
 non_goals: no-runtime-code-changes
 evidence_required: true
 ---
@@ -244,7 +244,7 @@ evidence_required: true
 - no-runtime-code-changes
 EOF
 
-  developer_path="$("${NEW_ISSUE_SCRIPT}" developer "CQ ${cycle_id} implementation: reliability increment" "${planner_issue_id}" p0 high high 25 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic")"
+  developer_path="$("${NEW_ISSUE_SCRIPT}" developer "CQ ${cycle_id} implementation: reliability increment" "${planner_issue_id}" p0 high high 25 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
   developer_issue_id="$(basename "${developer_path}" .md)"
   cat > "${developer_path}" <<EOF
 id: ${developer_issue_id}
@@ -259,7 +259,7 @@ max_diff_scope: 25
 allowed_paths: cmd/,internal/,pkg/,proto/,sidecar/,scripts/,docs/,specs/,PROMPT_build.md,PROMPT_plan.md,IMPLEMENTATION_PLAN.md,.ralph/
 denied_paths: .github/workflows/,deployments/,.git/
 acceptance_tests: make test,make test-sidecar,make lint
-invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic
+invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired
 non_goals: infra-deployment-orchestration
 evidence_required: true
 ---
@@ -277,7 +277,7 @@ evidence_required: true
 ## Acceptance Criteria
 - [ ] The selected reliability increment is implemented with bounded diff scope.
 - [ ] New/updated tests fail before and pass after the change.
-- [ ] No invariant regression across Solana/Base canonical indexing paths.
+- [ ] No invariant regression across mandatory-chain canonical indexing paths (Solana/Base/BTC).
 - [ ] Validation passes: \`make test\`, \`make test-sidecar\`, \`make lint\`.
 
 ## Notes
@@ -289,7 +289,7 @@ evidence_required: true
 - infra-deployment-orchestration
 EOF
 
-  qa_path="$("${NEW_ISSUE_SCRIPT}" qa "CQ ${cycle_id} QA: reliability gate and counterexample checks" "${developer_issue_id}" p0 medium medium 20 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic")"
+  qa_path="$("${NEW_ISSUE_SCRIPT}" qa "CQ ${cycle_id} QA: reliability gate and counterexample checks" "${developer_issue_id}" p0 medium medium 20 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
   qa_issue_id="$(basename "${qa_path}" .md)"
   cat > "${qa_path}" <<EOF
 id: ${qa_issue_id}
@@ -304,7 +304,7 @@ max_diff_scope: 20
 allowed_paths: cmd/,internal/,pkg/,proto/,sidecar/,scripts/,docs/,specs/,PROMPT_build.md,PROMPT_plan.md,IMPLEMENTATION_PLAN.md,.ralph/
 denied_paths: .github/workflows/,deployments/,.git/
 acceptance_tests: make test,make test-sidecar,make lint
-invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic
+invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired
 non_goals: bypass-failures-without-repro
 evidence_required: true
 ---

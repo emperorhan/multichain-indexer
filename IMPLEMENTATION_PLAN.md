@@ -1,12 +1,12 @@
 # IMPLEMENTATION_PLAN.md
 
-- Source PRD: `PRD.md v2.2` (2026-02-15)
+- Source PRD: `PRD.md v2.3` (2026-02-15)
 - Execution mode: local Ralph loop (`.ralph/` markdown queue)
 - Mandatory runtime targets: `solana-devnet`, `base-sepolia`, `btc-testnet`
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -83,6 +83,10 @@ Execution queue (dependency-ordered):
 72. `I-0243` (`M38-S2`) QA counterexample gate for tri-chain late-arrival closure determinism + invariant safety
 73. `I-0247` (`M39-S1`) tri-chain volatility-event completeness reconciliation determinism hardening
 74. `I-0248` (`M39-S2`) QA counterexample gate for tri-chain volatility-event completeness determinism + invariant safety
+75. `I-0249` (`M40-S1`) chain-scoped coordinator auto-tune control loop hardening
+76. `I-0250` (`M40-S2`) QA counterexample gate for chain-scoped auto-tune + fail-fast/backpressure invariants
+77. `I-0254` (`M41-S1`) auto-tune restart/profile-transition determinism hardening
+78. `I-0255` (`M41-S2`) QA counterexample gate for auto-tune restart/profile-transition determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1415,7 +1419,7 @@ Eliminate duplicate/missing-event risk when late-arriving transactions are obser
 - Gate: delayed-arrival closure windows can become ambiguous near moving heads and reintroduce non-deterministic include/exclude behavior across replay/backfill passes.
 - Fallback: enforce deterministic closed-range reconciliation fences with explicit late-arrival diagnostics, fail fast on unresolved closure-window ambiguity, and replay from last committed safe boundary.
 
-### M39. Tri-Chain Volatility-Event Completeness Reconciliation Tranche C0033 (P0, Next)
+### M39. Tri-Chain Volatility-Event Completeness Reconciliation Tranche C0033 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing volatility-event risk when tri-chain decode coverage shifts from partial to enriched across delayed sidecar/RPC discovery and replay/backfill boundaries, so equivalent logical ranges converge to one deterministic canonical output set per chain.
@@ -1454,6 +1458,84 @@ Eliminate duplicate/missing volatility-event risk when tri-chain decode coverage
 - Gate: partial/enriched equivalence matching can collapse distinct volatility-event legs or re-emit enriched events as duplicates near late-discovery boundaries.
 - Fallback: enforce deterministic enrichment-lineage reconciliation keys with explicit lineage-collision diagnostics, fail fast on unresolved ambiguity, and replay from last committed safe boundary.
 
+### M40. Chain-Scoped Auto-Tune Backpressure Control Tranche C0034 (P0, Completed)
+
+#### Objective
+Introduce chain-scoped coordinator auto-tune control so throughput knobs adapt to per-chain lag/latency pressure without introducing cross-chain coupling, replay divergence, or fail-fast safety regressions.
+
+#### Entry Gate
+- `M39` exit gate green.
+- Deployment mode support remains topology-independent (`like-group`, `independent`, hybrid).
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+
+#### Slices
+1. `M40-S1` (`I-0249`): implement deterministic chain-scoped auto-tune control inputs/decisions for coordinator throughput knobs (tick/batch/fetch envelope), with explicit safe bounds and per-chain diagnostics.
+2. `M40-S2` (`I-0250`): execute QA counterexample gate proving chain-scoped isolation, topology parity, and fail-fast safety under lag/latency pressure permutations.
+
+#### Definition Of Done
+1. Auto-tune decisions are computed only from chain-local signals (lag, queue depth, error budget, commit latency) and never read cross-chain pressure as direct control input.
+2. For identical chain input and fixed control config, repeated runs converge to deterministic canonical tuple outputs and cursor/watermark end-state.
+3. Auto-tune remains optional and reversible; disabling auto-tune does not change canonical output semantics.
+4. Correctness-impacting failures still panic immediately, with no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains and deployment modes.
+
+#### Test Contract
+1. Deterministic tests inject per-chain lag increase/decrease permutations and assert stable canonical output equivalence with and without auto-tune.
+2. Deterministic tests inject asymmetric pressure (one chain heavily lagged, others healthy) and assert `0` cross-chain throttle bleed in control decisions.
+3. Failure-injection tests under auto-tune-on mode assert panic-on-error and `0` failed-path cursor/watermark advancement.
+4. Topology parity tests assert canonical equivalence between grouped and independent deployment modes with auto-tune enabled.
+5. QA executes required validation commands plus auto-tune counterexample checks and records invariant evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs between auto-tune-on and auto-tune-off baseline runs for equivalent fixture ranges.
+2. `0` cross-chain control-coupling violations in asymmetric lag counterexamples.
+3. `0` fail-fast regressions under auto-tune-enabled failure injection.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: aggressive auto-tune loops can oscillate throughput knobs and amplify tail latency or retry storms under noisy lag signals.
+- Fallback: clamp control changes with bounded step-size/hysteresis, default to deterministic conservative profile on signal ambiguity, and preserve fail-fast abort semantics.
+
+### M41. Auto-Tune Restart/Profile-Transition Determinism Tranche C0035 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when auto-tune-enabled runtimes restart or switch control profiles under live tri-chain pressure, so cold-start, warm-start, and profile-transition permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M40` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M41-S1` (`I-0254`): harden deterministic auto-tune restart/profile-transition semantics so cold-start, warm-start, and live-profile-switch permutations cannot induce duplicate canonical IDs, missing logical events, cross-chain control bleed, or cursor regression.
+2. `M41-S2` (`I-0255`): execute QA counterexample gate for auto-tune restart/profile-transition determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under cold-start, warm-start, and profile-transition permutations converge to one canonical tuple output set per chain.
+2. Restarting one chain under lag pressure cannot induce cross-chain throughput-control bleed or cursor bleed on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under restart/profile-transition replay permutations.
+4. Replay/resume from restart/profile-transition boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject cold-start, warm-start, and profile-transition permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain restart under asymmetric lag while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from restart/profile-transition boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus auto-tune restart/profile-transition counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic cold-start, warm-start, and profile-transition permutation fixtures.
+2. `0` cross-chain control-coupling violations under one-chain restart lag-pressure counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under restart/profile-transition replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in restart/profile-transition recovery fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: restart/profile-transition handling can reset or over-apply control state, causing non-deterministic throughput envelopes and replay drift near boundary ticks.
+- Fallback: enforce deterministic reset-to-baseline plus bounded warm-start adoption guarded by chain-local proofs, emit explicit restart-profile diagnostics, and fail fast on unresolved boundary ambiguity.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -1471,6 +1553,14 @@ Eliminate duplicate/missing volatility-event risk when tri-chain decode coverage
 4. `DP-0101-D`: commit scheduling scope.
 - Preferred: chain-scoped commit scheduler per `ChainRuntime`; no cross-chain shared interleaver in production runtime.
 - Fallback: if legacy shared scheduling code remains, keep it non-routable and block startup when enabled.
+
+5. `DP-0101-E`: auto-tune control scope.
+- Preferred: per-chain control loop with chain-local inputs only; no cross-chain coupled throttling.
+- Fallback: disable auto-tune and run deterministic fixed coordinator profile until signal quality is restored.
+
+6. `DP-0101-F`: auto-tune restart/profile-transition state policy.
+- Preferred: deterministic chain-local restart/profile-transition state handoff with explicit baseline reset and bounded warm-start adoption.
+- Fallback: force deterministic baseline profile on every restart/profile transition until restart-state contracts are extended.
 
 ## Local Queue Mapping
 
@@ -1548,10 +1638,17 @@ Completed milestones/slices:
 71. `I-0238`
 72. `I-0242`
 73. `I-0243`
+74. `I-0247`
+75. `I-0248`
+76. `I-0249`
+77. `I-0250`
 
 Active downstream queue from this plan:
-1. `I-0247`
-2. `I-0248`
+1. `I-0254`
+2. `I-0255`
+
+Planned next tranche queue:
+1. `TBD by next planner slice after M41-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

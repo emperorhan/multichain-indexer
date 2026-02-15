@@ -736,6 +736,54 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of fee-component availability flap determinism and replay/resume invariant safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0249 (M40-S1)
+Assertions:
+1. Auto-tune control decisions are computed from chain-local signals only and never consume direct control pressure from other chains.
+2. Equivalent tri-chain fixture ranges converge to deterministic canonical tuple-equivalent outputs with auto-tune enabled and disabled.
+3. Asymmetric one-chain lag pressure does not throttle healthy chains or induce cursor bleed.
+4. Correctness-impacting failures still panic immediately with no failed-path cursor/watermark advancement.
+
+Pass Evidence:
+- Deterministic tests prove auto-tune-on/off canonical tuple parity on `solana-devnet`, `base-sepolia`, and `btc-testnet`.
+- Deterministic one-chain lag counterexamples prove `0` cross-chain control-coupling violations.
+- Failure-injection tests prove panic-on-error behavior and failed-path progression safety with auto-tune enabled.
+
+### I-0250 (M40-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M40 invariants.
+2. QA executes at least one counterexample with auto-tune-on/off parity and one-chain lag isolation stress.
+3. QA executes at least one counterexample with auto-tune-enabled failure injection and verifies panic-on-error plus no failed-path cursor/watermark progression.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of auto-tune isolation determinism, replay safety, and fail-fast cursor/watermark safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
+### I-0254 (M41-S1)
+Assertions:
+1. Equivalent tri-chain logical ranges processed under cold-start, warm-start, and live profile-transition permutations converge to one deterministic canonical output set per chain.
+2. Restart/profile-transition boundaries preserve deterministic canonical identity (`0` duplicate canonical IDs and `0` missing logical events).
+3. One-chain restart under lag pressure does not induce cross-chain control bleed, cursor bleed, or fail-fast safety regression.
+4. Replay/resume from restart/profile-transition boundaries remains idempotent with cursor monotonicity and signed-delta/fee-event invariant continuity.
+
+Pass Evidence:
+- Deterministic tests inject cold-start, warm-start, and profile-switch permutations and show canonical tuple equivalence on all mandatory chains.
+- Restart-under-pressure counterexamples show `0` cross-chain control-coupling violations and `0` duplicate/missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0255 (M41-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M41 invariants.
+2. QA executes at least one counterexample with cold-start vs warm-start vs profile-transition permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample with one-chain restart lag pressure and verifies no cross-chain control bleed, no duplicate/missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of restart/profile-transition determinism, replay safety, and fail-fast safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -768,3 +816,7 @@ Release recommendation must be `fail` if any condition holds:
 28. Incremental decode-coverage canonical convergence determinism cannot be proven (sparse-vs-enriched decode permutation convergence, one-time enrichment emission stability, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
 29. Decode-coverage regression flap canonical stability determinism cannot be proven (enriched->sparse->re-enriched permutation convergence, previously discovered enriched-event persistence during sparse fallback, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
 30. Fee-component availability flap canonical convergence determinism cannot be proven (full-fee vs partial-fee vs recovered-fee permutation convergence, deterministic Base fee split coexistence/unavailable-marker behavior, and no duplicate/missing logical fee events with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
+31. Chain-scoped auto-tune isolation determinism cannot be proven (auto-tune-on/off canonical tuple parity, one-chain lag control isolation, and fail-fast cursor/watermark safety not evidenced for all mandatory chains).
+32. Auto-tune restart/profile-transition determinism cannot be proven (cold-start/warm-start/profile-switch permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
+33. One-chain restart-under-pressure isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under restart permutations).
+34. Restart/profile-transition replay safety cannot be proven (replay idempotency, cursor monotonicity, and signed-delta/fee-event continuity not evidenced for all mandatory chains).

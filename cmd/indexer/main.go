@@ -155,10 +155,22 @@ func main() {
 	commitInterleaver := ingester.NewDeterministicMandatoryChainInterleaver(deterministicInterleaveMaxSkew)
 	for _, target := range targets {
 		pipelineCfg := pipeline.Config{
-			Chain:             target.chain,
-			Network:           target.network,
-			BatchSize:         cfg.Pipeline.BatchSize,
-			IndexingInterval:  time.Duration(cfg.Pipeline.IndexingIntervalMs) * time.Millisecond,
+			Chain:            target.chain,
+			Network:          target.network,
+			BatchSize:        cfg.Pipeline.BatchSize,
+			IndexingInterval: time.Duration(cfg.Pipeline.IndexingIntervalMs) * time.Millisecond,
+			CoordinatorAutoTune: pipeline.CoordinatorAutoTuneConfig{
+				Enabled:               cfg.Pipeline.CoordinatorAutoTuneEnabled,
+				MinBatchSize:          cfg.Pipeline.CoordinatorAutoTuneMinBatchSize,
+				MaxBatchSize:          cfg.Pipeline.CoordinatorAutoTuneMaxBatchSize,
+				StepUp:                cfg.Pipeline.CoordinatorAutoTuneStepUp,
+				StepDown:              cfg.Pipeline.CoordinatorAutoTuneStepDown,
+				LagHighWatermark:      cfg.Pipeline.CoordinatorAutoTuneLagHighWatermark,
+				LagLowWatermark:       cfg.Pipeline.CoordinatorAutoTuneLagLowWatermark,
+				QueueHighWatermarkPct: cfg.Pipeline.CoordinatorAutoTuneQueueHighPct,
+				QueueLowWatermarkPct:  cfg.Pipeline.CoordinatorAutoTuneQueueLowPct,
+				HysteresisTicks:       cfg.Pipeline.CoordinatorAutoTuneHysteresisTicks,
+			},
 			FetchWorkers:      cfg.Pipeline.FetchWorkers,
 			NormalizerWorkers: cfg.Pipeline.NormalizerWorkers,
 			ChannelBufferSize: cfg.Pipeline.ChannelBufferSize,

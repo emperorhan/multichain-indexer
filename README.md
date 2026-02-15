@@ -94,6 +94,8 @@ sequenceDiagram
 
 모든 스테이지는 **버퍼링된 Go 채널**로 연결되어, 별도의 동기화 로직 없이 자연스러운 backpressure가 전파됩니다. 다운스트림이 느려지면 업스트림 채널이 차면서 자동으로 속도를 조절합니다.
 
+현재 동작은 채널 기반의 **수동(passive) backpressure**이며, coordinator의 지표 기반 동적 auto-tune 제어(예: lag 기반 tick/batch 조절)는 기본 런타임에 아직 포함되지 않습니다. 관련 구현은 `IMPLEMENTATION_PLAN.md`의 다음 신뢰성 트랜치에서 진행합니다.
+
 ```mermaid
 graph BT
     DB_SLOW["DB Write Slow"] -->|"normalizedCh full"| NORM_BLOCK["Normalizer Workers Block"]
@@ -372,6 +374,16 @@ make lint           # Run golangci-lint
 | `BATCH_SIZE` | `100` | Signatures per fetch batch |
 | `INDEXING_INTERVAL_MS` | `5000` | Coordinator tick interval (ms) |
 | `CHANNEL_BUFFER_SIZE` | `10` | Inter-stage channel buffer |
+| `COORDINATOR_AUTOTUNE_ENABLED` | `false` | Enable chain-scoped coordinator batch auto-tune |
+| `COORDINATOR_AUTOTUNE_MIN_BATCH_SIZE` | `10` | Lower batch bound for auto-tune |
+| `COORDINATOR_AUTOTUNE_MAX_BATCH_SIZE` | `BATCH_SIZE` | Upper batch bound for auto-tune |
+| `COORDINATOR_AUTOTUNE_STEP_UP` | `10` | Batch step increase when lag pressure is sustained |
+| `COORDINATOR_AUTOTUNE_STEP_DOWN` | `10` | Batch step decrease when queue pressure is sustained |
+| `COORDINATOR_AUTOTUNE_LAG_HIGH_WATERMARK` | `500` | Lag threshold to trigger increase |
+| `COORDINATOR_AUTOTUNE_LAG_LOW_WATERMARK` | `100` | Lag threshold considered healthy for decrease decisions |
+| `COORDINATOR_AUTOTUNE_QUEUE_HIGH_PCT` | `80` | Job channel occupancy threshold to trigger decrease |
+| `COORDINATOR_AUTOTUNE_QUEUE_LOW_PCT` | `30` | Job channel occupancy threshold considered low pressure |
+| `COORDINATOR_AUTOTUNE_HYSTERESIS_TICKS` | `2` | Consecutive same-signal ticks required before changing batch |
 | `SIDECAR_TIMEOUT_SEC` | `30` | gRPC decode timeout (s) |
 | `LOG_LEVEL` | `info` | Log level (debug/info/warn/error) |
 

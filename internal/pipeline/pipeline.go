@@ -17,16 +17,34 @@ import (
 )
 
 type Config struct {
-	Chain             model.Chain
-	Network           model.Network
-	BatchSize         int
-	IndexingInterval  time.Duration
-	FetchWorkers      int
-	NormalizerWorkers int
-	ChannelBufferSize int
-	SidecarAddr       string
-	SidecarTimeout    time.Duration
-	CommitInterleaver ingester.CommitInterleaver
+	Chain               model.Chain
+	Network             model.Network
+	BatchSize           int
+	IndexingInterval    time.Duration
+	CoordinatorAutoTune CoordinatorAutoTuneConfig
+	FetchWorkers        int
+	NormalizerWorkers   int
+	ChannelBufferSize   int
+	SidecarAddr         string
+	SidecarTimeout      time.Duration
+	CommitInterleaver   ingester.CommitInterleaver
+}
+
+type CoordinatorAutoTuneConfig struct {
+	Enabled bool
+
+	MinBatchSize int
+	MaxBatchSize int
+	StepUp       int
+	StepDown     int
+
+	LagHighWatermark int64
+	LagLowWatermark  int64
+
+	QueueHighWatermarkPct int
+	QueueLowWatermarkPct  int
+
+	HysteresisTicks int
 }
 
 type Pipeline struct {
@@ -77,7 +95,18 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		p.repos.WatchedAddr, p.repos.Cursor,
 		p.cfg.BatchSize, p.cfg.IndexingInterval,
 		jobCh, p.logger,
-	).WithHeadProvider(p.adapter)
+	).WithHeadProvider(p.adapter).WithAutoTune(coordinator.AutoTuneConfig{
+		Enabled:               p.cfg.CoordinatorAutoTune.Enabled,
+		MinBatchSize:          p.cfg.CoordinatorAutoTune.MinBatchSize,
+		MaxBatchSize:          p.cfg.CoordinatorAutoTune.MaxBatchSize,
+		StepUp:                p.cfg.CoordinatorAutoTune.StepUp,
+		StepDown:              p.cfg.CoordinatorAutoTune.StepDown,
+		LagHighWatermark:      p.cfg.CoordinatorAutoTune.LagHighWatermark,
+		LagLowWatermark:       p.cfg.CoordinatorAutoTune.LagLowWatermark,
+		QueueHighWatermarkPct: p.cfg.CoordinatorAutoTune.QueueHighWatermarkPct,
+		QueueLowWatermarkPct:  p.cfg.CoordinatorAutoTune.QueueLowWatermarkPct,
+		HysteresisTicks:       p.cfg.CoordinatorAutoTune.HysteresisTicks,
+	})
 
 	fetch := fetcher.New(
 		p.adapter, jobCh, rawBatchCh,
@@ -106,6 +135,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		"normalizer_workers", p.cfg.NormalizerWorkers,
 		"batch_size", p.cfg.BatchSize,
 		"interval", p.cfg.IndexingInterval,
+		"coordinator_auto_tune_enabled", p.cfg.CoordinatorAutoTune.Enabled,
 	)
 
 	g, gCtx := errgroup.WithContext(ctx)

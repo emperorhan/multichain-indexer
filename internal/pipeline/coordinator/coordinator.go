@@ -24,6 +24,7 @@ type Coordinator struct {
 	jobCh           chan<- event.FetchJob
 	logger          *slog.Logger
 	headProvider    headSequenceProvider
+	autoTune        *autoTuneController
 }
 
 type headSequenceProvider interface {
@@ -54,6 +55,26 @@ func New(
 
 func (c *Coordinator) WithHeadProvider(provider headSequenceProvider) *Coordinator {
 	c.headProvider = provider
+	return c
+}
+
+func (c *Coordinator) WithAutoTune(cfg AutoTuneConfig) *Coordinator {
+	c.autoTune = newAutoTuneController(c.batchSize, cfg)
+	if c.autoTune != nil {
+		c.logger.Info("coordinator auto-tune enabled",
+			"chain", c.chain,
+			"network", c.network,
+			"min_batch", c.autoTune.minBatchSize,
+			"max_batch", c.autoTune.maxBatchSize,
+			"step_up", c.autoTune.stepUp,
+			"step_down", c.autoTune.stepDown,
+			"lag_high", c.autoTune.lagHighWatermark,
+			"lag_low", c.autoTune.lagLowWatermark,
+			"queue_high_pct", c.autoTune.queueHighWatermarkPct,
+			"queue_low_pct", c.autoTune.queueLowWatermarkPct,
+			"hysteresis_ticks", c.autoTune.hysteresisTicks,
+		)
+	}
 	return c
 }
 
@@ -104,6 +125,9 @@ func (c *Coordinator) tick(ctx context.Context) error {
 	groups := groupWatchedAddresses(c.chain, addresses)
 	c.logger.Debug("creating fetch jobs", "address_count", len(addresses), "fan_in_group_count", len(groups))
 
+	jobs := make([]event.FetchJob, 0, len(groups))
+	minCursorSequence := int64(0)
+	hasMinCursor := false
 	for _, group := range groups {
 		candidates := make([]watchedAddressCandidate, 0, len(group.members))
 		for _, member := range group.members {
@@ -131,18 +155,50 @@ func (c *Coordinator) tick(ctx context.Context) error {
 
 		representative, cursorValue, cursorSequence := resolveLagAwareCandidate(c.chain, group.identity, candidates)
 
-		job := event.FetchJob{
+		if !hasMinCursor || cursorSequence < minCursorSequence {
+			minCursorSequence = cursorSequence
+			hasMinCursor = true
+		}
+
+		jobs = append(jobs, event.FetchJob{
 			Chain:          c.chain,
 			Network:        c.network,
 			Address:        representative.address.Address,
 			CursorValue:    cursorValue,
 			CursorSequence: cursorSequence,
 			FetchCutoffSeq: fetchCutoffSeq,
-			BatchSize:      c.batchSize,
 			WalletID:       representative.address.WalletID,
 			OrgID:          representative.address.OrganizationID,
-		}
+		})
+	}
 
+	batchSize := c.batchSize
+	if c.autoTune != nil && len(jobs) > 0 {
+		resolved, diagnostics := c.autoTune.Resolve(autoTuneInputs{
+			HasHeadSignal:      c.headProvider != nil,
+			HeadSequence:       fetchCutoffSeq,
+			HasMinCursorSignal: hasMinCursor,
+			MinCursorSequence:  minCursorSequence,
+			QueueDepth:         len(c.jobCh),
+			QueueCapacity:      cap(c.jobCh),
+		})
+		batchSize = resolved
+		c.logger.Debug("coordinator auto-tune decision",
+			"chain", c.chain,
+			"network", c.network,
+			"lag_sequence", diagnostics.LagSequence,
+			"queue_depth", diagnostics.QueueDepth,
+			"queue_capacity", diagnostics.QueueCapacity,
+			"signal", diagnostics.Signal,
+			"decision", diagnostics.Decision,
+			"batch_before", diagnostics.BatchBefore,
+			"batch_after", diagnostics.BatchAfter,
+			"streak", diagnostics.Streak,
+		)
+	}
+
+	for _, job := range jobs {
+		job.BatchSize = batchSize
 		select {
 		case c.jobCh <- job:
 		case <-ctx.Done():

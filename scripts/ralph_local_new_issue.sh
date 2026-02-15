@@ -12,7 +12,7 @@ PRIORITY="${4:-p1}"
 COMPLEXITY="${5:-medium}"
 RISK_CLASS="${6:-}"
 MAX_DIFF_SCOPE="${7:-25}"
-INVARIANTS="${8:-canonical_event_id_unique,replay_idempotent,cursor_monotonic}"
+INVARIANTS="${8:-canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired}"
 RALPH_ROOT="${RALPH_ROOT:-.ralph}"
 ISSUES_DIR="${RALPH_ROOT}/issues"
 

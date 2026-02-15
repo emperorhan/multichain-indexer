@@ -246,6 +246,39 @@ func TestRun_PanicsOnTickError(t *testing.T) {
 	})
 }
 
+func TestRun_PanicsOnTickError_WithAutoTuneEnabled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	mockCursor := storemocks.NewMockCursorRepository(ctrl)
+
+	jobCh := make(chan event.FetchJob, 10)
+	c := New(
+		model.ChainSolana, model.NetworkDevnet,
+		mockWatchedAddr, mockCursor,
+		100, time.Second,
+		jobCh, slog.Default(),
+	).WithAutoTune(AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          50,
+		MaxBatchSize:          200,
+		StepUp:                10,
+		StepDown:              10,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 80,
+		QueueLowWatermarkPct:  30,
+		HysteresisTicks:       1,
+	})
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainSolana, model.NetworkDevnet).
+		Return(nil, errors.New("db connection lost"))
+
+	require.Panics(t, func() {
+		_ = c.Run(context.Background())
+	})
+}
+
 func TestTick_ContextCanceled(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
@@ -819,10 +852,154 @@ func TestTick_CheckpointIntegrityCrossChainMixupFailsFastAcrossMandatoryChains(t
 	}
 }
 
+func TestTick_AutoTuneOnOffPreservesCanonicalLagAwareTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name         string
+		chain        model.Chain
+		network      model.Network
+		ticks        [][]model.WatchedAddress
+		initialByKey map[string]*model.AddressCursor
+	}
+
+	baseUpper := "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	baseLower := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	solBase := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+	solLag := " " + solBase
+
+	tests := []testCase{
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			ticks: [][]model.WatchedAddress{
+				{{Address: baseUpper}, {Address: baseLower}},
+				{{Address: baseLower}, {Address: baseUpper}},
+				{{Address: baseUpper}, {Address: baseLower}},
+				{{Address: baseLower}, {Address: baseUpper}},
+			},
+			initialByKey: map[string]*model.AddressCursor{
+				baseUpper: {Address: baseUpper, CursorValue: strPtr("0x0000000000000000000000000000000000000000000000000000000000000010"), CursorSequence: 16},
+				baseLower: {Address: baseLower, CursorValue: strPtr("0x000000000000000000000000000000000000000000000000000000000000000a"), CursorSequence: 10},
+			},
+		},
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			ticks: [][]model.WatchedAddress{
+				{{Address: solBase}, {Address: solLag}},
+				{{Address: solLag}, {Address: solBase}},
+				{{Address: solBase}, {Address: solLag}},
+				{{Address: solLag}, {Address: solBase}},
+			},
+			initialByKey: map[string]*model.AddressCursor{
+				solBase: {Address: solBase, CursorValue: strPtr("sig-sol-16"), CursorSequence: 16},
+				solLag:  {Address: solLag, CursorValue: strPtr("sig-sol-10"), CursorSequence: 10},
+			},
+		},
+	}
+
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          50,
+		MaxBatchSize:          180,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTickScenario(t, tc.chain, tc.network, tc.ticks, tc.initialByKey, 2000, nil)
+			autoTuneSnapshots, autoTuneBatches := runAutoTuneTickScenario(t, tc.chain, tc.network, tc.ticks, tc.initialByKey, 2000, &autoTuneCfg)
+
+			assert.Equal(t, baselineSnapshots, autoTuneSnapshots, "auto-tune must not change canonical lag-aware tuple selection")
+			assert.NotEqual(t, baselineBatches, autoTuneBatches, "auto-tune should change envelope knobs under sustained lag")
+		})
+	}
+}
+
+func TestTick_AutoTuneChainScopedOneChainLagDoesNotThrottleHealthyChain(t *testing.T) {
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          160,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+
+	const tickCount = 5
+	healthyAddress := "0x1111111111111111111111111111111111111111"
+	laggingAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+
+	healthyBaseline := newAutoTuneHarness(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyAddress,
+		120,
+		130,
+		tickCount,
+		autoTuneCfg,
+	)
+	baselineBatches := make([]int, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		job := healthyBaseline.tickAndAdvance(t)
+		baselineBatches = append(baselineBatches, job.BatchSize)
+	}
+
+	healthyInterleaved := newAutoTuneHarness(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyAddress,
+		120,
+		130,
+		tickCount,
+		autoTuneCfg,
+	)
+	lagging := newAutoTuneHarness(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingAddress,
+		100,
+		2000,
+		tickCount,
+		autoTuneCfg,
+	)
+
+	interleavedHealthyBatches := make([]int, 0, tickCount)
+	laggingBatches := make([]int, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		laggingJob := lagging.tickAndAdvance(t)
+		laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+		healthyJob := healthyInterleaved.tickAndAdvance(t)
+		interleavedHealthyBatches = append(interleavedHealthyBatches, healthyJob.BatchSize)
+	}
+
+	assert.Equal(t, baselineBatches, interleavedHealthyBatches, "healthy chain knobs must be independent from lagging chain pressure")
+	assert.Greater(t, maxIntSlice(laggingBatches), maxIntSlice(interleavedHealthyBatches), "lagging chain should scale independently without throttling healthy chain")
+}
+
 type lagAwareJobSnapshot struct {
 	Address        string
 	CursorValue    string
 	CursorSequence int64
+}
+
+type autoTuneHarness struct {
+	coordinator *Coordinator
+	cursorRepo  *inMemoryCursorRepo
+	jobCh       chan event.FetchJob
 }
 
 type scriptedWatchedAddressRepo struct {
@@ -1017,6 +1194,120 @@ func cloneAddressCursor(cursor *model.AddressCursor) *model.AddressCursor {
 		cloned.CursorValue = &value
 	}
 	return &cloned
+}
+
+func runAutoTuneTickScenario(
+	t *testing.T,
+	chain model.Chain,
+	network model.Network,
+	ticks [][]model.WatchedAddress,
+	initialByKey map[string]*model.AddressCursor,
+	headSequence int64,
+	autoTuneCfg *AutoTuneConfig,
+) ([]lagAwareJobSnapshot, []int) {
+	t.Helper()
+
+	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
+	cursorRepo := &inMemoryCursorRepo{state: cloneCursorState(initialByKey)}
+	jobCh := make(chan event.FetchJob, len(ticks)+1)
+	c := New(chain, network, watchedRepo, cursorRepo, 100, time.Second, jobCh, slog.Default()).
+		WithHeadProvider(&stubHeadProvider{head: headSequence})
+	if autoTuneCfg != nil {
+		c = c.WithAutoTune(*autoTuneCfg)
+	}
+
+	snapshots := make([]lagAwareJobSnapshot, 0, len(ticks))
+	batches := make([]int, 0, len(ticks))
+	for i := range ticks {
+		require.NoError(t, c.tick(context.Background()))
+		require.Len(t, jobCh, 1)
+		job := <-jobCh
+
+		cursorValue := ""
+		if job.CursorValue != nil {
+			cursorValue = *job.CursorValue
+		}
+		snapshots = append(snapshots, lagAwareJobSnapshot{
+			Address:        job.Address,
+			CursorValue:    cursorValue,
+			CursorSequence: job.CursorSequence,
+		})
+		batches = append(batches, job.BatchSize)
+
+		nextSeq := job.CursorSequence + 5
+		nextCursor := syntheticCursorValue(chain, nextSeq)
+		lastFetched := time.Unix(1700001000+int64(i), 0)
+		cursorRepo.state[job.Address] = &model.AddressCursor{
+			Address:        job.Address,
+			CursorValue:    &nextCursor,
+			CursorSequence: nextSeq,
+			ItemsProcessed: int64(i + 1),
+			LastFetchedAt:  &lastFetched,
+		}
+	}
+	return snapshots, batches
+}
+
+func newAutoTuneHarness(
+	chain model.Chain,
+	network model.Network,
+	address string,
+	initialSequence int64,
+	headSequence int64,
+	tickCount int,
+	autoTuneCfg AutoTuneConfig,
+) *autoTuneHarness {
+	ticks := make([][]model.WatchedAddress, tickCount)
+	for i := range ticks {
+		ticks[i] = []model.WatchedAddress{{Address: address}}
+	}
+	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
+	cursorValue := syntheticCursorValue(chain, initialSequence)
+	cursorRepo := &inMemoryCursorRepo{
+		state: map[string]*model.AddressCursor{
+			address: {
+				Address:        address,
+				CursorValue:    &cursorValue,
+				CursorSequence: initialSequence,
+			},
+		},
+	}
+	jobCh := make(chan event.FetchJob, tickCount+1)
+	coord := New(chain, network, watchedRepo, cursorRepo, 100, time.Second, jobCh, slog.Default()).
+		WithHeadProvider(&stubHeadProvider{head: headSequence}).
+		WithAutoTune(autoTuneCfg)
+
+	return &autoTuneHarness{
+		coordinator: coord,
+		cursorRepo:  cursorRepo,
+		jobCh:       jobCh,
+	}
+}
+
+func (h *autoTuneHarness) tickAndAdvance(t *testing.T) event.FetchJob {
+	t.Helper()
+	require.NoError(t, h.coordinator.tick(context.Background()))
+	require.Len(t, h.jobCh, 1)
+	job := <-h.jobCh
+
+	nextSeq := job.CursorSequence + 1
+	nextCursor := syntheticCursorValue(job.Chain, nextSeq)
+	h.cursorRepo.state[job.Address] = &model.AddressCursor{
+		Address:        job.Address,
+		CursorValue:    &nextCursor,
+		CursorSequence: nextSeq,
+	}
+	return job
+}
+
+func maxIntSlice(values []int) int {
+	maxValue := 0
+	for i, value := range values {
+		if i == 0 || value > maxValue {
+			maxValue = value
+		}
+	}
+	return maxValue
 }
 
 func strPtr(v string) *string {

@@ -440,9 +440,9 @@ default_issue_value() {
       ;;
     invariants)
       case "${role}" in
-        planner) echo "canonical_event_id_unique,replay_idempotent,cursor_monotonic,chain_adapter_runtime_wired" ;;
-        qa) echo "canonical_event_id_unique,replay_idempotent,cursor_monotonic,solana_fee_event_coverage,base_fee_split_coverage" ;;
-        *) echo "canonical_event_id_unique,replay_idempotent,cursor_monotonic" ;;
+        planner) echo "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired" ;;
+        qa) echo "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,chain_adapter_runtime_wired" ;;
+        *) echo "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired" ;;
       esac
       ;;
     non_goals)

@@ -44,6 +44,7 @@ if [ ! -f "${CONTEXT_FILE}" ]; then
 - Inject endpoints/config via environment variables:
   - `SOLANA_DEVNET_RPC_URL`
   - `BASE_SEPOLIA_RPC_URL`
+  - `BTC_TESTNET_RPC_URL`
 EOF
 fi
 
@@ -61,7 +62,7 @@ max_diff_scope: 25
 allowed_paths: cmd/,internal/,pkg/,proto/,sidecar/,scripts/,docs/,specs/,PROMPT_build.md,PROMPT_plan.md,IMPLEMENTATION_PLAN.md,.ralph/
 denied_paths: .github/workflows/,deployments/,.git/
 acceptance_tests: make test,make test-sidecar,make lint
-invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic
+invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired
 non_goals: replace-with-non-goals
 evidence_required: true
 ---

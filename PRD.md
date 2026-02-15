@@ -1,6 +1,6 @@
 # PRD — Multi-Chain Asset-Volatility Indexer
 
-- Version: `v2.2`
+- Version: `v2.3`
 - Last updated: `2026-02-15`
 - Initial mandatory chains: `solana-devnet`, `base-sepolia`, `btc-testnet`
 - Target architecture families: `solana-like`, `evm-like`, `btc-like`
@@ -85,6 +85,12 @@ State progression (cursor, watermark, commit outcome) must be isolated per `chai
 - In-process skip/continue behavior for failed batches is prohibited.
 - Cursor/watermark must not advance on failed path before process abort.
 - Recovery is achieved by deterministic replay after restart, not by best-effort continuation in the same process.
+
+### R9. Chain-Scoped Adaptive Throughput Control (Auto-Tune)
+- Auto-tune (if enabled) may adjust throughput knobs only within a single `ChainRuntime` (for example: coordinator batch size/tick interval, fetch concurrency).
+- Auto-tune inputs must be chain-scoped metrics only (for example: chain-local lag, channel depth, RPC error budget, DB commit latency).
+- Cross-chain coupled control is prohibited; one chain's lag/error must never directly throttle or accelerate another chain.
+- Auto-tune must never weaken fail-fast safety: correctness-impacting errors still trigger immediate process abort (`panic`).
 
 ## 4. Normalizer Architecture (Most Critical)
 
@@ -201,8 +207,8 @@ Each `ChainRuntime` executes:
 - Keep chain profile overlays for RPC methods, fee fields, finality rules, and cursor semantics.
 
 ## 7.3 Deployment Topologies
-- `Topology A (recommended default)`: chain-per-deployment for strong fault isolation and simple SLO ownership.
-- `Topology B`: family-per-deployment for operational efficiency when traffic is low/moderate and chains share infra characteristics.
+- `Topology B (recommended default)`: family-per-deployment (`like-group`) for baseline operational efficiency and implementation sharing.
+- `Topology A`: chain-per-deployment for high-SLO or high-traffic chains that need strict fault isolation and dedicated scaling ownership.
 - `Topology C`: hybrid (some chains dedicated, others grouped) for cost/SLO balancing.
 
 ## 7.4 Commit Scheduling Policy
@@ -214,6 +220,12 @@ Each `ChainRuntime` executes:
 - One reconciliation loop per chain regardless of pod grouping.
 - Horizontal scaling decisions must be chain-aware (lag, error budget, RPC quota).
 - Pod grouping decisions must be reversible without changing canonical output semantics.
+
+## 7.6 Backpressure and Auto-Tune Guardrails
+- Buffered channel backpressure remains the baseline safety mechanism for bounded in-process flow control.
+- Auto-tune is an additive control plane, not a correctness boundary; disabling it must not change canonical output semantics.
+- Auto-tune actions must be auditable via per-chain diagnostics (input metrics, selected knobs, effective limits).
+- If control input is ambiguous or stale, runtime must prefer deterministic safe fallback and preserve fail-fast behavior.
 
 ## 8. Failure and Recovery
 
@@ -272,6 +284,7 @@ The PRD is considered implemented when:
 - replay/recovery tests pass,
 - fail-fast failure-injection tests prove panic-on-error with no unsafe cursor progression,
 - topology parity tests pass (chain-per-deploy vs family-per-deploy vs hybrid),
+- auto-tune behavior (when enabled) is chain-scoped, auditable, and preserves fail-fast safety invariants,
 - QA report confirms deterministic output, no duplicate rows, and no cross-chain cursor bleed.
 
 ## 11. Milestones
@@ -284,6 +297,7 @@ The PRD is considered implemented when:
 - M5: fail-fast panic safety contract hardening (no silent progression)
 - M6: BTC-like runtime activation (btc-testnet adapter + normalize + ingest + invariant gate)
 - M7: topology parity QA gate + release readiness
+- M8: chain-scoped auto-tune control loop hardening (lag-aware adaptive throughput with fail-fast invariants)
 
 ## 12. Ralph Loop Execution Contract (Local)
 - Planner agent updates specs/implementation plan from this PRD.

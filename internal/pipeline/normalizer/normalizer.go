@@ -1702,6 +1702,8 @@ func mergeDecodedBalanceEvents(chainID model.Chain, primary, secondary []*sideca
 		addEvent(be)
 	}
 
+	reconcileDecodedCoverageLineageAliases(chainID, byKey)
+
 	keys := make([]string, 0, len(byKey))
 	for key := range byKey {
 		keys = append(keys, key)
@@ -1713,6 +1715,124 @@ func mergeDecodedBalanceEvents(chainID model.Chain, primary, secondary []*sideca
 		out = append(out, byKey[key])
 	}
 	return out
+}
+
+func reconcileDecodedCoverageLineageAliases(chainID model.Chain, byKey map[string]*sidecarv1.BalanceEventInfo) {
+	if len(byKey) < 2 {
+		return
+	}
+
+	lineageGroups := make(map[string][]string, len(byKey))
+	for key, be := range byKey {
+		lineageKey := decodedCoverageEventLineageKey(chainID, be)
+		if lineageKey == "" {
+			continue
+		}
+		lineageGroups[lineageKey] = append(lineageGroups[lineageKey], key)
+	}
+
+	lineageKeys := make([]string, 0, len(lineageGroups))
+	for lineageKey := range lineageGroups {
+		lineageKeys = append(lineageKeys, lineageKey)
+	}
+	sort.Strings(lineageKeys)
+
+	for _, lineageKey := range lineageKeys {
+		groupKeys := lineageGroups[lineageKey]
+		if len(groupKeys) < 2 {
+			continue
+		}
+		sort.Strings(groupKeys)
+
+		pathHintedKeys := make([]string, 0, len(groupKeys))
+		pathlessKeys := make([]string, 0, len(groupKeys))
+		for _, key := range groupKeys {
+			be := byKey[key]
+			if be == nil {
+				continue
+			}
+			if decodedCoverageEventHasPathHint(chainID, be) {
+				pathHintedKeys = append(pathHintedKeys, key)
+			} else {
+				pathlessKeys = append(pathlessKeys, key)
+			}
+		}
+		// Only collapse aliases when there is a single path-hinted representative
+		// and one or more lower-fidelity pathless variants.
+		if len(pathHintedKeys) != 1 || len(pathlessKeys) == 0 {
+			continue
+		}
+
+		keeperKey := pathHintedKeys[0]
+		keeper := byKey[keeperKey]
+		for _, key := range groupKeys {
+			if key == keeperKey {
+				continue
+			}
+			candidate := byKey[key]
+			if candidate == nil {
+				continue
+			}
+			if shouldReplaceDecodedCoverageEvent(chainID, keeper, candidate) {
+				keeper = candidate
+				keeperKey = key
+			}
+		}
+		if !decodedCoverageEventHasPathHint(chainID, keeper) {
+			continue
+		}
+
+		for _, key := range pathlessKeys {
+			if key == keeperKey {
+				continue
+			}
+			mergeDecodedCoverageEventMetadata(chainID, keeper, byKey[key])
+			delete(byKey, key)
+		}
+		byKey[keeperKey] = keeper
+	}
+}
+
+func mergeDecodedCoverageEventMetadata(chainID model.Chain, preferred, additional *sidecarv1.BalanceEventInfo) {
+	if preferred == nil || additional == nil || len(additional.Metadata) == 0 {
+		return
+	}
+	preferredHadCompleteFeeSplit := false
+	additionalHasCompleteFeeSplit := false
+	if isEVMChain(chainID) {
+		_, preferredHasExecution := deriveBaseExecutionFeeFromMetadata(preferred.Metadata)
+		_, preferredHasData := deriveBaseDataFee(preferred.Metadata)
+		preferredHadCompleteFeeSplit = preferredHasExecution && preferredHasData
+
+		_, additionalHasExecution := deriveBaseExecutionFeeFromMetadata(additional.Metadata)
+		_, additionalHasData := deriveBaseDataFee(additional.Metadata)
+		additionalHasCompleteFeeSplit = additionalHasExecution && additionalHasData
+	}
+
+	if preferred.Metadata == nil {
+		preferred.Metadata = make(map[string]string, len(additional.Metadata))
+	}
+	for key, value := range additional.Metadata {
+		if _, exists := preferred.Metadata[key]; exists {
+			continue
+		}
+		preferred.Metadata[key] = value
+	}
+
+	if !isEVMChain(chainID) {
+		return
+	}
+	// If alias metadata contributes a complete fee split while the preferred
+	// event does not, copy the component keys verbatim to preserve fee coverage.
+	if additionalHasCompleteFeeSplit && !preferredHadCompleteFeeSplit {
+		for _, key := range baseFeeComponentMetadataKeys {
+			value := strings.TrimSpace(additional.Metadata[key])
+			if value == "" {
+				continue
+			}
+			preferred.Metadata[key] = value
+		}
+	}
 }
 
 func shouldReplaceDecodedCoverageEvent(chainID model.Chain, existing, incoming *sidecarv1.BalanceEventInfo) bool {
@@ -1755,7 +1875,7 @@ func decodedCoverageEventSelectionScore(chainID model.Chain, be *sidecarv1.Balan
 		metadataCount: len(be.Metadata),
 		fingerprint:   decodedEventFingerprint(chainID, be),
 	}
-	score.pathHint = resolveBaseMetadataEventPath(be.Metadata) != "" || hasSolanaInstructionPathHint(be.Metadata)
+	score.pathHint = decodedCoverageEventHasPathHint(chainID, be)
 
 	for _, value := range []string{
 		strings.TrimSpace(be.EventCategory),
@@ -1779,6 +1899,52 @@ func decodedCoverageEventSelectionScore(chainID model.Chain, be *sidecarv1.Balan
 		score.populatedFieldCount++
 	}
 	return score
+}
+
+func decodedCoverageEventHasPathHint(chainID model.Chain, be *sidecarv1.BalanceEventInfo) bool {
+	if be == nil {
+		return false
+	}
+	if isEVMChain(chainID) {
+		return resolveBaseMetadataEventPath(be.Metadata) != ""
+	}
+	if chainID == model.ChainSolana {
+		return hasSolanaInstructionPathHint(be.Metadata)
+	}
+	return strings.TrimSpace(be.Metadata["event_path"]) != ""
+}
+
+func decodedCoverageEventLineageKey(chainID model.Chain, be *sidecarv1.BalanceEventInfo) string {
+	if be == nil {
+		return ""
+	}
+
+	address := canonicalizeAddressIdentity(chainID, be.Address)
+	if address == "" {
+		address = strings.TrimSpace(be.Address)
+	}
+	assetID := canonicalizeAddressIdentity(chainID, be.ContractAddress)
+	if assetID == "" {
+		assetID = strings.TrimSpace(be.ContractAddress)
+	}
+	counterparty := canonicalizeAddressIdentity(chainID, be.CounterpartyAddress)
+	if counterparty == "" {
+		counterparty = strings.TrimSpace(be.CounterpartyAddress)
+	}
+
+	category := strings.ToUpper(strings.TrimSpace(be.EventCategory))
+	if category == "" {
+		category = strings.ToUpper(strings.TrimSpace(be.EventAction))
+	}
+
+	delta := strings.TrimSpace(be.Delta)
+	if strings.EqualFold(category, string(model.EventCategoryFee)) ||
+		strings.EqualFold(category, string(model.EventCategoryFeeExecutionL2)) ||
+		strings.EqualFold(category, string(model.EventCategoryFeeDataL1)) {
+		delta = canonicalFeeDelta(delta)
+	}
+
+	return fmt.Sprintf("%s|%s|%s|%s|%s", category, address, assetID, counterparty, delta)
 }
 
 func decodedCoverageEventKey(chainID model.Chain, be *sidecarv1.BalanceEventInfo) string {

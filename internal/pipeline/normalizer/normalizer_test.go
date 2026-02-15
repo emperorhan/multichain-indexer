@@ -5153,6 +5153,367 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 	}
 }
 
+func TestProcessBatch_TriChainDelayedEnrichmentIsolationConvergesWithEnrichedFirstBaseline(t *testing.T) {
+	const (
+		baseAddress          = "0xABCD000000000000000000000000000000003301"
+		baseSignature        = "ABCD3301"
+		baseSequence   int64 = 3301
+		baseCursorPrev       = "ABCD3300"
+
+		solanaAddress         = "sol-delay-owner"
+		solanaSignature       = "sol-delay-3301"
+		solanaSequence  int64 = 4301
+
+		btcAddress         = "tb1-delay-owner"
+		btcSignature       = "0xABCD5501"
+		btcSequence  int64 = 5501
+	)
+
+	type scenarioOutput struct {
+		baseInitial   event.NormalizedBatch
+		baseConverged event.NormalizedBatch
+		solana        event.NormalizedBatch
+		btc           event.NormalizedBatch
+	}
+
+	canonicalEventIDSet := func(batch event.NormalizedBatch) map[string]struct{} {
+		out := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				out[be.EventID] = struct{}{}
+			}
+		}
+		return out
+	}
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+	countCategory := func(batch event.NormalizedBatch, category model.EventCategory) int {
+		count := 0
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				if be.EventCategory == category {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	basePartial := func() *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      baseSignature,
+			BlockCursor: baseSequence,
+			FeeAmount:   "100",
+			FeePayer:    baseAddress,
+			Status:      "SUCCESS",
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "base_partial_transfer_1",
+					ProgramId:             "0xabcdef0000000000000000000000000000003301",
+					Address:               baseAddress,
+					ContractAddress:       "0xabcdef0000000000000000000000000000003301",
+					Delta:                 "-7",
+					CounterpartyAddress:   "0xdcba000000000000000000000000000000003301",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeFungible),
+					Metadata: map[string]string{
+						"fee_execution_l2": "70",
+						"fee_data_l1":      "30",
+						"decoder_version":  "base-decoder-v0",
+					},
+				},
+			},
+		}
+	}
+	baseEnriched := func() *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      "0x" + strings.ToLower(baseSignature),
+			BlockCursor: baseSequence,
+			FeeAmount:   "100",
+			FeePayer:    strings.ToLower(baseAddress),
+			Status:      "SUCCESS",
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 13,
+					InnerInstructionIndex: 0,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "base_enriched_transfer_1",
+					ProgramId:             "0xabcdef0000000000000000000000000000003301",
+					Address:               strings.ToLower(baseAddress),
+					ContractAddress:       "0xabcdef0000000000000000000000000000003301",
+					Delta:                 "-7",
+					CounterpartyAddress:   "0xdcba000000000000000000000000000000003301",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeFungible),
+					Metadata: map[string]string{
+						"event_path":       "log:10",
+						"base_event_path":  "log:10",
+						"fee_execution_l2": "70",
+						"fee_data_l1":      "30",
+						"decoder_version":  "base-decoder-v2",
+					},
+				},
+				{
+					OuterInstructionIndex: 14,
+					InnerInstructionIndex: 0,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "base_enriched_transfer_2",
+					ProgramId:             "0xabcdef0000000000000000000000000000003301",
+					Address:               strings.ToLower(baseAddress),
+					ContractAddress:       "0xabcdef0000000000000000000000000000003301",
+					Delta:                 "3",
+					CounterpartyAddress:   "0xdcba000000000000000000000000000000003302",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeFungible),
+					Metadata: map[string]string{
+						"event_path":       "log:11",
+						"base_event_path":  "log:11",
+						"fee_execution_l2": "70",
+						"fee_data_l1":      "30",
+						"decoder_version":  "base-decoder-v2",
+					},
+				},
+			},
+		}
+	}
+	solanaEnriched := func() *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      solanaSignature,
+			BlockCursor: solanaSequence,
+			FeeAmount:   "5000",
+			FeePayer:    solanaAddress,
+			Status:      "SUCCESS",
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 7,
+					InnerInstructionIndex: 9,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "solana_enriched_transfer",
+					ProgramId:             "11111111111111111111111111111111",
+					Address:               solanaAddress,
+					ContractAddress:       "So11111111111111111111111111111111111111112",
+					Delta:                 "-9",
+					CounterpartyAddress:   "sol-delay-counterparty",
+					TokenSymbol:           "SOL",
+					TokenName:             "Solana",
+					TokenDecimals:         9,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":      "outer:0|inner:-1",
+						"decoder_version": "solana-decoder-v2",
+					},
+				},
+			},
+		}
+	}
+	btcEnriched := func() *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      "ABCD5501",
+			BlockCursor: btcSequence,
+			FeeAmount:   "100",
+			FeePayer:    btcAddress,
+			Status:      "SUCCESS",
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "vin_spend",
+					ProgramId:             "btc",
+					Address:               btcAddress,
+					ContractAddress:       "BTC",
+					Delta:                 "-1000",
+					TokenSymbol:           "BTC",
+					TokenName:             "Bitcoin",
+					TokenDecimals:         8,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":     "vin:0",
+						"finality_state": "confirmed",
+					},
+				},
+				{
+					OuterInstructionIndex: 1,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "vout_receive",
+					ProgramId:             "btc",
+					Address:               btcAddress,
+					ContractAddress:       "BTC",
+					Delta:                 "900",
+					TokenSymbol:           "BTC",
+					TokenName:             "Bitcoin",
+					TokenDecimals:         8,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":     "vout:1",
+						"finality_state": "confirmed",
+					},
+				},
+			},
+		}
+	}
+
+	baseBatch := event.RawBatch{
+		Chain:                  model.ChainBase,
+		Network:                model.NetworkSepolia,
+		Address:                baseAddress,
+		PreviousCursorValue:    strPtr(baseCursorPrev),
+		PreviousCursorSequence: baseSequence - 1,
+		NewCursorValue:         strPtr(baseSignature),
+		NewCursorSequence:      baseSequence,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"base-delayed-enrichment"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: baseSignature, Sequence: baseSequence},
+		},
+	}
+	solanaBatch := event.RawBatch{
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		Address:                solanaAddress,
+		PreviousCursorValue:    strPtr("sol-delay-3300"),
+		PreviousCursorSequence: solanaSequence - 1,
+		NewCursorValue:         strPtr(solanaSignature),
+		NewCursorSequence:      solanaSequence,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"solana-delayed-enrichment"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: solanaSignature, Sequence: solanaSequence},
+		},
+	}
+	btcBatch := event.RawBatch{
+		Chain:                  model.ChainBTC,
+		Network:                model.NetworkTestnet,
+		Address:                btcAddress,
+		PreviousCursorValue:    strPtr("ABCD5500"),
+		PreviousCursorSequence: btcSequence - 1,
+		NewCursorValue:         strPtr(btcSignature),
+		NewCursorSequence:      btcSequence,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"btc-delayed-enrichment"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: btcSignature, Sequence: btcSequence},
+		},
+	}
+
+	runScenario := func(t *testing.T, partialFirst bool) scenarioOutput {
+		t.Helper()
+
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockChainDecoderClient(ctrl)
+		normalizedCh := make(chan event.NormalizedBatch, 4)
+		n := &Normalizer{
+			sidecarTimeout: 30 * time.Second,
+			normalizedCh:   normalizedCh,
+			logger:         slog.Default(),
+		}
+
+		firstBaseResult := baseEnriched()
+		if partialFirst {
+			firstBaseResult = basePartial()
+		}
+
+		responses := []*sidecarv1.DecodeSolanaTransactionBatchResponse{
+			{Results: []*sidecarv1.TransactionResult{firstBaseResult}},
+			{Results: []*sidecarv1.TransactionResult{solanaEnriched()}},
+			{Results: []*sidecarv1.TransactionResult{btcEnriched()}},
+			{Results: []*sidecarv1.TransactionResult{baseEnriched()}},
+		}
+		expectedSignatures := []string{
+			baseSignature,
+			solanaSignature,
+			btcSignature,
+			baseSignature,
+		}
+
+		call := 0
+		mockClient.EXPECT().
+			DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+			Times(len(responses)).
+			DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+				require.Len(t, req.GetTransactions(), 1)
+				assert.Equal(t, expectedSignatures[call], req.GetTransactions()[0].GetSignature())
+				resp := responses[call]
+				call++
+				return resp, nil
+			})
+
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseBatch))
+		baseInitial := <-normalizedCh
+
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, solanaBatch))
+		solanaRun := <-normalizedCh
+
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, btcBatch))
+		btcRun := <-normalizedCh
+
+		baseReplayBatch := baseBatch
+		baseReplayBatch.PreviousCursorValue = baseInitial.NewCursorValue
+		baseReplayBatch.PreviousCursorSequence = baseInitial.NewCursorSequence
+		baseReplayBatch.NewCursorValue = baseInitial.NewCursorValue
+		baseReplayBatch.NewCursorSequence = baseInitial.NewCursorSequence
+
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseReplayBatch))
+		baseConverged := <-normalizedCh
+
+		assertNoDuplicateCanonicalIDs(t, baseInitial)
+		assertNoDuplicateCanonicalIDs(t, baseConverged)
+		assertNoDuplicateCanonicalIDs(t, solanaRun)
+		assertNoDuplicateCanonicalIDs(t, btcRun)
+
+		return scenarioOutput{
+			baseInitial:   baseInitial,
+			baseConverged: baseConverged,
+			solana:        solanaRun,
+			btc:           btcRun,
+		}
+	}
+
+	partialFirst := runScenario(t, true)
+	enrichedFirst := runScenario(t, false)
+
+	assert.Equal(t, orderedCanonicalTuples(enrichedFirst.baseConverged), orderedCanonicalTuples(partialFirst.baseConverged))
+	assert.Equal(t, orderedCanonicalTuples(enrichedFirst.solana), orderedCanonicalTuples(partialFirst.solana))
+	assert.Equal(t, orderedCanonicalTuples(enrichedFirst.btc), orderedCanonicalTuples(partialFirst.btc))
+
+	assert.Less(
+		t,
+		len(canonicalEventIDSet(partialFirst.baseInitial)),
+		len(canonicalEventIDSet(partialFirst.baseConverged)),
+		"delayed base enrichment should add only previously missing logical events",
+	)
+	assert.Equal(t, 2, countCategory(partialFirst.baseConverged, model.EventCategoryTransfer))
+	assert.Equal(t, 1, countCategory(partialFirst.baseConverged, model.EventCategoryFeeExecutionL2))
+	assert.Equal(t, 1, countCategory(partialFirst.baseConverged, model.EventCategoryFeeDataL1))
+	assert.Equal(t, 1, countCategory(partialFirst.solana, model.EventCategoryFee))
+	assert.Equal(t, 2, countCategory(partialFirst.btc, model.EventCategoryTransfer))
+
+	require.NotNil(t, partialFirst.baseConverged.NewCursorValue)
+	require.NotNil(t, partialFirst.solana.NewCursorValue)
+	require.NotNil(t, partialFirst.btc.NewCursorValue)
+	assert.Equal(t, "0xabcd3301", *partialFirst.baseConverged.NewCursorValue)
+	assert.Equal(t, solanaSignature, *partialFirst.solana.NewCursorValue)
+	assert.Equal(t, "abcd5501", *partialFirst.btc.NewCursorValue)
+	assert.GreaterOrEqual(t, partialFirst.baseConverged.NewCursorSequence, partialFirst.baseInitial.NewCursorSequence)
+}
+
 func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMandatoryChains(t *testing.T) {
 	type testCase struct {
 		name           string
@@ -5625,16 +5986,16 @@ func TestProcessBatch_BTCReplayResumeDeterministicTupleEquivalenceAndNoDuplicate
 
 func TestProcessBatch_BTCSignedDeltaConservation_CoinbaseMultiInputOutputChangeAndFeeAttribution(t *testing.T) {
 	type testCase struct {
-		name                string
-		address             string
-		signature           string
-		sequence            int64
-		result              *sidecarv1.TransactionResult
-		expectedNetDelta    string
-		expectedFee         string
-		expectedFeePayer    string
-		expectedEventPaths  []string
-		expectFeeConserves  bool
+		name               string
+		address            string
+		signature          string
+		sequence           int64
+		result             *sidecarv1.TransactionResult
+		expectedNetDelta   string
+		expectedFee        string
+		expectedFeePayer   string
+		expectedEventPaths []string
+		expectFeeConserves bool
 	}
 
 	testCases := []testCase{
