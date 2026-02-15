@@ -42,6 +42,10 @@ type Fetcher struct {
 	batchSizeByAddress map[string]int
 }
 
+type cutoffAwareAdapter interface {
+	FetchNewSignaturesWithCutoff(ctx context.Context, address string, cursor *string, batchSize int, cutoffSeq int64) ([]chain.SignatureInfo, error)
+}
+
 func New(
 	adapter chain.ChainAdapter,
 	jobCh <-chan event.FetchJob,
@@ -131,6 +135,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 
 	// Canonicalize provider-returned ordering and suppress overlap duplicates.
 	sigs = canonicalizeSignatures(job.Chain, sigs)
+	sigs = suppressPostCutoffSignatures(sigs, job.FetchCutoffSeq)
 	sigs = suppressBoundaryCursorSignatures(job.Chain, sigs, canonicalCursor)
 	sigs = suppressPreCursorSequenceCarryover(sigs, job.CursorSequence)
 	if len(sigs) == 0 {
@@ -211,7 +216,7 @@ func (f *Fetcher) fetchSignaturesWithRetry(
 		Reason: "unset",
 	}
 	for attempt := 1; attempt <= attempts; attempt++ {
-		sigs, err := f.adapter.FetchNewSignatures(ctx, job.Address, cursor, currentBatch)
+		sigs, err := f.fetchNewSignatures(ctx, job.Address, cursor, currentBatch, job.FetchCutoffSeq)
 		if err == nil {
 			return sigs, currentBatch, nil
 		}
@@ -260,6 +265,21 @@ func (f *Fetcher) fetchSignaturesWithRetry(
 	}
 
 	return nil, currentBatch, fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, attempts, lastDecision.Reason, lastErr)
+}
+
+func (f *Fetcher) fetchNewSignatures(
+	ctx context.Context,
+	address string,
+	cursor *string,
+	batchSize int,
+	cutoffSeq int64,
+) ([]chain.SignatureInfo, error) {
+	if cutoffSeq > 0 {
+		if adapter, ok := f.adapter.(cutoffAwareAdapter); ok {
+			return adapter.FetchNewSignaturesWithCutoff(ctx, address, cursor, batchSize, cutoffSeq)
+		}
+	}
+	return f.adapter.FetchNewSignatures(ctx, address, cursor, batchSize)
 }
 
 func (f *Fetcher) fetchTransactionsWithRetry(ctx context.Context, log *slog.Logger, sigs []chain.SignatureInfo) ([]chain.SignatureInfo, []json.RawMessage, int, error) {
@@ -537,6 +557,21 @@ func suppressBoundaryCursorSignatures(chainID model.Chain, sigs []chain.Signatur
 	filtered := make([]chain.SignatureInfo, 0, len(sigs))
 	for _, sig := range sigs {
 		if canonicalSignatureIdentity(chainID, sig.Hash) == cursorIdentity {
+			continue
+		}
+		filtered = append(filtered, sig)
+	}
+	return filtered
+}
+
+func suppressPostCutoffSignatures(sigs []chain.SignatureInfo, cutoffSeq int64) []chain.SignatureInfo {
+	if len(sigs) == 0 || cutoffSeq <= 0 {
+		return sigs
+	}
+
+	filtered := make([]chain.SignatureInfo, 0, len(sigs))
+	for _, sig := range sigs {
+		if sig.Sequence > cutoffSeq {
 			continue
 		}
 		filtered = append(filtered, sig)

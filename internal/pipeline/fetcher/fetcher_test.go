@@ -1086,3 +1086,470 @@ func TestProcessJob_CanonicalizesFetchOrderAndSuppressesOverlapDuplicatesAcrossM
 		})
 	}
 }
+
+type deterministicCutoffAdapter struct {
+	chain      model.Chain
+	signatures []chain.SignatureInfo // oldest-first fixture
+}
+
+func (a *deterministicCutoffAdapter) Chain() string {
+	return a.chain.String()
+}
+
+func (a *deterministicCutoffAdapter) GetHeadSequence(context.Context) (int64, error) {
+	if len(a.signatures) == 0 {
+		return 0, nil
+	}
+	return a.signatures[len(a.signatures)-1].Sequence, nil
+}
+
+func (a *deterministicCutoffAdapter) FetchNewSignatures(
+	ctx context.Context,
+	address string,
+	cursor *string,
+	batchSize int,
+) ([]chain.SignatureInfo, error) {
+	return a.FetchNewSignaturesWithCutoff(ctx, address, cursor, batchSize, 0)
+}
+
+func (a *deterministicCutoffAdapter) FetchNewSignaturesWithCutoff(
+	_ context.Context,
+	_ string,
+	cursor *string,
+	batchSize int,
+	cutoffSeq int64,
+) ([]chain.SignatureInfo, error) {
+	if batchSize <= 0 {
+		return []chain.SignatureInfo{}, nil
+	}
+
+	filtered := make([]chain.SignatureInfo, 0, len(a.signatures))
+	for _, sig := range a.signatures {
+		if cutoffSeq > 0 && sig.Sequence > cutoffSeq {
+			continue
+		}
+		filtered = append(filtered, sig)
+	}
+
+	start := 0
+	if cursor != nil {
+		cursorIdentity := canonicalSignatureIdentity(a.chain, *cursor)
+		if cursorIdentity != "" {
+			for idx, sig := range filtered {
+				if canonicalSignatureIdentity(a.chain, sig.Hash) == cursorIdentity {
+					// Include cursor overlap so fetcher boundary suppression is exercised.
+					start = idx
+					break
+				}
+			}
+		}
+	}
+
+	if start >= len(filtered) {
+		return []chain.SignatureInfo{}, nil
+	}
+	selected := append([]chain.SignatureInfo(nil), filtered[start:]...)
+	if len(selected) > batchSize {
+		selected = selected[:batchSize]
+	}
+	return selected, nil
+}
+
+func (a *deterministicCutoffAdapter) FetchTransactions(_ context.Context, hashes []string) ([]json.RawMessage, error) {
+	out := make([]json.RawMessage, 0, len(hashes))
+	for _, hash := range hashes {
+		out = append(out, json.RawMessage(fmt.Sprintf(`{"tx":"%s"}`, hash)))
+	}
+	return out, nil
+}
+
+func TestProcessJob_PinnedCutoffPaginationPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name           string
+		chain          model.Chain
+		network        model.Network
+		address        string
+		signatures     []chain.SignatureInfo
+		cutoff         int64
+		expectedHashes []string
+		cursorA        string
+		cursorB        string
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "sol-cutoff-addr",
+			signatures: []chain.SignatureInfo{
+				{Hash: "sol-cutoff-1", Sequence: 100},
+				{Hash: "sol-cutoff-2", Sequence: 101},
+				{Hash: "sol-cutoff-3", Sequence: 102},
+				{Hash: "sol-cutoff-4", Sequence: 103},
+				{Hash: "sol-cutoff-5", Sequence: 104}, // beyond pinned cutoff
+			},
+			cutoff:         103,
+			expectedHashes: []string{"sol-cutoff-1", "sol-cutoff-2", "sol-cutoff-3", "sol-cutoff-4"},
+			cursorA:        "sol-cutoff-2",
+			cursorB:        "sol-cutoff-1",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			signatures: []chain.SignatureInfo{
+				{Hash: "AAA", Sequence: 200},
+				{Hash: "0xBbB", Sequence: 201},
+				{Hash: "ccc", Sequence: 202},
+				{Hash: "0xDDD", Sequence: 203},
+				{Hash: "eee", Sequence: 204}, // beyond pinned cutoff
+			},
+			cutoff:         203,
+			expectedHashes: []string{"0xaaa", "0xbbb", "0xccc", "0xddd"},
+			cursorA:        "0xBbB",
+			cursorB:        "AAA",
+		},
+	}
+
+	type jobSpec struct {
+		cursor    *string
+		batchSize int
+		cutoff    int64
+	}
+
+	run := func(t *testing.T, tc testCase, specs []jobSpec) []string {
+		t.Helper()
+
+		rawBatchCh := make(chan event.RawBatch, len(specs))
+		f := &Fetcher{
+			adapter:          &deterministicCutoffAdapter{chain: tc.chain, signatures: tc.signatures},
+			rawBatchCh:       rawBatchCh,
+			logger:           slog.Default(),
+			retryMaxAttempts: 1,
+		}
+
+		collected := make([]string, 0, len(tc.expectedHashes))
+		for _, spec := range specs {
+			job := event.FetchJob{
+				Chain:          tc.chain,
+				Network:        tc.network,
+				Address:        tc.address,
+				CursorValue:    spec.cursor,
+				CursorSequence: signatureSequenceForCursor(tc.chain, tc.signatures, spec.cursor),
+				FetchCutoffSeq: spec.cutoff,
+				BatchSize:      spec.batchSize,
+			}
+
+			f.setAdaptiveBatchSize(tc.address, spec.batchSize)
+			require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+
+			select {
+			case batch := <-rawBatchCh:
+				for _, sig := range batch.Signatures {
+					assert.LessOrEqual(t, sig.Sequence, spec.cutoff)
+					collected = append(collected, sig.Hash)
+				}
+			default:
+			}
+		}
+		return collected
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			cursorA := tc.cursorA
+			cursorB := tc.cursorB
+			strategyA := run(t, tc, []jobSpec{
+				{batchSize: 2, cutoff: tc.cutoff},
+				{cursor: &cursorA, batchSize: 2, cutoff: tc.cutoff},
+			})
+			strategyB := run(t, tc, []jobSpec{
+				{batchSize: 1, cutoff: tc.cutoff},
+				{cursor: &cursorB, batchSize: 3, cutoff: tc.cutoff},
+			})
+
+			assert.Equal(t, tc.expectedHashes, strategyA)
+			assert.Equal(t, tc.expectedHashes, strategyB)
+		})
+	}
+}
+
+func TestProcessJob_PinnedCutoffLateAppendDeferredWithoutDuplicateAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name           string
+		chain          model.Chain
+		network        model.Network
+		address        string
+		signatures     []chain.SignatureInfo
+		firstCutoff    int64
+		secondCutoff   int64
+		resumeCursor   string
+		expectedHashes []string
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "sol-late-append-addr",
+			signatures: []chain.SignatureInfo{
+				{Hash: "sol-late-1", Sequence: 100},
+				{Hash: "sol-late-2", Sequence: 101},
+				{Hash: "sol-late-3", Sequence: 102},
+				{Hash: "sol-late-4", Sequence: 103},
+				{Hash: "sol-late-5", Sequence: 104},
+			},
+			firstCutoff:    102,
+			secondCutoff:   104,
+			resumeCursor:   "sol-late-3",
+			expectedHashes: []string{"sol-late-1", "sol-late-2", "sol-late-3", "sol-late-4", "sol-late-5"},
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			signatures: []chain.SignatureInfo{
+				{Hash: "AAA", Sequence: 200},
+				{Hash: "bbb", Sequence: 201},
+				{Hash: "CCC", Sequence: 202},
+				{Hash: "ddd", Sequence: 203},
+				{Hash: "0xEEE", Sequence: 204},
+			},
+			firstCutoff:    202,
+			secondCutoff:   204,
+			resumeCursor:   "CCC",
+			expectedHashes: []string{"0xaaa", "0xbbb", "0xccc", "0xddd", "0xeee"},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			rawBatchCh := make(chan event.RawBatch, 2)
+			f := &Fetcher{
+				adapter:          &deterministicCutoffAdapter{chain: tc.chain, signatures: tc.signatures},
+				rawBatchCh:       rawBatchCh,
+				logger:           slog.Default(),
+				retryMaxAttempts: 1,
+			}
+
+			first := event.FetchJob{
+				Chain:          tc.chain,
+				Network:        tc.network,
+				Address:        tc.address,
+				BatchSize:      3,
+				FetchCutoffSeq: tc.firstCutoff,
+			}
+			f.setAdaptiveBatchSize(tc.address, first.BatchSize)
+			require.NoError(t, f.processJob(context.Background(), slog.Default(), first))
+
+			cursor := tc.resumeCursor
+			second := event.FetchJob{
+				Chain:          tc.chain,
+				Network:        tc.network,
+				Address:        tc.address,
+				CursorValue:    &cursor,
+				CursorSequence: signatureSequenceForCursor(tc.chain, tc.signatures, &cursor),
+				BatchSize:      2,
+				FetchCutoffSeq: tc.secondCutoff,
+			}
+			f.setAdaptiveBatchSize(tc.address, second.BatchSize)
+			require.NoError(t, f.processJob(context.Background(), slog.Default(), second))
+
+			collected := make([]string, 0, len(tc.expectedHashes))
+			for i := 0; i < 2; i++ {
+				batch := <-rawBatchCh
+				for _, sig := range batch.Signatures {
+					assert.LessOrEqual(t, sig.Sequence, tc.secondCutoff)
+					collected = append(collected, sig.Hash)
+				}
+			}
+
+			assert.Equal(t, tc.expectedHashes, collected)
+			seen := make(map[string]struct{}, len(collected))
+			for _, hash := range collected {
+				_, exists := seen[hash]
+				assert.False(t, exists, "duplicate hash emitted across cutoff-boundary resume: %s", hash)
+				seen[hash] = struct{}{}
+			}
+		})
+	}
+}
+
+func TestProcessJob_PinnedCutoffReplayResumeConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name           string
+		chain          model.Chain
+		network        model.Network
+		address        string
+		signatures     []chain.SignatureInfo
+		cutoff         int64
+		resumeCursor   string
+		expectedHashes []string
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "sol-replay-cutoff-addr",
+			signatures: []chain.SignatureInfo{
+				{Hash: "sol-replay-1", Sequence: 100},
+				{Hash: "sol-replay-2", Sequence: 101},
+				{Hash: "sol-replay-3", Sequence: 102},
+				{Hash: "sol-replay-4", Sequence: 103},
+			},
+			cutoff:         103,
+			resumeCursor:   "sol-replay-2",
+			expectedHashes: []string{"sol-replay-1", "sol-replay-2", "sol-replay-3", "sol-replay-4"},
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			signatures: []chain.SignatureInfo{
+				{Hash: "AAA", Sequence: 200},
+				{Hash: "bbb", Sequence: 201},
+				{Hash: "CCC", Sequence: 202},
+				{Hash: "ddd", Sequence: 203},
+			},
+			cutoff:         203,
+			resumeCursor:   "bbb",
+			expectedHashes: []string{"0xaaa", "0xbbb", "0xccc", "0xddd"},
+		},
+	}
+
+	run := func(t *testing.T, tc testCase, jobs []event.FetchJob) ([]string, []int64) {
+		t.Helper()
+		rawBatchCh := make(chan event.RawBatch, len(jobs))
+		f := &Fetcher{
+			adapter:          &deterministicCutoffAdapter{chain: tc.chain, signatures: tc.signatures},
+			rawBatchCh:       rawBatchCh,
+			logger:           slog.Default(),
+			retryMaxAttempts: 1,
+		}
+
+		out := make([]string, 0, len(tc.expectedHashes))
+		cursorSeqs := make([]int64, 0, len(jobs))
+		for _, job := range jobs {
+			f.setAdaptiveBatchSize(tc.address, job.BatchSize)
+			require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+			select {
+			case batch := <-rawBatchCh:
+				cursorSeqs = append(cursorSeqs, batch.NewCursorSequence)
+				for _, sig := range batch.Signatures {
+					out = append(out, sig.Hash)
+				}
+			default:
+			}
+		}
+		return out, cursorSeqs
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			full, _ := run(t, tc, []event.FetchJob{
+				{
+					Chain:          tc.chain,
+					Network:        tc.network,
+					Address:        tc.address,
+					BatchSize:      4,
+					FetchCutoffSeq: tc.cutoff,
+				},
+			})
+
+			cursor := tc.resumeCursor
+			resume, resumeCursorSeqs := run(t, tc, []event.FetchJob{
+				{
+					Chain:          tc.chain,
+					Network:        tc.network,
+					Address:        tc.address,
+					BatchSize:      2,
+					FetchCutoffSeq: tc.cutoff,
+				},
+				{
+					Chain:          tc.chain,
+					Network:        tc.network,
+					Address:        tc.address,
+					CursorValue:    &cursor,
+					CursorSequence: signatureSequenceForCursor(tc.chain, tc.signatures, &cursor),
+					BatchSize:      2,
+					FetchCutoffSeq: tc.cutoff,
+				},
+			})
+
+			assert.Equal(t, tc.expectedHashes, full)
+			assert.Equal(t, full, resume)
+			for i := 1; i < len(resumeCursorSeqs); i++ {
+				assert.GreaterOrEqual(t, resumeCursorSeqs[i], resumeCursorSeqs[i-1])
+			}
+		})
+	}
+}
+
+func TestProcessJob_CutoffPostFilterDefersOutOfRangeSignaturesWhenAdapterIsNotCutoffAware(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+	rawBatchCh := make(chan event.RawBatch, 1)
+	f := &Fetcher{
+		adapter:          mockAdapter,
+		rawBatchCh:       rawBatchCh,
+		logger:           slog.Default(),
+		retryMaxAttempts: 1,
+	}
+
+	job := event.FetchJob{
+		Chain:          model.ChainSolana,
+		Network:        model.NetworkDevnet,
+		Address:        "sol-cutoff-fallback",
+		BatchSize:      4,
+		FetchCutoffSeq: 102,
+	}
+
+	mockAdapter.EXPECT().
+		FetchNewSignatures(gomock.Any(), job.Address, (*string)(nil), 4).
+		Return([]chain.SignatureInfo{
+			{Hash: "sig-100", Sequence: 100},
+			{Hash: "sig-103", Sequence: 103},
+			{Hash: "sig-102", Sequence: 102},
+		}, nil)
+
+	mockAdapter.EXPECT().
+		FetchTransactions(gomock.Any(), []string{"sig-100", "sig-102"}).
+		Return([]json.RawMessage{
+			json.RawMessage(`{"tx":"sig-100"}`),
+			json.RawMessage(`{"tx":"sig-102"}`),
+		}, nil)
+
+	require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+	batch := <-rawBatchCh
+	require.Len(t, batch.Signatures, 2)
+	assert.Equal(t, "sig-100", batch.Signatures[0].Hash)
+	assert.Equal(t, "sig-102", batch.Signatures[1].Hash)
+	assert.Equal(t, int64(102), batch.NewCursorSequence)
+}
+
+func signatureSequenceForCursor(chainID model.Chain, sigs []chain.SignatureInfo, cursor *string) int64 {
+	if cursor == nil {
+		return 0
+	}
+	cursorIdentity := canonicalSignatureIdentity(chainID, *cursor)
+	if cursorIdentity == "" {
+		return 0
+	}
+	for _, sig := range sigs {
+		if canonicalSignatureIdentity(chainID, sig.Hash) == cursorIdentity {
+			return sig.Sequence
+		}
+	}
+	return 0
+}

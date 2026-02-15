@@ -23,6 +23,11 @@ type Coordinator struct {
 	interval        time.Duration
 	jobCh           chan<- event.FetchJob
 	logger          *slog.Logger
+	headProvider    headSequenceProvider
+}
+
+type headSequenceProvider interface {
+	GetHeadSequence(ctx context.Context) (int64, error)
 }
 
 func New(
@@ -45,6 +50,11 @@ func New(
 		jobCh:           jobCh,
 		logger:          logger.With("component", "coordinator"),
 	}
+}
+
+func (c *Coordinator) WithHeadProvider(provider headSequenceProvider) *Coordinator {
+	c.headProvider = provider
+	return c
 }
 
 func (c *Coordinator) Run(ctx context.Context) error {
@@ -75,6 +85,20 @@ func (c *Coordinator) tick(ctx context.Context) error {
 	addresses, err := c.watchedAddrRepo.GetActive(ctx, c.chain, c.network)
 	if err != nil {
 		return err
+	}
+	if len(addresses) == 0 {
+		return nil
+	}
+
+	fetchCutoffSeq := int64(0)
+	if c.headProvider != nil {
+		fetchCutoffSeq, err = c.headProvider.GetHeadSequence(ctx)
+		if err != nil {
+			return fmt.Errorf("resolve tick cutoff head: %w", err)
+		}
+		if fetchCutoffSeq < 0 {
+			fetchCutoffSeq = 0
+		}
 	}
 
 	groups := groupWatchedAddresses(c.chain, addresses)
@@ -113,6 +137,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			Address:        representative.address.Address,
 			CursorValue:    cursorValue,
 			CursorSequence: cursorSequence,
+			FetchCutoffSeq: fetchCutoffSeq,
 			BatchSize:      c.batchSize,
 			WalletID:       representative.address.WalletID,
 			OrgID:          representative.address.OrganizationID,

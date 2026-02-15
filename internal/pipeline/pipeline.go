@@ -77,7 +77,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		p.repos.WatchedAddr, p.repos.Cursor,
 		p.cfg.BatchSize, p.cfg.IndexingInterval,
 		jobCh, p.logger,
-	)
+	).WithHeadProvider(p.adapter)
 
 	fetch := fetcher.New(
 		p.adapter, jobCh, rawBatchCh,

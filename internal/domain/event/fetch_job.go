@@ -9,6 +9,7 @@ type FetchJob struct {
 	Address        string
 	CursorValue    *string // last processed signature/block
 	CursorSequence int64
+	FetchCutoffSeq int64 // pinned per-tick upper sequence bound (inclusive)
 	BatchSize      int
 	WalletID       *string
 	OrgID          *string

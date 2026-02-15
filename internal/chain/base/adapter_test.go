@@ -175,6 +175,45 @@ func TestAdapter_FetchNewSignatures_WithCursor(t *testing.T) {
 	assert.Equal(t, int64(11), sigs[1].Sequence)
 }
 
+func TestAdapter_FetchNewSignaturesWithCutoff_DefersHeadBeyondPinnedRange(t *testing.T) {
+	watched := "0xabc"
+	client := &fakeRPCClient{
+		head: 12,
+		blocks: map[int64]*rpc.Block{
+			10: {
+				Number:    "0xa",
+				Timestamp: "0x64",
+				Transactions: []*rpc.Transaction{
+					{Hash: "0xin10", TransactionIndex: "0x0", From: watched, To: "0xdef"},
+				},
+			},
+			11: {
+				Number:    "0xb",
+				Timestamp: "0x65",
+				Transactions: []*rpc.Transaction{
+					{Hash: "0xin11", TransactionIndex: "0x0", From: watched, To: "0xdef"},
+				},
+			},
+			12: {
+				Number:    "0xc",
+				Timestamp: "0x66",
+				Transactions: []*rpc.Transaction{
+					{Hash: "0xdefer12", TransactionIndex: "0x0", From: watched, To: "0xdef"},
+				},
+			},
+		},
+	}
+	a := newTestAdapter(client)
+
+	sigs, err := a.FetchNewSignaturesWithCutoff(context.Background(), watched, nil, 10, 11)
+	require.NoError(t, err)
+	require.Len(t, sigs, 2)
+	assert.Equal(t, "0xin10", sigs[0].Hash)
+	assert.Equal(t, int64(10), sigs[0].Sequence)
+	assert.Equal(t, "0xin11", sigs[1].Hash)
+	assert.Equal(t, int64(11), sigs[1].Sequence)
+}
+
 func TestAdapter_FetchTransactions(t *testing.T) {
 	client := &fakeRPCClient{
 		txs: map[string]*rpc.Transaction{

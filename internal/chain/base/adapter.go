@@ -44,13 +44,23 @@ func (a *Adapter) GetHeadSequence(ctx context.Context) (int64, error) {
 // FetchNewSignatures fetches Base tx hashes for a watched address.
 // Cursor is the last ingested tx hash; scanning resumes from its block/tx index.
 func (a *Adapter) FetchNewSignatures(ctx context.Context, address string, cursor *string, batchSize int) ([]chain.SignatureInfo, error) {
+	return a.FetchNewSignaturesWithCutoff(ctx, address, cursor, batchSize, 0)
+}
+
+// FetchNewSignaturesWithCutoff fetches Base tx hashes with an inclusive upper sequence bound.
+// cutoffSeq <= 0 disables the upper bound and preserves legacy behavior.
+func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address string, cursor *string, batchSize int, cutoffSeq int64) ([]chain.SignatureInfo, error) {
 	if batchSize <= 0 {
 		return []chain.SignatureInfo{}, nil
 	}
 
-	head, err := a.client.GetBlockNumber(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get head block: %w", err)
+	head := cutoffSeq
+	if head <= 0 {
+		liveHead, err := a.client.GetBlockNumber(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("get head block: %w", err)
+		}
+		head = liveHead
 	}
 
 	startBlock := head - (maxInitialLookbackBlocks - 1)
@@ -199,6 +209,7 @@ func (a *Adapter) FetchNewSignatures(ctx context.Context, address string, cursor
 		"cursor", cursor,
 		"start_block", startBlock,
 		"head_block", head,
+		"cutoff_seq", cutoffSeq,
 		"candidate_count", len(candidates),
 	)
 

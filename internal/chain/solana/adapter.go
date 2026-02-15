@@ -42,6 +42,12 @@ func (a *Adapter) GetHeadSequence(ctx context.Context) (int64, error) {
 // FetchNewSignatures fetches signatures since the cursor, returning oldest-first.
 // Uses pagination to collect up to batchSize signatures.
 func (a *Adapter) FetchNewSignatures(ctx context.Context, address string, cursor *string, batchSize int) ([]chain.SignatureInfo, error) {
+	return a.FetchNewSignaturesWithCutoff(ctx, address, cursor, batchSize, 0)
+}
+
+// FetchNewSignaturesWithCutoff fetches signatures in a closed range where sequence <= cutoffSeq.
+// cutoffSeq <= 0 disables the upper bound and preserves legacy behavior.
+func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address string, cursor *string, batchSize int, cutoffSeq int64) ([]chain.SignatureInfo, error) {
 	var allSigs []rpc.SignatureInfo
 	var before string
 
@@ -77,8 +83,18 @@ func (a *Adapter) FetchNewSignatures(ctx context.Context, address string, cursor
 			break
 		}
 
-		allSigs = append(allSigs, sigs...)
-		remaining -= len(sigs)
+		accepted := 0
+		for _, sig := range sigs {
+			if cutoffSeq > 0 && sig.Slot > cutoffSeq {
+				continue
+			}
+			allSigs = append(allSigs, sig)
+			accepted++
+		}
+		remaining -= accepted
+		if remaining <= 0 {
+			break
+		}
 
 		// If we got fewer than requested, we've reached the end
 		if len(sigs) < pageSize {
@@ -108,6 +124,7 @@ func (a *Adapter) FetchNewSignatures(ctx context.Context, address string, cursor
 		"address", address,
 		"count", len(result),
 		"cursor", cursor,
+		"cutoff_seq", cutoffSeq,
 	)
 
 	return result, nil

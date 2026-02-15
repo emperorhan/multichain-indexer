@@ -17,6 +17,20 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+type stubHeadProvider struct {
+	head  int64
+	err   error
+	calls int
+}
+
+func (s *stubHeadProvider) GetHeadSequence(context.Context) (int64, error) {
+	s.calls++
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.head, nil
+}
+
 func TestTick_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
@@ -91,6 +105,70 @@ func TestTick_NoAddresses(t *testing.T) {
 
 	err := c.tick(context.Background())
 	require.NoError(t, err)
+	assert.Empty(t, jobCh)
+}
+
+func TestTick_WithHeadProviderPinsSingleCutoffAcrossJobs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	mockCursor := storemocks.NewMockCursorRepository(ctrl)
+
+	jobCh := make(chan event.FetchJob, 10)
+	headProvider := &stubHeadProvider{head: 777}
+	c := New(
+		model.ChainSolana, model.NetworkDevnet,
+		mockWatchedAddr, mockCursor,
+		100, time.Second,
+		jobCh, slog.Default(),
+	).WithHeadProvider(headProvider)
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainSolana, model.NetworkDevnet).
+		Return([]model.WatchedAddress{
+			{Address: "addr1"},
+			{Address: "addr2"},
+		}, nil)
+
+	mockCursor.EXPECT().
+		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr1").
+		Return(nil, nil)
+	mockCursor.EXPECT().
+		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr2").
+		Return(nil, nil)
+
+	require.NoError(t, c.tick(context.Background()))
+	require.Len(t, jobCh, 2)
+	assert.Equal(t, 1, headProvider.calls)
+
+	job1 := <-jobCh
+	job2 := <-jobCh
+	assert.Equal(t, int64(777), job1.FetchCutoffSeq)
+	assert.Equal(t, int64(777), job2.FetchCutoffSeq)
+}
+
+func TestTick_WithHeadProviderErrorFailsFast(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	mockCursor := storemocks.NewMockCursorRepository(ctrl)
+
+	jobCh := make(chan event.FetchJob, 10)
+	headProvider := &stubHeadProvider{err: errors.New("head unavailable")}
+	c := New(
+		model.ChainBase, model.NetworkSepolia,
+		mockWatchedAddr, mockCursor,
+		100, time.Second,
+		jobCh, slog.Default(),
+	).WithHeadProvider(headProvider)
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainBase, model.NetworkSepolia).
+		Return([]model.WatchedAddress{
+			{Address: "0x1111111111111111111111111111111111111111"},
+		}, nil)
+
+	err := c.tick(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve tick cutoff head")
 	assert.Empty(t, jobCh)
 }
 

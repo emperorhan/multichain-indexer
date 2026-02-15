@@ -22,6 +22,13 @@ type ChainAdapter interface {
 	FetchTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error)
 }
 
+// CutoffAwareChainAdapter extends ChainAdapter with deterministic closed-range fetch support.
+// cutoffSeq is an inclusive upper bound for signature/block sequence selection.
+type CutoffAwareChainAdapter interface {
+	ChainAdapter
+	FetchNewSignaturesWithCutoff(ctx context.Context, address string, cursor *string, batchSize int, cutoffSeq int64) ([]SignatureInfo, error)
+}
+
 // SignatureInfo represents a transaction reference from the chain.
 type SignatureInfo struct {
 	Hash     string     // tx_hash (Solana: signature, EVM: hash)

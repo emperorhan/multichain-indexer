@@ -145,6 +145,42 @@ func TestAdapter_FetchNewSignatures_Pagination(t *testing.T) {
 	assert.Len(t, sigs, 1001)
 }
 
+func TestAdapter_FetchNewSignaturesWithCutoff_HeadAdvanceDuringPagination(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	adapter, mockClient := newTestAdapter(ctrl)
+
+	gomock.InOrder(
+		mockClient.EXPECT().
+			GetSignaturesForAddress(gomock.Any(), "addr1", gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ string, opts *rpc.GetSignaturesOpts) ([]rpc.SignatureInfo, error) {
+				assert.Equal(t, 3, opts.Limit)
+				assert.Empty(t, opts.Before)
+				return []rpc.SignatureInfo{
+					{Signature: "sig106", Slot: 106},
+					{Signature: "sig105", Slot: 105},
+					{Signature: "sig104", Slot: 104},
+				}, nil
+			}),
+		mockClient.EXPECT().
+			GetSignaturesForAddress(gomock.Any(), "addr1", gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ string, opts *rpc.GetSignaturesOpts) ([]rpc.SignatureInfo, error) {
+				assert.Equal(t, 3, opts.Limit)
+				assert.Equal(t, "sig104", opts.Before)
+				return []rpc.SignatureInfo{
+					{Signature: "sig103", Slot: 103},
+					{Signature: "sig102", Slot: 102},
+					{Signature: "sig101", Slot: 101},
+				}, nil
+			}),
+	)
+
+	sigs, err := adapter.FetchNewSignaturesWithCutoff(context.Background(), "addr1", nil, 3, 103)
+	require.NoError(t, err)
+	require.Len(t, sigs, 3)
+	assert.Equal(t, []string{"sig101", "sig102", "sig103"}, []string{sigs[0].Hash, sigs[1].Hash, sigs[2].Hash})
+	assert.Equal(t, []int64{101, 102, 103}, []int64{sigs[0].Sequence, sigs[1].Sequence, sigs[2].Sequence})
+}
+
 func TestAdapter_FetchNewSignatures_EmptyResult(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	adapter, mockClient := newTestAdapter(ctrl)
