@@ -2043,6 +2043,159 @@ func TestAutoTuneController_RollbackCheckpointFencePostBacklogDrainLiveCatchupOr
 	assert.Equal(t, 0, advancedLiveCatchupDecision.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFencePostLiveCatchupSteadyStateRebaselineOrdersBySteadyWatermarkAndQuarantinesAmbiguousMarkers(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	lateBridgeSeq2Cfg := quarantineCfg
+	lateBridgeSeq2Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=7|rollback-fence-late-bridge-seq=2|rollback-fence-late-bridge-release-watermark=80"
+	drainStage2Cfg := lateBridgeSeq2Cfg
+	drainStage2Cfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=82"
+	liveCatchupHead130Cfg := quarantineCfg
+	liveCatchupHead130Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=8|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90|rollback-fence-late-bridge-drain-watermark=120|rollback-fence-live-head=130"
+	steadyState131Cfg := liveCatchupHead130Cfg
+	steadyState131Cfg.PolicyManifestDigest = liveCatchupHead130Cfg.PolicyManifestDigest + "|rollback-fence-steady-state-watermark=131"
+	staleSteadyState130Cfg := liveCatchupHead130Cfg
+	staleSteadyState130Cfg.PolicyManifestDigest = liveCatchupHead130Cfg.PolicyManifestDigest + "|rollback-fence-steady-state-watermark=130"
+	advancedSteadyState145Cfg := liveCatchupHead130Cfg
+	advancedSteadyState145Cfg.PolicyManifestDigest = liveCatchupHead130Cfg.PolicyManifestDigest + "|rollback-fence-steady-state-watermark=145"
+	ambiguousSteadyStateCfg := quarantineCfg
+	ambiguousSteadyStateCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=8|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90|rollback-fence-late-bridge-drain-watermark=120|rollback-fence-steady-state-watermark=140"
+
+	baseSeed := 220
+	baseController := newAutoTuneControllerWithSeed(100, drainStage2Cfg, &baseSeed)
+	require.NotNil(t, baseController)
+	baseController.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:       true,
+		Version:        releaseCfg.PolicyVersion,
+		ManifestDigest: releaseCfg.PolicyManifestDigest,
+		Epoch:          releaseCfg.PolicyManifestRefreshEpoch,
+	})
+	batch, baseDecision := baseController.Resolve(highLag)
+	assert.Equal(t, baseSeed+20, batch)
+	assert.Equal(t, "apply_increase", baseDecision.Decision)
+	assert.Equal(t, drainStage2Cfg.PolicyManifestDigest, baseDecision.PolicyManifestDigest)
+	assert.Equal(t, drainStage2Cfg.PolicyManifestRefreshEpoch, baseDecision.PolicyEpoch)
+
+	liveCatchupSeed := baseController.currentBatch
+	liveCatchupController := newAutoTuneControllerWithSeed(100, liveCatchupHead130Cfg, &liveCatchupSeed)
+	require.NotNil(t, liveCatchupController)
+	liveCatchupController.reconcilePolicyTransition(baseController.exportPolicyTransition())
+	batch, liveCatchupDecision := liveCatchupController.Resolve(highLag)
+	assert.Equal(t, liveCatchupSeed+20, batch)
+	assert.Equal(t, "apply_increase", liveCatchupDecision.Decision)
+	assert.Equal(t, liveCatchupHead130Cfg.PolicyManifestDigest, liveCatchupDecision.PolicyManifestDigest)
+	assert.Equal(t, liveCatchupHead130Cfg.PolicyManifestRefreshEpoch, liveCatchupDecision.PolicyEpoch)
+	assert.Equal(t, 0, liveCatchupDecision.PolicyActivationTicks)
+
+	steadyStateSeed := liveCatchupController.currentBatch
+	steadyStateController := newAutoTuneControllerWithSeed(100, steadyState131Cfg, &steadyStateSeed)
+	require.NotNil(t, steadyStateController)
+	steadyStateController.reconcilePolicyTransition(liveCatchupController.exportPolicyTransition())
+	batch, steadyStateDecision := steadyStateController.Resolve(highLag)
+	assert.Equal(t, steadyStateSeed+20, batch)
+	assert.Equal(t, "apply_increase", steadyStateDecision.Decision)
+	assert.Equal(t, steadyState131Cfg.PolicyManifestDigest, steadyStateDecision.PolicyManifestDigest)
+	assert.Equal(t, steadyState131Cfg.PolicyManifestRefreshEpoch, steadyStateDecision.PolicyEpoch)
+	assert.Equal(t, 0, steadyStateDecision.PolicyActivationTicks)
+
+	staleSteadySeed := steadyStateController.currentBatch
+	staleSteadyController := newAutoTuneControllerWithSeed(100, staleSteadyState130Cfg, &staleSteadySeed)
+	require.NotNil(t, staleSteadyController)
+	staleSteadyController.reconcilePolicyTransition(steadyStateController.exportPolicyTransition())
+	batch, staleSteadyDecision := staleSteadyController.Resolve(highLag)
+	assert.Equal(t, staleSteadySeed+20, batch)
+	assert.Equal(t, "apply_increase", staleSteadyDecision.Decision)
+	assert.Equal(
+		t,
+		steadyState131Cfg.PolicyManifestDigest,
+		staleSteadyDecision.PolicyManifestDigest,
+		"lower steady-state rebaseline markers must remain pinned behind the latest verified steady-state ownership",
+	)
+	assert.Equal(t, steadyState131Cfg.PolicyManifestRefreshEpoch, staleSteadyDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleSteadyDecision.PolicyActivationTicks)
+
+	ambiguousSteadySeed := staleSteadyController.currentBatch
+	ambiguousSteadyController := newAutoTuneControllerWithSeed(100, ambiguousSteadyStateCfg, &ambiguousSteadySeed)
+	require.NotNil(t, ambiguousSteadyController)
+	ambiguousSteadyController.reconcilePolicyTransition(staleSteadyController.exportPolicyTransition())
+	batch, ambiguousSteadyDecision := ambiguousSteadyController.Resolve(highLag)
+	assert.Equal(t, ambiguousSteadySeed+20, batch)
+	assert.Equal(t, "apply_increase", ambiguousSteadyDecision.Decision)
+	assert.Equal(
+		t,
+		steadyState131Cfg.PolicyManifestDigest,
+		ambiguousSteadyDecision.PolicyManifestDigest,
+		"steady-state rebaseline markers must remain quarantined until live-catchup ownership is explicit",
+	)
+	assert.Equal(t, steadyState131Cfg.PolicyManifestRefreshEpoch, ambiguousSteadyDecision.PolicyEpoch)
+	assert.Equal(t, 0, ambiguousSteadyDecision.PolicyActivationTicks)
+
+	staleLiveSeed := ambiguousSteadyController.currentBatch
+	staleLiveController := newAutoTuneControllerWithSeed(100, liveCatchupHead130Cfg, &staleLiveSeed)
+	require.NotNil(t, staleLiveController)
+	staleLiveController.reconcilePolicyTransition(ambiguousSteadyController.exportPolicyTransition())
+	batch, staleLiveDecision := staleLiveController.Resolve(highLag)
+	assert.Equal(t, staleLiveSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleLiveDecision.Decision)
+	assert.Equal(
+		t,
+		steadyState131Cfg.PolicyManifestDigest,
+		staleLiveDecision.PolicyManifestDigest,
+		"post-rebaseline stale live-catchup markers must not reclaim ownership",
+	)
+	assert.Equal(t, steadyState131Cfg.PolicyManifestRefreshEpoch, staleLiveDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleLiveDecision.PolicyActivationTicks)
+
+	advancedSteadySeed := staleLiveController.currentBatch
+	advancedSteadyController := newAutoTuneControllerWithSeed(100, advancedSteadyState145Cfg, &advancedSteadySeed)
+	require.NotNil(t, advancedSteadyController)
+	advancedSteadyController.reconcilePolicyTransition(staleLiveController.exportPolicyTransition())
+	batch, advancedSteadyDecision := advancedSteadyController.Resolve(highLag)
+	assert.Equal(t, advancedSteadySeed+20, batch)
+	assert.Equal(t, "apply_increase", advancedSteadyDecision.Decision)
+	assert.Equal(t, advancedSteadyState145Cfg.PolicyManifestDigest, advancedSteadyDecision.PolicyManifestDigest)
+	assert.Equal(t, advancedSteadyState145Cfg.PolicyManifestRefreshEpoch, advancedSteadyDecision.PolicyEpoch)
+	assert.Equal(t, 0, advancedSteadyDecision.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,
