@@ -1764,6 +1764,159 @@ func TestAutoTuneController_RollbackCheckpointFencePostEpochRolloverLateBridgeOr
 	assert.Equal(t, 1, liveRolloverHold.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFencePostLateBridgeBacklogDrainOrdersByBridgeSequenceAndDrainWatermark(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	lateBridgeSeq2Cfg := quarantineCfg
+	lateBridgeSeq2Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=7|rollback-fence-late-bridge-seq=2|rollback-fence-late-bridge-release-watermark=80"
+	drainStage1Cfg := lateBridgeSeq2Cfg
+	drainStage1Cfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=81"
+	drainStage2Cfg := lateBridgeSeq2Cfg
+	drainStage2Cfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=82"
+	staleDrainCfg := lateBridgeSeq2Cfg
+	staleDrainCfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=79"
+	liveBridgeSeq3Cfg := quarantineCfg
+	liveBridgeSeq3Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=8|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90"
+	staleDrainedSeq2AfterLiveCfg := lateBridgeSeq2Cfg
+	staleDrainedSeq2AfterLiveCfg.PolicyManifestDigest = lateBridgeSeq2Cfg.PolicyManifestDigest + "|rollback-fence-late-bridge-drain-watermark=120"
+	ambiguousDrainCfg := quarantineCfg
+	ambiguousDrainCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=7|rollback-fence-late-bridge-drain-watermark=83"
+
+	baseSeed := 220
+	baseController := newAutoTuneControllerWithSeed(100, lateBridgeSeq2Cfg, &baseSeed)
+	require.NotNil(t, baseController)
+	baseController.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:       true,
+		Version:        releaseCfg.PolicyVersion,
+		ManifestDigest: releaseCfg.PolicyManifestDigest,
+		Epoch:          releaseCfg.PolicyManifestRefreshEpoch,
+	})
+	batch, baseDecision := baseController.Resolve(highLag)
+	assert.Equal(t, baseSeed+20, batch)
+	assert.Equal(t, "apply_increase", baseDecision.Decision)
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestDigest, baseDecision.PolicyManifestDigest)
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestRefreshEpoch, baseDecision.PolicyEpoch)
+
+	drainStage1Seed := baseController.currentBatch
+	drainStage1Controller := newAutoTuneControllerWithSeed(100, drainStage1Cfg, &drainStage1Seed)
+	require.NotNil(t, drainStage1Controller)
+	drainStage1Controller.reconcilePolicyTransition(baseController.exportPolicyTransition())
+	batch, drainStage1Decision := drainStage1Controller.Resolve(highLag)
+	assert.Equal(t, drainStage1Seed+20, batch)
+	assert.Equal(t, "apply_increase", drainStage1Decision.Decision)
+	assert.Equal(t, drainStage1Cfg.PolicyManifestDigest, drainStage1Decision.PolicyManifestDigest)
+	assert.Equal(t, drainStage1Cfg.PolicyManifestRefreshEpoch, drainStage1Decision.PolicyEpoch)
+	assert.Equal(t, 0, drainStage1Decision.PolicyActivationTicks)
+
+	drainStage2Seed := drainStage1Controller.currentBatch
+	drainStage2Controller := newAutoTuneControllerWithSeed(100, drainStage2Cfg, &drainStage2Seed)
+	require.NotNil(t, drainStage2Controller)
+	drainStage2Controller.reconcilePolicyTransition(drainStage1Controller.exportPolicyTransition())
+	batch, drainStage2Decision := drainStage2Controller.Resolve(highLag)
+	assert.Equal(t, drainStage2Seed+20, batch)
+	assert.Equal(t, "apply_increase", drainStage2Decision.Decision)
+	assert.Equal(t, drainStage2Cfg.PolicyManifestDigest, drainStage2Decision.PolicyManifestDigest)
+	assert.Equal(t, drainStage2Cfg.PolicyManifestRefreshEpoch, drainStage2Decision.PolicyEpoch)
+	assert.Equal(t, 0, drainStage2Decision.PolicyActivationTicks)
+
+	staleDrainSeed := drainStage2Controller.currentBatch
+	staleDrainController := newAutoTuneControllerWithSeed(100, staleDrainCfg, &staleDrainSeed)
+	require.NotNil(t, staleDrainController)
+	staleDrainController.reconcilePolicyTransition(drainStage2Controller.exportPolicyTransition())
+	batch, staleDrainDecision := staleDrainController.Resolve(highLag)
+	assert.Equal(t, staleDrainSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleDrainDecision.Decision)
+	assert.Equal(
+		t,
+		drainStage2Cfg.PolicyManifestDigest,
+		staleDrainDecision.PolicyManifestDigest,
+		"lower drain watermark must stay pinned behind the latest verified backlog-drain ownership",
+	)
+	assert.Equal(t, drainStage2Cfg.PolicyManifestRefreshEpoch, staleDrainDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleDrainDecision.PolicyActivationTicks)
+
+	ambiguousDrainSeed := staleDrainController.currentBatch
+	ambiguousDrainController := newAutoTuneControllerWithSeed(100, ambiguousDrainCfg, &ambiguousDrainSeed)
+	require.NotNil(t, ambiguousDrainController)
+	ambiguousDrainController.reconcilePolicyTransition(staleDrainController.exportPolicyTransition())
+	batch, ambiguousDrainDecision := ambiguousDrainController.Resolve(highLag)
+	assert.Equal(t, ambiguousDrainSeed+20, batch)
+	assert.Equal(t, "apply_increase", ambiguousDrainDecision.Decision)
+	assert.Equal(
+		t,
+		drainStage2Cfg.PolicyManifestDigest,
+		ambiguousDrainDecision.PolicyManifestDigest,
+		"ambiguous backlog-drain markers must remain quarantined until bridge ownership tuple is complete",
+	)
+	assert.Equal(t, drainStage2Cfg.PolicyManifestRefreshEpoch, ambiguousDrainDecision.PolicyEpoch)
+	assert.Equal(t, 0, ambiguousDrainDecision.PolicyActivationTicks)
+
+	liveBridgeSeed := ambiguousDrainController.currentBatch
+	liveBridgeController := newAutoTuneControllerWithSeed(100, liveBridgeSeq3Cfg, &liveBridgeSeed)
+	require.NotNil(t, liveBridgeController)
+	liveBridgeController.reconcilePolicyTransition(ambiguousDrainController.exportPolicyTransition())
+	batch, liveBridgeDecision := liveBridgeController.Resolve(highLag)
+	assert.Equal(t, liveBridgeSeed+20, batch)
+	assert.Equal(t, "apply_increase", liveBridgeDecision.Decision)
+	assert.Equal(t, liveBridgeSeq3Cfg.PolicyManifestDigest, liveBridgeDecision.PolicyManifestDigest)
+	assert.Equal(t, liveBridgeSeq3Cfg.PolicyManifestRefreshEpoch, liveBridgeDecision.PolicyEpoch)
+	assert.Equal(t, 0, liveBridgeDecision.PolicyActivationTicks)
+
+	staleAfterLiveSeed := liveBridgeController.currentBatch
+	staleAfterLiveController := newAutoTuneControllerWithSeed(100, staleDrainedSeq2AfterLiveCfg, &staleAfterLiveSeed)
+	require.NotNil(t, staleAfterLiveController)
+	staleAfterLiveController.reconcilePolicyTransition(liveBridgeController.exportPolicyTransition())
+	batch, staleAfterLiveDecision := staleAfterLiveController.Resolve(highLag)
+	assert.Equal(t, staleAfterLiveSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleAfterLiveDecision.Decision)
+	assert.Equal(
+		t,
+		liveBridgeSeq3Cfg.PolicyManifestDigest,
+		staleAfterLiveDecision.PolicyManifestDigest,
+		"delayed drained markers must not reclaim ownership once a newer live bridge sequence is verified",
+	)
+	assert.Equal(t, liveBridgeSeq3Cfg.PolicyManifestRefreshEpoch, staleAfterLiveDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleAfterLiveDecision.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,
