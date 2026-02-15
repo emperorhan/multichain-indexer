@@ -1118,6 +1118,177 @@ func TestProcessBatch_DualChainReplaySmoke_NoDuplicateCanonicalIDsAndCursorMonot
 	assert.GreaterOrEqual(t, secondBase.NewCursorSequence, firstBase.NewCursorSequence)
 }
 
+func TestProcessBatch_BoundaryPartitionVarianceEquivalentRangesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name      string
+		chain     model.Chain
+		network   model.Network
+		address   string
+		signature []event.SignatureInfo
+		buildTx   func(sig event.SignatureInfo, address string) *sidecarv1.TransactionResult
+	}
+
+	buildTransfer := func(sig event.SignatureInfo, address string, contract string) *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      sig.Hash,
+			BlockCursor: sig.Sequence,
+			Status:      "SUCCESS",
+			FeeAmount:   "1",
+			FeePayer:    address,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "transfer",
+					ProgramId:             "program",
+					Address:               address,
+					ContractAddress:       contract,
+					Delta:                 "-1",
+					TokenSymbol:           "ETH",
+					TokenName:             "Ether",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata:              map[string]string{"event_path": "log:7"},
+				},
+			},
+		}
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "sol-partition-addr",
+			signature: []event.SignatureInfo{
+				{Hash: "sol-partition-1", Sequence: 100},
+				{Hash: "sol-partition-2", Sequence: 101},
+				{Hash: "sol-partition-3", Sequence: 102},
+			},
+			buildTx: func(sig event.SignatureInfo, address string) *sidecarv1.TransactionResult {
+				return buildTransfer(sig, address, "SOL")
+			},
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			signature: []event.SignatureInfo{
+				{Hash: "0xaaa", Sequence: 200},
+				{Hash: "0xbbb", Sequence: 201},
+				{Hash: "0xccc", Sequence: 202},
+			},
+			buildTx: func(sig event.SignatureInfo, address string) *sidecarv1.TransactionResult {
+				return buildTransfer(sig, address, "ETH")
+			},
+		},
+	}
+
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, tuples []tupleSignature) {
+		t.Helper()
+		seen := make(map[string]struct{}, len(tuples))
+		for _, tuple := range tuples {
+			_, exists := seen[tuple.EventID]
+			require.False(t, exists, "duplicate canonical event id found: %s", tuple.EventID)
+			seen[tuple.EventID] = struct{}{}
+		}
+	}
+
+	runStrategy := func(t *testing.T, tc testCase, partitions [][]event.SignatureInfo) []tupleSignature {
+		t.Helper()
+
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+		normalizedCh := make(chan event.NormalizedBatch, len(partitions))
+		n := &Normalizer{
+			sidecarTimeout: 30 * time.Second,
+			normalizedCh:   normalizedCh,
+			logger:         slog.Default(),
+		}
+
+		for _, sigs := range partitions {
+			expectedSigs := append([]event.SignatureInfo(nil), sigs...)
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					require.Len(t, req.GetTransactions(), len(expectedSigs))
+					results := make([]*sidecarv1.TransactionResult, 0, len(expectedSigs))
+					for idx, sig := range expectedSigs {
+						assert.Equal(t, sig.Hash, req.GetTransactions()[idx].GetSignature())
+						results = append(results, tc.buildTx(sig, tc.address))
+					}
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: results}, nil
+				})
+		}
+
+		allTuples := make([]tupleSignature, 0, 12)
+		prevSequence := int64(0)
+		for _, sigs := range partitions {
+			rawTxs := make([]json.RawMessage, len(sigs))
+			for i := range rawTxs {
+				rawTxs[i] = json.RawMessage(`{"tx":"partition-variance"}`)
+			}
+			newCursor := sigs[len(sigs)-1].Hash
+			batch := event.RawBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorSequence: prevSequence,
+				RawTransactions:        rawTxs,
+				Signatures:             sigs,
+				NewCursorValue:         &newCursor,
+				NewCursorSequence:      sigs[len(sigs)-1].Sequence,
+			}
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			normalized := <-normalizedCh
+			allTuples = append(allTuples, orderedCanonicalTuples(normalized)...)
+			prevSequence = normalized.NewCursorSequence
+		}
+
+		return allTuples
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			strategyA := runStrategy(t, tc, [][]event.SignatureInfo{
+				{tc.signature[0], tc.signature[1]},
+				{tc.signature[2]},
+			})
+			strategyB := runStrategy(t, tc, [][]event.SignatureInfo{
+				{tc.signature[0]},
+				{tc.signature[1], tc.signature[2]},
+			})
+
+			assert.Equal(t, strategyA, strategyB, "canonical tuple ordering changed across deterministic partition strategies")
+			assertNoDuplicateCanonicalIDs(t, strategyA)
+			assertNoDuplicateCanonicalIDs(t, strategyB)
+
+			mustContain := tc.signature[1].Hash
+			foundA := false
+			foundB := false
+			for _, tuple := range strategyA {
+				if tuple.TxHash == mustContain {
+					foundA = true
+					break
+				}
+			}
+			for _, tuple := range strategyB {
+				if tuple.TxHash == mustContain {
+					foundB = true
+					break
+				}
+			}
+			assert.True(t, foundA, "missing boundary event in partition strategy A")
+			assert.True(t, foundB, "missing boundary event in partition strategy B")
+		})
+	}
+}
+
 func strPtr(v string) *string {
 	return &v
 }

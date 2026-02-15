@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	defaultRetryMaxAttempts = 4
-	defaultBackoffInitial   = 200 * time.Millisecond
-	defaultBackoffMax       = 3 * time.Second
-	defaultAdaptiveMinBatch = 1
+	defaultRetryMaxAttempts  = 4
+	defaultBackoffInitial    = 200 * time.Millisecond
+	defaultBackoffMax        = 3 * time.Second
+	defaultAdaptiveMinBatch  = 1
+	boundaryOverlapLookahead = 1
 )
 
 // Fetcher consumes FetchJobs, calls ChainAdapter, and produces RawBatches.
@@ -111,9 +112,13 @@ func (f *Fetcher) worker(ctx context.Context, workerID int) {
 func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.FetchJob) error {
 	requestedBatch := f.resolveBatchSize(job.Address, job.BatchSize)
 	canonicalCursor := canonicalizeCursorValue(job.Chain, job.CursorValue)
+	signatureBatch := requestedBatch
+	if canonicalCursor != nil {
+		signatureBatch += boundaryOverlapLookahead
+	}
 
 	// 1. Fetch new signatures with retry/backoff and adaptive batch size reduction.
-	sigs, sigBatchSize, err := f.fetchSignaturesWithRetry(ctx, log, job, canonicalCursor, requestedBatch)
+	sigs, sigBatchSize, err := f.fetchSignaturesWithRetry(ctx, log, job, canonicalCursor, signatureBatch)
 	if err != nil {
 		f.setAdaptiveBatchSize(job.Address, sigBatchSize)
 		return err
@@ -126,9 +131,13 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 
 	// Canonicalize provider-returned ordering and suppress overlap duplicates.
 	sigs = canonicalizeSignatures(job.Chain, sigs)
+	sigs = suppressBoundaryCursorSignatures(job.Chain, sigs, canonicalCursor)
 	if len(sigs) == 0 {
 		log.Debug("no canonical signatures after overlap suppression", "address", job.Address)
 		return nil
+	}
+	if len(sigs) > requestedBatch {
+		sigs = sigs[:requestedBatch]
 	}
 
 	// 2. Fetch raw transactions with retry/backoff.
@@ -513,6 +522,25 @@ func canonicalizeSignatures(chainID model.Chain, sigs []chain.SignatureInfo) []c
 	})
 
 	return ordered
+}
+
+func suppressBoundaryCursorSignatures(chainID model.Chain, sigs []chain.SignatureInfo, cursor *string) []chain.SignatureInfo {
+	if len(sigs) == 0 || cursor == nil {
+		return sigs
+	}
+	cursorIdentity := canonicalSignatureIdentity(chainID, *cursor)
+	if cursorIdentity == "" {
+		return sigs
+	}
+
+	filtered := make([]chain.SignatureInfo, 0, len(sigs))
+	for _, sig := range sigs {
+		if canonicalSignatureIdentity(chainID, sig.Hash) == cursorIdentity {
+			continue
+		}
+		filtered = append(filtered, sig)
+	}
+	return filtered
 }
 
 func shouldReplaceCanonicalSignature(existing, incoming chain.SignatureInfo) bool {

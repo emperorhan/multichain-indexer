@@ -47,7 +47,7 @@ func TestProcessJob_HappyPath(t *testing.T) {
 
 	now := time.Now()
 	mockAdapter.EXPECT().
-		FetchNewSignatures(gomock.Any(), "addr1", &cursor, 100).
+		FetchNewSignatures(gomock.Any(), "addr1", &cursor, 101).
 		Return([]chain.SignatureInfo{
 			{Hash: "sig1", Sequence: 100, Time: &now},
 			{Hash: "sig2", Sequence: 200, Time: &now},
@@ -554,10 +554,239 @@ func TestProcessJob_BaseCanonicalizesOptionalPrefixCursorAlias(t *testing.T) {
 
 	canonicalCursor := "0xabcdef1234"
 	mockAdapter.EXPECT().
-		FetchNewSignatures(gomock.Any(), job.Address, &canonicalCursor, 16).
+		FetchNewSignatures(gomock.Any(), job.Address, &canonicalCursor, 17).
 		Return([]chain.SignatureInfo{}, nil)
 
 	require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+}
+
+func TestProcessJob_CursorBoundaryOverlapSuppressedAndProgressesAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name               string
+		chain              model.Chain
+		network            model.Network
+		address            string
+		cursor             string
+		expectedCursor     string
+		boundarySig        string
+		newSig             string
+		newSeq             int64
+		expectedPrevCursor string
+	}{
+		{
+			name:               "solana-devnet",
+			chain:              model.ChainSolana,
+			network:            model.NetworkDevnet,
+			address:            "sol-boundary-addr",
+			cursor:             "sol-boundary-1",
+			expectedCursor:     "sol-boundary-2",
+			boundarySig:        " sol-boundary-1 ",
+			newSig:             "sol-boundary-2",
+			newSeq:             102,
+			expectedPrevCursor: "sol-boundary-1",
+		},
+		{
+			name:               "base-sepolia",
+			chain:              model.ChainBase,
+			network:            model.NetworkSepolia,
+			address:            "0x1111111111111111111111111111111111111111",
+			cursor:             "ABCDEF",
+			expectedCursor:     "0x123456",
+			boundarySig:        "0xABCDEF",
+			newSig:             "123456",
+			newSeq:             202,
+			expectedPrevCursor: "0xabcdef",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+			rawBatchCh := make(chan event.RawBatch, 1)
+			f := &Fetcher{
+				adapter:          mockAdapter,
+				rawBatchCh:       rawBatchCh,
+				logger:           slog.Default(),
+				retryMaxAttempts: 1,
+			}
+
+			job := event.FetchJob{
+				Chain:       tc.chain,
+				Network:     tc.network,
+				Address:     tc.address,
+				CursorValue: &tc.cursor,
+				BatchSize:   1,
+			}
+
+			mockAdapter.EXPECT().
+				FetchNewSignatures(gomock.Any(), tc.address, gomock.Any(), 2).
+				Return([]chain.SignatureInfo{
+					{Hash: tc.boundarySig, Sequence: tc.newSeq - 1},
+					{Hash: tc.newSig, Sequence: tc.newSeq},
+				}, nil)
+
+			mockAdapter.EXPECT().
+				FetchTransactions(gomock.Any(), []string{tc.expectedCursor}).
+				Return([]json.RawMessage{json.RawMessage(`{"tx":"boundary-new"}`)}, nil)
+
+			require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+			batch := <-rawBatchCh
+			require.Len(t, batch.Signatures, 1)
+			assert.Equal(t, tc.expectedCursor, batch.Signatures[0].Hash)
+			assert.Equal(t, tc.newSeq, batch.Signatures[0].Sequence)
+			require.NotNil(t, batch.PreviousCursorValue)
+			assert.Equal(t, tc.expectedPrevCursor, *batch.PreviousCursorValue)
+			require.NotNil(t, batch.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *batch.NewCursorValue)
+			assert.Equal(t, tc.newSeq, batch.NewCursorSequence)
+		})
+	}
+}
+
+func TestProcessJob_BoundaryPartitionVarianceConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+		rangeS  []chain.SignatureInfo
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "sol-partition-addr",
+			rangeS: []chain.SignatureInfo{
+				{Hash: "sol-partition-1", Sequence: 100},
+				{Hash: "sol-partition-2", Sequence: 101},
+				{Hash: "sol-partition-3", Sequence: 102},
+			},
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			rangeS: []chain.SignatureInfo{
+				{Hash: "AAA", Sequence: 200},
+				{Hash: "0xBBB", Sequence: 201},
+				{Hash: "ccc", Sequence: 202},
+			},
+		},
+	}
+
+	signatureHashes := func(sigs []event.SignatureInfo) []string {
+		out := make([]string, 0, len(sigs))
+		for _, sig := range sigs {
+			out = append(out, sig.Hash)
+		}
+		return out
+	}
+
+	runStrategy := func(t *testing.T, tc testCase, jobs []event.FetchJob, sigResponses [][]chain.SignatureInfo) []string {
+		t.Helper()
+
+		ctrl := gomock.NewController(t)
+		mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+		rawBatchCh := make(chan event.RawBatch, len(jobs))
+		f := &Fetcher{
+			adapter:          mockAdapter,
+			rawBatchCh:       rawBatchCh,
+			logger:           slog.Default(),
+			retryMaxAttempts: 1,
+		}
+
+		for i, job := range jobs {
+			fetchBatch := job.BatchSize
+			if job.CursorValue != nil {
+				fetchBatch++
+			}
+
+			expectedHashes := canonicalizeSignatures(tc.chain, sigResponses[i])
+			expectedHashes = suppressBoundaryCursorSignatures(tc.chain, expectedHashes, canonicalizeCursorValue(tc.chain, job.CursorValue))
+			if len(expectedHashes) > job.BatchSize {
+				expectedHashes = expectedHashes[:job.BatchSize]
+			}
+			hashes := make([]string, 0, len(expectedHashes))
+			for _, sig := range expectedHashes {
+				hashes = append(hashes, sig.Hash)
+			}
+
+			mockAdapter.EXPECT().
+				FetchNewSignatures(gomock.Any(), tc.address, gomock.Any(), fetchBatch).
+				Return(sigResponses[i], nil)
+
+			if len(hashes) == 0 {
+				continue
+			}
+
+			mockAdapter.EXPECT().
+				FetchTransactions(gomock.Any(), hashes).
+				DoAndReturn(func(_ context.Context, got []string) ([]json.RawMessage, error) {
+					payloads := make([]json.RawMessage, 0, len(got))
+					for _, hash := range got {
+						payloads = append(payloads, json.RawMessage(fmt.Sprintf(`{"tx":"%s"}`, hash)))
+					}
+					return payloads, nil
+				})
+		}
+
+		collected := make([]string, 0, 4)
+		for _, job := range jobs {
+			f.setAdaptiveBatchSize(job.Address, job.BatchSize)
+			require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+			select {
+			case batch := <-rawBatchCh:
+				collected = append(collected, signatureHashes(batch.Signatures)...)
+			default:
+			}
+		}
+		return collected
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			// Strategy A: [s1,s2] then restart from boundary s2 -> [s2,s3]
+			cursorA := tc.rangeS[1].Hash
+			strategyA := runStrategy(t, tc,
+				[]event.FetchJob{
+					{Chain: tc.chain, Network: tc.network, Address: tc.address, BatchSize: 2},
+					{Chain: tc.chain, Network: tc.network, Address: tc.address, CursorValue: &cursorA, BatchSize: 2},
+				},
+				[][]chain.SignatureInfo{
+					{tc.rangeS[0], tc.rangeS[1]},
+					{tc.rangeS[1], tc.rangeS[2]},
+				},
+			)
+
+			// Strategy B: [s1] then restart from boundary s1 -> [s1,s2,s3]
+			cursorB := tc.rangeS[0].Hash
+			strategyB := runStrategy(t, tc,
+				[]event.FetchJob{
+					{Chain: tc.chain, Network: tc.network, Address: tc.address, BatchSize: 1},
+					{Chain: tc.chain, Network: tc.network, Address: tc.address, CursorValue: &cursorB, BatchSize: 2},
+				},
+				[][]chain.SignatureInfo{
+					{tc.rangeS[0]},
+					{tc.rangeS[0], tc.rangeS[1], tc.rangeS[2]},
+				},
+			)
+
+			expected := make([]string, 0, len(tc.rangeS))
+			for _, sig := range canonicalizeSignatures(tc.chain, tc.rangeS) {
+				expected = append(expected, sig.Hash)
+			}
+			assert.Equal(t, expected, strategyA)
+			assert.Equal(t, expected, strategyB)
+		})
+	}
 }
 
 func TestProcessJob_CanonicalizesFetchOrderAndSuppressesOverlapDuplicatesAcrossMandatoryChains(t *testing.T) {
