@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -75,6 +75,8 @@ Execution queue (dependency-ordered):
 64. `I-0227` (`M34-S2`) QA failure-injection gate for fail-fast panic + cursor/watermark safety
 65. `I-0228` (`M35-S1`) BTC-like runtime activation (`btc-testnet`) + canonical UTXO/fee semantics wiring
 66. `I-0229` (`M35-S2`) QA golden/invariant/topology-parity gate for BTC-like activation
+67. `I-0232` (`M36-S1`) BTC reorg/finality flap canonical convergence determinism hardening
+68. `I-0233` (`M36-S2`) QA counterexample gate for BTC reorg/finality flap recovery determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1181,7 +1183,7 @@ Eliminate duplicate/missing-event risk when decode coverage regresses from enric
 - Gate: naive sparse-regression handling can either drop previously discovered enriched logical events or repeatedly re-emit them when enrichment returns.
 - Fallback: keep deterministic conservative coverage-floor reconciliation with explicit regression-conflict diagnostics, fail fast on unresolved coverage flap ambiguity, and replay from last-safe cursor until flap contracts are extended.
 
-### M33. Fee-Component Availability Flap Canonical Convergence Determinism Reliability Tranche C0027 (P0, Next)
+### M33. Fee-Component Availability Flap Canonical Convergence Determinism Reliability Tranche C0027 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when fee-component availability for equivalent logical transactions flaps across runtime passes (for example Base execution fee always present while L1 data fee temporarily unavailable and later recovered), so fee-event coverage converges to one deterministic canonical output set without replay drift.
@@ -1218,7 +1220,7 @@ Eliminate duplicate/missing-event risk when fee-component availability for equiv
 - Gate: inconsistent provider fee-field availability can cause unstable fee-component identity that either suppresses legitimate recovered data-fee events or re-emits already-materialized fee events as duplicates.
 - Fallback: preserve deterministic conservative fee-floor reconciliation (`fee_execution_l2` always deterministic, `fee_data_l1` only when source fields are provably available, explicit unavailable-marker diagnostics otherwise) and replay from last-safe cursor until fee-availability contracts are extended.
 
-### M34. Fail-Fast Panic Contract Hardening Tranche C0028 (P0, Next)
+### M34. Fail-Fast Panic Contract Hardening Tranche C0028 (P0, Completed)
 
 #### Objective
 Enforce strict fail-fast safety so correctness-impacting stage failures cannot continue in-process and cannot advance cursor/watermark before process abort.
@@ -1253,7 +1255,7 @@ Enforce strict fail-fast safety so correctness-impacting stage failures cannot c
 - Gate: over-broad panic classification can reduce availability if non-critical errors are incorrectly escalated.
 - Fallback: keep deterministic error classification matrix under planner control, defaulting unknown correctness-impacting errors to panic.
 
-### M35. BTC-Like Runtime Activation Tranche C0029 (P0, Next)
+### M35. BTC-Like Runtime Activation Tranche C0029 (P0, Completed)
 
 #### Objective
 Activate `btc-like` runtime support (`btc-testnet`) with deterministic UTXO canonicalization, explicit fee semantics, and topology-independent correctness.
@@ -1289,6 +1291,45 @@ Activate `btc-like` runtime support (`btc-testnet`) with deterministic UTXO cano
 #### Risk Gate + Fallback
 - Gate: RPC/script-decoder heterogeneity can destabilize deterministic vin/vout ownership classification.
 - Fallback: enforce deterministic conservative ownership rules with explicit unresolved-script diagnostics and fail fast on ambiguity that threatens canonical correctness.
+
+### M36. BTC Reorg/Finality Flap Canonical Convergence Tranche C0030 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when BTC branch history reorgs across runtime passes (including one-block and deeper rollback windows), so post-reorg replay converges to one deterministic canonical output set with preserved signed-delta conservation and cursor safety.
+
+#### Entry Gate
+- `M35` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M36-S1` (`I-0232`): harden BTC rollback/replay convergence semantics so competing-branch permutations cannot induce duplicate canonical IDs, missing logical events, signed-delta drift, or cursor regression.
+2. `M36-S2` (`I-0233`): execute QA counterexample gate for BTC reorg/finality flap determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent BTC logical ranges processed under canonical-branch, one-block-reorg, and multi-block-reorg permutations converge to one canonical tuple output set.
+2. Rollback of orphaned BTC branch outputs deterministically removes stale canonical outputs and replays replacement-branch outputs exactly once.
+3. BTC miner-fee plus vin/vout signed-delta conservation remains valid after rollback/replay permutations.
+4. Replay/resume from reorg boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject BTC competing-branch permutations (single-depth and multi-depth) and assert canonical tuple convergence to post-reorg deterministic baseline outputs.
+2. Deterministic tests assert orphaned-branch canonical IDs do not survive after rollback and replacement-branch events emit once.
+3. Deterministic replay/resume tests from BTC reorg boundaries assert signed-delta conservation, `0` balance drift, and cursor/watermark safety.
+4. QA executes required validation commands plus BTC reorg/finality-flap counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across BTC reorg/finality flap permutation fixtures.
+2. `0` missing logical events when comparing permutations against deterministic post-reorg baseline fixtures.
+3. `0` signed-delta conservation violations after rollback/replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in BTC reorg recovery fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `reorg_recovery_deterministic`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: ambiguous BTC fork ancestry near moving head can destabilize rollback-window selection and replacement-branch ordering.
+- Fallback: enforce deterministic conservative rollback-window policy with explicit fork-ambiguity diagnostics, fail fast on unresolved ancestry ambiguity, and replay from last committed safe boundary.
 
 ## Decision Register (Major + Fallback)
 
@@ -1371,14 +1412,17 @@ Completed milestones/slices:
 58. `I-0215`
 59. `I-0219`
 60. `I-0220`
+61. `I-0224`
+62. `I-0225`
+63. `I-0226`
+64. `I-0227`
+65. `I-0228`
+66. `I-0229`
+67. `I-0230`
 
 Active downstream queue from this plan:
-1. `I-0224`
-2. `I-0225`
-3. `I-0226`
-4. `I-0227`
-5. `I-0228`
-6. `I-0229`
+1. `I-0232`
+2. `I-0233`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

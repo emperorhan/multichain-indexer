@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -5485,6 +5486,558 @@ func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMa
 func TestCanonicalSignatureIdentity_BTCTxIDIsLowercased(t *testing.T) {
 	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
 	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
+}
+
+func TestProcessBatch_BTCReplayResumeDeterministicTupleEquivalenceAndNoDuplicateCanonicalIDs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 3)
+	n := &Normalizer{
+		sidecarTimeout: 30 * time.Second,
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	response := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{
+			{
+				TxHash:      "ABCD9001",
+				BlockCursor: 9001,
+				FeeAmount:   "100",
+				FeePayer:    "tb1-replay-owner",
+				Status:      "SUCCESS",
+				BalanceEvents: []*sidecarv1.BalanceEventInfo{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         string(model.EventCategoryTransfer),
+						EventAction:           "vin_spend",
+						ProgramId:             "btc",
+						Address:               "tb1-replay-owner",
+						ContractAddress:       "BTC",
+						Delta:                 "-1100",
+						TokenSymbol:           "BTC",
+						TokenName:             "Bitcoin",
+						TokenDecimals:         8,
+						TokenType:             string(model.TokenTypeNative),
+						Metadata: map[string]string{
+							"event_path":     "vin:0",
+							"finality_state": "confirmed",
+						},
+					},
+					{
+						OuterInstructionIndex: 1,
+						InnerInstructionIndex: -1,
+						EventCategory:         string(model.EventCategoryTransfer),
+						EventAction:           "vout_receive",
+						ProgramId:             "btc",
+						Address:               "tb1-replay-owner",
+						ContractAddress:       "BTC",
+						Delta:                 "1000",
+						TokenSymbol:           "BTC",
+						TokenName:             "Bitcoin",
+						TokenDecimals:         8,
+						TokenType:             string(model.TokenTypeNative),
+						Metadata: map[string]string{
+							"event_path":     "vout:1",
+							"finality_state": "confirmed",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Times(3).
+		DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+			require.Len(t, req.GetTransactions(), 1)
+			assert.Equal(t, "abcd9001", canonicalSignatureIdentity(model.ChainBTC, req.GetTransactions()[0].GetSignature()))
+			return response, nil
+		})
+
+	baseBatch := event.RawBatch{
+		Chain:                  model.ChainBTC,
+		Network:                model.NetworkTestnet,
+		Address:                "tb1-replay-owner",
+		PreviousCursorValue:    strPtr("0xABCD9000"),
+		PreviousCursorSequence: 9000,
+		NewCursorValue:         strPtr("0xABCD9001"),
+		NewCursorSequence:      9001,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"btc-replay-proof"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: "0xABCD9001", Sequence: 9001},
+		},
+	}
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseBatch))
+	firstRun := <-normalizedCh
+
+	repeatedRunBatch := baseBatch
+	repeatedRunBatch.Signatures = []event.SignatureInfo{
+		{Hash: "ABCD9001", Sequence: 9001},
+	}
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, repeatedRunBatch))
+	secondRun := <-normalizedCh
+
+	replayBoundaryBatch := baseBatch
+	replayBoundaryBatch.PreviousCursorValue = firstRun.NewCursorValue
+	replayBoundaryBatch.PreviousCursorSequence = firstRun.NewCursorSequence
+	replayBoundaryBatch.NewCursorValue = firstRun.NewCursorValue
+	replayBoundaryBatch.NewCursorSequence = firstRun.NewCursorSequence
+	replayBoundaryBatch.Signatures = []event.SignatureInfo{
+		{Hash: "ABCD9001", Sequence: 9001},
+	}
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, replayBoundaryBatch))
+	thirdRun := <-normalizedCh
+
+	assertNoDuplicateCanonicalIDs := func(run event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range run.Transactions {
+			for _, be := range tx.BalanceEvents {
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id in run: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	assertNoDuplicateCanonicalIDs(firstRun)
+	assertNoDuplicateCanonicalIDs(secondRun)
+	assertNoDuplicateCanonicalIDs(thirdRun)
+	assert.Equal(t, orderedCanonicalTuples(firstRun), orderedCanonicalTuples(secondRun))
+	assert.Equal(t, orderedCanonicalTuples(firstRun), orderedCanonicalTuples(thirdRun))
+	assert.GreaterOrEqual(t, secondRun.NewCursorSequence, secondRun.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, thirdRun.NewCursorSequence, thirdRun.PreviousCursorSequence)
+
+	for _, run := range []event.NormalizedBatch{firstRun, secondRun, thirdRun} {
+		require.NotNil(t, run.NewCursorValue)
+		assert.Equal(t, "abcd9001", *run.NewCursorValue)
+		require.Len(t, run.Transactions, 1)
+		assert.Equal(t, "abcd9001", run.Transactions[0].TxHash)
+	}
+}
+
+func TestProcessBatch_BTCSignedDeltaConservation_CoinbaseMultiInputOutputChangeAndFeeAttribution(t *testing.T) {
+	type testCase struct {
+		name                string
+		address             string
+		signature           string
+		sequence            int64
+		result              *sidecarv1.TransactionResult
+		expectedNetDelta    string
+		expectedFee         string
+		expectedFeePayer    string
+		expectedEventPaths  []string
+		expectFeeConserves  bool
+	}
+
+	testCases := []testCase{
+		{
+			name:      "coinbase_reward_mint",
+			address:   "tb1-miner",
+			signature: "0xCOINBASE9001",
+			sequence:  9101,
+			result: &sidecarv1.TransactionResult{
+				TxHash:      "COINBASE9001",
+				BlockCursor: 9101,
+				FeeAmount:   "0",
+				FeePayer:    "",
+				Status:      "SUCCESS",
+				BalanceEvents: []*sidecarv1.BalanceEventInfo{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         string(model.EventCategoryTransfer),
+						EventAction:           "vout_receive",
+						ProgramId:             "btc",
+						Address:               "tb1-miner",
+						ContractAddress:       "BTC",
+						Delta:                 "625000000",
+						TokenSymbol:           "BTC",
+						TokenName:             "Bitcoin",
+						TokenDecimals:         8,
+						TokenType:             string(model.TokenTypeNative),
+						Metadata: map[string]string{
+							"event_path":     "vout:0",
+							"finality_state": "confirmed",
+						},
+					},
+				},
+			},
+			expectedNetDelta:   "625000000",
+			expectedFee:        "0",
+			expectedFeePayer:   "",
+			expectedEventPaths: []string{"vout:0"},
+		},
+		{
+			name:      "multi_input_output_with_change_and_fee",
+			address:   "tb1-spender",
+			signature: "FEEC0DE9002",
+			sequence:  9102,
+			result: &sidecarv1.TransactionResult{
+				TxHash:      "0xFEEC0DE9002",
+				BlockCursor: 9102,
+				FeeAmount:   "50",
+				FeePayer:    "tb1-spender",
+				Status:      "SUCCESS",
+				BalanceEvents: []*sidecarv1.BalanceEventInfo{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         string(model.EventCategoryTransfer),
+						EventAction:           "vin_spend",
+						ProgramId:             "btc",
+						Address:               "tb1-spender",
+						ContractAddress:       "BTC",
+						Delta:                 "-700",
+						TokenSymbol:           "BTC",
+						TokenName:             "Bitcoin",
+						TokenDecimals:         8,
+						TokenType:             string(model.TokenTypeNative),
+						Metadata: map[string]string{
+							"event_path":     "vin:0",
+							"finality_state": "confirmed",
+						},
+					},
+					{
+						OuterInstructionIndex: 1,
+						InnerInstructionIndex: -1,
+						EventCategory:         string(model.EventCategoryTransfer),
+						EventAction:           "vin_spend",
+						ProgramId:             "btc",
+						Address:               "tb1-spender",
+						ContractAddress:       "BTC",
+						Delta:                 "-400",
+						TokenSymbol:           "BTC",
+						TokenName:             "Bitcoin",
+						TokenDecimals:         8,
+						TokenType:             string(model.TokenTypeNative),
+						Metadata: map[string]string{
+							"event_path":     "vin:1",
+							"finality_state": "confirmed",
+						},
+					},
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         string(model.EventCategoryTransfer),
+						EventAction:           "vout_receive",
+						ProgramId:             "btc",
+						Address:               "tb1-merchant",
+						ContractAddress:       "BTC",
+						Delta:                 "1000",
+						TokenSymbol:           "BTC",
+						TokenName:             "Bitcoin",
+						TokenDecimals:         8,
+						TokenType:             string(model.TokenTypeNative),
+						Metadata: map[string]string{
+							"event_path":     "vout:0",
+							"finality_state": "confirmed",
+						},
+					},
+					{
+						OuterInstructionIndex: 1,
+						InnerInstructionIndex: -1,
+						EventCategory:         string(model.EventCategoryTransfer),
+						EventAction:           "vout_receive",
+						ProgramId:             "btc",
+						Address:               "tb1-spender",
+						ContractAddress:       "BTC",
+						Delta:                 "50",
+						TokenSymbol:           "BTC",
+						TokenName:             "Bitcoin",
+						TokenDecimals:         8,
+						TokenType:             string(model.TokenTypeNative),
+						Metadata: map[string]string{
+							"event_path":     "vout:1",
+							"finality_state": "confirmed",
+						},
+					},
+				},
+			},
+			expectedNetDelta:   "-50",
+			expectedFee:        "50",
+			expectedFeePayer:   "tb1-spender",
+			expectedEventPaths: []string{"vin:0", "vin:1", "vout:0", "vout:1"},
+			expectFeeConserves: true,
+		},
+	}
+
+	parseDecimal := func(t *testing.T, value string) *big.Int {
+		t.Helper()
+		out, ok := new(big.Int).SetString(strings.TrimSpace(value), 10)
+		require.True(t, ok, "invalid decimal: %q", value)
+		return out
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+			normalizedCh := make(chan event.NormalizedBatch, 1)
+			n := &Normalizer{
+				sidecarTimeout: 30 * time.Second,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+					Results: []*sidecarv1.TransactionResult{tc.result},
+				}, nil).
+				Times(1)
+
+			rawBatch := event.RawBatch{
+				Chain:                  model.ChainBTC,
+				Network:                model.NetworkTestnet,
+				Address:                tc.address,
+				PreviousCursorValue:    strPtr("btc-delta-prev"),
+				PreviousCursorSequence: tc.sequence - 1,
+				NewCursorValue:         strPtr(tc.signature),
+				NewCursorSequence:      tc.sequence,
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":"btc-signed-delta-proof"}`),
+				},
+				Signatures: []event.SignatureInfo{
+					{Hash: tc.signature, Sequence: tc.sequence},
+				},
+			}
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, rawBatch))
+			normalized := <-normalizedCh
+			require.Len(t, normalized.Transactions, 1)
+
+			tx := normalized.Transactions[0]
+			assert.Equal(t, tc.expectedFee, tx.FeeAmount)
+			assert.Equal(t, tc.expectedFeePayer, tx.FeePayer)
+
+			seenPaths := make(map[string]struct{}, len(tx.BalanceEvents))
+			seenEventIDs := make(map[string]struct{}, len(tx.BalanceEvents))
+
+			netDelta := big.NewInt(0)
+			totalVinSpend := big.NewInt(0)
+			totalVoutReceive := big.NewInt(0)
+
+			for _, be := range tx.BalanceEvents {
+				assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
+				seenPaths[be.EventPath] = struct{}{}
+				_, exists := seenEventIDs[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seenEventIDs[be.EventID] = struct{}{}
+
+				delta := parseDecimal(t, be.Delta)
+				netDelta.Add(netDelta, delta)
+
+				switch be.EventAction {
+				case "vin_spend":
+					totalVinSpend.Add(totalVinSpend, new(big.Int).Abs(new(big.Int).Set(delta)))
+				case "vout_receive":
+					totalVoutReceive.Add(totalVoutReceive, delta)
+				}
+			}
+
+			for _, expectedPath := range tc.expectedEventPaths {
+				_, exists := seenPaths[expectedPath]
+				assert.True(t, exists, "missing expected btc event_path %q", expectedPath)
+			}
+			assert.Equal(t, tc.expectedNetDelta, netDelta.String())
+
+			if tc.expectFeeConserves {
+				fee := parseDecimal(t, tx.FeeAmount)
+				inputMinusOutput := big.NewInt(0).Sub(totalVinSpend, totalVoutReceive)
+				assert.Equal(t, fee.String(), inputMinusOutput.String())
+			}
+		})
+	}
+}
+
+func TestProcessBatch_BTCTopologyParityLikeGroupVsIndependent_CanonicalTupleEquivalence(t *testing.T) {
+	type btcFixture struct {
+		signature string
+		sequence  int64
+		txHash    string
+		vinDelta  string
+		voutDelta string
+	}
+	type topologyResult struct {
+		tupleSet  map[string]struct{}
+		eventIDs  map[string]struct{}
+		finalHead string
+	}
+
+	fixtures := []btcFixture{
+		{
+			signature: "0xABCD9901",
+			sequence:  9901,
+			txHash:    "ABCD9901",
+			vinDelta:  "-3000",
+			voutDelta: "2900",
+		},
+		{
+			signature: "ABCD9902",
+			sequence:  9902,
+			txHash:    "0xabcd9902",
+			vinDelta:  "-1200",
+			voutDelta: "1100",
+		},
+	}
+
+	buildResult := func(f btcFixture) *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      f.txHash,
+			BlockCursor: f.sequence,
+			FeeAmount:   "100",
+			FeePayer:    "tb1-topology-owner",
+			Status:      "SUCCESS",
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "vin_spend",
+					ProgramId:             "btc",
+					Address:               "tb1-topology-owner",
+					ContractAddress:       "BTC",
+					Delta:                 f.vinDelta,
+					TokenSymbol:           "BTC",
+					TokenName:             "Bitcoin",
+					TokenDecimals:         8,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":     "vin:0",
+						"finality_state": "confirmed",
+					},
+				},
+				{
+					OuterInstructionIndex: 1,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "vout_receive",
+					ProgramId:             "btc",
+					Address:               "tb1-topology-owner",
+					ContractAddress:       "BTC",
+					Delta:                 f.voutDelta,
+					TokenSymbol:           "BTC",
+					TokenName:             "Bitcoin",
+					TokenDecimals:         8,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":     "vout:1",
+						"finality_state": "confirmed",
+					},
+				},
+			},
+		}
+	}
+
+	runTopology := func(t *testing.T, mode string, partitions [][]btcFixture) topologyResult {
+		t.Helper()
+
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockChainDecoderClient(ctrl)
+		normalizedCh := make(chan event.NormalizedBatch, len(partitions))
+		n := &Normalizer{
+			sidecarTimeout: 30 * time.Second,
+			normalizedCh:   normalizedCh,
+			logger:         slog.Default(),
+		}
+
+		call := 0
+		mockClient.EXPECT().
+			DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+			Times(len(partitions)).
+			DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+				expectedPartition := partitions[call]
+				require.Len(t, req.GetTransactions(), len(expectedPartition))
+
+				results := make([]*sidecarv1.TransactionResult, 0, len(expectedPartition))
+				for idx, f := range expectedPartition {
+					assert.Equal(
+						t,
+						canonicalSignatureIdentity(model.ChainBTC, f.signature),
+						canonicalSignatureIdentity(model.ChainBTC, req.GetTransactions()[idx].GetSignature()),
+					)
+					results = append(results, buildResult(f))
+				}
+				call++
+				return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: results}, nil
+			})
+
+		tupleSet := make(map[string]struct{}, 8)
+		eventIDs := make(map[string]struct{}, 8)
+		prevCursor := strPtr("0xABCD9900")
+		prevSequence := int64(9900)
+		finalCursor := ""
+
+		for _, partition := range partitions {
+			rawTxs := make([]json.RawMessage, len(partition))
+			signatures := make([]event.SignatureInfo, 0, len(partition))
+			for i, f := range partition {
+				rawTxs[i] = json.RawMessage(`{"tx":"btc-topology-parity-proof"}`)
+				signatures = append(signatures, event.SignatureInfo{
+					Hash:     f.signature,
+					Sequence: f.sequence,
+				})
+			}
+
+			nextCursor := partition[len(partition)-1].signature
+			batch := event.RawBatch{
+				Chain:                  model.ChainBTC,
+				Network:                model.NetworkTestnet,
+				Address:                "tb1-topology-owner",
+				PreviousCursorValue:    prevCursor,
+				PreviousCursorSequence: prevSequence,
+				NewCursorValue:         &nextCursor,
+				NewCursorSequence:      partition[len(partition)-1].sequence,
+				RawTransactions:        rawTxs,
+				Signatures:             signatures,
+			}
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			normalized := <-normalizedCh
+			for _, tuple := range orderedCanonicalTuples(normalized) {
+				key := strings.Join([]string{tuple.EventID, tuple.TxHash, tuple.EventCategory, tuple.Delta}, "|")
+				tupleSet[key] = struct{}{}
+
+				_, exists := eventIDs[tuple.EventID]
+				require.False(t, exists, "duplicate canonical event id in %s topology run: %s", mode, tuple.EventID)
+				eventIDs[tuple.EventID] = struct{}{}
+			}
+
+			require.NotNil(t, normalized.NewCursorValue)
+			finalCursor = *normalized.NewCursorValue
+			prevCursor = normalized.NewCursorValue
+			prevSequence = normalized.NewCursorSequence
+		}
+
+		return topologyResult{
+			tupleSet:  tupleSet,
+			eventIDs:  eventIDs,
+			finalHead: finalCursor,
+		}
+	}
+
+	likeGroup := runTopology(t, "like-group", [][]btcFixture{
+		{fixtures[0], fixtures[1]},
+	})
+	independent := runTopology(t, "independent", [][]btcFixture{
+		{fixtures[0]},
+		{fixtures[1]},
+	})
+
+	assert.Equal(t, likeGroup.tupleSet, independent.tupleSet, "btc-testnet topology modes must converge to canonical tuple equivalence")
+	assert.Equal(t, likeGroup.eventIDs, independent.eventIDs, "btc-testnet topology modes must converge to identical canonical event id set")
+	assert.Equal(t, "abcd9902", likeGroup.finalHead)
+	assert.Equal(t, likeGroup.finalHead, independent.finalHead)
 }
 
 func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithoutSyntheticFeeEvent(t *testing.T) {

@@ -63,9 +63,15 @@
 60. `I-0220` (`M32-S2`): QA counterexample gate for decode-coverage regression flap determinism + invariant safety.
 61. `I-0224` (`M33-S1`): fee-component availability flap canonical convergence determinism hardening across full-fee, partial-fee, and recovered-fee permutations.
 62. `I-0225` (`M33-S2`): QA counterexample gate for fee-component availability flap determinism + invariant safety.
+63. `I-0226` (`M34-S1`): fail-fast panic contract hardening to block unsafe cursor/watermark progression on correctness-impacting failures.
+64. `I-0227` (`M34-S2`): QA failure-injection gate for fail-fast panic and cursor/watermark safety.
+65. `I-0228` (`M35-S1`): BTC-like runtime activation (`btc-testnet`) with deterministic canonical UTXO identity and miner-fee signed-delta semantics.
+66. `I-0229` (`M35-S2`): QA golden/invariant/topology-parity gate for BTC-like runtime activation.
+67. `I-0232` (`M36-S1`): BTC reorg/finality flap canonical convergence determinism hardening across competing-branch rollback/replay permutations.
+68. `I-0233` (`M36-S2`): QA counterexample gate for BTC reorg/finality flap determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225 -> I-0226 -> I-0227 -> I-0228 -> I-0229 -> I-0232 -> I-0233`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -135,6 +141,12 @@ Each slice must be independently releasable:
 58. Before `I-0220`: `I-0219` emits deterministic evidence that enriched->sparse->re-enriched coverage flap permutations converge with zero duplicate/missing logical events while preserving signed-delta and explicit fee-event invariants.
 59. Before `I-0224`: `I-0220` QA report is `PASS` and no unresolved decode-coverage regression flap determinism blocker remains.
 60. Before `I-0225`: `I-0224` emits deterministic evidence that full-fee, partial-fee, and recovered-fee permutations converge with zero duplicate/missing logical events while preserving signed-delta and explicit fee-event invariants.
+61. Before `I-0226`: `I-0225` QA report is `PASS` and no unresolved fee-component-availability flap determinism blocker remains.
+62. Before `I-0227`: `I-0226` emits deterministic evidence that correctness-impacting failures panic immediately with zero failed-path cursor/watermark progression.
+63. Before `I-0228`: `I-0227` QA report is `PASS` and no unresolved fail-fast safety blocker remains.
+64. Before `I-0229`: `I-0228` emits deterministic BTC runtime evidence for canonical replay idempotency, signed-delta conservation, and topology parity.
+65. Before `I-0232`: `I-0229` QA report is `PASS` and no unresolved BTC activation/topology parity blocker remains.
+66. Before `I-0233`: `I-0232` emits deterministic evidence that BTC reorg/finality flap permutations converge with zero duplicate/missing logical events while preserving signed-delta conservation and cursor monotonicity.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -167,6 +179,7 @@ Each slice must be independently releasable:
 28. If incremental decode-coverage reconciliation cannot deterministically prove sparse/enriched logical equivalence and one-time enrichment emission for the same event range, preserve deterministic conservative coverage-lineage matching with explicit coverage-conflict diagnostics and replay from last-safe cursor until incremental-coverage contracts are extended.
 29. If decode-coverage regression flap reconciliation cannot deterministically preserve enriched discoveries during sparse fallback while preventing duplicate re-emission on re-enrichment, preserve deterministic conservative coverage-floor matching with explicit regression-conflict diagnostics and replay from last-safe cursor until flap contracts are extended.
 30. If fee-component availability flap reconciliation cannot deterministically preserve Base fee split semantics while preventing duplicate fee-event re-emission across missing->recovered fee-field transitions, preserve deterministic conservative fee-floor matching with explicit fee-availability diagnostics and replay from last-safe cursor until fee-availability contracts are extended.
+31. If BTC reorg/finality flap reconciliation cannot deterministically resolve fork ancestry and replacement-branch tuple equivalence near moving head, preserve deterministic conservative rollback-window policy with explicit fork-ambiguity diagnostics and replay from last-safe cursor until reorg contracts are extended.
 
 ## Completion Evidence
 1. Developer slice output:
