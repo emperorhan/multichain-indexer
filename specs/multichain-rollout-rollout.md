@@ -51,9 +51,11 @@
 48. `I-0192` (`M26-S2`): QA counterexample gate for moving-head fetch determinism + invariant safety.
 49. `I-0194` (`M27-S1`): volatility-burst normalizer canonical fold determinism hardening across dense multi-actor/multi-asset transaction paths.
 50. `I-0195` (`M27-S2`): QA counterexample gate for volatility-burst normalizer determinism + invariant safety.
+51. `I-0199` (`M28-S1`): deferred sidecar-recovery backfill determinism hardening across degradation->recovery replay boundaries.
+52. `I-0200` (`M28-S2`): QA counterexample gate for deferred sidecar-recovery determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -111,6 +113,8 @@ Each slice must be independently releasable:
 46. Before `I-0192`: `I-0191` emits deterministic evidence that moving-head fetch permutations converge to one canonical output set with zero duplicate/missing logical events and no cursor regression.
 47. Before `I-0194`: `I-0192` QA report is `PASS` and no unresolved moving-head fetch cutoff determinism blocker remains.
 48. Before `I-0195`: `I-0194` emits deterministic evidence that volatility-burst normalization permutations converge with zero duplicate/missing logical events while preserving signed-delta conservation and explicit fee-event coverage.
+49. Before `I-0199`: `I-0195` QA report is `PASS` and no unresolved volatility-burst determinism blocker remains.
+50. Before `I-0200`: `I-0199` emits deterministic evidence that degradation->recovery backfill permutations converge with zero duplicate/missing logical events while preserving signed-delta and explicit fee-event invariants.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -137,6 +141,7 @@ Each slice must be independently releasable:
 22. If partition-boundary reconciliation cannot deterministically prove seam identity equivalence across split/merge/resume permutations, preserve deterministic fail-fast with explicit seam-boundary diagnostics and replay from last-safe cursor until boundary contracts are extended.
 23. If moving-head fetch cutoff reconciliation cannot deterministically prove closed-range coverage while heads advance during paging, preserve deterministic fail-fast with explicit cutoff-boundary diagnostics and replay from last-safe cursor until fetch-cutoff contracts are extended.
 24. If volatility-burst fold reconciliation cannot deterministically prove actor/asset delta conservation and canonical path disambiguation under dense same-transaction permutations, preserve deterministic conservative folding with explicit fold-collision diagnostics and replay from last-safe cursor until fold contracts are extended.
+25. If deferred sidecar-recovery reconciliation cannot deterministically prove recovered-signature identity equivalence against previously processed ranges, preserve deterministic conservative recovery matching with explicit recovery-collision diagnostics and replay from last-safe cursor until backfill contracts are extended.
 
 ## Completion Evidence
 1. Developer slice output:

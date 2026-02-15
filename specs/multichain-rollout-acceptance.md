@@ -592,6 +592,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of volatility-burst normalizer determinism, signed-delta conservation, and fee-event coexistence safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0199 (M28-S1)
+Assertions:
+1. Equivalent logical ranges under sidecar degradation->recovery permutations (temporary unavailable, schema mismatch then recovered, mixed recovered+already-decoded signatures) converge to one deterministic canonical output set on both mandatory chains.
+2. Recovered signatures reconcile to deterministic canonical identities against prior processed ranges with `0` duplicate canonical IDs and `0` missing logical events.
+3. Replay/resume from deferred-recovery boundaries remains idempotent with cursor monotonicity and no balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject degradation->recovery permutations on `solana-devnet` and `base-sepolia` and show canonical tuple equivalence against fully-decodable baselines.
+- Deterministic recovered+already-decoded replay tests show `0` duplicate canonical IDs and `0` missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0200 (M28-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M28 invariants.
+2. QA executes at least one counterexample with degradation->recovery permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample validating recovered-signature reconciliation with no duplicate canonical IDs, no missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of deferred sidecar-recovery determinism and replay/resume invariant safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -618,3 +642,4 @@ Release recommendation must be `fail` if any condition holds:
 22. Batch-partition variance determinism cannot be proven (partition-size/seam-boundary permutation convergence, split/merge/retry seam reconciliation, and no duplicate/missing logical canonical outputs with cursor monotonicity not evidenced for both mandatory chains).
 23. Moving-head fetch cutoff determinism cannot be proven (head-advance-during-pagination convergence, pinned-cutoff closed-range coverage, and no duplicate/missing logical canonical outputs with cursor monotonicity not evidenced for both mandatory chains).
 24. Volatility-burst normalizer determinism cannot be proven (dense same-transaction permutation convergence, actor/asset signed-delta conservation, and explicit fee-event coexistence with no duplicate/missing logical canonical outputs and cursor monotonicity not evidenced for both mandatory chains).
+25. Deferred sidecar-recovery backfill determinism cannot be proven (degradation->recovery permutation convergence, recovered-signature canonical identity reconciliation against prior ranges, and no duplicate/missing logical canonical outputs with cursor monotonicity not evidenced for both mandatory chains).

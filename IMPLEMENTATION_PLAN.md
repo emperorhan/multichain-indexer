@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -59,6 +59,8 @@ Execution queue (dependency-ordered):
 48. `I-0192` (`M26-S2`) QA counterexample gate for moving-head fetch determinism + invariant safety
 49. `I-0194` (`M27-S1`) volatility-burst normalizer canonical fold determinism hardening
 50. `I-0195` (`M27-S2`) QA counterexample gate for volatility-burst normalizer determinism + invariant safety
+51. `I-0199` (`M28-S1`) deferred sidecar-recovery backfill determinism hardening
+52. `I-0200` (`M28-S2`) QA counterexample gate for deferred sidecar-recovery determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -944,7 +946,7 @@ Eliminate duplicate/missing-event risk when chain heads advance during fetch pag
 - Gate: strict fetch-cutoff pinning can increase backlog/lag under rapid head growth or provider latency skew.
 - Fallback: keep deterministic cutoff pinning with bounded lag-window guardrails, emit explicit cutoff-lag diagnostics, and fail fast on unresolved head-boundary ambiguity until fetch-cutoff contracts are extended.
 
-### M27. Volatility-Burst Normalizer Canonical Fold Determinism Reliability Tranche C0021 (P0, Next)
+### M27. Volatility-Burst Normalizer Canonical Fold Determinism Reliability Tranche C0021 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing signed-delta risk when high-volatility transactions emit dense multi-actor/multi-asset balance deltas, so equivalent logical inputs converge to one canonical event set with deterministic fee coverage and replay-safe cursor progression.
@@ -979,6 +981,42 @@ Eliminate duplicate/missing signed-delta risk when high-volatility transactions 
 #### Risk Gate + Fallback
 - Gate: over-aggressive fold/collapse logic can accidentally merge distinct logical events, while under-constrained fold boundaries can re-emit duplicate canonical events.
 - Fallback: keep deterministic conservative folding boundaries with explicit collision diagnostics, fail fast on unresolved fold ambiguity, and replay from last-safe cursor until fold contracts are extended.
+
+### M28. Deferred Sidecar-Recovery Backfill Determinism Reliability Tranche C0022 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when previously undecodable signatures later become decodable, so replay/backfill converges to one deterministic canonical output set with signed-delta and fee-event invariants preserved.
+
+#### Entry Gate
+- `M27` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M28-S1` (`I-0199`): implement deterministic deferred-signature recovery/backfill identity and emission semantics so sidecar-unavailable/schema-mismatch recovery cannot induce duplicate canonical IDs, missing logical events, or signed-delta drift.
+2. `M28-S2` (`I-0200`): execute QA counterexample gate for deferred sidecar-recovery backfill determinism and invariant evidence across mandatory chains.
+
+#### Definition Of Done
+1. Equivalent logical ranges under degradation->recovery permutations (temporary sidecar unavailable, terminal decode mismatch later recovered, mixed recovered+already-decoded signatures) converge to one canonical tuple output set on both mandatory chains.
+2. Recovered signatures follow deterministic canonical identity reconciliation against previously processed ranges, with `0` duplicate canonical IDs and deterministic explicit fee-event coexistence where source fields exist.
+3. Replay/resume from recovery boundaries remains idempotent with `0` missing logical events, chain-scoped cursor monotonicity, and no balance double-apply side effects.
+4. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject sidecar-unavailable/schema-mismatch then recovery permutations for equivalent Solana/Base logical ranges and assert one canonical output set against fully-decodable baseline expectations.
+2. Deterministic tests inject mixed recovered+already-decoded signature sets and assert `0` duplicate canonical IDs plus signed-delta conservation with explicit fee-event coexistence expectations.
+3. Deterministic replay/resume tests from recovery seam boundaries assert chain-scoped cursor monotonicity and `0` balance drift.
+4. QA executes required validation commands plus deferred-recovery counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across deferred-recovery permutation fixtures on mandatory chains.
+2. `0` missing logical events when comparing deferred-recovery fixtures against fully-decodable baseline fixtures.
+3. `0` cursor monotonicity regressions across deferred-recovery replay/resume fixtures.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-broad recovery matching can remap recovered signatures to incorrect canonical identities or re-emit previously ingested logical events.
+- Fallback: keep deterministic conservative recovery reconciliation keyed by chain/signature/canonical-path boundaries, emit explicit recovery-collision diagnostics, and fail fast on unresolved recovery ambiguity until backfill contracts are extended.
 
 ## Decision Register (Major + Fallback)
 
@@ -1045,10 +1083,12 @@ Completed milestones/slices:
 46. `I-0189`
 47. `I-0191`
 48. `I-0192`
+49. `I-0194`
+50. `I-0195`
 
 Active downstream queue from this plan:
-1. `I-0194`
-2. `I-0195`
+1. `I-0199`
+2. `I-0200`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -1060,3 +1100,4 @@ Superseded issues:
 - `I-0173` and `I-0174` are superseded by `I-0175` and `I-0176` to replace generic cycle placeholders with executable checkpoint-integrity recovery determinism slices.
 - `I-0181` and `I-0182` are superseded by `I-0183` and `I-0184` to replace generic cycle placeholders with executable ambiguous-commit determinism slices.
 - `I-0186` and `I-0187` are superseded by `I-0188` and `I-0189` to replace generic cycle placeholders with executable batch-partition determinism slices.
+- `I-0197` and `I-0198` are superseded by `I-0199` and `I-0200` to replace generic cycle placeholders with executable deferred sidecar-recovery backfill determinism slices.
