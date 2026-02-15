@@ -21,9 +21,11 @@
 18. `I-0131` (`M11-S2`): QA counterexample gate for retry-boundary classification + invariant safety.
 19. `I-0135` (`M12-S1`): deterministic decode-error isolation + suffix continuity hardening across mandatory-chain runtime paths.
 20. `I-0136` (`M12-S2`): QA counterexample gate for decode-error isolation + invariant safety.
+21. `I-0138` (`M13-S1`): deterministic fetch-order canonicalization + overlap duplicate suppression hardening across mandatory-chain runtime paths.
+22. `I-0139` (`M13-S2`): QA counterexample gate for fetch-order/overlap dedupe determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -51,6 +53,8 @@ Each slice must be independently releasable:
 16. Before `I-0131`: `I-0130` emits deterministic evidence that terminal failures fail-fast (no retry) and transient failures recover with bounded retries.
 17. Before `I-0135`: `I-0131` QA report is `PASS` and no unresolved retry-boundary blocker remains.
 18. Before `I-0136`: `I-0135` emits deterministic evidence that single-signature decode failures do not block decodable suffix signatures.
+19. Before `I-0138`: `I-0136` QA report is `PASS` and no unresolved decode-error isolation blocker remains.
+20. Before `I-0139`: `I-0138` emits deterministic evidence that order-permuted and overlap-duplicated fetch inputs converge to identical canonical tuple outputs with zero duplicate canonical IDs.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -62,6 +66,7 @@ Each slice must be independently releasable:
 7. If transient failure retry hardening blurs permanent-error boundaries, keep bounded retries with explicit `transient_recovery_exhausted` diagnostics and require QA follow-up issue fanout.
 8. If retry-boundary classification is ambiguous for a provider error class, default to terminal handling until deterministic retryability tests and QA counterexample evidence are added.
 9. If decode-error isolation risks masking broad sidecar outages, keep deterministic full-batch-collapse fail-fast guardrails while allowing bounded per-signature isolation for partial decode failures.
+10. If overlap dedupe boundaries are ambiguous, use conservative dedupe keying and deterministic collision diagnostics, then fail fast for unresolved ambiguity instead of silently dropping records.
 
 ## Completion Evidence
 1. Developer slice output:

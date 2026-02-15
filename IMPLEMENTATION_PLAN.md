@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -29,6 +29,8 @@ Execution queue (dependency-ordered):
 18. `I-0131` (`M11-S2`) QA counterexample gate for retry-boundary classification + invariant safety
 19. `I-0135` (`M12-S1`) deterministic decode-error isolation + suffix continuity hardening
 20. `I-0136` (`M12-S2`) QA counterexample gate for decode-error isolation + invariant safety
+21. `I-0138` (`M13-S1`) deterministic fetch-order canonicalization + overlap duplicate suppression hardening
+22. `I-0139` (`M13-S2`) QA counterexample gate for fetch-order/overlap dedupe determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -384,7 +386,7 @@ Eliminate nondeterministic retry behavior by enforcing explicit transient-vs-ter
 - Gate: misclassifying provider/client failures can reduce recovery rate (too strict) or mask persistent faults (too broad).
 - Fallback: default unknown errors to terminal classification, then promote to retryable only with deterministic tests and explicit QA evidence.
 
-### M12. Decode-Error Isolation Reliability Tranche C0006 (P0, Next)
+### M12. Decode-Error Isolation Reliability Tranche C0006 (P0, Completed)
 
 #### Objective
 Prevent single-signature decode failures from stalling downstream indexing by isolating decode failures deterministically while preserving canonical/replay/cursor/runtime invariants on mandatory chains.
@@ -418,6 +420,41 @@ Prevent single-signature decode failures from stalling downstream indexing by is
 #### Risk Gate + Fallback
 - Gate: over-permissive decode-error isolation can hide broad sidecar/provider outages.
 - Fallback: keep deterministic failure threshold guardrails (fail-fast on full-batch decode collapse) while preserving per-signature isolation for bounded partial failures, with QA follow-up issue fanout.
+
+### M13. Fetch-Order Canonicalization Reliability Tranche C0007 (P0, Next)
+
+#### Objective
+Eliminate provider-ordering and overlapping-page nondeterminism by canonicalizing fetch ordering and suppressing deterministic overlap duplicates before normalization, while preserving canonical/replay/cursor/runtime invariants on mandatory chains.
+
+#### Entry Gate
+- `M12` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M13-S1` (`I-0138`): implement deterministic fetch-order canonicalization and overlap duplicate suppression across mandatory-chain runtime fetch->normalize paths.
+2. `M13-S2` (`I-0139`): execute QA counterexample gate for order-permutation equivalence and overlap dedupe determinism.
+
+#### Definition Of Done
+1. Equivalent fetched transaction/signature sets with different provider return orders normalize into the same deterministic canonical tuple ordering.
+2. Deterministic overlap dedupe prevents duplicate canonical emission when adjacent fetch windows/pages return repeated transaction/signature records.
+3. Replay of overlap-heavy fixtures remains idempotent with no duplicate canonical IDs and no balance double-apply effects.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject provider-order permutations for both `solana-devnet` and `base-sepolia` and assert stable ordered canonical tuples.
+2. Deterministic tests inject adjacent-window overlap duplicates and assert one canonical emission per logical transaction/signature identity.
+3. Replay/idempotency/cursor tests remain green with no duplicate canonical IDs or cursor regression.
+4. QA executes required validation commands plus permutation/overlap counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across order-permuted runs over identical logical input for mandatory chains.
+2. `0` duplicate canonical IDs in overlap-window replay fixtures.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-aggressive overlap dedupe keying can suppress legitimate distinct records when identity boundaries are underspecified.
+- Fallback: enforce conservative dedupe key (`chain + cursor-scope + canonical transaction/signature identity`) and fail-fast with deterministic diagnostics on ambiguous collisions until key contract is extended.
 
 ## Decision Register (Major + Fallback)
 
@@ -454,10 +491,12 @@ Completed milestones/slices:
 16. `I-0128`
 17. `I-0130`
 18. `I-0131`
+19. `I-0135`
+20. `I-0136`
 
 Active downstream queue from this plan:
-1. `I-0135`
-2. `I-0136`
+1. `I-0138`
+2. `I-0139`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

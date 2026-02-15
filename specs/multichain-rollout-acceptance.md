@@ -232,6 +232,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of both partial-failure isolation and full-batch decode-collapse behavior.
 - Follow-up issue links are present for failures (if any).
 
+### I-0138 (M13-S1)
+Assertions:
+1. Equivalent logical fetch inputs with permuted provider return order converge to identical deterministic canonical tuple ordering on both mandatory chains.
+2. Adjacent-window/page overlap duplicates are deterministically suppressed so each logical transaction/signature identity is emitted once.
+3. Overlap-heavy replay runs preserve canonical no-dup behavior and cursor monotonicity without balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests explicitly permute fetch ordering on `solana-devnet` and `base-sepolia` and show `0` canonical tuple diffs.
+- Overlap-window duplicate tests show `0` duplicate canonical IDs with stable canonical ordering.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0139 (M13-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M13 invariants.
+2. QA executes at least one counterexample with order-permuted fetch results and verifies deterministic canonical tuple equivalence.
+3. QA executes at least one counterexample with overlap-duplicated adjacent windows/pages and verifies deterministic duplicate suppression.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of both order-permutation equivalence and overlap-dedupe determinism on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -243,3 +267,4 @@ Release recommendation must be `fail` if any condition holds:
 7. Transient-failure recovery invariants cannot be proven with deterministic fail-first/retry evidence for both mandatory chains.
 8. Retry-boundary determinism cannot be proven (terminal no-retry and transient bounded-retry behavior not evidenced for both mandatory chains).
 9. Decode-error isolation determinism cannot be proven (partial-failure suffix continuity and full-batch fail-fast behavior not evidenced for both mandatory chains).
+10. Fetch-order canonicalization determinism cannot be proven (order-permutation equivalence and overlap-dedupe stability not evidenced for both mandatory chains).

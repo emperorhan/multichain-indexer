@@ -164,6 +164,8 @@ func (n *Normalizer) processBatchWithRetry(
 }
 
 func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client sidecarv1.ChainDecoderClient, batch event.RawBatch) error {
+	const decodeStage = "normalizer.decode_batch"
+
 	if len(batch.RawTransactions) != len(batch.Signatures) {
 		return fmt.Errorf("raw/signature length mismatch: raw=%d signatures=%d", len(batch.RawTransactions), len(batch.Signatures))
 	}
@@ -190,7 +192,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 
 	// Log decode errors
 	for _, decErr := range resp.Errors {
-		log.Warn("sidecar decode error", "signature", decErr.Signature, "error", decErr.Error)
+		log.Warn("sidecar decode error", "stage", decodeStage, "signature", decErr.Signature, "error", decErr.Error)
 	}
 
 	resultBySignature := make(map[string]*sidecarv1.TransactionResult, len(resp.Results))
@@ -228,23 +230,32 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	}
 
 	processed := 0
-	decodeStopped := false
-	stopSignature := ""
-	stopReason := ""
 	orderedResultIndex := 0
+	type decodeFailure struct {
+		signature string
+		reason    string
+	}
+	decodeFailures := make([]decodeFailure, 0, len(batch.Signatures))
 
 	for _, sig := range batch.Signatures {
 		signature := strings.TrimSpace(sig.Hash)
 		if signature == "" {
-			decodeStopped = true
-			stopReason = "empty signature"
-			break
+			decodeFailures = append(decodeFailures, decodeFailure{
+				signature: "<empty>",
+				reason:    "empty signature",
+			})
+			continue
 		}
 		if errMsg, hasErr := errorBySignature[signature]; hasErr {
-			decodeStopped = true
-			stopSignature = signature
-			stopReason = errMsg
-			break
+			if errMsg == "" {
+				errMsg = "decode failed"
+			}
+			log.Warn("signature decode isolated", "stage", decodeStage, "signature", signature, "error", errMsg)
+			decodeFailures = append(decodeFailures, decodeFailure{
+				signature: signature,
+				reason:    errMsg,
+			})
+			continue
 		}
 
 		var (
@@ -255,10 +266,12 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 			delete(resultBySignature, signature)
 		} else {
 			if orderedResultIndex >= len(orderedResults) {
-				decodeStopped = true
-				stopSignature = signature
-				stopReason = "missing decode result"
-				break
+				log.Warn("signature decode isolated", "stage", decodeStage, "signature", signature, "error", "missing decode result")
+				decodeFailures = append(decodeFailures, decodeFailure{
+					signature: signature,
+					reason:    "missing decode result",
+				})
+				continue
 			}
 			result = orderedResults[orderedResultIndex]
 			orderedResultIndex++
@@ -271,17 +284,27 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		processed++
 	}
 
-	if decodeStopped {
-		if stopSignature == "" {
-			stopSignature = "<unknown>"
-		}
-		if stopReason == "" {
-			stopReason = "decode failed"
-		}
-		return fmt.Errorf("decode blocked at signature %s after %d successful txs: %s", stopSignature, processed, stopReason)
-	}
 	if processed == 0 && len(batch.Signatures) > 0 {
-		return fmt.Errorf("no decodable transactions in batch")
+		diagnostics := make([]string, 0, len(decodeFailures))
+		for _, failure := range decodeFailures {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s=%s", failure.signature, failure.reason))
+		}
+		if len(diagnostics) == 0 {
+			diagnostics = append(diagnostics, "<unknown>=missing decode result")
+		}
+		return fmt.Errorf(
+			"decode collapse stage=%s no decodable transactions in batch (diagnostics=%s)",
+			decodeStage,
+			strings.Join(diagnostics, ","),
+		)
+	}
+	if len(decodeFailures) > 0 {
+		log.Warn("decode isolation continued batch",
+			"stage", decodeStage,
+			"address", batch.Address,
+			"processed", processed,
+			"failed", len(decodeFailures),
+		)
 	}
 
 	select {

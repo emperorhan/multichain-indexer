@@ -1577,93 +1577,241 @@ func TestProcessBatch_ReplayTuplesStableForSCPersistentOrdering(t *testing.T) {
 	assert.Equal(t, tuples(first.Transactions[0]), tuples(second.Transactions[0]))
 }
 
-func TestProcessBatch_DecodeErrors(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mockClient := mocks.NewMockChainDecoderClient(ctrl)
-
-	normalizedCh := make(chan event.NormalizedBatch, 1)
-	n := &Normalizer{
-		sidecarTimeout: 30_000_000_000,
-		normalizedCh:   normalizedCh,
-		logger:         slog.Default(),
+func TestProcessBatch_DecodeCollapseFailFastDeterministicAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name      string
+		chain     model.Chain
+		network   model.Network
+		address   string
+		firstSig  string
+		secondSig string
+	}{
+		{
+			name:      "solana-devnet",
+			chain:     model.ChainSolana,
+			network:   model.NetworkDevnet,
+			address:   "addr_owner",
+			firstSig:  "sol-collapse-1",
+			secondSig: "sol-collapse-2",
+		},
+		{
+			name:      "base-sepolia",
+			chain:     model.ChainBase,
+			network:   model.NetworkSepolia,
+			address:   "0x1111111111111111111111111111111111111111",
+			firstSig:  "base-collapse-1",
+			secondSig: "base-collapse-2",
+		},
 	}
 
-	batch := event.RawBatch{
-		Chain:   model.ChainSolana,
-		Network: model.NetworkDevnet,
-		Address: "addr1",
-		RawTransactions: []json.RawMessage{
-			json.RawMessage(`{"tx":1}`),
-		},
-		Signatures: []event.SignatureInfo{
-			{Hash: "sig1", Sequence: 100},
-		},
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+			normalizedCh := make(chan event.NormalizedBatch, 1)
+			n := &Normalizer{
+				sidecarTimeout: 30_000_000_000,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			batch := event.RawBatch{
+				Chain:   tc.chain,
+				Network: tc.network,
+				Address: tc.address,
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":1}`),
+					json.RawMessage(`{"tx":2}`),
+				},
+				Signatures: []event.SignatureInfo{
+					{Hash: tc.firstSig, Sequence: 100},
+					{Hash: tc.secondSig, Sequence: 101},
+				},
+			}
+
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(2).
+				Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+					Errors: []*sidecarv1.DecodeError{
+						{Signature: tc.firstSig, Error: "parse error"},
+						{Signature: tc.secondSig, Error: "schema mismatch"},
+					},
+				}, nil)
+
+			errFirst := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
+			errSecond := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
+			require.Error(t, errFirst)
+			require.Error(t, errSecond)
+			assert.Equal(t, errFirst.Error(), errSecond.Error(), "decode collapse diagnostics should be deterministic")
+			assert.Contains(t, errFirst.Error(), "decode collapse stage=normalizer.decode_batch")
+			assert.Contains(t, errFirst.Error(), tc.firstSig+"=parse error")
+			assert.Contains(t, errFirst.Error(), tc.secondSig+"=schema mismatch")
+			assert.Equal(t, 0, len(normalizedCh), "full-batch decode collapse must not emit normalized output")
+		})
 	}
-
-	mockClient.EXPECT().
-		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
-			Results: []*sidecarv1.TransactionResult{},
-			Errors: []*sidecarv1.DecodeError{
-				{Signature: "sig1", Error: "parse error"},
-			},
-		}, nil)
-
-	err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "decode blocked")
 }
 
-func TestProcessBatch_DecodeErrorAfterPrefix_FailsFast(t *testing.T) {
+func TestProcessBatch_DualChainReplaySmoke_MixedSuccessDecodeFailure_NoDuplicateCanonicalIDsAndCursorMonotonic(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockChainDecoderClient(ctrl)
 
-	normalizedCh := make(chan event.NormalizedBatch, 1)
+	normalizedCh := make(chan event.NormalizedBatch, 4)
 	n := &Normalizer{
 		sidecarTimeout: 30_000_000_000,
 		normalizedCh:   normalizedCh,
 		logger:         slog.Default(),
 	}
 
-	firstSig := "sig1"
-	secondSig := "sig2"
-	batch := event.RawBatch{
-		Chain:   model.ChainSolana,
-		Network: model.NetworkDevnet,
-		Address: "addr1",
-		RawTransactions: []json.RawMessage{
-			json.RawMessage(`{"tx":1}`),
-			json.RawMessage(`{"tx":2}`),
+	const (
+		solPrefixSig = "sol-decode-ok-1"
+		solFailedSig = "sol-decode-failed-1"
+		solSuffixSig = "sol-decode-ok-2"
+
+		basePrefixSig = "base-decode-ok-1"
+		baseFailedSig = "base-decode-failed-1"
+		baseSuffixSig = "base-decode-ok-2"
+	)
+
+	solPrefix := loadSolanaFixture(t, "solana_cpi_ownership_scoped.json")
+	solPrefix.TxHash = solPrefixSig
+	solSuffix := loadSolanaFixture(t, "solana_cpi_ownership_scoped.json")
+	solSuffix.TxHash = solSuffixSig
+	solSuffix.BlockCursor = 403
+
+	basePrefix := loadBaseFeeFixture(t, "base_fee_decomposition_complete.json")
+	basePrefix.TxHash = basePrefixSig
+	baseSuffix := loadBaseFeeFixture(t, "base_fee_decomposition_complete.json")
+	baseSuffix.TxHash = baseSuffixSig
+	baseSuffix.BlockCursor = 703
+
+	solResp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{solPrefix, solSuffix},
+		Errors: []*sidecarv1.DecodeError{
+			{Signature: solFailedSig, Error: "parse error"},
 		},
-		Signatures: []event.SignatureInfo{
-			{Hash: firstSig, Sequence: 100},
-			{Hash: secondSig, Sequence: 101},
+	}
+	baseResp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{basePrefix, baseSuffix},
+		Errors: []*sidecarv1.DecodeError{
+			{Signature: baseFailedSig, Error: "parse error"},
 		},
 	}
 
 	mockClient.EXPECT().
-		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
-			Results: []*sidecarv1.TransactionResult{
-				{
-					TxHash:      firstSig,
-					BlockCursor: 100,
-					Status:      string(model.TxStatusSuccess),
-				},
-			},
-			Errors: []*sidecarv1.DecodeError{
-				{Signature: secondSig, Error: "parse error"},
-			},
-		}, nil)
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any()).
+		Times(4).
+		DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+			require.Len(t, req.GetTransactions(), 3)
+			switch req.GetTransactions()[0].GetSignature() {
+			case solPrefixSig:
+				return solResp, nil
+			case basePrefixSig:
+				return baseResp, nil
+			default:
+				t.Fatalf("unexpected signature %q", req.GetTransactions()[0].GetSignature())
+				return nil, nil
+			}
+		})
 
-	err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "decode blocked")
-	select {
-	case got := <-normalizedCh:
-		t.Fatalf("expected no normalized batch, got %+v", got)
-	default:
+	solPrev := "sol-prev-decode-mixed"
+	basePrev := "base-prev-decode-mixed"
+	solBatch := event.RawBatch{
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		Address:                "addr_owner",
+		PreviousCursorValue:    &solPrev,
+		PreviousCursorSequence: 400,
+		NewCursorValue:         strPtr(solSuffixSig),
+		NewCursorSequence:      403,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"sol-decode-ok-1"}`),
+			json.RawMessage(`{"tx":"sol-decode-failed-1"}`),
+			json.RawMessage(`{"tx":"sol-decode-ok-2"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: solPrefixSig, Sequence: 401},
+			{Hash: solFailedSig, Sequence: 402},
+			{Hash: solSuffixSig, Sequence: 403},
+		},
 	}
+	baseBatch := event.RawBatch{
+		Chain:                  model.ChainBase,
+		Network:                model.NetworkSepolia,
+		Address:                "0x1111111111111111111111111111111111111111",
+		PreviousCursorValue:    &basePrev,
+		PreviousCursorSequence: 700,
+		NewCursorValue:         strPtr(baseSuffixSig),
+		NewCursorSequence:      703,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"base-decode-ok-1"}`),
+			json.RawMessage(`{"tx":"base-decode-failed-1"}`),
+			json.RawMessage(`{"tx":"base-decode-ok-2"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: basePrefixSig, Sequence: 701},
+			{Hash: baseFailedSig, Sequence: 702},
+			{Hash: baseSuffixSig, Sequence: 703},
+		},
+	}
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, solBatch))
+	firstSol := <-normalizedCh
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseBatch))
+	firstBase := <-normalizedCh
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, solBatch))
+	secondSol := <-normalizedCh
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseBatch))
+	secondBase := <-normalizedCh
+
+	txHashes := func(batch event.NormalizedBatch) []string {
+		out := make([]string, 0, len(batch.Transactions))
+		for _, tx := range batch.Transactions {
+			out = append(out, tx.TxHash)
+		}
+		return out
+	}
+	assertRunNoDuplicateCanonicalIDs := func(run []event.NormalizedBatch) {
+		seen := make(map[string]struct{})
+		for _, batch := range run {
+			for _, tx := range batch.Transactions {
+				for _, be := range tx.BalanceEvents {
+					require.NotEmpty(t, be.EventID)
+					_, exists := seen[be.EventID]
+					require.False(t, exists, "duplicate canonical event id in run: %s", be.EventID)
+					seen[be.EventID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	require.Len(t, firstSol.Transactions, 2)
+	require.Len(t, firstBase.Transactions, 2)
+	assert.Equal(t, []string{solPrefixSig, solSuffixSig}, txHashes(firstSol))
+	assert.Equal(t, []string{basePrefixSig, baseSuffixSig}, txHashes(firstBase))
+	assert.NotContains(t, txHashes(firstSol), solFailedSig)
+	assert.NotContains(t, txHashes(firstBase), baseFailedSig)
+
+	firstRun := []event.NormalizedBatch{firstSol, firstBase}
+	secondRun := []event.NormalizedBatch{secondSol, secondBase}
+	assertRunNoDuplicateCanonicalIDs(firstRun)
+	assertRunNoDuplicateCanonicalIDs(secondRun)
+	assert.Equal(t, orderedCanonicalEventIDs(firstRun), orderedCanonicalEventIDs(secondRun), "canonical event ordering changed across mixed success+decode-failure replay inputs")
+
+	require.NotNil(t, firstSol.NewCursorValue)
+	require.NotNil(t, firstBase.NewCursorValue)
+	assert.Equal(t, solSuffixSig, *firstSol.NewCursorValue)
+	assert.Equal(t, baseSuffixSig, *firstBase.NewCursorValue)
+
+	assert.GreaterOrEqual(t, firstSol.NewCursorSequence, firstSol.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, firstBase.NewCursorSequence, firstBase.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, secondSol.NewCursorSequence, secondSol.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, secondBase.NewCursorSequence, secondBase.PreviousCursorSequence)
+	assert.GreaterOrEqual(t, secondSol.NewCursorSequence, firstSol.NewCursorSequence)
+	assert.GreaterOrEqual(t, secondBase.NewCursorSequence, firstBase.NewCursorSequence)
 }
 
 func TestProcessBatchWithRetry_TransientDecodeFailureDeterministicAcrossChains(t *testing.T) {

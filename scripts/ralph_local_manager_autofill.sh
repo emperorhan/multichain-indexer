@@ -47,6 +47,28 @@ text_exists() {
   grep -R -E -q -- "${pattern}" "$@" 2>/dev/null
 }
 
+issue_status() {
+  local file="$1"
+  awk -F': ' '
+    /^---[[:space:]]*$/ { exit }
+    $1 == "status" { print $2; found=1; exit }
+    END { if (!found) print "ready" }
+  ' "${file}" 2>/dev/null || echo "ready"
+}
+
+issue_marked_superseded() {
+  local file="$1"
+  text_exists "^[[:space:]-]*superseded_by:[[:space:]]*[^[:space:]]+" "${file}"
+}
+
+issue_is_stale_superseded_blocked() {
+  local file="$1"
+  local status
+  status="$(issue_status "${file}")"
+  [ "${status}" = "blocked" ] || return 1
+  issue_marked_superseded "${file}"
+}
+
 issue_exists_with_key_in_dirs() {
   local key="$1"
   shift
@@ -64,10 +86,23 @@ issue_exists_with_key() {
 
 issue_exists_with_prefix_open() {
   local prefix="$1"
-  text_exists "automanager_key:[[:space:]]*${prefix}" \
+  local file
+  while IFS= read -r file; do
+    [ -f "${file}" ] || continue
+    if ! text_exists "automanager_key:[[:space:]]*${prefix}" "${file}"; then
+      continue
+    fi
+    # Ignore stale blocked issues already superseded by newer tasks.
+    if issue_is_stale_superseded_blocked "${file}"; then
+      continue
+    fi
+    return 0
+  done < <(find \
     "${RALPH_ROOT}/issues" \
     "${RALPH_ROOT}/in-progress" \
-    "${RALPH_ROOT}/blocked"
+    "${RALPH_ROOT}/blocked" \
+    -maxdepth 1 -type f -name 'I-*.md' 2>/dev/null | sort)
+  return 1
 }
 
 next_cycle_number() {
