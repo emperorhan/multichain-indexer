@@ -1165,7 +1165,7 @@ run_codex_for_issue() {
   local issue_file="$1"
   local role="$2"
   local model="$3"
-  local prompt log_file rc issue_id issue_allowed issue_denied issue_max_diff issue_invariants issue_acceptance_tests
+  local prompt log_file rc issue_id issue_allowed issue_denied issue_max_diff issue_invariants issue_acceptance_tests allowed_invariants_csv
 
   log_file="${LOGS_DIR}/$(basename "${issue_file}" .md)-$(date -u +%Y%m%dT%H%M%SZ).log"
   issue_id="$(meta_value "${issue_file}" "id")"
@@ -1174,6 +1174,7 @@ run_codex_for_issue() {
   issue_max_diff="$(meta_value "${issue_file}" "max_diff_scope")"
   issue_invariants="$(meta_value "${issue_file}" "invariants")"
   issue_acceptance_tests="$(meta_value "${issue_file}" "acceptance_tests")"
+  allowed_invariants_csv="$("${INVARIANTS_CMD}" csv)"
   prompt="$(cat <<EOF
 You are executing a local Ralph loop task with no GitHub dependency.
 
@@ -1187,6 +1188,8 @@ Workspace policy:
   - denied_paths: ${issue_denied}
   - max_diff_scope: ${issue_max_diff}
 - Preserve invariants: ${issue_invariants}
+- Allowed invariant ids for any issue contract edits/creation: ${allowed_invariants_csv}
+- Do not introduce new invariant ids outside the allowed registry.
 - Validation target: ${issue_acceptance_tests}
 
 $(role_guide "${role}" "${issue_id}")

@@ -11,6 +11,7 @@ INVARIANTS=(
   "canonical_event_id_unique"
   "replay_idempotent"
   "cursor_monotonic"
+  "signed_delta_conservation"
   "solana_fee_event_coverage"
   "base_fee_split_coverage"
   "reorg_recovery_deterministic"
