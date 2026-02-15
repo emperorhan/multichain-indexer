@@ -87,9 +87,21 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("get cursor %s: %w", member.Address, err)
 			}
+			reconciledCursor, recoveryMode, err := reconcileCheckpointCursor(c.chain, c.network, member.Address, cursor)
+			if err != nil {
+				return fmt.Errorf("checkpoint integrity validation failed for %s: %w", member.Address, err)
+			}
+			if recoveryMode != "" {
+				c.logger.Warn("checkpoint integrity recovery applied",
+					"mode", recoveryMode,
+					"chain", c.chain,
+					"network", c.network,
+					"address", member.Address,
+				)
+			}
 			candidates = append(candidates, watchedAddressCandidate{
 				address: member,
-				cursor:  cursor,
+				cursor:  reconciledCursor,
 			})
 		}
 
@@ -114,6 +126,72 @@ func (c *Coordinator) tick(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func reconcileCheckpointCursor(
+	chain model.Chain,
+	network model.Network,
+	address string,
+	cursor *model.AddressCursor,
+) (*model.AddressCursor, string, error) {
+	if cursor == nil {
+		return nil, "", nil
+	}
+
+	if cursor.Chain != "" && cursor.Chain != chain {
+		return nil, "", fmt.Errorf(
+			"checkpoint_integrity_failure mode=cross_chain_checkpoint_mixup chain=%s network=%s address=%s detail=chain_mismatch cursor_chain=%s",
+			chain, network, address, cursor.Chain,
+		)
+	}
+	if cursor.Network != "" && cursor.Network != network {
+		return nil, "", fmt.Errorf(
+			"checkpoint_integrity_failure mode=cross_chain_checkpoint_mixup chain=%s network=%s address=%s detail=network_mismatch cursor_network=%s",
+			chain, network, address, cursor.Network,
+		)
+	}
+	if strings.TrimSpace(cursor.Address) != "" {
+		expectedIdentity := canonicalWatchedAddressIdentity(chain, address)
+		actualIdentity := canonicalWatchedAddressIdentity(chain, cursor.Address)
+		if expectedIdentity != "" && actualIdentity != "" && expectedIdentity != actualIdentity {
+			return nil, "", fmt.Errorf(
+				"checkpoint_integrity_failure mode=cross_chain_checkpoint_mixup chain=%s network=%s address=%s detail=address_mismatch cursor_address=%s",
+				chain, network, address, strings.TrimSpace(cursor.Address),
+			)
+		}
+	}
+	if cursor.CursorValue != nil && isCrossChainCursorValueShape(chain, *cursor.CursorValue) {
+		return nil, "", fmt.Errorf(
+			"checkpoint_integrity_failure mode=cross_chain_checkpoint_mixup chain=%s network=%s address=%s detail=cursor_shape_mismatch cursor_value=%q",
+			chain, network, address, strings.TrimSpace(*cursor.CursorValue),
+		)
+	}
+
+	reconciled := *cursor
+	reconciledCursorValue := canonicalizeCursorValue(chain, cursor.CursorValue)
+
+	if cursor.CursorSequence < 0 {
+		reconciled.CursorValue = nil
+		reconciled.CursorSequence = 0
+		return &reconciled, "invalid_cursor_sequence", nil
+	}
+
+	if cursor.CursorSequence > 0 && reconciledCursorValue == nil {
+		reconciled.CursorValue = nil
+		reconciled.CursorSequence = 0
+		return &reconciled, "truncated_payload", nil
+	}
+
+	// A persisted positive sequence with non-zero processed count but nil fetch timestamp
+	// indicates a stale/partially-written checkpoint snapshot.
+	if cursor.CursorSequence > 0 && cursor.ItemsProcessed > 0 && cursor.LastFetchedAt == nil {
+		reconciled.CursorValue = nil
+		reconciled.CursorSequence = 0
+		return &reconciled, "stale_cursor_snapshot", nil
+	}
+
+	reconciled.CursorValue = reconciledCursorValue
+	return &reconciled, "", nil
 }
 
 type watchedAddressGroup struct {
@@ -342,6 +420,49 @@ func isHexString(v string) bool {
 		case ch >= '0' && ch <= '9':
 		case ch >= 'a' && ch <= 'f':
 		case ch >= 'A' && ch <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isCrossChainCursorValueShape(chain model.Chain, cursor string) bool {
+	trimmed := strings.TrimSpace(cursor)
+	if trimmed == "" {
+		return false
+	}
+
+	if isEVMChain(chain) {
+		if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
+			return false
+		}
+		if strings.HasPrefix(strings.ToLower(trimmed), "sig-") {
+			return true
+		}
+		return len(trimmed) >= 32 && len(trimmed) <= 128 && isBase58String(trimmed)
+	}
+
+	return looksLikeEVMHash(trimmed)
+}
+
+func looksLikeEVMHash(value string) bool {
+	if !(strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X")) {
+		return false
+	}
+	hexPortion := strings.TrimPrefix(strings.TrimPrefix(value, "0x"), "0X")
+	return hexPortion != "" && isHexString(hexPortion)
+}
+
+func isBase58String(v string) bool {
+	for _, ch := range v {
+		switch {
+		case ch >= '1' && ch <= '9':
+		case ch >= 'A' && ch <= 'H':
+		case ch >= 'J' && ch <= 'N':
+		case ch >= 'P' && ch <= 'Z':
+		case ch >= 'a' && ch <= 'k':
+		case ch >= 'm' && ch <= 'z':
 		default:
 			return false
 		}

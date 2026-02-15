@@ -472,6 +472,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of checkpoint-integrity recovery determinism and restart/resume invariant safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0178 (M23-S1)
+Assertions:
+1. Sidecar degradation permutations (temporary unavailable, schema mismatch, parse failure) preserve deterministic canonical outputs for decodable signatures on both mandatory chains.
+2. Transient sidecar-unavailable paths use bounded deterministic retries and do not advance cursor/watermark until decode+ingest succeeds.
+3. Terminal decode failures are deterministically isolated or fail fast with reproducible signature-level diagnostics, without duplicate canonical IDs or balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject sidecar-unavailable retry permutations on `solana-devnet` and `base-sepolia` and show bounded retry behavior with no pre-commit cursor advancement.
+- Deterministic tests inject mixed schema-mismatch/parse-failure signatures plus decodable suffix signatures and show deterministic continuation outputs across independent runs.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0179 (M23-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M23 invariants.
+2. QA executes at least one counterexample with sidecar-unavailable bursts and verifies deterministic bounded-retry behavior plus cursor monotonicity.
+3. QA executes at least one counterexample with schema-mismatch/parse-failure signatures and verifies deterministic decode-isolation continuity for decodable outputs.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of sidecar-degradation determinism and decode-isolation continuity behavior on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -493,3 +517,4 @@ Release recommendation must be `fail` if any condition holds:
 17. Dual-chain tick interleaving determinism cannot be proven (completion-order permutation equivalence, one-chain-lag cursor isolation, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
 18. Crash-recovery checkpoint determinism cannot be proven (crash-cutpoint permutation equivalence, restart/resume completeness, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
 19. Checkpoint-integrity recovery determinism cannot be proven (corrupted checkpoint detection, deterministic recovery/fail-fast behavior, and post-recovery replay/cursor invariants not evidenced for both mandatory chains).
+20. Sidecar-degradation determinism cannot be proven (bounded retry semantics for transient sidecar outage, deterministic terminal decode-failure isolation/fail-fast behavior, and no duplicate/missing decodable canonical outputs across permutations on both mandatory chains).

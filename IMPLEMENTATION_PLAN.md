@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -49,6 +49,8 @@ Execution queue (dependency-ordered):
 38. `I-0171` (`M21-S2`) QA counterexample gate for crash-point permutation determinism + invariant safety
 39. `I-0175` (`M22-S1`) checkpoint integrity self-healing determinism hardening
 40. `I-0176` (`M22-S2`) QA counterexample gate for checkpoint-integrity recovery determinism + invariant safety
+41. `I-0178` (`M23-S1`) sidecar decode degradation determinism hardening
+42. `I-0179` (`M23-S2`) QA counterexample gate for sidecar-degradation determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -754,7 +756,7 @@ Eliminate duplicate/missing-event risk when process crashes occur at partial dua
 - Gate: strict checkpoint ordering and resume reconciliation may increase tick latency or replay window size under repeated crashes.
 - Fallback: use deterministic replay-from-last-safe-checkpoint semantics with explicit crash-cutpoint diagnostics and bounded replay window guardrails until optimized checkpoint granularity is proven safe.
 
-### M22. Checkpoint Integrity Self-Healing Determinism Reliability Tranche C0016 (P0, Next)
+### M22. Checkpoint Integrity Self-Healing Determinism Reliability Tranche C0016 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when persisted tick checkpoint state is partially written, stale, or chain-inconsistent, so restart/resume converges to one deterministic canonical output and cursor state without manual repair.
@@ -788,6 +790,43 @@ Eliminate duplicate/missing-event risk when persisted tick checkpoint state is p
 #### Risk Gate + Fallback
 - Gate: strict checkpoint-integrity validation and recovery can increase restart latency and replay-window cost under repeated corruption scenarios.
 - Fallback: use deterministic fail-fast plus replay-from-last-known-good checkpoint semantics with explicit checkpoint-integrity diagnostics and bounded recovery window guardrails until optimized repair granularity is proven safe.
+
+### M23. Sidecar Decode Degradation Determinism Reliability Tranche C0017 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when sidecar decode availability or schema compatibility degrades intermittently, so mandatory-chain runs converge to deterministic canonical output and cursor behavior under replay/resume.
+
+#### Entry Gate
+- `M22` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M23-S1` (`I-0178`): implement deterministic sidecar-degradation classification and continuation semantics so transient decode outages and schema-incompatible signatures cannot induce duplicate canonical IDs, missing decodable-event coverage, or cursor regression.
+2. `M23-S2` (`I-0179`): execute QA counterexample gate for sidecar-degradation determinism and invariant evidence across mandatory chains.
+
+#### Definition Of Done
+1. Equivalent logical input with sidecar-degradation permutations (temporary unavailable, schema mismatch, parse failure) converges to one deterministic canonical tuple output for all decodable signatures.
+2. Sidecar-transient unavailability paths use deterministic bounded retries and do not advance cursor/watermark on failed attempts.
+3. Sidecar terminal decode failures are isolated or fail-fast by explicit deterministic rules with reproducible signature-level diagnostics and no silent event loss.
+4. Replay/resume after degradation permutations remains idempotent with stable canonical ordering, no duplicate canonical IDs, and no balance double-apply side effects.
+5. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject sidecar-unavailable bursts before and during decode and assert bounded retry behavior plus no cursor advancement before success.
+2. Deterministic tests inject mixed schema-mismatch/parse-failure signatures with decodable suffix signatures and assert deterministic isolation/continuation outputs across independent runs.
+3. Deterministic tests replay equivalent ranges under at least two fixed degradation permutations and assert `0` duplicate canonical IDs, `0` tuple diffs for decodable outputs, and `0` balance drift.
+4. QA executes required validation commands plus sidecar-degradation counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across sidecar-degradation replay fixtures on mandatory chains.
+2. `0` cursor monotonicity regressions in sidecar-unavailable retry/resume fixtures.
+3. `0` canonical tuple diffs for decodable outputs across deterministic degradation permutations.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-aggressive continuation under sidecar degradation can hide broad decode outages and silently drop logical events.
+- Fallback: preserve deterministic fail-fast guardrails for full-batch degradation, keep bounded per-signature isolation only for explicitly classified partial decode failures, and emit stage-scoped diagnostics until sidecar reliability contracts are extended.
 
 ## Decision Register (Major + Fallback)
 
@@ -844,10 +883,12 @@ Completed milestones/slices:
 36. `I-0166`
 37. `I-0170`
 38. `I-0171`
+39. `I-0175`
+40. `I-0176`
 
 Active downstream queue from this plan:
-1. `I-0175`
-2. `I-0176`
+1. `I-0178`
+2. `I-0179`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

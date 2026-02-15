@@ -471,11 +471,11 @@ func TestTick_FanInOrderVarianceDeterministicAcrossMandatoryChains(t *testing.T)
 
 func TestTick_FanInLagAwareMembershipChurnReplayResumeAcrossMandatoryChains(t *testing.T) {
 	type testCase struct {
-		name        string
-		chain       model.Chain
-		network     model.Network
-		ticksA      [][]model.WatchedAddress
-		ticksB      [][]model.WatchedAddress
+		name         string
+		chain        model.Chain
+		network      model.Network
+		ticksA       [][]model.WatchedAddress
+		ticksB       [][]model.WatchedAddress
 		initialByKey map[string]*model.AddressCursor
 	}
 
@@ -602,6 +602,145 @@ func TestTick_FanInDoesNotCollapseDistinctSolanaAddresses(t *testing.T) {
 	assert.NotEqual(t, job1.Address, job2.Address)
 }
 
+func TestTick_CheckpointIntegrityCorruptionRecoveryConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		address         string
+		validCursorHint string
+	}
+
+	tests := []testCase{
+		{
+			name:            "solana-devnet",
+			chain:           model.ChainSolana,
+			network:         model.NetworkDevnet,
+			address:         "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+			validCursorHint: "sig-sol-55",
+		},
+		{
+			name:            "base-sepolia",
+			chain:           model.ChainBase,
+			network:         model.NetworkSepolia,
+			address:         "0x1111111111111111111111111111111111111111",
+			validCursorHint: "ABCDEF55",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ticks := [][]model.WatchedAddress{
+				{{Address: tc.address}},
+				{{Address: tc.address}},
+				{{Address: tc.address}},
+				{{Address: tc.address}},
+			}
+
+			baseline := runCheckpointIntegrityTickScenario(t, tc.chain, tc.network, ticks, map[string]*model.AddressCursor{})
+
+			truncated := runCheckpointIntegrityTickScenario(t, tc.chain, tc.network, ticks, map[string]*model.AddressCursor{
+				tc.address: {
+					Address:        tc.address,
+					CursorValue:    strPtr("   "),
+					CursorSequence: 55,
+					ItemsProcessed: 3,
+				},
+			})
+
+			stale := runCheckpointIntegrityTickScenario(t, tc.chain, tc.network, ticks, map[string]*model.AddressCursor{
+				tc.address: {
+					Address:        tc.address,
+					CursorValue:    strPtr(tc.validCursorHint),
+					CursorSequence: 55,
+					ItemsProcessed: 8,
+					LastFetchedAt:  nil,
+				},
+			})
+
+			assert.Equal(t, baseline, truncated)
+			assert.Equal(t, baseline, stale)
+
+			for i := 1; i < len(stale); i++ {
+				assert.GreaterOrEqual(t, stale[i].CursorSequence, stale[i-1].CursorSequence)
+			}
+		})
+	}
+}
+
+func TestTick_CheckpointIntegrityCrossChainMixupFailsFastAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+		cursor  model.AddressCursor
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet-value-shape-mixup",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+			cursor: model.AddressCursor{
+				CursorValue:    strPtr("0xabc123"),
+				CursorSequence: 11,
+			},
+		},
+		{
+			name:    "base-sepolia-value-shape-mixup",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			cursor: model.AddressCursor{
+				CursorValue:    strPtr("3N5Y7jA1vB2qK8mL9pQ4tU6wX1zC5dE2fG7hJ3kL9mN"),
+				CursorSequence: 22,
+			},
+		},
+		{
+			name:    "chain-scope-mismatch",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "scope-mismatch-addr",
+			cursor: model.AddressCursor{
+				Chain:          model.ChainBase,
+				Network:        model.NetworkSepolia,
+				Address:        "0x2222222222222222222222222222222222222222",
+				CursorValue:    strPtr("0xdef456"),
+				CursorSequence: 33,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+			mockCursor := storemocks.NewMockCursorRepository(ctrl)
+
+			jobCh := make(chan event.FetchJob, 2)
+			c := New(tc.chain, tc.network, mockWatchedAddr, mockCursor, 100, time.Second, jobCh, slog.Default())
+
+			mockWatchedAddr.EXPECT().
+				GetActive(gomock.Any(), tc.chain, tc.network).
+				Return([]model.WatchedAddress{{Address: tc.address}}, nil)
+
+			mockCursor.EXPECT().
+				Get(gomock.Any(), tc.chain, tc.network, tc.address).
+				Return(&tc.cursor, nil)
+
+			err := c.tick(context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "checkpoint_integrity_failure")
+			assert.Contains(t, err.Error(), "cross_chain_checkpoint_mixup")
+			assert.Empty(t, jobCh)
+		})
+	}
+}
+
 type lagAwareJobSnapshot struct {
 	Address        string
 	CursorValue    string
@@ -706,6 +845,51 @@ func runLagAwareTickScenario(
 	}
 
 	return snapshots, cloneCursorState(cursorRepo.state)
+}
+
+func runCheckpointIntegrityTickScenario(
+	t *testing.T,
+	chain model.Chain,
+	network model.Network,
+	ticks [][]model.WatchedAddress,
+	initialByKey map[string]*model.AddressCursor,
+) []lagAwareJobSnapshot {
+	t.Helper()
+
+	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
+	cursorRepo := &inMemoryCursorRepo{state: cloneCursorState(initialByKey)}
+	jobCh := make(chan event.FetchJob, len(ticks)+1)
+	c := New(chain, network, watchedRepo, cursorRepo, 100, time.Second, jobCh, slog.Default())
+
+	snapshots := make([]lagAwareJobSnapshot, 0, len(ticks))
+	for i := range ticks {
+		require.NoError(t, c.tick(context.Background()))
+		require.Len(t, jobCh, 1)
+
+		job := <-jobCh
+		cursorValue := ""
+		if job.CursorValue != nil {
+			cursorValue = *job.CursorValue
+		}
+		snapshots = append(snapshots, lagAwareJobSnapshot{
+			Address:        job.Address,
+			CursorValue:    cursorValue,
+			CursorSequence: job.CursorSequence,
+		})
+
+		nextSeq := job.CursorSequence + 5
+		nextCursor := syntheticCursorValue(chain, nextSeq)
+		lastFetched := time.Unix(1700000000+int64(i), 0)
+		cursorRepo.state[job.Address] = &model.AddressCursor{
+			Address:        job.Address,
+			CursorValue:    &nextCursor,
+			CursorSequence: nextSeq,
+			ItemsProcessed: int64(i + 1),
+			LastFetchedAt:  &lastFetched,
+		}
+	}
+
+	return snapshots
 }
 
 func lagAwareMinSequence(active []model.WatchedAddress, cursorRepo *inMemoryCursorRepo) int64 {
