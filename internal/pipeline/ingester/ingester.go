@@ -380,6 +380,22 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 
 	// 5. Commit
 	if err := dbTx.Commit(); err != nil {
+		reconciled, reconcileErr := ing.reconcileAmbiguousCommitOutcome(ctx, batch, err)
+		if reconcileErr != nil {
+			return reconcileErr
+		}
+		if reconciled {
+			committed = true
+			ing.logger.Warn("commit outcome reconciled as committed",
+				"chain", batch.Chain,
+				"network", batch.Network,
+				"address", batch.Address,
+				"cursor_sequence", batch.NewCursorSequence,
+				"cursor_value", batch.NewCursorValue,
+				"commit_error", err,
+			)
+			return nil
+		}
 		return fmt.Errorf("commit: %w", err)
 	}
 	committed = true
@@ -586,6 +602,125 @@ func canonicalizeCursorValue(chainID model.Chain, cursor *string) *string {
 	}
 	value := identity
 	return &value
+}
+
+func (ing *Ingester) reconcileAmbiguousCommitOutcome(
+	ctx context.Context,
+	batch event.NormalizedBatch,
+	commitErr error,
+) (bool, error) {
+	if !isAmbiguousCommitAckError(commitErr) {
+		return false, nil
+	}
+
+	expectedCursor := canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+	if expectedCursor == nil {
+		return false, retry.Terminal(fmt.Errorf(
+			"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=missing_expected_cursor expected_seq=%d commit_err=%w",
+			batch.Chain,
+			batch.Network,
+			batch.Address,
+			batch.NewCursorSequence,
+			commitErr,
+		))
+	}
+
+	cursor, err := ing.cursorRepo.Get(ctx, batch.Chain, batch.Network, batch.Address)
+	if err != nil {
+		return false, retry.Terminal(fmt.Errorf(
+			"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=cursor_probe_failed expected_seq=%d expected_cursor=%s commit_err=%v: %w",
+			batch.Chain,
+			batch.Network,
+			batch.Address,
+			batch.NewCursorSequence,
+			*expectedCursor,
+			commitErr,
+			err,
+		))
+	}
+
+	if cursorMatchesCommitBoundary(batch.Chain, cursor, expectedCursor, batch.NewCursorSequence) {
+		return true, nil
+	}
+
+	observedSeq := int64(-1)
+	observedCursor := "<nil>"
+	if cursor != nil {
+		observedSeq = cursor.CursorSequence
+		if normalized := canonicalizeCursorValue(batch.Chain, cursor.CursorValue); normalized != nil {
+			observedCursor = *normalized
+		}
+	}
+
+	return false, retry.Terminal(fmt.Errorf(
+		"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=cursor_mismatch expected_seq=%d expected_cursor=%s observed_seq=%d observed_cursor=%s commit_err=%w",
+		batch.Chain,
+		batch.Network,
+		batch.Address,
+		batch.NewCursorSequence,
+		*expectedCursor,
+		observedSeq,
+		observedCursor,
+		commitErr,
+	))
+}
+
+func cursorMatchesCommitBoundary(
+	chain model.Chain,
+	cursor *model.AddressCursor,
+	expectedCursor *string,
+	expectedSeq int64,
+) bool {
+	if cursor == nil || expectedCursor == nil {
+		return false
+	}
+	if cursor.CursorSequence < expectedSeq {
+		return false
+	}
+	if cursor.CursorSequence > expectedSeq {
+		return true
+	}
+
+	observedCursor := canonicalizeCursorValue(chain, cursor.CursorValue)
+	if observedCursor == nil {
+		return false
+	}
+	return *observedCursor == *expectedCursor
+}
+
+func isAmbiguousCommitAckError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if retry.Classify(err).IsTransient() {
+		return true
+	}
+
+	lower := strings.ToLower(err.Error())
+	return containsAnySubstring(lower, []string{
+		"driver: bad connection",
+		"connection reset",
+		"broken pipe",
+		"unexpected eof",
+		"eof",
+		"i/o timeout",
+		"timed out",
+		"timeout",
+		"network is unreachable",
+		"connection aborted",
+		"connection closed",
+		"transport is closing",
+	})
+}
+
+func containsAnySubstring(value string, tokens []string) bool {
+	for _, token := range tokens {
+		if strings.Contains(value, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func canonicalSignatureIdentity(chainID model.Chain, hash string) string {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,13 +28,27 @@ type fakeDriver struct{}
 type fakeConn struct{}
 type fakeTxImpl struct{}
 
+var (
+	fakeCommitErrorMu sync.Mutex
+	fakeCommitErrors  []error
+)
+
 func (d *fakeDriver) Open(name string) (driver.Conn, error) { return &fakeConn{}, nil }
 func (c *fakeConn) Prepare(query string) (driver.Stmt, error) {
 	return nil, errors.New("not implemented")
 }
 func (c *fakeConn) Close() error              { return nil }
 func (c *fakeConn) Begin() (driver.Tx, error) { return &fakeTxImpl{}, nil }
-func (tx *fakeTxImpl) Commit() error          { return nil }
+func (tx *fakeTxImpl) Commit() error {
+	fakeCommitErrorMu.Lock()
+	defer fakeCommitErrorMu.Unlock()
+	if len(fakeCommitErrors) == 0 {
+		return nil
+	}
+	err := fakeCommitErrors[0]
+	fakeCommitErrors = fakeCommitErrors[1:]
+	return err
+}
 func (tx *fakeTxImpl) Rollback() error        { return nil }
 
 func init() {
@@ -43,6 +58,18 @@ func init() {
 func openFakeDB() *sql.DB {
 	db, _ := sql.Open("fake_ingester", "")
 	return db
+}
+
+func setFakeCommitErrors(errs ...error) {
+	fakeCommitErrorMu.Lock()
+	defer fakeCommitErrorMu.Unlock()
+	fakeCommitErrors = append([]error(nil), errs...)
+}
+
+func clearFakeCommitErrors() {
+	fakeCommitErrorMu.Lock()
+	defer fakeCommitErrorMu.Unlock()
+	fakeCommitErrors = nil
 }
 
 func newIngesterMocks(t *testing.T) (
@@ -1582,6 +1609,355 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 			require.Len(t, tuples, 2)
 			assert.Equal(t, tuples[0], tuples[1], "canonical tuple changed between fail-first and retry attempts")
 			assert.Equal(t, 2, cursorAttempts)
+		})
+	}
+}
+
+func TestIngester_ProcessBatch_AmbiguousCommitAck_ReconcilesAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		address         string
+		txHash          string
+		blockCursor     int64
+		cursorValue     string
+		contractAddress string
+		programID       string
+		counterparty    string
+		eventID         string
+		commitErr       error
+	}{
+		{
+			name:            "solana-devnet-ack-timeout",
+			chain:           model.ChainSolana,
+			network:         model.NetworkDevnet,
+			address:         "addr-sol-commit-ambiguous",
+			txHash:          "sig-sol-commit-ambiguous-1",
+			blockCursor:     401,
+			cursorValue:     "sig-sol-commit-ambiguous-1",
+			contractAddress: "11111111111111111111111111111111",
+			programID:       "11111111111111111111111111111111",
+			counterparty:    "sol-counterparty",
+			eventID:         "solana|devnet|sig-sol-commit-ambiguous-1|tx:outer:0:inner:-1|addr:addr-sol-commit-ambiguous|asset:11111111111111111111111111111111|cat:TRANSFER",
+			commitErr:       errors.New("commit ack timeout"),
+		},
+		{
+			name:            "solana-devnet-post-write-disconnect",
+			chain:           model.ChainSolana,
+			network:         model.NetworkDevnet,
+			address:         "addr-sol-commit-disconnect",
+			txHash:          "sig-sol-commit-disconnect-1",
+			blockCursor:     402,
+			cursorValue:     "sig-sol-commit-disconnect-1",
+			contractAddress: "11111111111111111111111111111111",
+			programID:       "11111111111111111111111111111111",
+			counterparty:    "sol-counterparty",
+			eventID:         "solana|devnet|sig-sol-commit-disconnect-1|tx:outer:0:inner:-1|addr:addr-sol-commit-disconnect|asset:11111111111111111111111111111111|cat:TRANSFER",
+			commitErr:       errors.New("driver: bad connection"),
+		},
+		{
+			name:            "base-sepolia-ack-timeout",
+			chain:           model.ChainBase,
+			network:         model.NetworkSepolia,
+			address:         "0x1111111111111111111111111111111111111111",
+			txHash:          "0xbase-commit-ambiguous-1",
+			blockCursor:     501,
+			cursorValue:     "0xbase-commit-ambiguous-1",
+			contractAddress: "ETH",
+			programID:       "0xbase-program",
+			counterparty:    "0x2222222222222222222222222222222222222222",
+			eventID:         "base|sepolia|0xbase-commit-ambiguous-1|tx:log:7|addr:0x1111111111111111111111111111111111111111|asset:ETH|cat:TRANSFER",
+			commitErr:       errors.New("i/o timeout while waiting for commit ack"),
+		},
+		{
+			name:            "base-sepolia-post-write-disconnect",
+			chain:           model.ChainBase,
+			network:         model.NetworkSepolia,
+			address:         "0x3333333333333333333333333333333333333333",
+			txHash:          "0xbase-commit-disconnect-1",
+			blockCursor:     502,
+			cursorValue:     "0xbase-commit-disconnect-1",
+			contractAddress: "ETH",
+			programID:       "0xbase-program",
+			counterparty:    "0x4444444444444444444444444444444444444444",
+			eventID:         "base|sepolia|0xbase-commit-disconnect-1|tx:log:8|addr:0x3333333333333333333333333333333333333333|asset:ETH|cat:TRANSFER",
+			commitErr:       errors.New("connection reset by peer after commit"),
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			clearFakeCommitErrors()
+			t.Cleanup(clearFakeCommitErrors)
+			setFakeCommitErrors(tc.commitErr)
+
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			_ = ctrl
+
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+
+			txID := uuid.New()
+			tokenID := uuid.New()
+			batch := event.NormalizedBatch{
+				Chain:   tc.chain,
+				Network: tc.network,
+				Address: tc.address,
+				Transactions: []event.NormalizedTransaction{
+					{
+						TxHash:      tc.txHash,
+						BlockCursor: tc.blockCursor,
+						FeeAmount:   "0",
+						FeePayer:    tc.address,
+						Status:      model.TxStatusSuccess,
+						ChainData:   json.RawMessage("{}"),
+						BalanceEvents: []event.NormalizedBalanceEvent{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         model.EventCategoryTransfer,
+								EventAction:           "transfer",
+								ProgramID:             tc.programID,
+								ContractAddress:       tc.contractAddress,
+								Address:               tc.address,
+								CounterpartyAddress:   tc.counterparty,
+								Delta:                 "-1",
+								EventID:               tc.eventID,
+								TokenType:             model.TokenTypeNative,
+							},
+						},
+					},
+				},
+				NewCursorValue:    &tc.cursorValue,
+				NewCursorSequence: tc.blockCursor,
+			}
+
+			setupBeginTx(mockDB)
+
+			mockTxRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(txID, nil).
+				Times(1)
+
+			mockTokenRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(tokenID, nil).
+				Times(1)
+
+			mockBERepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(true, nil).
+				Times(1)
+
+			mockBalanceRepo.EXPECT().
+				AdjustBalanceTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					tokenID, nil, nil,
+					"-1", tc.blockCursor, tc.txHash,
+				).
+				Return(nil).
+				Times(1)
+
+			mockCursorRepo.EXPECT().
+				UpsertTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					&tc.cursorValue, tc.blockCursor, int64(1),
+				).
+				Return(nil).
+				Times(1)
+
+			mockConfigRepo.EXPECT().
+				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
+				Return(nil).
+				Times(1)
+
+			mockCursorRepo.EXPECT().
+				Get(gomock.Any(), tc.chain, tc.network, tc.address).
+				Return(&model.AddressCursor{
+					Chain:          tc.chain,
+					Network:        tc.network,
+					Address:        tc.address,
+					CursorValue:    &tc.cursorValue,
+					CursorSequence: tc.blockCursor,
+				}, nil).
+				Times(1)
+
+			require.NoError(t, ing.processBatch(context.Background(), batch))
+		})
+	}
+}
+
+func TestIngester_ProcessBatch_AmbiguousCommitRetryAfterUnknown_DeduplicatesAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		address         string
+		txHash          string
+		blockCursor     int64
+		cursorValue     string
+		contractAddress string
+		programID       string
+		counterparty    string
+		eventID         string
+		commitErr       error
+	}{
+		{
+			name:            "solana-devnet-retry-after-unknown",
+			chain:           model.ChainSolana,
+			network:         model.NetworkDevnet,
+			address:         "addr-sol-unknown-retry",
+			txHash:          "sig-sol-unknown-retry-1",
+			blockCursor:     601,
+			cursorValue:     "sig-sol-unknown-retry-1",
+			contractAddress: "11111111111111111111111111111111",
+			programID:       "11111111111111111111111111111111",
+			counterparty:    "sol-counterparty",
+			eventID:         "solana|devnet|sig-sol-unknown-retry-1|tx:outer:0:inner:-1|addr:addr-sol-unknown-retry|asset:11111111111111111111111111111111|cat:TRANSFER",
+			commitErr:       errors.New("commit ack timeout"),
+		},
+		{
+			name:            "base-sepolia-retry-after-unknown",
+			chain:           model.ChainBase,
+			network:         model.NetworkSepolia,
+			address:         "0x5555555555555555555555555555555555555555",
+			txHash:          "0xbase-unknown-retry-1",
+			blockCursor:     701,
+			cursorValue:     "0xbase-unknown-retry-1",
+			contractAddress: "ETH",
+			programID:       "0xbase-program",
+			counterparty:    "0x6666666666666666666666666666666666666666",
+			eventID:         "base|sepolia|0xbase-unknown-retry-1|tx:log:9|addr:0x5555555555555555555555555555555555555555|asset:ETH|cat:TRANSFER",
+			commitErr:       errors.New("driver: bad connection"),
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			clearFakeCommitErrors()
+			t.Cleanup(clearFakeCommitErrors)
+			setFakeCommitErrors(tc.commitErr)
+
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			_ = ctrl
+
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+			ing.retryMaxAttempts = 3
+			ing.retryDelayStart = 0
+			ing.retryDelayMax = 0
+			ing.sleepFn = func(context.Context, time.Duration) error { return nil }
+
+			txID := uuid.New()
+			tokenID := uuid.New()
+			batch := event.NormalizedBatch{
+				Chain:   tc.chain,
+				Network: tc.network,
+				Address: tc.address,
+				Transactions: []event.NormalizedTransaction{
+					{
+						TxHash:      tc.txHash,
+						BlockCursor: tc.blockCursor,
+						FeeAmount:   "0",
+						FeePayer:    tc.address,
+						Status:      model.TxStatusSuccess,
+						ChainData:   json.RawMessage("{}"),
+						BalanceEvents: []event.NormalizedBalanceEvent{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         model.EventCategoryTransfer,
+								EventAction:           "transfer",
+								ProgramID:             tc.programID,
+								ContractAddress:       tc.contractAddress,
+								Address:               tc.address,
+								CounterpartyAddress:   tc.counterparty,
+								Delta:                 "-1",
+								EventID:               tc.eventID,
+								TokenType:             model.TokenTypeNative,
+							},
+						},
+					},
+				},
+				NewCursorValue:    &tc.cursorValue,
+				NewCursorSequence: tc.blockCursor,
+			}
+
+			setupBeginTx(mockDB)
+			setupBeginTx(mockDB)
+
+			mockTxRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(txID, nil).
+				Times(2)
+
+			mockTokenRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(tokenID, nil).
+				Times(2)
+
+			totalUpserts := 0
+			insertedCount := 0
+			mockBERepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(context.Context, *sql.Tx, *model.BalanceEvent) (bool, error) {
+					totalUpserts++
+					if totalUpserts == 1 {
+						insertedCount++
+						return true, nil
+					}
+					return false, nil
+				}).
+				Times(2)
+
+			mockBalanceRepo.EXPECT().
+				AdjustBalanceTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					tokenID, nil, nil,
+					"-1", tc.blockCursor, tc.txHash,
+				).
+				Return(nil).
+				Times(1)
+
+			cursorWrites := make([]int64, 0, 2)
+			mockCursorRepo.EXPECT().
+				UpsertTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					&tc.cursorValue, tc.blockCursor, int64(1),
+				).
+				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
+					cursorWrites = append(cursorWrites, tc.blockCursor)
+					return nil
+				}).
+				Times(2)
+
+			mockConfigRepo.EXPECT().
+				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
+				Return(nil).
+				Times(2)
+
+			mockCursorRepo.EXPECT().
+				Get(gomock.Any(), tc.chain, tc.network, tc.address).
+				Return(nil, errors.New("cursor probe unavailable")).
+				Times(1)
+
+			err := ing.processBatchWithRetry(context.Background(), batch)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "terminal_failure stage=ingester.process_batch")
+			assert.Contains(t, err.Error(), "commit_ambiguity_unresolved")
+
+			// Replay/resume after unknown outcome must remain idempotent.
+			require.NoError(t, ing.processBatch(context.Background(), batch))
+
+			assert.Equal(t, 2, totalUpserts)
+			assert.Equal(t, 1, insertedCount, "retry-after-unknown replay must not duplicate canonical IDs")
+			require.Len(t, cursorWrites, 2)
+			assert.GreaterOrEqual(t, cursorWrites[1], cursorWrites[0], "cursor progression must stay monotonic on replay")
 		})
 	}
 }
