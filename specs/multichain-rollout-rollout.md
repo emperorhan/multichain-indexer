@@ -79,9 +79,11 @@
 76. `I-0250` (`M40-S2`): QA counterexample gate for auto-tune isolation/fail-fast safety + topology parity.
 77. `I-0254` (`M41-S1`): auto-tune restart/profile-transition determinism hardening across cold-start, warm-start, and live profile-switch permutations.
 78. `I-0255` (`M41-S2`): QA counterexample gate for auto-tune restart/profile-transition determinism + invariant safety.
+79. `I-0259` (`M42-S1`): auto-tune signal-flap hysteresis determinism hardening across steady-state, threshold-jitter, and recovery-to-steady-state permutations.
+80. `I-0260` (`M42-S2`): QA counterexample gate for auto-tune signal-flap hysteresis determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225 -> I-0226 -> I-0227 -> I-0228 -> I-0229 -> I-0232 -> I-0233 -> I-0237 -> I-0238 -> I-0242 -> I-0243 -> I-0247 -> I-0248 -> I-0249 -> I-0250 -> I-0254 -> I-0255`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225 -> I-0226 -> I-0227 -> I-0228 -> I-0229 -> I-0232 -> I-0233 -> I-0237 -> I-0238 -> I-0242 -> I-0243 -> I-0247 -> I-0248 -> I-0249 -> I-0250 -> I-0254 -> I-0255 -> I-0259 -> I-0260`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -167,6 +169,8 @@ Each slice must be independently releasable:
 74. Before `I-0250`: `I-0249` emits deterministic auto-tune isolation evidence showing `0` cross-chain control-coupling violations and no fail-fast/cursor-safety regression.
 75. Before `I-0254`: `I-0250` QA report is `PASS` and no unresolved auto-tune isolation/fail-fast blocker remains.
 76. Before `I-0255`: `I-0254` emits deterministic restart/profile-transition evidence showing `0` canonical tuple diffs and `0` duplicate/missing logical events across cold-start, warm-start, and profile-switch permutations.
+77. Before `I-0259`: `I-0255` QA report is `PASS` and no unresolved restart/profile-transition determinism blocker remains.
+78. Before `I-0260`: `I-0259` emits deterministic signal-flap hysteresis evidence showing `0` canonical tuple diffs and `0` duplicate/missing logical events across steady-state, threshold-jitter, and recovery permutations.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -205,6 +209,7 @@ Each slice must be independently releasable:
 34. If tri-chain volatility-event completeness reconciliation cannot deterministically preserve logical event equivalence between partial and enriched decode coverage states, preserve deterministic conservative enrichment-lineage matching with explicit lineage-collision diagnostics and replay from last-safe cursor until completeness contracts are extended.
 35. If chain-scoped auto-tune control cannot deterministically maintain chain-local isolation under asymmetric lag/latency pressure, clamp to deterministic conservative fixed profile, emit explicit control-coupling diagnostics, and replay from last-safe cursor until control contracts are extended.
 36. If auto-tune restart/profile-transition handling cannot deterministically preserve canonical output equivalence across cold-start, warm-start, and profile-switch permutations, force deterministic baseline-reset policy with explicit restart-profile diagnostics and replay from last-safe cursor until restart-state contracts are extended.
+37. If auto-tune signal-flap hysteresis handling cannot deterministically preserve canonical output equivalence across jitter-heavy threshold crossings and cooldown windows, force deterministic debounced conservative profile with explicit control-flap diagnostics and replay from last-safe cursor until hysteresis contracts are extended.
 
 ## Completion Evidence
 1. Developer slice output:

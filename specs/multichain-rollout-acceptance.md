@@ -784,6 +784,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of restart/profile-transition determinism, replay safety, and fail-fast safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0259 (M42-S1)
+Assertions:
+1. Equivalent tri-chain logical ranges processed under steady-state, threshold-jitter, and recovery-to-steady-state permutations converge to one deterministic canonical output set per chain.
+2. Signal-flap hysteresis/cooldown boundaries preserve deterministic canonical identity (`0` duplicate canonical IDs and `0` missing logical events).
+3. One-chain oscillation-heavy lag pressure does not induce cross-chain control bleed, cursor bleed, or fail-fast safety regression.
+4. Replay/resume from hysteresis/cooldown boundaries remains idempotent with cursor monotonicity and signed-delta/fee-event invariant continuity.
+
+Pass Evidence:
+- Deterministic tests inject steady-state, threshold-jitter, and recovery permutations and show canonical tuple equivalence on all mandatory chains.
+- Oscillation-under-pressure counterexamples show `0` cross-chain control-coupling violations and `0` duplicate/missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0260 (M42-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M42 invariants.
+2. QA executes at least one counterexample with steady-state vs threshold-jitter vs recovery permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample with one-chain oscillation-heavy lag pressure and verifies no cross-chain control bleed, no duplicate/missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of signal-flap hysteresis determinism, replay safety, and fail-fast safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -820,3 +844,6 @@ Release recommendation must be `fail` if any condition holds:
 32. Auto-tune restart/profile-transition determinism cannot be proven (cold-start/warm-start/profile-switch permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
 33. One-chain restart-under-pressure isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under restart permutations).
 34. Restart/profile-transition replay safety cannot be proven (replay idempotency, cursor monotonicity, and signed-delta/fee-event continuity not evidenced for all mandatory chains).
+35. Auto-tune signal-flap hysteresis determinism cannot be proven (steady-state/threshold-jitter/recovery permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
+36. One-chain oscillation-under-pressure isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under signal-flap permutations).
+37. Signal-flap hysteresis/cooldown replay safety cannot be proven (replay idempotency, cursor monotonicity, and signed-delta/fee-event continuity not evidenced for all mandatory chains).
