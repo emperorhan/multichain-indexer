@@ -1164,6 +1164,7 @@ type rollbackFenceOwnershipOrdering struct {
 	steadyGeneration     int64
 	generationFloor      int64
 	floorLiftEpoch       int64
+	settleWindowEpoch    int64
 }
 
 func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
@@ -1186,6 +1187,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	steadyGeneration, hasSteadyGeneration := parseRollbackFenceSteadyGeneration(normalized)
 	generationFloor, hasGenerationFloor := parseRollbackFenceGenerationRetentionFloor(normalized)
 	floorLiftEpoch, hasFloorLiftEpoch := parseRollbackFenceFloorLiftEpoch(normalized)
+	settleWindowEpoch, hasSettleWindowEpoch := parseRollbackFenceSettleWindowEpoch(normalized)
 	if hasBridgeSequence != hasExplicitWatermark {
 		// Quarantine ambiguous late-bridge markers until both sequence and
 		// release watermark are present for deterministic ordering.
@@ -1227,6 +1229,11 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		// generation-retention-floor ownership is present.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if hasSettleWindowEpoch && !hasFloorLiftEpoch {
+		// Quarantine settle-window markers until explicit retention-floor-lift
+		// ownership is present.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	if !hasBridgeSequence {
 		bridgeSequence = 0
 		releaseWatermark = releaseEpoch
@@ -1261,6 +1268,9 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if !hasFloorLiftEpoch {
 		floorLiftEpoch = 0
 	}
+	if !hasSettleWindowEpoch {
+		settleWindowEpoch = 0
+	}
 	if generationFloor > steadyGeneration {
 		// Quarantine unresolved retired-generation markers whose ownership
 		// points below the active retention floor.
@@ -1275,6 +1285,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		steadyGeneration:     steadyGeneration,
 		generationFloor:      generationFloor,
 		floorLiftEpoch:       floorLiftEpoch,
+		settleWindowEpoch:    settleWindowEpoch,
 	}, true
 }
 
@@ -1329,9 +1340,45 @@ func compareRollbackFenceOwnershipOrdering(
 		return -1
 	case left.floorLiftEpoch > right.floorLiftEpoch:
 		return 1
+	}
+	switch {
+	case left.settleWindowEpoch < right.settleWindowEpoch:
+		return -1
+	case left.settleWindowEpoch > right.settleWindowEpoch:
+		return 1
 	default:
 		return 0
 	}
+}
+
+func parseRollbackFenceSettleWindowEpoch(digest string) (int64, bool) {
+	const (
+		settleWindowEpochKey     = "rollback-fence-settle-window-epoch="
+		floorLiftSettleWindowKey = "rollback-fence-floor-lift-settle-window-epoch="
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, settleWindowEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, settleWindowEpochKey))
+		case strings.HasPrefix(token, floorLiftSettleWindowKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, floorLiftSettleWindowKey))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		settleWindowEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || settleWindowEpoch < 0 {
+			return 0, false
+		}
+		return settleWindowEpoch, true
+	}
+
+	return 0, false
 }
 
 func isRollbackFenceTombstoneExpiryDigest(epoch int64, digest string) bool {
@@ -1674,7 +1721,7 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	// Ownership progression is strictly monotonic under explicit
 	// (epoch, bridge_sequence, drain_watermark, live_head,
 	// steady_state_watermark, steady_generation, generation_retention_floor,
-	// floor_lift_epoch) ordering.
+	// floor_lift_epoch, settle_window_epoch) ordering.
 	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }
 
