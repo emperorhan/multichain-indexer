@@ -91,6 +91,8 @@ type PipelineConfig struct {
 	CoordinatorAutoTuneHysteresisTicks        int
 	CoordinatorAutoTuneTelemetryStaleTicks    int
 	CoordinatorAutoTuneTelemetryRecoveryTicks int
+	CoordinatorAutoTuneOperatorOverrideBatch  int
+	CoordinatorAutoTuneOperatorReleaseTicks   int
 }
 
 type ServerConfig struct {
@@ -152,6 +154,8 @@ func Load() (*Config, error) {
 			CoordinatorAutoTuneHysteresisTicks:        getEnvInt("COORDINATOR_AUTOTUNE_HYSTERESIS_TICKS", 2),
 			CoordinatorAutoTuneTelemetryStaleTicks:    getEnvInt("COORDINATOR_AUTOTUNE_TELEMETRY_STALE_TICKS", 2),
 			CoordinatorAutoTuneTelemetryRecoveryTicks: getEnvInt("COORDINATOR_AUTOTUNE_TELEMETRY_RECOVERY_TICKS", 1),
+			CoordinatorAutoTuneOperatorOverrideBatch:  getEnvInt("COORDINATOR_AUTOTUNE_OPERATOR_OVERRIDE_BATCH_SIZE", 0),
+			CoordinatorAutoTuneOperatorReleaseTicks:   getEnvInt("COORDINATOR_AUTOTUNE_OPERATOR_RELEASE_HOLD_TICKS", 2),
 		},
 		Server: ServerConfig{
 			HealthPort: getEnvInt("HEALTH_PORT", 8080),

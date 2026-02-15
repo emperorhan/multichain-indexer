@@ -19,6 +19,9 @@ type AutoTuneConfig struct {
 
 	TelemetryStaleTicks    int
 	TelemetryRecoveryTicks int
+
+	OperatorOverrideBatchSize int
+	OperatorReleaseHoldTicks  int
 }
 
 type autoTuneInputs struct {
@@ -35,6 +38,7 @@ type autoTuneDiagnostics struct {
 	QueueDepth             int
 	QueueCapacity          int
 	TelemetryState         string
+	OverrideState          string
 	Signal                 string
 	Decision               string
 	BatchBefore            int
@@ -43,6 +47,7 @@ type autoTuneDiagnostics struct {
 	Cooldown               int
 	TelemetryStaleTicks    int
 	TelemetryRecoveryTicks int
+	OverrideReleaseTicks   int
 }
 
 type autoTuneSignal string
@@ -61,6 +66,19 @@ const (
 	autoTuneTelemetryRecoveryHold  autoTuneTelemetryState = "recovery_hold"
 )
 
+type autoTuneOverrideState string
+
+const (
+	autoTuneOverrideAuto        autoTuneOverrideState = "auto"
+	autoTuneOverrideManualHold  autoTuneOverrideState = "manual_hold"
+	autoTuneOverrideReleaseHold autoTuneOverrideState = "release_hold"
+)
+
+type autoTuneOverrideTransition struct {
+	WasManualOverride    bool
+	ReleaseHoldRemaining int
+}
+
 type autoTuneController struct {
 	minBatchSize int
 	maxBatchSize int
@@ -78,6 +96,9 @@ type autoTuneController struct {
 	cooldownLeft           int
 	telemetryStaleTicks    int
 	telemetryRecoveryTicks int
+	operatorOverrideBatch  int
+	operatorReleaseHold    int
+	overrideReleaseLeft    int
 	telemetryFallback      bool
 	telemetryArmed         bool
 	telemetryStaleObserved int
@@ -173,6 +194,14 @@ func newAutoTuneControllerWithSeedMode(
 	if telemetryRecoveryTicks <= 0 {
 		telemetryRecoveryTicks = 1
 	}
+	operatorReleaseHold := cfg.OperatorReleaseHoldTicks
+	if operatorReleaseHold < 0 {
+		operatorReleaseHold = 0
+	}
+	operatorOverrideBatch := 0
+	if cfg.OperatorOverrideBatchSize > 0 {
+		operatorOverrideBatch = clampInt(cfg.OperatorOverrideBatchSize, minBatch, maxBatch)
+	}
 
 	baseStartBatch := clampInt(baseBatchSize, minBatch, maxBatch)
 	if baseStartBatch <= 0 {
@@ -199,6 +228,9 @@ func newAutoTuneControllerWithSeedMode(
 	if startBatch <= 0 {
 		startBatch = minBatch
 	}
+	if operatorOverrideBatch > 0 {
+		startBatch = operatorOverrideBatch
+	}
 
 	return &autoTuneController{
 		minBatchSize:           minBatch,
@@ -213,6 +245,8 @@ func newAutoTuneControllerWithSeedMode(
 		cooldownTicks:          cooldownTicks,
 		telemetryStaleTicks:    telemetryStaleTicks,
 		telemetryRecoveryTicks: telemetryRecoveryTicks,
+		operatorOverrideBatch:  operatorOverrideBatch,
+		operatorReleaseHold:    operatorReleaseHold,
 		currentBatch:           startBatch,
 		lastSignal:             autoTuneSignalHold,
 		lastApplied:            autoTuneSignalHold,
@@ -230,12 +264,57 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		}
 	}
 
+	overrideState := a.resolveOverrideState()
+	before := a.currentBatch
+	if overrideState == autoTuneOverrideManualHold {
+		a.currentBatch = clampInt(a.operatorOverrideBatch, a.minBatchSize, a.maxBatchSize)
+		a.resetAdaptiveControlState()
+		return a.currentBatch, autoTuneDiagnostics{
+			LagSequence:            lagSequence,
+			QueueDepth:             inputs.QueueDepth,
+			QueueCapacity:          inputs.QueueCapacity,
+			TelemetryState:         string(telemetryState),
+			OverrideState:          string(overrideState),
+			Signal:                 string(autoTuneSignalHold),
+			Decision:               "hold_operator_override",
+			BatchBefore:            before,
+			BatchAfter:             a.currentBatch,
+			Streak:                 a.streak,
+			Cooldown:               a.cooldownLeft,
+			TelemetryStaleTicks:    a.telemetryStaleObserved,
+			TelemetryRecoveryTicks: a.telemetryRecoverySeen,
+			OverrideReleaseTicks:   a.overrideReleaseLeft,
+		}
+	}
+	if overrideState == autoTuneOverrideReleaseHold {
+		remainingBefore := a.overrideReleaseLeft
+		a.resetAdaptiveControlState()
+		if a.overrideReleaseLeft > 0 {
+			a.overrideReleaseLeft--
+		}
+		return a.currentBatch, autoTuneDiagnostics{
+			LagSequence:            lagSequence,
+			QueueDepth:             inputs.QueueDepth,
+			QueueCapacity:          inputs.QueueCapacity,
+			TelemetryState:         string(telemetryState),
+			OverrideState:          string(overrideState),
+			Signal:                 string(autoTuneSignalHold),
+			Decision:               "hold_operator_release",
+			BatchBefore:            before,
+			BatchAfter:             a.currentBatch,
+			Streak:                 a.streak,
+			Cooldown:               a.cooldownLeft,
+			TelemetryStaleTicks:    a.telemetryStaleObserved,
+			TelemetryRecoveryTicks: a.telemetryRecoverySeen,
+			OverrideReleaseTicks:   remainingBefore,
+		}
+	}
+
 	signal := autoTuneSignalHold
 	if telemetryState == autoTuneTelemetryHealthy {
 		signal = a.classifySignal(inputs, lagSequence)
 	}
 	decision := "hold"
-	before := a.currentBatch
 	appliedControl := false
 	blockedByCooldown := a.cooldownLeft > 0 && isOppositeSignal(signal, a.lastApplied)
 	if signal != a.saturationSignal || !a.isSaturatedBoundary(signal) {
@@ -327,6 +406,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		QueueDepth:             inputs.QueueDepth,
 		QueueCapacity:          inputs.QueueCapacity,
 		TelemetryState:         string(telemetryState),
+		OverrideState:          string(overrideState),
 		Signal:                 string(signal),
 		Decision:               decision,
 		BatchBefore:            before,
@@ -335,7 +415,51 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		Cooldown:               a.cooldownLeft,
 		TelemetryStaleTicks:    a.telemetryStaleObserved,
 		TelemetryRecoveryTicks: a.telemetryRecoverySeen,
+		OverrideReleaseTicks:   a.overrideReleaseLeft,
 	}
+}
+
+func (a *autoTuneController) exportOverrideTransition() autoTuneOverrideTransition {
+	return autoTuneOverrideTransition{
+		WasManualOverride:    a.operatorOverrideBatch > 0,
+		ReleaseHoldRemaining: a.overrideReleaseLeft,
+	}
+}
+
+func (a *autoTuneController) reconcileOverrideTransition(transition autoTuneOverrideTransition) {
+	if a.operatorOverrideBatch > 0 {
+		a.currentBatch = clampInt(a.operatorOverrideBatch, a.minBatchSize, a.maxBatchSize)
+		a.overrideReleaseLeft = 0
+		a.resetAdaptiveControlState()
+		return
+	}
+	if transition.ReleaseHoldRemaining > 0 {
+		a.overrideReleaseLeft = transition.ReleaseHoldRemaining
+		a.resetAdaptiveControlState()
+		return
+	}
+	if transition.WasManualOverride && a.operatorReleaseHold > 0 {
+		a.overrideReleaseLeft = a.operatorReleaseHold
+		a.resetAdaptiveControlState()
+	}
+}
+
+func (a *autoTuneController) resolveOverrideState() autoTuneOverrideState {
+	if a.operatorOverrideBatch > 0 {
+		return autoTuneOverrideManualHold
+	}
+	if a.overrideReleaseLeft > 0 {
+		return autoTuneOverrideReleaseHold
+	}
+	return autoTuneOverrideAuto
+}
+
+func (a *autoTuneController) resetAdaptiveControlState() {
+	a.lastSignal = autoTuneSignalHold
+	a.lastApplied = autoTuneSignalHold
+	a.saturationSignal = autoTuneSignalHold
+	a.streak = 0
+	a.cooldownLeft = 0
 }
 
 func (a *autoTuneController) resolveTelemetryState(inputs autoTuneInputs) autoTuneTelemetryState {

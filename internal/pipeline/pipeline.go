@@ -44,9 +44,11 @@ type CoordinatorAutoTuneConfig struct {
 	QueueHighWatermarkPct int
 	QueueLowWatermarkPct  int
 
-	HysteresisTicks        int
-	TelemetryStaleTicks    int
-	TelemetryRecoveryTicks int
+	HysteresisTicks          int
+	TelemetryStaleTicks      int
+	TelemetryRecoveryTicks   int
+	OperatorOverrideBatch    int
+	OperatorReleaseHoldTicks int
 }
 
 type Pipeline struct {
@@ -98,18 +100,20 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		p.cfg.BatchSize, p.cfg.IndexingInterval,
 		jobCh, p.logger,
 	).WithHeadProvider(p.adapter).WithAutoTune(coordinator.AutoTuneConfig{
-		Enabled:                p.cfg.CoordinatorAutoTune.Enabled,
-		MinBatchSize:           p.cfg.CoordinatorAutoTune.MinBatchSize,
-		MaxBatchSize:           p.cfg.CoordinatorAutoTune.MaxBatchSize,
-		StepUp:                 p.cfg.CoordinatorAutoTune.StepUp,
-		StepDown:               p.cfg.CoordinatorAutoTune.StepDown,
-		LagHighWatermark:       p.cfg.CoordinatorAutoTune.LagHighWatermark,
-		LagLowWatermark:        p.cfg.CoordinatorAutoTune.LagLowWatermark,
-		QueueHighWatermarkPct:  p.cfg.CoordinatorAutoTune.QueueHighWatermarkPct,
-		QueueLowWatermarkPct:   p.cfg.CoordinatorAutoTune.QueueLowWatermarkPct,
-		HysteresisTicks:        p.cfg.CoordinatorAutoTune.HysteresisTicks,
-		TelemetryStaleTicks:    p.cfg.CoordinatorAutoTune.TelemetryStaleTicks,
-		TelemetryRecoveryTicks: p.cfg.CoordinatorAutoTune.TelemetryRecoveryTicks,
+		Enabled:                   p.cfg.CoordinatorAutoTune.Enabled,
+		MinBatchSize:              p.cfg.CoordinatorAutoTune.MinBatchSize,
+		MaxBatchSize:              p.cfg.CoordinatorAutoTune.MaxBatchSize,
+		StepUp:                    p.cfg.CoordinatorAutoTune.StepUp,
+		StepDown:                  p.cfg.CoordinatorAutoTune.StepDown,
+		LagHighWatermark:          p.cfg.CoordinatorAutoTune.LagHighWatermark,
+		LagLowWatermark:           p.cfg.CoordinatorAutoTune.LagLowWatermark,
+		QueueHighWatermarkPct:     p.cfg.CoordinatorAutoTune.QueueHighWatermarkPct,
+		QueueLowWatermarkPct:      p.cfg.CoordinatorAutoTune.QueueLowWatermarkPct,
+		HysteresisTicks:           p.cfg.CoordinatorAutoTune.HysteresisTicks,
+		TelemetryStaleTicks:       p.cfg.CoordinatorAutoTune.TelemetryStaleTicks,
+		TelemetryRecoveryTicks:    p.cfg.CoordinatorAutoTune.TelemetryRecoveryTicks,
+		OperatorOverrideBatchSize: p.cfg.CoordinatorAutoTune.OperatorOverrideBatch,
+		OperatorReleaseHoldTicks:  p.cfg.CoordinatorAutoTune.OperatorReleaseHoldTicks,
 	})
 
 	fetch := fetcher.New(

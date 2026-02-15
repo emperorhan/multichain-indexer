@@ -32,9 +32,11 @@ type headSequenceProvider interface {
 }
 
 type AutoTuneRestartState struct {
-	Chain     model.Chain
-	Network   model.Network
-	BatchSize int
+	Chain                    model.Chain
+	Network                  model.Network
+	BatchSize                int
+	OverrideManualActive     bool
+	OverrideReleaseRemaining int
 }
 
 func New(
@@ -76,10 +78,13 @@ func (c *Coordinator) ExportAutoTuneRestartState() *AutoTuneRestartState {
 	if c.autoTune == nil {
 		return nil
 	}
+	override := c.autoTune.exportOverrideTransition()
 	return &AutoTuneRestartState{
-		Chain:     c.chain,
-		Network:   c.network,
-		BatchSize: c.autoTune.currentBatch,
+		Chain:                    c.chain,
+		Network:                  c.network,
+		BatchSize:                c.autoTune.currentBatch,
+		OverrideManualActive:     override.WasManualOverride,
+		OverrideReleaseRemaining: override.ReleaseHoldRemaining,
 	}
 }
 
@@ -87,6 +92,8 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 	transitionMode := "cold_start"
 	var seedBatch *int
 	seedReason := "none"
+	previousAutoTune := c.autoTune
+	overrideTransition := autoTuneOverrideTransition{}
 
 	if warmState != nil {
 		switch {
@@ -115,20 +122,32 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 			seedBatch = &seed
 			transitionMode = "warm_start"
 			seedReason = "warm_state_adopted"
+			overrideTransition = autoTuneOverrideTransition{
+				WasManualOverride:    warmState.OverrideManualActive,
+				ReleaseHoldRemaining: maxInt(warmState.OverrideReleaseRemaining, 0),
+			}
 		}
-	} else if c.autoTune != nil {
-		seed := c.autoTune.currentBatch
+	} else if previousAutoTune != nil {
+		seed := previousAutoTune.currentBatch
 		seedBatch = &seed
 		transitionMode = "profile_transition"
 		seedReason = "profile_transition_seed"
+		overrideTransition = previousAutoTune.exportOverrideTransition()
 	}
 
-	if transitionMode == "warm_start" {
+	useBoundedWarmStart := transitionMode == "warm_start" &&
+		!overrideTransition.WasManualOverride &&
+		overrideTransition.ReleaseHoldRemaining == 0
+	if transitionMode == "warm_start" && !useBoundedWarmStart {
+		seedReason = "warm_state_override_boundary_seed"
+	}
+	if useBoundedWarmStart {
 		c.autoTune = newAutoTuneControllerWithRestartSeed(c.batchSize, cfg, seedBatch)
 	} else {
 		c.autoTune = newAutoTuneControllerWithSeed(c.batchSize, cfg, seedBatch)
 	}
 	if c.autoTune != nil {
+		c.autoTune.reconcileOverrideTransition(overrideTransition)
 		c.logger.Info("coordinator auto-tune enabled",
 			"chain", c.chain,
 			"network", c.network,
@@ -144,6 +163,9 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 			"cooldown_ticks", c.autoTune.cooldownTicks,
 			"telemetry_stale_ticks", c.autoTune.telemetryStaleTicks,
 			"telemetry_recovery_ticks", c.autoTune.telemetryRecoveryTicks,
+			"operator_override_batch", c.autoTune.operatorOverrideBatch,
+			"operator_release_hold_ticks", c.autoTune.operatorReleaseHold,
+			"operator_release_remaining", c.autoTune.overrideReleaseLeft,
 			"profile_transition", transitionMode == "profile_transition",
 			"transition_mode", transitionMode,
 			"seed_reason", seedReason,
@@ -265,6 +287,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			"queue_depth", diagnostics.QueueDepth,
 			"queue_capacity", diagnostics.QueueCapacity,
 			"telemetry_state", diagnostics.TelemetryState,
+			"override_state", diagnostics.OverrideState,
 			"signal", diagnostics.Signal,
 			"decision", diagnostics.Decision,
 			"batch_before", diagnostics.BatchBefore,
@@ -273,6 +296,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			"cooldown", diagnostics.Cooldown,
 			"telemetry_stale_ticks", diagnostics.TelemetryStaleTicks,
 			"telemetry_recovery_ticks", diagnostics.TelemetryRecoveryTicks,
+			"override_release_ticks", diagnostics.OverrideReleaseTicks,
 		)
 	}
 

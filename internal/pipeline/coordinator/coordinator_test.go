@@ -2036,6 +2036,321 @@ func TestTick_AutoTuneTelemetryFallbackReplayResumeConvergesAcrossMandatoryChain
 	}
 }
 
+func TestTick_AutoTuneOperatorOverridePermutationsConvergeCanonicalTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qoverrideperm00000000000000000000000000",
+		},
+	}
+
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:                  true,
+		MinBatchSize:             60,
+		MaxBatchSize:             200,
+		StepUp:                   20,
+		StepDown:                 10,
+		LagHighWatermark:         80,
+		LagLowWatermark:          20,
+		QueueHighWatermarkPct:    90,
+		QueueLowWatermarkPct:     10,
+		HysteresisTicks:          1,
+		CooldownTicks:            1,
+		OperatorReleaseHoldTicks: 2,
+	}
+	manualOverrideCfg := autoTuneCfg
+	manualOverrideCfg.OperatorOverrideBatchSize = 70
+	releaseCfg := autoTuneCfg
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			autoHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, autoTuneCfg)
+			autoSnapshots, autoBatches := collectAutoTuneTrace(t, autoHarness, len(heads))
+
+			overrideHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, autoTuneCfg)
+			overrideSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			overrideBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					overrideHarness.coordinator.WithAutoTune(manualOverrideCfg)
+				}
+				if i == 5 {
+					overrideHarness.coordinator.WithAutoTune(releaseCfg)
+				}
+				job := overrideHarness.tickAndAdvance(t)
+				overrideSnapshots = append(overrideSnapshots, snapshotFromFetchJob(job))
+				overrideBatches = append(overrideBatches, job.BatchSize)
+			}
+
+			assert.Equal(t, autoSnapshots, overrideSnapshots, "auto and operator-override permutations must converge to one canonical tuple output set")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, autoSnapshots, overrideSnapshots, "auto vs operator-override permutations")
+			assert.NotEqual(t, autoBatches, overrideBatches, "operator override should deterministically alter control decisions without changing canonical tuples")
+			assert.Contains(t, overrideBatches, 70, "manual override profile should pin deterministic batch during override hold")
+			assertCursorMonotonicByAddress(t, autoSnapshots)
+			assertCursorMonotonicByAddress(t, overrideSnapshots)
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainOperatorOverrideDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:                  true,
+		MinBatchSize:             60,
+		MaxBatchSize:             200,
+		StepUp:                   20,
+		StepDown:                 10,
+		LagHighWatermark:         80,
+		LagLowWatermark:          20,
+		QueueHighWatermarkPct:    90,
+		QueueLowWatermarkPct:     10,
+		HysteresisTicks:          1,
+		CooldownTicks:            1,
+		OperatorReleaseHoldTicks: 2,
+	}
+	manualOverrideCfg := autoTuneCfg
+	manualOverrideCfg.OperatorOverrideBatchSize = 70
+	releaseCfg := autoTuneCfg
+
+	const tickCount = 8
+	healthyBaseAddress := "0x1111111111111111111111111111111111111111"
+	healthyBTCAddress := "tb1qoverridehealthy000000000000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+
+	healthyHeads := []int64{130, 131, 132, 133, 134, 135, 136, 137}
+	laggingHeads := []int64{260, 261, 262, 263, 264, 265, 266, 267}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		autoTuneCfg,
+	)
+	_, laggingBaselineBatches := collectAutoTuneTrace(t, laggingBaseline, tickCount)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		autoTuneCfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBatches := make([]int, 0, tickCount)
+
+	for i := 0; i < tickCount; i++ {
+		if i == 2 {
+			laggingInterleaved.coordinator.WithAutoTune(manualOverrideCfg)
+		}
+		if i == 5 {
+			laggingInterleaved.coordinator.WithAutoTune(releaseCfg)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+		laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana operator override must not alter base canonical tuples")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana operator override must not alter base control decisions")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana operator override must not alter btc canonical tuples")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana operator override must not alter btc control decisions")
+	assert.NotEqual(t, laggingBaselineBatches, laggingBatches, "operator override should be chain-scoped and only alter lagging chain control decisions")
+	assert.Contains(t, laggingBatches, 70, "lagging chain override path should pin deterministic manual batch")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved operator override")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved operator override")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
+func TestTick_AutoTuneOperatorOverrideReplayResumeConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qoverridereplay000000000000000000000000",
+		},
+	}
+
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:                  true,
+		MinBatchSize:             60,
+		MaxBatchSize:             200,
+		StepUp:                   20,
+		StepDown:                 10,
+		LagHighWatermark:         80,
+		LagLowWatermark:          20,
+		QueueHighWatermarkPct:    90,
+		QueueLowWatermarkPct:     10,
+		HysteresisTicks:          1,
+		CooldownTicks:            1,
+		OperatorReleaseHoldTicks: 3,
+	}
+	manualOverrideCfg := autoTuneCfg
+	manualOverrideCfg.OperatorOverrideBatchSize = 70
+	releaseCfg := autoTuneCfg
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267}
+	const splitTick = 5
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			coldHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, autoTuneCfg)
+			coldSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			coldBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					coldHarness.coordinator.WithAutoTune(manualOverrideCfg)
+				}
+				if i == 4 {
+					coldHarness.coordinator.WithAutoTune(releaseCfg)
+				}
+				job := coldHarness.tickAndAdvance(t)
+				coldSnapshots = append(coldSnapshots, snapshotFromFetchJob(job))
+				coldBatches = append(coldBatches, job.BatchSize)
+			}
+
+			warmFirst := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads[:splitTick], autoTuneCfg)
+			warmSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			warmBatches := make([]int, 0, len(heads))
+			for i := 0; i < splitTick; i++ {
+				if i == 2 {
+					warmFirst.coordinator.WithAutoTune(manualOverrideCfg)
+				}
+				if i == 4 {
+					warmFirst.coordinator.WithAutoTune(releaseCfg)
+				}
+				job := warmFirst.tickAndAdvance(t)
+				warmSnapshots = append(warmSnapshots, snapshotFromFetchJob(job))
+				warmBatches = append(warmBatches, job.BatchSize)
+			}
+
+			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, restartState)
+			assert.False(t, restartState.OverrideManualActive)
+			assert.Greater(t, restartState.OverrideReleaseRemaining, 0, "restart state must preserve release-hold countdown at override boundary")
+			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
+			require.NotNil(t, resumeCursor)
+
+			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				resumeCursor.CursorSequence,
+				heads[splitTick:],
+				releaseCfg,
+				restartState,
+			)
+			warmTailSnapshots, warmTailBatches := collectAutoTuneTrace(t, warmSecond, len(heads)-splitTick)
+			warmSnapshots = append(warmSnapshots, warmTailSnapshots...)
+			warmBatches = append(warmBatches, warmTailBatches...)
+
+			assert.Equal(t, coldSnapshots, warmSnapshots, "operator-override replay/resume must converge to deterministic canonical tuples")
+			assert.Equal(t, coldBatches, warmBatches, "operator-override replay/resume must preserve deterministic control decisions")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, coldSnapshots, warmSnapshots, "cold vs warm operator-override replay")
+			assertCursorMonotonicByAddress(t, warmSnapshots)
+		})
+	}
+}
+
 type lagAwareJobSnapshot struct {
 	Address        string
 	CursorValue    string

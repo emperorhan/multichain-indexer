@@ -622,3 +622,149 @@ func TestAutoTuneController_MissingTelemetryAfterBaselineTriggersFallback(t *tes
 	assert.Equal(t, "apply_increase", d5.Decision)
 	assert.Equal(t, "healthy", d5.TelemetryState)
 }
+
+func TestAutoTuneController_OperatorOverridePinsBatchAndReleasesDeterministically(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	autoController := newAutoTuneController(100, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+		CooldownTicks:         1,
+	})
+	require.NotNil(t, autoController)
+
+	batch, d1 := autoController.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "apply_increase", d1.Decision)
+
+	batch, d2 := autoController.Resolve(highLag)
+	assert.Equal(t, 140, batch)
+	assert.Equal(t, "apply_increase", d2.Decision)
+
+	seed := autoController.currentBatch
+	manualController := newAutoTuneControllerWithSeed(100, AutoTuneConfig{
+		Enabled:                   true,
+		MinBatchSize:              60,
+		MaxBatchSize:              200,
+		StepUp:                    20,
+		StepDown:                  10,
+		LagHighWatermark:          80,
+		LagLowWatermark:           20,
+		QueueHighWatermarkPct:     90,
+		QueueLowWatermarkPct:      10,
+		HysteresisTicks:           1,
+		CooldownTicks:             1,
+		OperatorOverrideBatchSize: 70,
+		OperatorReleaseHoldTicks:  2,
+	}, &seed)
+	require.NotNil(t, manualController)
+	manualController.reconcileOverrideTransition(autoController.exportOverrideTransition())
+
+	batch, d3 := manualController.Resolve(highLag)
+	assert.Equal(t, 70, batch)
+	assert.Equal(t, "hold_operator_override", d3.Decision)
+	assert.Equal(t, "manual_hold", d3.OverrideState)
+
+	batch, d4 := manualController.Resolve(highLag)
+	assert.Equal(t, 70, batch)
+	assert.Equal(t, "hold_operator_override", d4.Decision)
+
+	releaseSeed := manualController.currentBatch
+	releaseController := newAutoTuneControllerWithSeed(100, AutoTuneConfig{
+		Enabled:                  true,
+		MinBatchSize:             60,
+		MaxBatchSize:             200,
+		StepUp:                   20,
+		StepDown:                 10,
+		LagHighWatermark:         80,
+		LagLowWatermark:          20,
+		QueueHighWatermarkPct:    90,
+		QueueLowWatermarkPct:     10,
+		HysteresisTicks:          1,
+		CooldownTicks:            1,
+		OperatorReleaseHoldTicks: 2,
+	}, &releaseSeed)
+	require.NotNil(t, releaseController)
+	releaseController.reconcileOverrideTransition(manualController.exportOverrideTransition())
+
+	batch, d5 := releaseController.Resolve(highLag)
+	assert.Equal(t, 70, batch)
+	assert.Equal(t, "hold_operator_release", d5.Decision)
+	assert.Equal(t, "release_hold", d5.OverrideState)
+	assert.Equal(t, 2, d5.OverrideReleaseTicks)
+
+	batch, d6 := releaseController.Resolve(highLag)
+	assert.Equal(t, 70, batch)
+	assert.Equal(t, "hold_operator_release", d6.Decision)
+	assert.Equal(t, "release_hold", d6.OverrideState)
+	assert.Equal(t, 1, d6.OverrideReleaseTicks)
+
+	batch, d7 := releaseController.Resolve(highLag)
+	assert.Equal(t, 90, batch)
+	assert.Equal(t, "apply_increase", d7.Decision)
+	assert.Equal(t, "auto", d7.OverrideState)
+}
+
+func TestAutoTuneController_OperatorReleaseHoldStatePersistsAcrossWarmRestartSeed(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	controller := newAutoTuneControllerWithRestartSeed(100, AutoTuneConfig{
+		Enabled:                  true,
+		MinBatchSize:             60,
+		MaxBatchSize:             200,
+		StepUp:                   20,
+		StepDown:                 10,
+		LagHighWatermark:         80,
+		LagLowWatermark:          20,
+		QueueHighWatermarkPct:    90,
+		QueueLowWatermarkPct:     10,
+		HysteresisTicks:          1,
+		CooldownTicks:            1,
+		OperatorReleaseHoldTicks: 3,
+	}, intPtr(90))
+	require.NotNil(t, controller)
+	controller.reconcileOverrideTransition(autoTuneOverrideTransition{
+		WasManualOverride:    false,
+		ReleaseHoldRemaining: 2,
+	})
+
+	batch, d1 := controller.Resolve(highLag)
+	assert.Equal(t, 90, batch)
+	assert.Equal(t, "hold_operator_release", d1.Decision)
+	assert.Equal(t, 2, d1.OverrideReleaseTicks)
+
+	batch, d2 := controller.Resolve(highLag)
+	assert.Equal(t, 90, batch)
+	assert.Equal(t, "hold_operator_release", d2.Decision)
+	assert.Equal(t, 1, d2.OverrideReleaseTicks)
+
+	batch, d3 := controller.Resolve(highLag)
+	assert.Equal(t, 110, batch)
+	assert.Equal(t, "apply_increase", d3.Decision)
+}
+
+func intPtr(v int) *int {
+	return &v
+}
