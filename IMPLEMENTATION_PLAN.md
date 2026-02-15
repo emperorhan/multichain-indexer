@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -101,6 +101,8 @@ Execution queue (dependency-ordered):
 90. `I-0283` (`M47-S2`) QA counterexample gate for auto-tune policy-manifest refresh determinism + invariant safety
 91. `I-0287` (`M48-S1`) auto-tune policy-manifest sequence-gap recovery reconciliation determinism hardening
 92. `I-0288` (`M48-S2`) QA counterexample gate for auto-tune policy-manifest sequence-gap recovery determinism + invariant safety
+93. `I-0292` (`M49-S1`) auto-tune policy-manifest snapshot-cutover reconciliation determinism hardening
+94. `I-0293` (`M49-S2`) QA counterexample gate for auto-tune policy-manifest snapshot-cutover determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1784,7 +1786,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when auto-tune policy m
 - Gate: out-of-order or stale policy-manifest refresh signals can race with active policy-version state and create non-deterministic digest lineage near control-loop tick boundaries.
 - Fallback: enforce deterministic policy-manifest digest lineage fences with monotonic refresh epochs, pin last-verified digest on unresolved lineage ambiguity, and fail fast on manifest-boundary ambiguity.
 
-### M48. Auto-Tune Policy-Manifest Sequence-Gap Recovery Determinism Tranche C0042 (P0, Next)
+### M48. Auto-Tune Policy-Manifest Sequence-Gap Recovery Determinism Tranche C0042 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when policy-manifest sequence updates arrive with transient gaps, duplicate segment re-delivery, or late gap-fill recovery while runtimes continue indexing, so sequence-complete baseline, gap-hold, late-gap-fill apply, and duplicate segment re-apply permutations converge to one deterministic canonical output set per chain.
@@ -1822,6 +1824,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when policy-manifest se
 #### Risk Gate + Fallback
 - Gate: sequence-gap boundaries can race with manifest digest lineage advancement and create non-deterministic deferred-apply windows near control-loop tick boundaries.
 - Fallback: enforce deterministic contiguous-sequence apply fences with explicit gap-hold diagnostics, pin last contiguous verified sequence on ambiguity, and fail fast on unresolved sequence-gap boundary conflicts.
+
+### M49. Auto-Tune Policy-Manifest Snapshot-Cutover Determinism Tranche C0043 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when policy-manifest delivery shifts between segment-tail updates and compact snapshot cutovers, including stale snapshot delivery and snapshot-tail re-apply during replay/resume, so sequence-tail baseline, snapshot-cutover apply, stale-snapshot reject, and snapshot+tail re-apply permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M48` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M49-S1` (`I-0292`): harden deterministic auto-tune policy-manifest snapshot-cutover reconciliation semantics so snapshot-cutover apply, stale snapshot reject, and snapshot+tail re-apply cannot induce duplicate canonical IDs, missing logical events, cross-chain control bleed, or cursor regression.
+2. `M49-S2` (`I-0293`): execute QA counterexample gate for auto-tune policy-manifest snapshot-cutover determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under sequence-tail baseline, snapshot-cutover apply, stale snapshot reject, and snapshot+tail re-apply permutations converge to one canonical tuple output set per chain.
+2. Snapshot-cutover apply or stale snapshot reject transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under policy-manifest snapshot-cutover replay/resume permutations.
+4. Replay/resume from policy-manifest snapshot-cutover boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject sequence-tail baseline, snapshot-cutover apply, stale snapshot reject, and snapshot+tail re-apply permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain policy-manifest snapshot-cutover transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from policy-manifest snapshot-cutover boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus auto-tune policy-manifest snapshot-cutover counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic sequence-tail baseline, snapshot-cutover apply, stale snapshot reject, and snapshot+tail re-apply fixtures.
+2. `0` cross-chain control-coupling violations under one-chain policy-manifest snapshot-cutover counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under policy-manifest snapshot-cutover replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in policy-manifest snapshot-cutover fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: snapshot base-sequence boundaries can race with in-flight segment-tail windows and create non-deterministic overlap ownership near control-loop tick boundaries.
+- Fallback: enforce deterministic snapshot-base activation fences with explicit snapshot lineage diagnostics, pin last verified snapshot+tail boundary on ambiguity, and fail fast on unresolved snapshot-overlap conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -1876,6 +1917,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when policy-manifest se
 13. `DP-0101-M`: auto-tune policy-manifest sequence-gap recovery policy.
 - Preferred: deterministic chain-local contiguous sequence-apply state machine with explicit gap-hold windows, late gap-fill apply, and replay-stable segment lineage markers.
 - Fallback: pin last contiguous verified sequence while manifest segment gaps are unresolved, reject ambiguous duplicate segment lineage, and resume sequence apply only after replay-safe boundary confirmation is proven.
+
+14. `DP-0101-N`: auto-tune policy-manifest snapshot-cutover reconciliation policy.
+- Preferred: deterministic chain-local snapshot-cutover state machine with explicit base-sequence activation fences, stale-snapshot rejection, and replay-stable snapshot+tail lineage markers.
+- Fallback: pin last verified snapshot+tail boundary while snapshot lineage is ambiguous, reject overlapping snapshot/segment ownership, and resume snapshot apply only after replay-safe boundary confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -1971,13 +2016,15 @@ Completed milestones/slices:
 89. `I-0278`
 90. `I-0282`
 91. `I-0283`
+92. `I-0287`
+93. `I-0288`
 
 Active downstream queue from this plan:
-1. `I-0287`
-2. `I-0288`
+1. `I-0292`
+2. `I-0293`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M48-S2`
+1. `TBD by next planner slice after M49-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -2003,3 +2050,4 @@ Superseded issues:
 - `I-0275` and `I-0276` are superseded by `I-0277` and `I-0278` to replace generic cycle placeholders with executable auto-tune policy-version rollout determinism slices.
 - `I-0280` and `I-0281` are superseded by `I-0282` and `I-0283` to replace generic cycle placeholders with executable auto-tune policy-manifest refresh determinism slices.
 - `I-0285` and `I-0286` are superseded by `I-0287` and `I-0288` to replace generic cycle placeholders with executable auto-tune policy-manifest sequence-gap recovery determinism slices.
+- `I-0290` and `I-0291` are superseded by `I-0292` and `I-0293` to replace generic cycle placeholders with executable auto-tune policy-manifest snapshot-cutover determinism slices.

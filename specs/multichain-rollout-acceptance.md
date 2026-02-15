@@ -952,6 +952,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of policy-manifest sequence-gap recovery determinism, replay safety, and fail-fast safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0292 (M49-S1)
+Assertions:
+1. Equivalent tri-chain logical ranges processed under sequence-tail baseline, snapshot-cutover apply, stale snapshot reject, and snapshot+tail re-apply permutations converge to one deterministic canonical output set per chain.
+2. Policy-manifest snapshot-cutover boundaries preserve deterministic canonical identity (`0` duplicate canonical IDs and `0` missing logical events).
+3. One-chain policy-manifest snapshot-cutover transitions do not induce cross-chain control bleed, cursor bleed, or fail-fast safety regression.
+4. Replay/resume from policy-manifest snapshot-cutover boundaries remains idempotent with cursor monotonicity and signed-delta/fee-event invariant continuity.
+
+Pass Evidence:
+- Deterministic tests inject sequence-tail baseline, snapshot-cutover apply, stale snapshot reject, and snapshot+tail re-apply permutations and show canonical tuple equivalence on all mandatory chains.
+- One-chain policy-manifest snapshot-cutover counterexamples show `0` cross-chain control-coupling violations and `0` duplicate/missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0293 (M49-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M49 invariants.
+2. QA executes at least one counterexample with sequence-tail baseline vs snapshot-cutover apply vs stale snapshot reject vs snapshot+tail re-apply permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample with one-chain policy-manifest snapshot-cutover transition and verifies no cross-chain control bleed, no duplicate/missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of policy-manifest snapshot-cutover determinism, replay safety, and fail-fast safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -1004,3 +1028,5 @@ Release recommendation must be `fail` if any condition holds:
 48. One-chain policy-manifest transition isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under policy-manifest refresh/reject permutations).
 49. Auto-tune policy-manifest sequence-gap recovery determinism cannot be proven (sequence-complete/gap-hold/late-gap-fill/duplicate-segment-reapply permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
 50. One-chain policy-manifest sequence-gap recovery isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under policy-manifest sequence-gap recovery permutations).
+51. Auto-tune policy-manifest snapshot-cutover determinism cannot be proven (sequence-tail/snapshot-cutover/stale-snapshot-reject/snapshot-tail-reapply permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
+52. One-chain policy-manifest snapshot-cutover isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under policy-manifest snapshot-cutover permutations).
