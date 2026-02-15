@@ -632,6 +632,20 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 			a.policyEpoch = incomingEpoch
 			return
 		}
+		if isDeterministicRollbackFenceTombstoneExpiryTransition(previousEpoch, previousDigest, incomingDigest) {
+			// Same-epoch tombstone expiry is metadata ownership only and must
+			// converge deterministically from retained tombstone to expired state.
+			a.policyManifestDigest = incomingDigest
+			a.policyEpoch = incomingEpoch
+			return
+		}
+		if isDeterministicRollbackFenceTombstoneExpiryTransition(previousEpoch, incomingDigest, previousDigest) {
+			// Reject stale post-expiry ownership reactivation once expiry ownership
+			// is verified for this rollback fence lineage.
+			a.policyManifestDigest = previousDigest
+			a.policyEpoch = previousEpoch
+			return
+		}
 		if isDeterministicRollbackFenceEpochCompactionTransition(previousEpoch, incomingDigest, previousDigest) {
 			// Reject stale pre-compaction rollback state once compacted ownership is verified.
 			a.policyManifestDigest = previousDigest
@@ -764,6 +778,97 @@ func hasRollbackFenceEpochCompactionTombstone(digest string) bool {
 		}
 	}
 	return false
+}
+
+func parseRollbackFenceTombstoneExpiryEpoch(digest string) (int64, bool) {
+	const expiryKey = "rollback-fence-tombstone-expiry-epoch="
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		if !strings.HasPrefix(token, expiryKey) {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(token, expiryKey))
+		if value == "" {
+			return 0, false
+		}
+		expiryEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || expiryEpoch < 0 {
+			return 0, false
+		}
+		return expiryEpoch, true
+	}
+
+	return 0, false
+}
+
+func isRollbackFenceTombstoneExpiryDigest(epoch int64, digest string) bool {
+	if epoch < 0 {
+		return false
+	}
+	normalized := normalizePolicyManifestDigest(digest)
+	if hasRollbackFenceEpochCompactionTombstone(normalized) {
+		return false
+	}
+	expiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(normalized)
+	if !ok {
+		return false
+	}
+	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(normalized)
+	if !ok {
+		return false
+	}
+	if rollbackToSeq != epoch {
+		return false
+	}
+	if rollbackFromSeq <= rollbackToSeq {
+		return false
+	}
+	if rollbackForwardSeq < rollbackFromSeq {
+		return false
+	}
+	// Expiry must be explicitly post-fence to avoid accepting ambiguous
+	// same-epoch markers that can re-open stale ownership.
+	return expiryEpoch > epoch
+}
+
+func isDeterministicRollbackFenceTombstoneExpiryTransition(
+	epoch int64,
+	sourceDigest string,
+	targetDigest string,
+) bool {
+	if epoch < 0 {
+		return false
+	}
+	sourceNormalized := normalizePolicyManifestDigest(sourceDigest)
+	targetNormalized := normalizePolicyManifestDigest(targetDigest)
+	if !isRollbackFenceEpochCompactionDigest(epoch, sourceNormalized) {
+		return false
+	}
+	if !isRollbackFenceTombstoneExpiryDigest(epoch, targetNormalized) {
+		return false
+	}
+	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
+		return false
+	}
+	if sourceToSeq != epoch || targetToSeq != epoch {
+		return false
+	}
+	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
+		return false
+	}
+	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
+		return false
+	}
+	return true
 }
 
 func (a *autoTuneController) resolveOverrideState() autoTuneOverrideState {
