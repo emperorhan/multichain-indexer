@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -51,6 +51,8 @@ Execution queue (dependency-ordered):
 40. `I-0176` (`M22-S2`) QA counterexample gate for checkpoint-integrity recovery determinism + invariant safety
 41. `I-0178` (`M23-S1`) sidecar decode degradation determinism hardening
 42. `I-0179` (`M23-S2`) QA counterexample gate for sidecar-degradation determinism + invariant safety
+43. `I-0183` (`M24-S1`) ambiguous ingest-commit acknowledgment determinism hardening
+44. `I-0184` (`M24-S2`) QA counterexample gate for commit-ambiguity replay determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -791,7 +793,7 @@ Eliminate duplicate/missing-event risk when persisted tick checkpoint state is p
 - Gate: strict checkpoint-integrity validation and recovery can increase restart latency and replay-window cost under repeated corruption scenarios.
 - Fallback: use deterministic fail-fast plus replay-from-last-known-good checkpoint semantics with explicit checkpoint-integrity diagnostics and bounded recovery window guardrails until optimized repair granularity is proven safe.
 
-### M23. Sidecar Decode Degradation Determinism Reliability Tranche C0017 (P0, Next)
+### M23. Sidecar Decode Degradation Determinism Reliability Tranche C0017 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when sidecar decode availability or schema compatibility degrades intermittently, so mandatory-chain runs converge to deterministic canonical output and cursor behavior under replay/resume.
@@ -827,6 +829,42 @@ Eliminate duplicate/missing-event risk when sidecar decode availability or schem
 #### Risk Gate + Fallback
 - Gate: over-aggressive continuation under sidecar degradation can hide broad decode outages and silently drop logical events.
 - Fallback: preserve deterministic fail-fast guardrails for full-batch degradation, keep bounded per-signature isolation only for explicitly classified partial decode failures, and emit stage-scoped diagnostics until sidecar reliability contracts are extended.
+
+### M24. Ambiguous Ingest-Commit Acknowledgment Determinism Reliability Tranche C0018 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when ingest commit outcome is ambiguous (for example, commit-ack timeout or transport interruption after write), so replay/resume converges to one deterministic canonical output and cursor state on mandatory chains.
+
+#### Entry Gate
+- `M23` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M24-S1` (`I-0183`): implement deterministic ambiguous-commit outcome reconciliation so commit-ack loss/timeouts cannot induce duplicate canonical IDs, missing logical events, or cursor regression.
+2. `M24-S2` (`I-0184`): execute QA counterexample gate for ambiguous-commit replay determinism and invariant evidence across mandatory chains.
+
+#### Definition Of Done
+1. Equivalent logical input under commit-ack ambiguity permutations (ack timeout, post-write disconnect, retry-after-unknown) converges to one deterministic canonical tuple output on both mandatory chains.
+2. Unknown commit outcomes are reconciled by deterministic commit-state rules before retry/resume cursor advancement, with reproducible diagnostics for every ambiguity path.
+3. Replay/resume after ambiguous-commit permutations remains idempotent with `0` duplicate canonical IDs, `0` missing logical events, and no balance double-apply side effects.
+4. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject commit-ack timeout/disconnect permutations across Solana/Base ingest paths and assert one canonical output set for equivalent logical ranges.
+2. Deterministic tests inject retry-after-unknown permutations and assert `0` duplicate canonical IDs plus `0` missing logical events across independent runs.
+3. Deterministic replay/resume tests from ambiguous commit boundaries assert chain-scoped cursor monotonicity and `0` balance drift.
+4. QA executes required validation commands plus ambiguous-commit counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across ambiguous-commit replay fixtures on mandatory chains.
+2. `0` missing logical events across commit-ack timeout/disconnect permutation fixtures.
+3. `0` cursor monotonicity regressions in retry-after-unknown replay/resume fixtures.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: incorrect ambiguous-commit reconciliation can misclassify committed vs uncommitted writes, causing either duplicate replay or silent event loss.
+- Fallback: preserve deterministic fail-fast behavior for unresolved commit ambiguity, emit explicit commit-ambiguity diagnostics, and replay from last-safe cursor until reconciliation rules are fully proven.
 
 ## Decision Register (Major + Fallback)
 
@@ -885,10 +923,12 @@ Completed milestones/slices:
 38. `I-0171`
 39. `I-0175`
 40. `I-0176`
+41. `I-0178`
+42. `I-0179`
 
 Active downstream queue from this plan:
-1. `I-0178`
-2. `I-0179`
+1. `I-0183`
+2. `I-0184`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -898,3 +938,4 @@ Superseded issues:
 - `I-0163` and `I-0164` are superseded by `I-0165` and `I-0166` to replace generic cycle placeholders with executable dual-chain tick interleaving reliability slices.
 - `I-0168` and `I-0169` are superseded by `I-0170` and `I-0171` to replace generic cycle placeholders with executable crash-recovery checkpoint determinism slices.
 - `I-0173` and `I-0174` are superseded by `I-0175` and `I-0176` to replace generic cycle placeholders with executable checkpoint-integrity recovery determinism slices.
+- `I-0181` and `I-0182` are superseded by `I-0183` and `I-0184` to replace generic cycle placeholders with executable ambiguous-commit determinism slices.

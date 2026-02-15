@@ -196,9 +196,14 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		return fmt.Errorf("sidecar decode: %w", err)
 	}
 
-	// Log decode errors
-	for _, decErr := range resp.Errors {
-		log.Warn("sidecar decode error", "stage", decodeStage, "signature", decErr.Signature, "error", decErr.Error)
+	terminalDecodeErrors, transientDecodeErrors := classifyDecodeErrors(batch.Chain, resp.Errors, log, decodeStage)
+	if len(transientDecodeErrors) > 0 {
+		return retry.Transient(fmt.Errorf(
+			"decode transient stage=%s signatures=%d diagnostics=%s",
+			decodeStage,
+			len(transientDecodeErrors),
+			formatDecodeDiagnostics(transientDecodeErrors),
+		))
 	}
 
 	fallbackResults := make([]*sidecarv1.TransactionResult, 0, len(resp.Results))
@@ -222,21 +227,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		return compareDecodedResultOrder(batch.Chain, fallbackResults[i], fallbackResults[j]) < 0
 	})
 
-	errorBySignature := make(map[string]string, len(resp.Errors))
-	for _, decErr := range resp.Errors {
-		if decErr == nil {
-			continue
-		}
-		signatureKey := canonicalSignatureIdentity(batch.Chain, decErr.Signature)
-		if signatureKey == "" {
-			continue
-		}
-		reason := strings.TrimSpace(decErr.Error)
-		existing, exists := errorBySignature[signatureKey]
-		if !exists || reason < existing {
-			errorBySignature[signatureKey] = reason
-		}
-	}
+	errorBySignature := terminalDecodeErrors
 
 	// Convert to NormalizedBatch
 	normalized := event.NormalizedBatch{
@@ -1184,6 +1175,69 @@ func compareDecodedResultOrder(chainID model.Chain, left, right *sidecarv1.Trans
 	}
 
 	return 0
+}
+
+func classifyDecodeErrors(
+	chainID model.Chain,
+	decodeErrors []*sidecarv1.DecodeError,
+	log *slog.Logger,
+	stage string,
+) (map[string]string, map[string]string) {
+	terminalBySignature := make(map[string]string, len(decodeErrors))
+	transientBySignature := make(map[string]string)
+	for idx, decErr := range decodeErrors {
+		if decErr == nil {
+			continue
+		}
+		signatureKey := canonicalSignatureIdentity(chainID, decErr.Signature)
+		if signatureKey == "" {
+			signatureKey = fmt.Sprintf("<unknown:%03d>", idx)
+		}
+		reason := strings.TrimSpace(decErr.Error)
+		if reason == "" {
+			reason = "decode failed"
+		}
+		decision := retry.Classify(fmt.Errorf("sidecar decode error: %s", reason))
+		log.Warn("sidecar decode error",
+			"stage", stage,
+			"signature", decErr.Signature,
+			"error", reason,
+			"classification", decision.Class,
+			"classification_reason", decision.Reason,
+		)
+		if decision.IsTransient() {
+			existing, exists := transientBySignature[signatureKey]
+			if !exists || reason < existing {
+				transientBySignature[signatureKey] = reason
+			}
+			delete(terminalBySignature, signatureKey)
+			continue
+		}
+		if _, transient := transientBySignature[signatureKey]; transient {
+			continue
+		}
+		existing, exists := terminalBySignature[signatureKey]
+		if !exists || reason < existing {
+			terminalBySignature[signatureKey] = reason
+		}
+	}
+	return terminalBySignature, transientBySignature
+}
+
+func formatDecodeDiagnostics(errorBySignature map[string]string) string {
+	if len(errorBySignature) == 0 {
+		return "<none>"
+	}
+	signatures := make([]string, 0, len(errorBySignature))
+	for signature := range errorBySignature {
+		signatures = append(signatures, signature)
+	}
+	sort.Strings(signatures)
+	diagnostics := make([]string, 0, len(signatures))
+	for _, signature := range signatures {
+		diagnostics = append(diagnostics, fmt.Sprintf("%s=%s", signature, errorBySignature[signature]))
+	}
+	return strings.Join(diagnostics, ",")
 }
 
 func isEVMChain(chainID model.Chain) bool {

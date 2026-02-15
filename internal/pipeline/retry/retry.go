@@ -167,6 +167,7 @@ var terminalMessageTokens = []string{
 	"invalid params",
 	"method not found",
 	"parse error",
+	"schema mismatch",
 	"execution reverted",
 	"insufficient funds",
 	"not found",

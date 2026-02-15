@@ -2557,6 +2557,310 @@ func TestProcessBatch_DualChainReplaySmoke_MixedSuccessDecodeFailure_NoDuplicate
 	assert.GreaterOrEqual(t, secondBase.NewCursorSequence, firstBase.NewCursorSequence)
 }
 
+func TestProcessBatch_MixedTerminalDecodeFailures_DeterministicContinuationAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name           string
+		chain          model.Chain
+		network        model.Network
+		address        string
+		signatures     []event.SignatureInfo
+		expectedTxs    []string
+		expectedCursor string
+		responseA      []*sidecarv1.TransactionResult
+		responseB      []*sidecarv1.TransactionResult
+		errorsA        []*sidecarv1.DecodeError
+		errorsB        []*sidecarv1.DecodeError
+	}
+
+	buildTransfer := func(txHash string, cursor int64, address string, contract string) *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      txHash,
+			BlockCursor: cursor,
+			Status:      "SUCCESS",
+			FeeAmount:   "1",
+			FeePayer:    address,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "transfer",
+					ProgramId:             "program",
+					Address:               address,
+					ContractAddress:       contract,
+					Delta:                 "-1",
+					TokenSymbol:           "ETH",
+					TokenName:             "Ether",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeNative),
+				},
+			},
+		}
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "addr-owner-terminal-mixed",
+			signatures: []event.SignatureInfo{
+				{Hash: "sol-ok-1", Sequence: 801},
+				{Hash: "sol-fail-parse", Sequence: 802},
+				{Hash: "sol-fail-schema", Sequence: 803},
+				{Hash: "sol-ok-2", Sequence: 804},
+			},
+			expectedTxs:    []string{"sol-ok-1", "sol-ok-2"},
+			expectedCursor: "sol-ok-2",
+			responseA: []*sidecarv1.TransactionResult{
+				buildTransfer("sol-ok-1", 801, "addr-owner-terminal-mixed", "SOL"),
+				buildTransfer("sol-ok-2", 804, "addr-owner-terminal-mixed", "SOL"),
+			},
+			responseB: []*sidecarv1.TransactionResult{
+				buildTransfer("sol-ok-2", 804, "addr-owner-terminal-mixed", "SOL"),
+				buildTransfer("sol-ok-1", 801, "addr-owner-terminal-mixed", "SOL"),
+			},
+			errorsA: []*sidecarv1.DecodeError{
+				{Signature: "sol-fail-parse", Error: "parse error"},
+				{Signature: "sol-fail-schema", Error: "decode schema mismatch"},
+			},
+			errorsB: []*sidecarv1.DecodeError{
+				{Signature: "sol-fail-schema", Error: "decode schema mismatch"},
+				{Signature: "sol-fail-parse", Error: "parse error"},
+			},
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			signatures: []event.SignatureInfo{
+				{Hash: "0xabc801", Sequence: 901},
+				{Hash: "0xabc802", Sequence: 902},
+				{Hash: "0xabc803", Sequence: 903},
+				{Hash: "0xabc804", Sequence: 904},
+			},
+			expectedTxs:    []string{"0xabc801", "0xabc804"},
+			expectedCursor: "0xabc804",
+			responseA: []*sidecarv1.TransactionResult{
+				buildTransfer("0xabc804", 904, "0x1111111111111111111111111111111111111111", "ETH"),
+				buildTransfer("0xabc801", 901, "0x1111111111111111111111111111111111111111", "ETH"),
+			},
+			responseB: []*sidecarv1.TransactionResult{
+				buildTransfer("0xabc801", 901, "0x1111111111111111111111111111111111111111", "ETH"),
+				buildTransfer("0xabc804", 904, "0x1111111111111111111111111111111111111111", "ETH"),
+			},
+			errorsA: []*sidecarv1.DecodeError{
+				{Signature: "0xabc802", Error: "parse error"},
+				{Signature: "0xabc803", Error: "decode schema mismatch"},
+			},
+			errorsB: []*sidecarv1.DecodeError{
+				{Signature: "0xabc803", Error: "decode schema mismatch"},
+				{Signature: "0xabc802", Error: "parse error"},
+			},
+		},
+	}
+
+	txHashes := func(batch event.NormalizedBatch) []string {
+		out := make([]string, 0, len(batch.Transactions))
+		for _, tx := range batch.Transactions {
+			out = append(out, tx.TxHash)
+		}
+		return out
+	}
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+			normalizedCh := make(chan event.NormalizedBatch, 2)
+			n := &Normalizer{
+				sidecarTimeout: 30 * time.Second,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			rawTxs := make([]json.RawMessage, len(tc.signatures))
+			for i := range rawTxs {
+				rawTxs[i] = json.RawMessage(`{"tx":"mixed-terminal"}`)
+			}
+			batch := event.RawBatch{
+				Chain:           tc.chain,
+				Network:         tc.network,
+				Address:         tc.address,
+				RawTransactions: rawTxs,
+				Signatures:      tc.signatures,
+			}
+
+			call := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(2).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					call++
+					if call == 1 {
+						return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+							Results: tc.responseA,
+							Errors:  tc.errorsA,
+						}, nil
+					}
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+						Results: tc.responseB,
+						Errors:  tc.errorsB,
+					}, nil
+				})
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			first := <-normalizedCh
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			second := <-normalizedCh
+
+			assert.Equal(t, tc.expectedTxs, txHashes(first))
+			assert.Equal(t, tc.expectedTxs, txHashes(second))
+			assert.Equal(t, orderedCanonicalTuples(first), orderedCanonicalTuples(second))
+			assertNoDuplicateCanonicalIDs(t, first)
+			assertNoDuplicateCanonicalIDs(t, second)
+			require.NotNil(t, first.NewCursorValue)
+			require.NotNil(t, second.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *first.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *second.NewCursorValue)
+		})
+	}
+}
+
+func TestProcessBatchWithRetry_TransientDecodeErrorsInResponse_BlockCursorAdvanceAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name          string
+		chain         model.Chain
+		network       model.Network
+		address       string
+		firstSig      string
+		secondSig     string
+		firstSequence int64
+		buildResult   func(*testing.T, string, int64) *sidecarv1.TransactionResult
+	}
+
+	testCases := []testCase{
+		{
+			name:          "solana-devnet",
+			chain:         model.ChainSolana,
+			network:       model.NetworkDevnet,
+			address:       "addr-retry-solana-response",
+			firstSig:      "sol-response-transient-1",
+			secondSig:     "sol-response-transient-2",
+			firstSequence: 1201,
+			buildResult: func(t *testing.T, signature string, sequence int64) *sidecarv1.TransactionResult {
+				result := loadSolanaFixture(t, "solana_cpi_ownership_scoped.json")
+				result.TxHash = signature
+				result.BlockCursor = sequence
+				return result
+			},
+		},
+		{
+			name:          "base-sepolia",
+			chain:         model.ChainBase,
+			network:       model.NetworkSepolia,
+			address:       "0x1111111111111111111111111111111111111111",
+			firstSig:      "0x1201",
+			secondSig:     "0x1202",
+			firstSequence: 2201,
+			buildResult: func(t *testing.T, signature string, sequence int64) *sidecarv1.TransactionResult {
+				result := loadBaseFeeFixture(t, "base_fee_decomposition_complete.json")
+				result.TxHash = signature
+				result.BlockCursor = sequence
+				return result
+			},
+		},
+	}
+
+	txHashes := func(batch event.NormalizedBatch) []string {
+		out := make([]string, 0, len(batch.Transactions))
+		for _, tx := range batch.Transactions {
+			out = append(out, tx.TxHash)
+		}
+		return out
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+			normalizedCh := make(chan event.NormalizedBatch, 1)
+			n := &Normalizer{
+				sidecarTimeout:   30 * time.Second,
+				normalizedCh:     normalizedCh,
+				logger:           slog.Default(),
+				retryMaxAttempts: 2,
+				retryDelayStart:  0,
+				retryDelayMax:    0,
+				sleepFn:          func(context.Context, time.Duration) error { return nil },
+			}
+
+			secondSequence := tc.firstSequence + 1
+			batch := event.RawBatch{
+				Chain:           tc.chain,
+				Network:         tc.network,
+				Address:         tc.address,
+				RawTransactions: []json.RawMessage{json.RawMessage(`{"tx":"first"}`), json.RawMessage(`{"tx":"second"}`)},
+				Signatures: []event.SignatureInfo{
+					{Hash: tc.firstSig, Sequence: tc.firstSequence},
+					{Hash: tc.secondSig, Sequence: secondSequence},
+				},
+			}
+
+			decodeAttempts := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(2).
+				DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					require.Len(t, req.GetTransactions(), 2)
+					decodeAttempts++
+					if decodeAttempts == 1 {
+						return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+							Results: []*sidecarv1.TransactionResult{
+								tc.buildResult(t, tc.firstSig, tc.firstSequence),
+							},
+							Errors: []*sidecarv1.DecodeError{
+								{Signature: tc.secondSig, Error: "sidecar unavailable"},
+							},
+						}, nil
+					}
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+						Results: []*sidecarv1.TransactionResult{
+							tc.buildResult(t, tc.firstSig, tc.firstSequence),
+							tc.buildResult(t, tc.secondSig, secondSequence),
+						},
+					}, nil
+				})
+
+			require.NoError(t, n.processBatchWithRetry(context.Background(), slog.Default(), mockClient, batch))
+			require.Equal(t, 2, decodeAttempts)
+			require.Equal(t, 1, len(normalizedCh), "transient decode-error attempt must not emit pre-retry normalized output")
+
+			normalized := <-normalizedCh
+			assert.Equal(t, []string{tc.firstSig, tc.secondSig}, txHashes(normalized))
+			require.NotNil(t, normalized.NewCursorValue)
+			assert.Equal(t, tc.secondSig, *normalized.NewCursorValue)
+			assert.Equal(t, secondSequence, normalized.NewCursorSequence)
+		})
+	}
+}
+
 func TestProcessBatchWithRetry_TransientDecodeFailureDeterministicAcrossChains(t *testing.T) {
 	testCases := []struct {
 		name        string

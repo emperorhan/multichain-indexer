@@ -42,6 +42,11 @@ func TestClassify_RepresentativeRuntimeErrors(t *testing.T) {
 			expectedClass: ClassTerminal,
 		},
 		{
+			name:          "schema mismatch terminal",
+			err:           errors.New("decode schema mismatch for signature sig-2"),
+			expectedClass: ClassTerminal,
+		},
+		{
 			name:          "unknown defaults terminal",
 			err:           errors.New("unexpected failure"),
 			expectedClass: ClassTerminal,

@@ -496,6 +496,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of sidecar-degradation determinism and decode-isolation continuity behavior on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0183 (M24-S1)
+Assertions:
+1. Ambiguous ingest-commit permutations (ack timeout, post-write disconnect, retry-after-unknown) converge to one deterministic canonical output set for equivalent logical ranges on both mandatory chains.
+2. Deterministic reconciliation of unknown commit outcomes prevents duplicate canonical IDs and missing logical events before retry/resume cursor advancement.
+3. Replay/resume from ambiguous-commit boundaries remains idempotent with cursor monotonicity and no balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject commit-ack timeout/disconnect permutations on `solana-devnet` and `base-sepolia` and show canonical tuple equivalence across independent runs.
+- Deterministic retry-after-unknown tests show `0` duplicate canonical IDs and `0` missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0184 (M24-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M24 invariants.
+2. QA executes at least one counterexample with commit-ack timeout/disconnect permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample with retry-after-unknown replay/resume and verifies no duplicate canonical IDs, no missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of ambiguous-commit reconciliation determinism and replay/resume invariant safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -518,3 +542,4 @@ Release recommendation must be `fail` if any condition holds:
 18. Crash-recovery checkpoint determinism cannot be proven (crash-cutpoint permutation equivalence, restart/resume completeness, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
 19. Checkpoint-integrity recovery determinism cannot be proven (corrupted checkpoint detection, deterministic recovery/fail-fast behavior, and post-recovery replay/cursor invariants not evidenced for both mandatory chains).
 20. Sidecar-degradation determinism cannot be proven (bounded retry semantics for transient sidecar outage, deterministic terminal decode-failure isolation/fail-fast behavior, and no duplicate/missing decodable canonical outputs across permutations on both mandatory chains).
+21. Ambiguous ingest-commit determinism cannot be proven (commit-ack timeout/disconnect reconciliation, retry-after-unknown replay equivalence, and no duplicate/missing logical canonical outputs with cursor monotonicity not evidenced for both mandatory chains).
