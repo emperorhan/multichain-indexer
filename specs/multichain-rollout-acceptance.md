@@ -256,6 +256,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of both order-permutation equivalence and overlap-dedupe determinism on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0141 (M14-S1)
+Assertions:
+1. Equivalent logical transaction/signature identities represented with alias variants (case differences, optional prefix forms, provider-format variance) converge to one deterministic canonical identity on both mandatory chains.
+2. Alias variants cannot bypass duplicate suppression boundaries and cannot produce duplicate canonical IDs in replay-equivalent runs.
+3. Alias-mixed replay runs preserve canonical no-dup behavior and cursor monotonicity without balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject alias variants on `solana-devnet` and `base-sepolia` and show `0` canonical tuple diffs across independent runs.
+- Alias+overlap duplicate tests show `0` duplicate canonical IDs with stable canonical ordering.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0142 (M14-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M14 invariants.
+2. QA executes at least one counterexample with canonical identity alias variants and verifies deterministic canonical tuple equivalence.
+3. QA executes at least one counterexample combining alias variants with overlap duplicates and verifies deterministic duplicate suppression.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of both alias-equivalence determinism and alias+overlap duplicate suppression behavior on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -268,3 +292,4 @@ Release recommendation must be `fail` if any condition holds:
 8. Retry-boundary determinism cannot be proven (terminal no-retry and transient bounded-retry behavior not evidenced for both mandatory chains).
 9. Decode-error isolation determinism cannot be proven (partial-failure suffix continuity and full-batch fail-fast behavior not evidenced for both mandatory chains).
 10. Fetch-order canonicalization determinism cannot be proven (order-permutation equivalence and overlap-dedupe stability not evidenced for both mandatory chains).
+11. Canonical identity alias determinism cannot be proven (alias-equivalent identity convergence and alias+overlap duplicate suppression not evidenced for both mandatory chains).

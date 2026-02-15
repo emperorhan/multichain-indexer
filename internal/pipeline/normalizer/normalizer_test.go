@@ -358,6 +358,88 @@ func TestProcessBatch_EventIDDeterminism(t *testing.T) {
 	assert.NotEmpty(t, first.Transactions[0].BalanceEvents[0].EventID)
 }
 
+func TestProcessBatch_BaseResultMatching_DeterministicAcrossResponseOrderAndHashCase(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 2)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000,
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	batch := event.RawBatch{
+		Chain:   model.ChainBase,
+		Network: model.NetworkSepolia,
+		Address: "0x1111111111111111111111111111111111111111",
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"base-order-1"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: "0xABCDEF", Sequence: 77},
+		},
+	}
+
+	matched := &sidecarv1.TransactionResult{
+		TxHash:      "0xabcdef",
+		BlockCursor: 77,
+		Status:      "SUCCESS",
+		BalanceEvents: []*sidecarv1.BalanceEventInfo{
+			{
+				OuterInstructionIndex: 0,
+				InnerInstructionIndex: -1,
+				EventCategory:         string(model.EventCategoryTransfer),
+				EventAction:           "native_transfer",
+				ProgramId:             "0xbase-program",
+				Address:               "0x1111111111111111111111111111111111111111",
+				ContractAddress:       "ETH",
+				Delta:                 "-1",
+				TokenSymbol:           "ETH",
+				TokenName:             "Ether",
+				TokenDecimals:         18,
+				TokenType:             string(model.TokenTypeNative),
+			},
+		},
+	}
+	unrelated := &sidecarv1.TransactionResult{
+		TxHash:      "0x0000000000000000000000000000000000000000000000000000000000000001",
+		BlockCursor: 78,
+		Status:      "SUCCESS",
+	}
+
+	call := 0
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Times(2).
+		DoAndReturn(func(_ context.Context, _ *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+			call++
+			if call == 1 {
+				return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+					Results: []*sidecarv1.TransactionResult{unrelated, matched},
+				}, nil
+			}
+			return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: []*sidecarv1.TransactionResult{matched, unrelated},
+			}, nil
+		})
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+	first := <-normalizedCh
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+	second := <-normalizedCh
+
+	require.Len(t, first.Transactions, 1)
+	require.Len(t, second.Transactions, 1)
+	assert.Equal(t, "0xabcdef", first.Transactions[0].TxHash)
+	assert.Equal(t, "0xabcdef", second.Transactions[0].TxHash)
+	assert.Equal(t, orderedCanonicalTuples(first), orderedCanonicalTuples(second))
+	require.NotNil(t, first.NewCursorValue)
+	require.NotNil(t, second.NewCursorValue)
+	assert.Equal(t, "0xabcdef", *first.NewCursorValue)
+	assert.Equal(t, "0xabcdef", *second.NewCursorValue)
+}
+
 func TestProcessBatch_PersistedArtifactsReplayHasZeroCanonicalTupleDiff(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockChainDecoderClient(ctrl)

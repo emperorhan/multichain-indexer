@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -117,6 +119,13 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 
 	if len(sigs) == 0 {
 		log.Debug("no new signatures", "address", job.Address)
+		return nil
+	}
+
+	// Canonicalize provider-returned ordering and suppress overlap duplicates.
+	sigs = canonicalizeSignatures(sigs)
+	if len(sigs) == 0 {
+		log.Debug("no canonical signatures after overlap suppression", "address", job.Address)
 		return nil
 	}
 
@@ -457,4 +466,73 @@ func (f *Fetcher) effectiveAdaptiveMinBatch() int {
 		return defaultAdaptiveMinBatch
 	}
 	return f.adaptiveMinBatch
+}
+
+func canonicalizeSignatures(sigs []chain.SignatureInfo) []chain.SignatureInfo {
+	if len(sigs) == 0 {
+		return []chain.SignatureInfo{}
+	}
+
+	byIdentity := make(map[string]chain.SignatureInfo, len(sigs))
+	for _, sig := range sigs {
+		identity := canonicalSignatureIdentity(sig.Hash)
+		if identity == "" {
+			continue
+		}
+
+		candidate := chain.SignatureInfo{
+			Hash:     identity,
+			Sequence: sig.Sequence,
+			Time:     sig.Time,
+		}
+
+		existing, ok := byIdentity[identity]
+		if !ok || shouldReplaceCanonicalSignature(existing, candidate) {
+			byIdentity[identity] = candidate
+		}
+	}
+
+	ordered := make([]chain.SignatureInfo, 0, len(byIdentity))
+	for _, sig := range byIdentity {
+		ordered = append(ordered, sig)
+	}
+
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Sequence != ordered[j].Sequence {
+			return ordered[i].Sequence < ordered[j].Sequence
+		}
+		return ordered[i].Hash < ordered[j].Hash
+	})
+
+	return ordered
+}
+
+func shouldReplaceCanonicalSignature(existing, incoming chain.SignatureInfo) bool {
+	if existing.Sequence != incoming.Sequence {
+		return incoming.Sequence > existing.Sequence
+	}
+
+	if existing.Time == nil && incoming.Time != nil {
+		return true
+	}
+	if existing.Time != nil && incoming.Time == nil {
+		return false
+	}
+	if existing.Time != nil && incoming.Time != nil && !existing.Time.Equal(*incoming.Time) {
+		return incoming.Time.After(*existing.Time)
+	}
+
+	return incoming.Hash < existing.Hash
+}
+
+func canonicalSignatureIdentity(hash string) string {
+	trimmed := strings.TrimSpace(hash)
+	if trimmed == "" {
+		return ""
+	}
+	// EVM tx hashes are hex and case-insensitive; normalize to suppress case-only duplicates.
+	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
+		return strings.ToLower(trimmed)
+	}
+	return trimmed
 }

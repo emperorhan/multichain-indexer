@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -530,4 +531,146 @@ func TestProcessJob_TransientSignatureFetchExhaustion_StageDiagnostic(t *testing
 	err := f.processJob(context.Background(), slog.Default(), job)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transient_recovery_exhausted stage=fetcher.fetch_signatures")
+}
+
+func TestProcessJob_CanonicalizesFetchOrderAndSuppressesOverlapDuplicatesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name           string
+		chain          model.Chain
+		network        model.Network
+		address        string
+		permutationA   []chain.SignatureInfo
+		permutationB   []chain.SignatureInfo
+		expectedHash   []string
+		expectedSeqs   []int64
+		expectedCursor string
+		expectedSeq    int64
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "sol-addr-1",
+			permutationA: []chain.SignatureInfo{
+				{Hash: "sig3", Sequence: 300},
+				{Hash: "sig1", Sequence: 100},
+				{Hash: "sig2", Sequence: 200},
+				{Hash: "sig2", Sequence: 200},
+				{Hash: "sig3", Sequence: 300},
+			},
+			permutationB: []chain.SignatureInfo{
+				{Hash: "sig2", Sequence: 200},
+				{Hash: "sig3", Sequence: 300},
+				{Hash: "sig1", Sequence: 100},
+				{Hash: "sig3", Sequence: 300},
+				{Hash: "sig2", Sequence: 200},
+			},
+			expectedHash:   []string{"sig1", "sig2", "sig3"},
+			expectedSeqs:   []int64{100, 200, 300},
+			expectedCursor: "sig3",
+			expectedSeq:    300,
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			permutationA: []chain.SignatureInfo{
+				{Hash: "0xCCC", Sequence: 30},
+				{Hash: "0xAaA", Sequence: 10},
+				{Hash: "0xbBb", Sequence: 20},
+				{Hash: "0xBBB", Sequence: 20},
+				{Hash: "0xaaa", Sequence: 10},
+			},
+			permutationB: []chain.SignatureInfo{
+				{Hash: "0xBBB", Sequence: 20},
+				{Hash: "0xccc", Sequence: 30},
+				{Hash: "0xAAA", Sequence: 10},
+				{Hash: "0xbbb", Sequence: 20},
+				{Hash: "0xaaa", Sequence: 10},
+			},
+			expectedHash:   []string{"0xaaa", "0xbbb", "0xccc"},
+			expectedSeqs:   []int64{10, 20, 30},
+			expectedCursor: "0xccc",
+			expectedSeq:    30,
+		},
+	}
+
+	signatureHashes := func(sigs []event.SignatureInfo) []string {
+		out := make([]string, 0, len(sigs))
+		for _, sig := range sigs {
+			out = append(out, sig.Hash)
+		}
+		return out
+	}
+
+	signatureSequences := func(sigs []event.SignatureInfo) []int64 {
+		out := make([]int64, 0, len(sigs))
+		for _, sig := range sigs {
+			out = append(out, sig.Sequence)
+		}
+		return out
+	}
+
+	run := func(t *testing.T, tc testCase, input []chain.SignatureInfo) event.RawBatch {
+		t.Helper()
+
+		ctrl := gomock.NewController(t)
+		mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+		rawBatchCh := make(chan event.RawBatch, 1)
+		f := &Fetcher{
+			adapter:          mockAdapter,
+			rawBatchCh:       rawBatchCh,
+			logger:           slog.Default(),
+			retryMaxAttempts: 1,
+		}
+
+		job := event.FetchJob{
+			Chain:     tc.chain,
+			Network:   tc.network,
+			Address:   tc.address,
+			BatchSize: 16,
+		}
+
+		mockAdapter.EXPECT().
+			FetchNewSignatures(gomock.Any(), tc.address, (*string)(nil), 16).
+			Return(input, nil)
+
+		mockAdapter.EXPECT().
+			FetchTransactions(gomock.Any(), tc.expectedHash).
+			DoAndReturn(func(_ context.Context, hashes []string) ([]json.RawMessage, error) {
+				payloads := make([]json.RawMessage, 0, len(hashes))
+				for _, hash := range hashes {
+					payloads = append(payloads, json.RawMessage(fmt.Sprintf(`{"tx":"%s"}`, hash)))
+				}
+				return payloads, nil
+			})
+
+		require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+		return <-rawBatchCh
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			first := run(t, tc, tc.permutationA)
+			second := run(t, tc, tc.permutationB)
+
+			assert.Equal(t, tc.expectedHash, signatureHashes(first.Signatures))
+			assert.Equal(t, tc.expectedHash, signatureHashes(second.Signatures))
+			assert.Equal(t, tc.expectedSeqs, signatureSequences(first.Signatures))
+			assert.Equal(t, signatureSequences(first.Signatures), signatureSequences(second.Signatures))
+
+			require.NotNil(t, first.NewCursorValue)
+			require.NotNil(t, second.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *first.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *second.NewCursorValue)
+			assert.Equal(t, tc.expectedSeq, first.NewCursorSequence)
+			assert.Equal(t, tc.expectedSeq, second.NewCursorSequence)
+			assert.Equal(t, signatureHashes(first.Signatures), signatureHashes(second.Signatures))
+		})
+	}
 }

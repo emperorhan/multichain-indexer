@@ -195,25 +195,41 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		log.Warn("sidecar decode error", "stage", decodeStage, "signature", decErr.Signature, "error", decErr.Error)
 	}
 
+	fallbackResults := make([]*sidecarv1.TransactionResult, 0, len(resp.Results))
 	resultBySignature := make(map[string]*sidecarv1.TransactionResult, len(resp.Results))
-	orderedResults := make([]*sidecarv1.TransactionResult, 0, len(resp.Results))
 	for _, result := range resp.Results {
 		if result == nil {
 			continue
 		}
-		orderedResults = append(orderedResults, result)
-		if strings.TrimSpace(result.TxHash) == "" {
+		fallbackResults = append(fallbackResults, result)
+
+		signatureKey := canonicalSignatureIdentity(result.TxHash)
+		if signatureKey == "" {
 			continue
 		}
-		resultBySignature[strings.TrimSpace(result.TxHash)] = result
+		existing, ok := resultBySignature[signatureKey]
+		if !ok || shouldReplaceDecodedResult(existing, result) {
+			resultBySignature[signatureKey] = result
+		}
 	}
+	sort.Slice(fallbackResults, func(i, j int) bool {
+		return compareDecodedResultOrder(fallbackResults[i], fallbackResults[j]) < 0
+	})
 
 	errorBySignature := make(map[string]string, len(resp.Errors))
 	for _, decErr := range resp.Errors {
-		if decErr == nil || strings.TrimSpace(decErr.Signature) == "" {
+		if decErr == nil {
 			continue
 		}
-		errorBySignature[strings.TrimSpace(decErr.Signature)] = strings.TrimSpace(decErr.Error)
+		signatureKey := canonicalSignatureIdentity(decErr.Signature)
+		if signatureKey == "" {
+			continue
+		}
+		reason := strings.TrimSpace(decErr.Error)
+		existing, exists := errorBySignature[signatureKey]
+		if !exists || reason < existing {
+			errorBySignature[signatureKey] = reason
+		}
 	}
 
 	// Convert to NormalizedBatch
@@ -230,7 +246,8 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	}
 
 	processed := 0
-	orderedResultIndex := 0
+	fallbackIndex := 0
+	consumedResults := make(map[*sidecarv1.TransactionResult]struct{}, len(fallbackResults))
 	type decodeFailure struct {
 		signature string
 		reason    string
@@ -239,14 +256,15 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 
 	for _, sig := range batch.Signatures {
 		signature := strings.TrimSpace(sig.Hash)
-		if signature == "" {
+		signatureKey := canonicalSignatureIdentity(signature)
+		if signatureKey == "" {
 			decodeFailures = append(decodeFailures, decodeFailure{
 				signature: "<empty>",
 				reason:    "empty signature",
 			})
 			continue
 		}
-		if errMsg, hasErr := errorBySignature[signature]; hasErr {
+		if errMsg, hasErr := errorBySignature[signatureKey]; hasErr {
 			if errMsg == "" {
 				errMsg = "decode failed"
 			}
@@ -262,23 +280,35 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 			result *sidecarv1.TransactionResult
 			ok     bool
 		)
-		if result, ok = resultBySignature[signature]; ok {
-			delete(resultBySignature, signature)
-		} else {
-			if orderedResultIndex >= len(orderedResults) {
-				log.Warn("signature decode isolated", "stage", decodeStage, "signature", signature, "error", "missing decode result")
-				decodeFailures = append(decodeFailures, decodeFailure{
-					signature: signature,
-					reason:    "missing decode result",
-				})
-				continue
-			}
-			result = orderedResults[orderedResultIndex]
-			orderedResultIndex++
+		if result, ok = resultBySignature[signatureKey]; ok {
+			delete(resultBySignature, signatureKey)
 		}
+		if result == nil {
+			for fallbackIndex < len(fallbackResults) {
+				candidate := fallbackResults[fallbackIndex]
+				fallbackIndex++
+				if candidate == nil {
+					continue
+				}
+				if _, used := consumedResults[candidate]; used {
+					continue
+				}
+				result = candidate
+				break
+			}
+		}
+		if result == nil {
+			log.Warn("signature decode isolated", "stage", decodeStage, "signature", signature, "error", "missing decode result")
+			decodeFailures = append(decodeFailures, decodeFailure{
+				signature: signature,
+				reason:    "missing decode result",
+			})
+			continue
+		}
+		consumedResults[result] = struct{}{}
 
 		normalized.Transactions = append(normalized.Transactions, n.normalizedTxFromResult(batch, result))
-		cursorValue := sig.Hash
+		cursorValue := signatureKey
 		normalized.NewCursorValue = &cursorValue
 		normalized.NewCursorSequence = sig.Sequence
 		processed++
@@ -941,6 +971,112 @@ func mapTokenTypeToAssetType(tokenType model.TokenType) string {
 
 func balanceEventPath(outerInstructionIndex, innerInstructionIndex int32) string {
 	return fmt.Sprintf("outer:%d|inner:%d", outerInstructionIndex, innerInstructionIndex)
+}
+
+func canonicalSignatureIdentity(hash string) string {
+	trimmed := strings.TrimSpace(hash)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
+		return strings.ToLower(trimmed)
+	}
+	return trimmed
+}
+
+func shouldReplaceDecodedResult(existing, incoming *sidecarv1.TransactionResult) bool {
+	if existing == nil {
+		return incoming != nil
+	}
+	if incoming == nil {
+		return false
+	}
+
+	if existing.BlockCursor != incoming.BlockCursor {
+		return incoming.BlockCursor > existing.BlockCursor
+	}
+
+	existingStatus := strings.TrimSpace(existing.Status)
+	incomingStatus := strings.TrimSpace(incoming.Status)
+	existingSuccess := strings.EqualFold(existingStatus, string(model.TxStatusSuccess))
+	incomingSuccess := strings.EqualFold(incomingStatus, string(model.TxStatusSuccess))
+	if existingSuccess != incomingSuccess {
+		return incomingSuccess
+	}
+	if existingStatus != incomingStatus {
+		return incomingStatus < existingStatus
+	}
+
+	existingFee := strings.TrimSpace(existing.FeeAmount)
+	incomingFee := strings.TrimSpace(incoming.FeeAmount)
+	if existingFee != incomingFee {
+		return incomingFee < existingFee
+	}
+
+	existingPayer := canonicalSignatureIdentity(existing.FeePayer)
+	incomingPayer := canonicalSignatureIdentity(incoming.FeePayer)
+	if existingPayer != incomingPayer {
+		return incomingPayer < existingPayer
+	}
+
+	return strings.TrimSpace(incoming.TxHash) < strings.TrimSpace(existing.TxHash)
+}
+
+func compareDecodedResultOrder(left, right *sidecarv1.TransactionResult) int {
+	if left == nil && right == nil {
+		return 0
+	}
+	if left == nil {
+		return 1
+	}
+	if right == nil {
+		return -1
+	}
+
+	leftHash := canonicalSignatureIdentity(left.TxHash)
+	rightHash := canonicalSignatureIdentity(right.TxHash)
+	if leftHash != rightHash {
+		if leftHash < rightHash {
+			return -1
+		}
+		return 1
+	}
+
+	if left.BlockCursor != right.BlockCursor {
+		if left.BlockCursor < right.BlockCursor {
+			return -1
+		}
+		return 1
+	}
+
+	leftStatus := strings.TrimSpace(left.Status)
+	rightStatus := strings.TrimSpace(right.Status)
+	if leftStatus != rightStatus {
+		if leftStatus < rightStatus {
+			return -1
+		}
+		return 1
+	}
+
+	leftFeePayer := canonicalSignatureIdentity(left.FeePayer)
+	rightFeePayer := canonicalSignatureIdentity(right.FeePayer)
+	if leftFeePayer != rightFeePayer {
+		if leftFeePayer < rightFeePayer {
+			return -1
+		}
+		return 1
+	}
+
+	leftFeeAmount := strings.TrimSpace(left.FeeAmount)
+	rightFeeAmount := strings.TrimSpace(right.FeeAmount)
+	if leftFeeAmount != rightFeeAmount {
+		if leftFeeAmount < rightFeeAmount {
+			return -1
+		}
+		return 1
+	}
+
+	return 0
 }
 
 func (n *Normalizer) effectiveRetryMaxAttempts() int {
