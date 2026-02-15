@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -39,6 +39,8 @@ Execution queue (dependency-ordered):
 28. `I-0148` (`M16-S2`) QA counterexample gate for rollback/finality convergence determinism + invariant safety
 29. `I-0150` (`M17-S1`) cursor-boundary canonical continuity hardening
 30. `I-0151` (`M17-S2`) QA counterexample gate for cursor-boundary determinism + invariant safety
+31. `I-0155` (`M18-S1`) watched-address fan-in canonical dedupe hardening
+32. `I-0156` (`M18-S2`) QA counterexample gate for watched-address fan-in determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -569,7 +571,7 @@ Preserve deterministic canonical identity and balance correctness when previousl
 - Gate: over-pruning during rollback reconciliation can drop valid post-fork events if fork boundaries are computed incorrectly.
 - Fallback: keep reconciliation strictly fork-range scoped, emit deterministic rollback-collision diagnostics, and fail fast on ambiguous ancestry boundaries until contract extension is approved.
 
-### M17. Cursor-Boundary Continuity Reliability Tranche C0011 (P0, Next)
+### M17. Cursor-Boundary Continuity Reliability Tranche C0011 (P0, Completed)
 
 #### Objective
 Eliminate canonical duplicate/missing-event risk at adjacent cursor boundaries so restart/resume and shifted batch windows preserve one deterministic canonical event set on mandatory chains.
@@ -603,6 +605,41 @@ Eliminate canonical duplicate/missing-event risk at adjacent cursor boundaries s
 #### Risk Gate + Fallback
 - Gate: over-aggressive boundary dedupe can suppress legitimate distinct events when identity boundaries are underspecified.
 - Fallback: use conservative boundary identity keying (`chain + canonical identity + event path + cursor scope`), emit deterministic boundary-collision diagnostics, and fail fast on unresolved ambiguity until contract extension is approved.
+
+### M18. Watched-Address Fan-In Determinism Reliability Tranche C0012 (P0, Next)
+
+#### Objective
+Eliminate duplicate and missing-event risk when the same logical transaction/signature is discovered through multiple watched-address streams, so fan-in ingestion converges to one deterministic canonical event set on mandatory chains.
+
+#### Entry Gate
+- `M17` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M18-S1` (`I-0155`): implement deterministic watched-address fan-in union/dedupe semantics across mandatory-chain fetch/normalize/ingest paths so replay-equivalent multi-address inputs cannot re-emit or drop logical canonical events.
+2. `M18-S2` (`I-0156`): execute QA counterexample gate for fan-in overlap/replay determinism and invariant evidence.
+
+#### Definition Of Done
+1. Logical transactions/signatures observed from overlapping watched-address inputs converge to one canonical event set per logical balance delta.
+2. Replay-equivalent runs over the same range with different watched-address ordering/partitioning produce identical ordered canonical tuples.
+3. Fan-in replay remains idempotent with no balance double-apply side effects and no boundary event loss.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject overlapping watched-address discovery patterns for both `solana-devnet` and `base-sepolia` and assert one canonical emission set per logical transaction/signature identity.
+2. Deterministic tests replay the same logical range with at least two fixed watched-address order/partition strategies and assert `0` canonical tuple diffs.
+3. Replay/idempotency/cursor tests remain green with no regressions on `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, and `chain_adapter_runtime_wired`.
+4. QA executes required validation commands plus watched-address overlap counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across watched-address-overlap replay fixtures on mandatory chains.
+2. `0` missing logical canonical events when comparing single-address baseline fixtures vs watched-address fan-in fixtures over equivalent ranges.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-aggressive fan-in dedupe may collapse legitimately distinct per-actor balance deltas that share transaction identity.
+- Fallback: use conservative fan-in identity keying (`chain + canonical identity + actor + asset_id + event_path`), emit deterministic fan-in-collision diagnostics, and fail fast on unresolved ambiguity until contract extension is approved.
 
 ## Decision Register (Major + Fallback)
 
@@ -651,9 +688,10 @@ Completed milestones/slices:
 28. `I-0148`
 
 Active downstream queue from this plan:
-1. `I-0150`
-2. `I-0151`
+1. `I-0155`
+2. `I-0156`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
 - `I-0133` and `I-0134` are superseded by `I-0135` and `I-0136` for a clean planner-only handoff after prior scope-violation execution.
+- `I-0153` and `I-0154` are superseded by `I-0155` and `I-0156` to replace generic cycle placeholders with executable watched-address fan-in reliability slices.
