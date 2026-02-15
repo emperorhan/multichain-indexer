@@ -2803,6 +2803,433 @@ func TestTick_AutoTunePolicyManifestPermutationsConvergeCanonicalTuplesAcrossMan
 	}
 }
 
+func TestTick_AutoTunePolicyManifestSequenceGapPermutationsConvergeCanonicalTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKgapseq",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x2222222222222222222222222222222222222222",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestseqgap000000000000000000000000",
+		},
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               400,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, segment1Cfg)
+			baselineSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			baselineBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					baselineHarness.coordinator.WithAutoTune(segment2Cfg)
+				}
+				if i == 4 {
+					baselineHarness.coordinator.WithAutoTune(segment3Cfg)
+				}
+				job := baselineHarness.tickAndAdvance(t)
+				baselineSnapshots = append(baselineSnapshots, snapshotFromFetchJob(job))
+				baselineBatches = append(baselineBatches, job.BatchSize)
+			}
+
+			sequenceGapHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, segment1Cfg)
+			sequenceGapSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			sequenceGapBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					sequenceGapHarness.coordinator.WithAutoTune(segment3Cfg)
+					state := sequenceGapHarness.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, segment1Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "non-contiguous segment apply must pin previously verified manifest digest")
+					assert.Equal(t, segment1Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch, "non-contiguous segment apply must pin last contiguous epoch")
+				}
+				if i == 4 {
+					sequenceGapHarness.coordinator.WithAutoTune(segment2Cfg)
+					state := sequenceGapHarness.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, segment2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "late contiguous gap-fill must become active deterministically")
+					assert.Equal(t, segment2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				if i == 6 {
+					sequenceGapHarness.coordinator.WithAutoTune(segment3Cfg)
+					state := sequenceGapHarness.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "duplicate segment re-apply after gap-fill must converge deterministically")
+					assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				if i == 7 {
+					sequenceGapHarness.coordinator.WithAutoTune(segment3Cfg)
+				}
+				job := sequenceGapHarness.tickAndAdvance(t)
+				sequenceGapSnapshots = append(sequenceGapSnapshots, snapshotFromFetchJob(job))
+				sequenceGapBatches = append(sequenceGapBatches, job.BatchSize)
+			}
+
+			assert.Equal(t, baselineSnapshots, sequenceGapSnapshots, "sequence-complete baseline and sequence-gap permutations must converge to one canonical tuple output set")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, sequenceGapSnapshots, "sequence baseline vs sequence-gap hold/late-gap-fill/re-apply")
+			assertCursorMonotonicByAddress(t, baselineSnapshots)
+			assertCursorMonotonicByAddress(t, sequenceGapSnapshots)
+
+			assert.NotEqual(t, baselineBatches, sequenceGapBatches, "sequence-gap permutations should alter control decisions only at sequence transition boundaries")
+			assert.NotEqual(t, sequenceGapBatches[1], sequenceGapBatches[2], "non-contiguous segment transition must not open policy activation hold")
+			assert.Equal(t, sequenceGapBatches[3], sequenceGapBatches[4], "late contiguous gap-fill must apply deterministic activation hold")
+			assert.Equal(t, sequenceGapBatches[5], sequenceGapBatches[6], "contiguous re-apply after gap-fill must apply deterministic activation hold exactly once")
+			assert.NotEqual(t, sequenceGapBatches[6], sequenceGapBatches[7], "duplicate segment re-apply at same epoch must not reopen activation hold")
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestSequenceGapDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               320,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+
+	const tickCount = 10
+	healthyBaseAddress := "0x3333333333333333333333333333333333333333"
+	healthyBTCAddress := "tb1qmanifestseqhealthy0000000000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKgapseq"
+
+	healthyHeads := []int64{130, 131, 132, 133, 134, 135, 136, 137, 138, 139}
+	laggingHeads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+	)
+	laggingBaselineSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBaselineBatches := make([]int, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		if i == 2 {
+			laggingBaseline.coordinator.WithAutoTune(segment2Cfg)
+		}
+		if i == 4 {
+			laggingBaseline.coordinator.WithAutoTune(segment3Cfg)
+		}
+		job := laggingBaseline.tickAndAdvance(t)
+		laggingBaselineSnapshots = append(laggingBaselineSnapshots, snapshotFromFetchJob(job))
+		laggingBaselineBatches = append(laggingBaselineBatches, job.BatchSize)
+	}
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBatches := make([]int, 0, tickCount)
+
+	for i := 0; i < tickCount; i++ {
+		if i == 2 {
+			laggingInterleaved.coordinator.WithAutoTune(segment3Cfg)
+			state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, state)
+			assert.Equal(t, segment1Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "one-chain sequence-gap apply must pin previous contiguous manifest digest")
+			assert.Equal(t, segment1Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch, "one-chain sequence-gap apply must pin previous contiguous manifest epoch")
+		}
+		if i == 4 {
+			laggingInterleaved.coordinator.WithAutoTune(segment2Cfg)
+			state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, state)
+			assert.Equal(t, segment2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "one-chain late contiguous gap-fill must become active deterministically")
+			assert.Equal(t, segment2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+		}
+		if i == 6 {
+			laggingInterleaved.coordinator.WithAutoTune(segment3Cfg)
+			state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, state)
+			assert.Equal(t, segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "one-chain contiguous re-apply after gap-fill must converge deterministically")
+			assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+		}
+		if i == 7 {
+			laggingInterleaved.coordinator.WithAutoTune(segment3Cfg)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+		laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "one-chain sequence-gap recovery must not alter base canonical tuples")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "one-chain sequence-gap recovery must not alter base control decisions")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "one-chain sequence-gap recovery must not alter btc canonical tuples")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "one-chain sequence-gap recovery must not alter btc control decisions")
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "sequence-gap recovery must preserve lagging-chain canonical tuples")
+	assert.NotEqual(t, laggingBaselineBatches, laggingBatches, "sequence-gap recovery permutations should alter only lagging-chain control decisions at sequence boundaries")
+	assert.NotEqual(t, laggingBatches[1], laggingBatches[2], "non-contiguous segment transition must not open policy activation hold")
+	assert.Equal(t, laggingBatches[3], laggingBatches[4], "late contiguous gap-fill must apply deterministic activation hold")
+	assert.Equal(t, laggingBatches[5], laggingBatches[6], "contiguous re-apply after gap-fill must apply deterministic activation hold exactly once")
+	assert.NotEqual(t, laggingBatches[6], laggingBatches[7], "duplicate segment re-apply at same epoch must not reopen activation hold")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs one-chain sequence-gap transition")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs one-chain sequence-gap transition")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs one-chain sequence-gap transition")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
+func TestTick_AutoTunePolicyManifestSequenceGapReplayResumeConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKseqreplay",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x3333333333333333333333333333333333333333",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestseqreplay000000000000000000000",
+		},
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               320,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  2,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269}
+	const splitTick = 3
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			coldHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, segment1Cfg)
+			coldSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			coldBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					coldHarness.coordinator.WithAutoTune(segment3Cfg)
+				}
+				if i == 4 {
+					coldHarness.coordinator.WithAutoTune(segment2Cfg)
+				}
+				if i == 6 {
+					coldHarness.coordinator.WithAutoTune(segment3Cfg)
+				}
+				if i == 7 {
+					coldHarness.coordinator.WithAutoTune(segment3Cfg)
+				}
+				job := coldHarness.tickAndAdvance(t)
+				coldSnapshots = append(coldSnapshots, snapshotFromFetchJob(job))
+				coldBatches = append(coldBatches, job.BatchSize)
+			}
+
+			warmFirst := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads[:splitTick], segment1Cfg)
+			warmSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			warmBatches := make([]int, 0, len(heads))
+			for i := 0; i < splitTick; i++ {
+				if i == 2 {
+					warmFirst.coordinator.WithAutoTune(segment3Cfg)
+				}
+				job := warmFirst.tickAndAdvance(t)
+				warmSnapshots = append(warmSnapshots, snapshotFromFetchJob(job))
+				warmBatches = append(warmBatches, job.BatchSize)
+			}
+
+			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, restartState)
+			assert.Equal(t, segment1Cfg.PolicyVersion, restartState.PolicyVersion)
+			assert.Equal(t, segment1Cfg.PolicyManifestDigest, restartState.PolicyManifestDigest)
+			assert.Equal(t, segment1Cfg.PolicyManifestRefreshEpoch, restartState.PolicyEpoch)
+			assert.Equal(t, 0, restartState.PolicyActivationRemaining, "restart state must not open activation hold after rejected sequence-gap transition")
+			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
+			require.NotNil(t, resumeCursor)
+
+			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				resumeCursor.CursorSequence,
+				heads[splitTick:],
+				segment3Cfg,
+				restartState,
+			)
+
+			for i := splitTick; i < len(heads); i++ {
+				if i == 4 {
+					warmSecond.coordinator.WithAutoTune(segment2Cfg)
+					state := warmSecond.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, segment2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "replay late contiguous gap-fill must be accepted deterministically")
+					assert.Equal(t, segment2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				if i == 6 {
+					warmSecond.coordinator.WithAutoTune(segment3Cfg)
+					state := warmSecond.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "replay contiguous segment re-apply after gap-fill must converge deterministically")
+					assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				if i == 7 {
+					warmSecond.coordinator.WithAutoTune(segment3Cfg)
+				}
+				job := warmSecond.tickAndAdvance(t)
+				warmSnapshots = append(warmSnapshots, snapshotFromFetchJob(job))
+				warmBatches = append(warmBatches, job.BatchSize)
+			}
+
+			assert.Equal(t, coldSnapshots, warmSnapshots, "policy-manifest sequence-gap replay/resume must converge to deterministic canonical tuples")
+			assert.Equal(t, coldBatches, warmBatches, "policy-manifest sequence-gap replay/resume must preserve deterministic control decisions")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, coldSnapshots, warmSnapshots, "cold vs warm sequence-gap replay")
+			assertCursorMonotonicByAddress(t, warmSnapshots)
+		})
+	}
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,

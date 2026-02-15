@@ -920,6 +920,103 @@ func TestAutoTuneController_PolicyManifestRefreshRejectsStaleAndDigestReapplyIsD
 	assert.Equal(t, 0, reapplyDecision.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_PolicyManifestSequenceGapRequiresContiguousEpochProgress(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	baseCfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               260,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	baseController := newAutoTuneController(100, baseCfg)
+	require.NotNil(t, baseController)
+
+	batch, baselineDecision := baseController.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "apply_increase", baselineDecision.Decision)
+	assert.Equal(t, "manifest-v2a", baselineDecision.PolicyManifestDigest)
+	assert.Equal(t, int64(1), baselineDecision.PolicyEpoch)
+
+	gapCfg := baseCfg
+	gapCfg.PolicyManifestDigest = "manifest-v2c"
+	gapCfg.PolicyManifestRefreshEpoch = 3
+	gapSeed := baseController.currentBatch
+	gapController := newAutoTuneControllerWithSeed(100, gapCfg, &gapSeed)
+	require.NotNil(t, gapController)
+	gapController.reconcilePolicyTransition(baseController.exportPolicyTransition())
+
+	batch, gapDecision := gapController.Resolve(highLag)
+	assert.Equal(t, 140, batch)
+	assert.Equal(t, "apply_increase", gapDecision.Decision, "sequence-gap transition must not apply non-contiguous manifest segment")
+	assert.Equal(t, "manifest-v2a", gapDecision.PolicyManifestDigest, "sequence-gap transition must pin last contiguous digest")
+	assert.Equal(t, int64(1), gapDecision.PolicyEpoch, "sequence-gap transition must pin last contiguous epoch")
+	assert.Equal(t, 0, gapDecision.PolicyActivationTicks, "sequence-gap transition must not open activation hold")
+
+	gapFillCfg := baseCfg
+	gapFillCfg.PolicyManifestDigest = "manifest-v2b"
+	gapFillCfg.PolicyManifestRefreshEpoch = 2
+	gapFillSeed := gapController.currentBatch
+	gapFillController := newAutoTuneControllerWithSeed(100, gapFillCfg, &gapFillSeed)
+	require.NotNil(t, gapFillController)
+	gapFillController.reconcilePolicyTransition(gapController.exportPolicyTransition())
+
+	batch, gapFillHold := gapFillController.Resolve(highLag)
+	assert.Equal(t, gapFillSeed, batch)
+	assert.Equal(t, "hold_policy_transition", gapFillHold.Decision, "late contiguous gap-fill must apply deterministic activation hold")
+	assert.Equal(t, "manifest-v2b", gapFillHold.PolicyManifestDigest)
+	assert.Equal(t, int64(2), gapFillHold.PolicyEpoch)
+	assert.Equal(t, 1, gapFillHold.PolicyActivationTicks)
+
+	batch, gapFillApplied := gapFillController.Resolve(highLag)
+	assert.Equal(t, gapFillSeed+20, batch)
+	assert.Equal(t, "apply_increase", gapFillApplied.Decision)
+	assert.Equal(t, "manifest-v2b", gapFillApplied.PolicyManifestDigest)
+	assert.Equal(t, int64(2), gapFillApplied.PolicyEpoch)
+
+	reapplySeed := gapFillController.currentBatch
+	reapplyController := newAutoTuneControllerWithSeed(100, gapCfg, &reapplySeed)
+	require.NotNil(t, reapplyController)
+	reapplyController.reconcilePolicyTransition(gapFillController.exportPolicyTransition())
+
+	batch, reapplyHold := reapplyController.Resolve(highLag)
+	assert.Equal(t, reapplySeed, batch)
+	assert.Equal(t, "hold_policy_transition", reapplyHold.Decision, "duplicate segment re-apply after gap-fill must deterministically activate once")
+	assert.Equal(t, "manifest-v2c", reapplyHold.PolicyManifestDigest)
+	assert.Equal(t, int64(3), reapplyHold.PolicyEpoch)
+	assert.Equal(t, 1, reapplyHold.PolicyActivationTicks)
+
+	duplicateSeed := reapplyController.currentBatch
+	duplicateController := newAutoTuneControllerWithSeed(100, gapCfg, &duplicateSeed)
+	require.NotNil(t, duplicateController)
+	duplicateController.reconcilePolicyTransition(reapplyController.exportPolicyTransition())
+
+	batch, duplicateDecision := duplicateController.Resolve(highLag)
+	assert.Equal(t, duplicateSeed+20, batch)
+	assert.Equal(t, "apply_increase", duplicateDecision.Decision, "duplicate segment re-apply at same contiguous epoch must not reopen activation hold")
+	assert.Equal(t, "manifest-v2c", duplicateDecision.PolicyManifestDigest)
+	assert.Equal(t, int64(3), duplicateDecision.PolicyEpoch)
+	assert.Equal(t, 0, duplicateDecision.PolicyActivationTicks)
+}
+
 func intPtr(v int) *int {
 	return &v
 }

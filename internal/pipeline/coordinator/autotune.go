@@ -550,8 +550,14 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 	}
 
 	if incomingVersion == previousVersion && incomingDigest == previousDigest {
-		a.policyManifestDigest = incomingDigest
-		if previousEpoch > a.policyEpoch {
+		if incomingEpoch == previousEpoch+1 {
+			a.policyManifestDigest = incomingDigest
+			a.policyEpoch = incomingEpoch
+			a.policyActivationLeft = a.policyActivationHold
+			a.resetAdaptiveControlState()
+		} else {
+			// Reject duplicate/stale/sequence-gap transitions for identical digest lineage.
+			a.policyManifestDigest = previousDigest
 			a.policyEpoch = previousEpoch
 		}
 		if transition.ActivationHoldRemaining > a.policyActivationLeft {
@@ -571,10 +577,20 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 	}
 
 	if incomingEpoch > previousEpoch {
-		a.policyManifestDigest = incomingDigest
-		a.policyEpoch = incomingEpoch
-		a.policyActivationLeft = a.policyActivationHold
-		a.resetAdaptiveControlState()
+		if incomingEpoch == previousEpoch+1 {
+			a.policyManifestDigest = incomingDigest
+			a.policyEpoch = incomingEpoch
+			a.policyActivationLeft = a.policyActivationHold
+			a.resetAdaptiveControlState()
+			return
+		}
+		// Reject sequence-gap transitions: pin previously verified contiguous lineage.
+		a.policyManifestDigest = previousDigest
+		a.policyEpoch = previousEpoch
+		if transition.ActivationHoldRemaining > a.policyActivationLeft {
+			a.policyActivationLeft = transition.ActivationHoldRemaining
+			a.resetAdaptiveControlState()
+		}
 		return
 	}
 
