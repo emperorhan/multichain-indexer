@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -47,6 +47,8 @@ Execution queue (dependency-ordered):
 36. `I-0166` (`M20-S2`) QA counterexample gate for dual-chain interleaving determinism + invariant safety
 37. `I-0170` (`M21-S1`) tick checkpoint crash-recovery determinism hardening
 38. `I-0171` (`M21-S2`) QA counterexample gate for crash-point permutation determinism + invariant safety
+39. `I-0175` (`M22-S1`) checkpoint integrity self-healing determinism hardening
+40. `I-0176` (`M22-S2`) QA counterexample gate for checkpoint-integrity recovery determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -717,7 +719,7 @@ Eliminate missing/duplicate-event risk from nondeterministic mandatory-chain tic
 - Gate: deterministic interleaving barriers can reduce throughput or increase tick latency under asymmetric provider delay.
 - Fallback: keep ordering rules chain-scoped with bounded skew guardrails, emit explicit interleaving-skew diagnostics, and fail fast on ambiguous commit ordering until the contract is extended.
 
-### M21. Tick Checkpoint Crash-Recovery Determinism Reliability Tranche C0015 (P0, Next)
+### M21. Tick Checkpoint Crash-Recovery Determinism Reliability Tranche C0015 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when process crashes occur at partial dual-chain tick progress boundaries, so restart/resume always converges to one deterministic canonical output and cursor state.
@@ -751,6 +753,41 @@ Eliminate duplicate/missing-event risk when process crashes occur at partial dua
 #### Risk Gate + Fallback
 - Gate: strict checkpoint ordering and resume reconciliation may increase tick latency or replay window size under repeated crashes.
 - Fallback: use deterministic replay-from-last-safe-checkpoint semantics with explicit crash-cutpoint diagnostics and bounded replay window guardrails until optimized checkpoint granularity is proven safe.
+
+### M22. Checkpoint Integrity Self-Healing Determinism Reliability Tranche C0016 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when persisted tick checkpoint state is partially written, stale, or chain-inconsistent, so restart/resume converges to one deterministic canonical output and cursor state without manual repair.
+
+#### Entry Gate
+- `M21` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M22-S1` (`I-0175`): implement deterministic checkpoint integrity validation + last-safe reconciliation so corrupted/stale/inconsistent persisted checkpoint state cannot induce duplicate canonical IDs, missing logical events, or cursor regression.
+2. `M22-S2` (`I-0176`): execute QA counterexample gate for checkpoint corruption/recovery determinism and restart/resume invariant evidence.
+
+#### Definition Of Done
+1. Startup/resume validates persisted checkpoint payload integrity and chain-scoped consistency before processing new ranges.
+2. Corrupted or chain-inconsistent checkpoint state deterministically recovers to one last-safe boundary (or fails fast with explicit diagnostics) without silent duplicate or missing-event side effects.
+3. Replay/resume after integrity-triggered reconciliation remains idempotent with stable canonical tuple ordering and no balance double-apply side effects.
+4. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject checkpoint corruption modes (truncated payload, stale checkpoint cursor, cross-chain checkpoint mix-up) across Solana/Base tick resume paths and assert one canonical output set for equivalent logical input.
+2. Deterministic tests assert recovery from each corruption mode yields `0` duplicate canonical IDs, `0` missing logical events, and chain-scoped cursor monotonicity.
+3. Deterministic repeated recover/restart loops assert `0` canonical tuple diffs and `0` balance drift.
+4. QA executes required validation commands plus checkpoint-integrity counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across checkpoint-corruption permutation fixtures on mandatory chains.
+2. `0` duplicate canonical IDs and `0` missing logical events after integrity-triggered recovery/resume fixtures.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: strict checkpoint-integrity validation and recovery can increase restart latency and replay-window cost under repeated corruption scenarios.
+- Fallback: use deterministic fail-fast plus replay-from-last-known-good checkpoint semantics with explicit checkpoint-integrity diagnostics and bounded recovery window guardrails until optimized repair granularity is proven safe.
 
 ## Decision Register (Major + Fallback)
 
@@ -805,15 +842,18 @@ Completed milestones/slices:
 34. `I-0161`
 35. `I-0165`
 36. `I-0166`
+37. `I-0170`
+38. `I-0171`
 
 Active downstream queue from this plan:
-1. `I-0170`
-2. `I-0171`
+1. `I-0175`
+2. `I-0176`
 
-Superseded issue:
+Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
 - `I-0133` and `I-0134` are superseded by `I-0135` and `I-0136` for a clean planner-only handoff after prior scope-violation execution.
 - `I-0153` and `I-0154` are superseded by `I-0155` and `I-0156` to replace generic cycle placeholders with executable watched-address fan-in reliability slices.
 - `I-0158` and `I-0159` are superseded by `I-0160` and `I-0161` to replace generic cycle placeholders with executable lag-aware fan-in cursor continuity reliability slices.
 - `I-0163` and `I-0164` are superseded by `I-0165` and `I-0166` to replace generic cycle placeholders with executable dual-chain tick interleaving reliability slices.
 - `I-0168` and `I-0169` are superseded by `I-0170` and `I-0171` to replace generic cycle placeholders with executable crash-recovery checkpoint determinism slices.
+- `I-0173` and `I-0174` are superseded by `I-0175` and `I-0176` to replace generic cycle placeholders with executable checkpoint-integrity recovery determinism slices.

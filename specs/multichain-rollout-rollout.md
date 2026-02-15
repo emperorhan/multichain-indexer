@@ -37,9 +37,13 @@
 34. `I-0161` (`M19-S2`): QA counterexample gate for lag-aware fan-in cursor continuity + invariant safety.
 35. `I-0165` (`M20-S1`): dual-chain tick interleaving determinism hardening across mandatory-chain runtime paths.
 36. `I-0166` (`M20-S2`): QA counterexample gate for dual-chain interleaving determinism + invariant safety.
+37. `I-0170` (`M21-S1`): tick checkpoint crash-recovery determinism hardening across mandatory-chain runtime paths.
+38. `I-0171` (`M21-S2`): QA counterexample gate for crash-point permutation determinism + invariant safety.
+39. `I-0175` (`M22-S1`): checkpoint integrity self-healing determinism hardening across mandatory-chain restart/resume paths.
+40. `I-0176` (`M22-S2`): QA counterexample gate for checkpoint-integrity recovery determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -83,6 +87,10 @@ Each slice must be independently releasable:
 32. Before `I-0161`: `I-0160` emits deterministic evidence that divergent-cursor and fan-in-membership-churn inputs converge to one canonical output set with zero duplicate and zero missing logical events.
 33. Before `I-0165`: `I-0161` QA report is `PASS` and no unresolved lag-aware fan-in cursor continuity blocker remains.
 34. Before `I-0166`: `I-0165` emits deterministic evidence that dual-chain completion-order permutations converge to one canonical output set with zero tuple diffs and no cross-chain cursor bleed.
+35. Before `I-0170`: `I-0166` QA report is `PASS` and no unresolved dual-chain interleaving determinism blocker remains.
+36. Before `I-0171`: `I-0170` emits deterministic evidence that crash cutpoint permutations converge with zero duplicate/missing logical events and no cross-chain cursor bleed.
+37. Before `I-0175`: `I-0171` QA report is `PASS` and no unresolved crash-recovery checkpoint determinism blocker remains.
+38. Before `I-0176`: `I-0175` emits deterministic evidence that checkpoint corruption/integrity recovery permutations converge with zero duplicate/missing logical events and chain-scoped cursor monotonicity.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -102,6 +110,8 @@ Each slice must be independently releasable:
 15. If watched-address fan-in dedupe boundaries are ambiguous, keep fan-in identity keying conservative (`chain + canonical identity + actor + asset_id + event_path`), emit deterministic fan-in-collision diagnostics, and fail fast until fan-in contracts are explicitly extended.
 16. If lag-aware fan-in cursor reconciliation widens replay windows excessively, keep deterministic bounded replay-window guardrails, emit explicit lag-merge diagnostics, and fail fast on ambiguous lag-range overlaps until lag-window contracts are explicitly extended.
 17. If deterministic dual-chain interleaving barriers add unacceptable latency under asymmetric chain delay, keep chain-scoped ordering with bounded skew guardrails, emit explicit interleaving-skew diagnostics, and fail fast on ambiguous commit ordering until interleaving contracts are explicitly extended.
+18. If crash-safe checkpoint ordering increases restart/tick latency under repeated failures, keep deterministic replay-from-last-safe-checkpoint semantics, emit explicit crash-cutpoint diagnostics, and fail fast on ambiguous resume boundaries until checkpoint contracts are explicitly extended.
+19. If checkpoint-integrity validation and repair path increases restart cost or reveals ambiguous corrupted-state boundaries, keep deterministic fail-fast plus replay-from-last-known-good checkpoint semantics with explicit checkpoint-integrity diagnostics until repair granularity is explicitly extended.
 
 ## Completion Evidence
 1. Developer slice output:

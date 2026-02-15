@@ -10,7 +10,7 @@ import (
 )
 
 type CommitInterleaver interface {
-	Acquire(ctx context.Context, chain model.Chain, network model.Network) (func(), error)
+	Acquire(ctx context.Context, chain model.Chain, network model.Network) (func(committed bool), error)
 }
 
 type deterministicDualChainInterleaver struct {
@@ -49,11 +49,11 @@ func (d *deterministicDualChainInterleaver) Acquire(
 	ctx context.Context,
 	chain model.Chain,
 	network model.Network,
-) (func(), error) {
+) (func(committed bool), error) {
 	key := interleaveKey(chain, network)
 	index, ok := d.orderIndex[key]
 	if !ok {
-		return func() {}, nil
+		return func(bool) {}, nil
 	}
 
 	deadline := time.Time{}
@@ -136,14 +136,16 @@ func (d *deterministicDualChainInterleaver) cancelWaiter(key string) {
 	}
 }
 
-func (d *deterministicDualChainInterleaver) releaseFunc(key string, index int) func() {
-	return func() {
+func (d *deterministicDualChainInterleaver) releaseFunc(key string, index int) func(committed bool) {
+	return func(committed bool) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		if d.active == key {
 			d.active = ""
 		}
-		d.next = (index + 1) % len(d.order)
+		if committed {
+			d.next = (index + 1) % len(d.order)
+		}
 		d.signalLocked()
 	}
 }

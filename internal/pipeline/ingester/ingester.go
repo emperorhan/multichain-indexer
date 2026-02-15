@@ -198,8 +198,9 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	}
 	batch.PreviousCursorValue = canonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
 	batch.NewCursorValue = canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+	committed := false
 
-	releaseInterleave := func() {}
+	releaseInterleave := func(bool) {}
 	if ing.commitInterleaver != nil {
 		release, err := ing.commitInterleaver.Acquire(ctx, batch.Chain, batch.Network)
 		if err != nil {
@@ -207,13 +208,14 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		}
 		releaseInterleave = release
 	}
-	defer releaseInterleave()
+	defer func() {
+		releaseInterleave(committed)
+	}()
 
 	dbTx, err := ing.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	committed := false
 	defer func() {
 		if committed {
 			return

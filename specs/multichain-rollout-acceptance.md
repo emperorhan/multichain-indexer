@@ -424,6 +424,54 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of dual-chain interleaving determinism and one-chain-lag cursor-isolation behavior on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0170 (M21-S1)
+Assertions:
+1. Crash cutpoint permutations around fetch/normalize/ingest/cursor-commit boundaries converge to one deterministic canonical tuple output set for equivalent dual-chain logical input ranges.
+2. Resume from each modeled crash cutpoint yields `0` duplicate canonical IDs, `0` missing logical events, and chain-scoped cursor monotonicity with no cross-chain cursor bleed.
+3. Repeated crash/restart replay loops remain idempotent with stable canonical tuple ordering and no balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject crash cutpoints across opposite Solana/Base completion-order permutations and show `0` canonical tuple diffs.
+- Deterministic resume-from-cutpoint tests show `0` duplicate canonical IDs, `0` missing logical events, and no cursor regression.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0171 (M21-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M21 invariants.
+2. QA executes at least one counterexample with crash cutpoint permutations and verifies deterministic canonical tuple equivalence across restart/resume paths.
+3. QA executes at least one counterexample with repeated crash/restart loops and verifies no duplicate canonical IDs, no missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of crash-point permutation determinism and restart/resume invariant safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
+### I-0175 (M22-S1)
+Assertions:
+1. Startup/resume validates persisted checkpoint payload integrity and chain-scoped checkpoint consistency before processing new mandatory-chain ranges.
+2. Checkpoint corruption modes (truncated payload, stale cursor snapshot, cross-chain checkpoint mix-up) deterministically recover to one last-safe boundary or fail fast with explicit diagnostics, without duplicate or missing logical events.
+3. Replay/resume after integrity-triggered recovery remains idempotent with stable canonical tuple ordering, `0` duplicate canonical IDs, and no balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject checkpoint corruption/integrity-failure permutations on `solana-devnet` and `base-sepolia` and show `0` canonical tuple diffs after recovery.
+- Deterministic recovery tests show `0` duplicate canonical IDs, `0` missing logical events, and chain-scoped cursor monotonicity.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0176 (M22-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M22 invariants.
+2. QA executes at least one counterexample with checkpoint corruption permutations and verifies deterministic recovery convergence to canonical tuple equivalence.
+3. QA executes at least one counterexample with repeated integrity-triggered restart/recovery loops and verifies no duplicate canonical IDs, no missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of checkpoint-integrity recovery determinism and restart/resume invariant safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -443,3 +491,5 @@ Release recommendation must be `fail` if any condition holds:
 15. Watched-address fan-in determinism cannot be proven (overlap convergence, watched-address partition/order variance equivalence, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
 16. Lag-aware fan-in cursor continuity determinism cannot be proven (divergent-cursor completeness parity to union baseline, fan-in membership-churn permutation equivalence, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
 17. Dual-chain tick interleaving determinism cannot be proven (completion-order permutation equivalence, one-chain-lag cursor isolation, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
+18. Crash-recovery checkpoint determinism cannot be proven (crash-cutpoint permutation equivalence, restart/resume completeness, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
+19. Checkpoint-integrity recovery determinism cannot be proven (corrupted checkpoint detection, deterministic recovery/fail-fast behavior, and post-recovery replay/cursor invariants not evidenced for both mandatory chains).

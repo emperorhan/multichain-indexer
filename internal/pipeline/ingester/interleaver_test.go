@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -52,6 +54,9 @@ type interleaveState struct {
 	cursors  map[string]*model.AddressCursor
 
 	watermarks map[string]int64
+
+	cursorWrites    map[string][]int64
+	watermarkWrites map[string][]int64
 }
 
 func newInterleaveState(txFailures map[string]error) *interleaveState {
@@ -60,13 +65,15 @@ func newInterleaveState(txFailures map[string]error) *interleaveState {
 		clonedFailures[key] = err
 	}
 	return &interleaveState{
-		txFailures:     clonedFailures,
-		txIDs:          make(map[string]uuid.UUID),
-		tokenIDs:       make(map[string]uuid.UUID),
-		insertedEvents: make(map[string]struct{}),
-		balances:       make(map[string]string),
-		cursors:        make(map[string]*model.AddressCursor),
-		watermarks:     make(map[string]int64),
+		txFailures:      clonedFailures,
+		txIDs:           make(map[string]uuid.UUID),
+		tokenIDs:        make(map[string]uuid.UUID),
+		insertedEvents:  make(map[string]struct{}),
+		balances:        make(map[string]string),
+		cursors:         make(map[string]*model.AddressCursor),
+		watermarks:      make(map[string]int64),
+		cursorWrites:    make(map[string][]int64),
+		watermarkWrites: make(map[string][]int64),
 	}
 }
 
@@ -287,6 +294,7 @@ func (r *interleaveCursorRepo) UpsertTx(
 		cloned.CursorValue = &value
 	}
 	r.state.cursors[key] = cloned
+	r.state.cursorWrites[key] = append(r.state.cursorWrites[key], cursorSequence)
 	return nil
 }
 
@@ -319,6 +327,7 @@ func (r *interleaveConfigRepo) UpdateWatermarkTx(
 	if ingestedSequence > r.state.watermarks[key] {
 		r.state.watermarks[key] = ingestedSequence
 	}
+	r.state.watermarkWrites[key] = append(r.state.watermarkWrites[key], r.state.watermarks[key])
 	return nil
 }
 
@@ -580,4 +589,294 @@ func TestDualChainInterleaving_ReplayResumeIdempotentAcrossMixedPermutations(t *
 	watermarks := state.snapshotWatermarks()
 	assert.Equal(t, int64(101), watermarks[interleaveKey(model.ChainSolana, model.NetworkDevnet)])
 	assert.Equal(t, int64(201), watermarks[interleaveKey(model.ChainBase, model.NetworkSepolia)])
+}
+
+func TestDeterministicDualChainInterleaver_FailedAttemptDoesNotAdvanceCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	interleaver, ok := NewDeterministicDualChainInterleaver(10 * time.Millisecond).(*deterministicDualChainInterleaver)
+	require.True(t, ok)
+
+	releaseSol, err := interleaver.Acquire(ctx, model.ChainSolana, model.NetworkDevnet)
+	require.NoError(t, err)
+	releaseSol(false)
+
+	interleaver.mu.Lock()
+	nextAfterFailedAttempt := interleaver.next
+	interleaver.mu.Unlock()
+	assert.Equal(t, 0, nextAfterFailedAttempt, "failed attempt must not advance next-turn checkpoint")
+
+	releaseSol, err = interleaver.Acquire(ctx, model.ChainSolana, model.NetworkDevnet)
+	require.NoError(t, err)
+	releaseSol(true)
+
+	interleaver.mu.Lock()
+	nextAfterCommittedSolana := interleaver.next
+	interleaver.mu.Unlock()
+	assert.Equal(t, 1, nextAfterCommittedSolana)
+
+	releaseBase, err := interleaver.Acquire(ctx, model.ChainBase, model.NetworkSepolia)
+	require.NoError(t, err)
+	releaseBase(true)
+
+	interleaver.mu.Lock()
+	nextAfterCommittedBase := interleaver.next
+	interleaver.mu.Unlock()
+	assert.Equal(t, 0, nextAfterCommittedBase)
+}
+
+type crashCutpoint string
+
+const (
+	cutpointAfterFetch        crashCutpoint = "after_fetch"
+	cutpointAfterNormalize    crashCutpoint = "after_normalize"
+	cutpointIngestPreCommit   crashCutpoint = "ingest_pre_commit"
+	cutpointAfterCursorCommit crashCutpoint = "after_cursor_commit"
+)
+
+type crashPermutationResult struct {
+	tupleKeys       []string
+	eventIDs        []string
+	cursorSeq       map[string]int64
+	watermarks      map[string]int64
+	balancesByActor map[string]string
+	cursorWrites    map[string][]int64
+	watermarkWrites map[string][]int64
+	insertedCount   int
+	upsertAttempts  int
+}
+
+func TestDualChainInterleaving_CrashCutpointPermutationsConverge(t *testing.T) {
+	baseline := runCrashPermutationBaseline(t)
+	expectedEventIDs := expectedInterleaveEventIDs()
+
+	cutpoints := []crashCutpoint{
+		cutpointAfterFetch,
+		cutpointAfterNormalize,
+		cutpointIngestPreCommit,
+		cutpointAfterCursorCommit,
+	}
+	chains := []model.Chain{model.ChainSolana, model.ChainBase}
+	orderings := []bool{false, true}
+
+	for _, cutpoint := range cutpoints {
+		for _, crashChain := range chains {
+			for _, otherChainFirst := range orderings {
+				result := runCrashPermutationScenario(t, cutpoint, crashChain, otherChainFirst)
+				scenario := fmt.Sprintf("cutpoint=%s crash_chain=%s other_chain_first=%t", cutpoint, crashChain, otherChainFirst)
+
+				assert.Equal(t, baseline.tupleKeys, result.tupleKeys, "%s canonical tuples drifted", scenario)
+				assert.Equal(t, baseline.cursorSeq, result.cursorSeq, "%s cursor state drifted", scenario)
+				assert.Equal(t, baseline.watermarks, result.watermarks, "%s watermark state drifted", scenario)
+				assert.Equal(t, baseline.balancesByActor, result.balancesByActor, "%s balance state drifted", scenario)
+
+				assert.Equal(t, expectedEventIDs, result.eventIDs, "%s missing logical events after resume", scenario)
+				assert.Equal(t, len(expectedEventIDs), result.insertedCount, "%s duplicate canonical IDs detected", scenario)
+				assert.GreaterOrEqual(t, result.upsertAttempts, result.insertedCount, "%s replay did not execute expected duplicate suppression path", scenario)
+
+				assertMonotonicWrites(t, result.cursorWrites, scenario+" cursor writes")
+				assertMonotonicWrites(t, result.watermarkWrites, scenario+" watermark writes")
+			}
+		}
+	}
+}
+
+func runCrashPermutationBaseline(t *testing.T) crashPermutationResult {
+	t.Helper()
+
+	ctx := context.Background()
+	state := newInterleaveState(nil)
+	for i := 0; i < 4; i++ {
+		solIng, baseIng := newInterleaveIngesters(t, state, 5*time.Millisecond)
+		errs := runTwoChainPermutation(ctx, solIng, baseIng, delayForIteration(i, true), delayForIteration(i, false))
+		require.Empty(t, errs)
+	}
+
+	return snapshotCrashPermutationResult(state)
+}
+
+func runCrashPermutationScenario(
+	t *testing.T,
+	cutpoint crashCutpoint,
+	crashChain model.Chain,
+	otherChainFirst bool,
+) crashPermutationResult {
+	t.Helper()
+
+	ctx := context.Background()
+	state := newInterleaveState(nil)
+	solIng, baseIng := newInterleaveIngesters(t, state, 5*time.Millisecond)
+	otherChain := counterpartChain(crashChain)
+
+	if otherChainFirst {
+		require.NoError(t, processInterleaveChain(ctx, solIng, baseIng, otherChain))
+	}
+
+	switch cutpoint {
+	case cutpointAfterFetch, cutpointAfterNormalize:
+		// Crash before normalized output reaches ingest; resume must replay deterministically.
+	case cutpointIngestPreCommit:
+		chainKey := interleaveKey(crashChain, networkForInterleaveChain(crashChain))
+		state.mu.Lock()
+		state.txFailures[chainKey] = errors.New("crash cutpoint pre-commit")
+		state.mu.Unlock()
+		err := processInterleaveChain(ctx, solIng, baseIng, crashChain)
+		require.Error(t, err)
+	case cutpointAfterCursorCommit:
+		require.NoError(t, processInterleaveChain(ctx, solIng, baseIng, crashChain))
+	default:
+		t.Fatalf("unknown crash cutpoint: %s", cutpoint)
+	}
+
+	for i := 0; i < 4; i++ {
+		solResume, baseResume := newInterleaveIngesters(t, state, 5*time.Millisecond)
+		errs := runTwoChainPermutation(ctx, solResume, baseResume, delayForIteration(i, true), delayForIteration(i, false))
+		require.Empty(t, errs)
+	}
+
+	return snapshotCrashPermutationResult(state)
+}
+
+func processInterleaveChain(ctx context.Context, solIng, baseIng *Ingester, chain model.Chain) error {
+	switch chain {
+	case model.ChainSolana:
+		return solIng.processBatch(ctx, buildInterleaveBatch(model.ChainSolana, model.NetworkDevnet))
+	case model.ChainBase:
+		return baseIng.processBatch(ctx, buildInterleaveBatch(model.ChainBase, model.NetworkSepolia))
+	default:
+		return fmt.Errorf("unsupported chain for interleave scenario: %s", chain)
+	}
+}
+
+func networkForInterleaveChain(chain model.Chain) model.Network {
+	switch chain {
+	case model.ChainSolana:
+		return model.NetworkDevnet
+	case model.ChainBase:
+		return model.NetworkSepolia
+	default:
+		return model.Network("")
+	}
+}
+
+func counterpartChain(chain model.Chain) model.Chain {
+	if chain == model.ChainSolana {
+		return model.ChainBase
+	}
+	return model.ChainSolana
+}
+
+func delayForIteration(iteration int, isSolana bool) time.Duration {
+	if iteration%2 == 0 {
+		if isSolana {
+			return 2 * time.Millisecond
+		}
+		return 0
+	}
+	if isSolana {
+		return 0
+	}
+	return 2 * time.Millisecond
+}
+
+func expectedInterleaveEventIDs() []string {
+	ids := []string{
+		buildInterleaveBatch(model.ChainSolana, model.NetworkDevnet).Transactions[0].BalanceEvents[0].EventID,
+		buildInterleaveBatch(model.ChainBase, model.NetworkSepolia).Transactions[0].BalanceEvents[0].EventID,
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func snapshotCrashPermutationResult(state *interleaveState) crashPermutationResult {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	tuples := make([]interleaveTuple, len(state.tuples))
+	copy(tuples, state.tuples)
+	sort.Slice(tuples, func(i, j int) bool {
+		return interleaveTupleKey(tuples[i]) < interleaveTupleKey(tuples[j])
+	})
+	tupleKeys := make([]string, len(tuples))
+	for i, tuple := range tuples {
+		tupleKeys[i] = interleaveTupleKey(tuple)
+	}
+
+	eventIDs := make([]string, 0, len(state.insertedEvents))
+	for eventID := range state.insertedEvents {
+		eventIDs = append(eventIDs, eventID)
+	}
+	sort.Strings(eventIDs)
+
+	cursorSeq := make(map[string]int64, len(state.cursors))
+	for key, cursor := range state.cursors {
+		if cursor == nil {
+			cursorSeq[key] = 0
+			continue
+		}
+		cursorSeq[key] = cursor.CursorSequence
+	}
+
+	watermarks := make(map[string]int64, len(state.watermarks))
+	for key, value := range state.watermarks {
+		watermarks[key] = value
+	}
+
+	balancesByActor := make(map[string]string, len(state.balances))
+	for key, value := range state.balances {
+		parts := strings.Split(key, "|")
+		actorKey := key
+		if len(parts) >= 2 {
+			actorKey = parts[0] + "|" + parts[1]
+		}
+		if current, exists := balancesByActor[actorKey]; exists {
+			next, err := addDecimalStringsForTest(current, value)
+			if err != nil {
+				// Should not happen in this fixture, keep the raw current value for determinism.
+				continue
+			}
+			balancesByActor[actorKey] = next
+			continue
+		}
+		balancesByActor[actorKey] = value
+	}
+
+	cursorWrites := make(map[string][]int64, len(state.cursorWrites))
+	for key, writes := range state.cursorWrites {
+		copied := make([]int64, len(writes))
+		copy(copied, writes)
+		cursorWrites[key] = copied
+	}
+
+	watermarkWrites := make(map[string][]int64, len(state.watermarkWrites))
+	for key, writes := range state.watermarkWrites {
+		copied := make([]int64, len(writes))
+		copy(copied, writes)
+		watermarkWrites[key] = copied
+	}
+
+	return crashPermutationResult{
+		tupleKeys:       tupleKeys,
+		eventIDs:        eventIDs,
+		cursorSeq:       cursorSeq,
+		watermarks:      watermarks,
+		balancesByActor: balancesByActor,
+		cursorWrites:    cursorWrites,
+		watermarkWrites: watermarkWrites,
+		insertedCount:   len(state.insertedEvents),
+		upsertAttempts:  state.upsertAttempts,
+	}
+}
+
+func interleaveTupleKey(tuple interleaveTuple) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", tuple.Chain, tuple.Network, tuple.EventID, tuple.TxHash, tuple.Address, tuple.Category, tuple.Delta)
+}
+
+func assertMonotonicWrites(t *testing.T, writes map[string][]int64, label string) {
+	t.Helper()
+
+	for key, seq := range writes {
+		for i := 1; i < len(seq); i++ {
+			assert.GreaterOrEqual(t, seq[i], seq[i-1], "%s key=%s sequence regressed", label, key)
+		}
+	}
 }
