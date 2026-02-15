@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -105,6 +105,8 @@ Execution queue (dependency-ordered):
 94. `I-0293` (`M49-S2`) QA counterexample gate for auto-tune policy-manifest snapshot-cutover determinism + invariant safety
 95. `I-0297` (`M50-S1`) auto-tune policy-manifest rollback-lineage reconciliation determinism hardening
 96. `I-0298` (`M50-S2`) QA counterexample gate for auto-tune policy-manifest rollback-lineage determinism + invariant safety
+97. `I-0300` (`M51-S1`) auto-tune policy-manifest rollback-crashpoint replay determinism hardening
+98. `I-0301` (`M51-S2`) QA counterexample gate for auto-tune policy-manifest rollback-crashpoint determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1866,7 +1868,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when policy-manifest de
 - Gate: snapshot base-sequence boundaries can race with in-flight segment-tail windows and create non-deterministic overlap ownership near control-loop tick boundaries.
 - Fallback: enforce deterministic snapshot-base activation fences with explicit snapshot lineage diagnostics, pin last verified snapshot+tail boundary on ambiguity, and fail fast on unresolved snapshot-overlap conflicts.
 
-### M50. Auto-Tune Policy-Manifest Rollback-Lineage Determinism Tranche C0044 (P0, Next)
+### M50. Auto-Tune Policy-Manifest Rollback-Lineage Determinism Tranche C0044 (P0)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when policy-manifest lineage must roll back to a previously valid digest due to control-plane correction or source rewind and then re-advance, so forward-lineage baseline, rollback-apply, stale-rollback reject, and rollback+re-forward re-apply permutations converge to one deterministic canonical output set per chain.
@@ -1904,6 +1906,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when policy-manifest li
 #### Risk Gate + Fallback
 - Gate: rollback-lineage boundaries can race with in-flight snapshot+tail state and create non-deterministic digest ownership near control-loop tick boundaries.
 - Fallback: enforce deterministic rollback activation fences with explicit lineage-epoch diagnostics, pin last verified rollback-safe digest on ambiguity, and fail fast on unresolved rollback-lineage ownership conflicts.
+
+### M51. Auto-Tune Policy-Manifest Rollback-Crashpoint Replay Determinism Tranche C0045 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when process abort/restart occurs during rollback-lineage transition windows, so forward-lineage baseline, rollback-apply crash, rollback checkpoint-resume, and rollback+re-forward crash-resume permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M50` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M51-S1` (`I-0300`): harden deterministic rollback-lineage phase checkpointing and replay semantics so crash/restart during rollback-apply or rollback+re-forward transitions cannot induce duplicate canonical IDs, missing logical events, cross-chain control bleed, or cursor regression.
+2. `M51-S2` (`I-0301`): execute QA counterexample gate for rollback-crashpoint replay determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under forward-lineage baseline, rollback-apply crash, rollback checkpoint-resume, and rollback+re-forward crash-resume permutations converge to one canonical tuple output set per chain.
+2. Crash/restart during rollback transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under rollback-crashpoint replay/resume permutations.
+4. Replay/resume from rollback transition checkpoints remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject forward-lineage baseline, rollback-apply crash, rollback checkpoint-resume, and rollback+re-forward crash-resume permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain rollback-crashpoint transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from rollback transition checkpoints assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus rollback-crashpoint replay counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic forward-lineage baseline, rollback-apply crash, rollback checkpoint-resume, and rollback+re-forward crash-resume fixtures.
+2. `0` cross-chain control-coupling violations under one-chain rollback-crashpoint counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under rollback-crashpoint replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in rollback-crashpoint fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: rollback transition phase checkpoints can race with in-flight re-forward application and create non-deterministic resume ownership near process restart boundaries.
+- Fallback: enforce deterministic rollback phase fences with explicit checkpoint-phase diagnostics, pin last verified rollback-safe phase boundary on ambiguity, and fail fast on unresolved rollback phase ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -1966,6 +2007,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when policy-manifest li
 15. `DP-0101-O`: auto-tune policy-manifest rollback-lineage reconciliation policy.
 - Preferred: deterministic chain-local rollback-lineage state machine with explicit rollback epoch fences, stale-rollback rejection, and replay-stable rollback+re-forward lineage markers.
 - Fallback: pin last verified rollback-safe digest while rollback lineage is ambiguous, reject overlapping forward/rollback ownership windows, and resume lineage apply only after replay-safe boundary confirmation is proven.
+
+16. `DP-0101-P`: auto-tune policy-manifest rollback-crashpoint replay policy.
+- Preferred: deterministic chain-local rollback transition phase checkpoints with replay-stable rollback/apply/resume markers, explicit crash-boundary ownership fencing, and stale-phase resume rejection.
+- Fallback: pin last verified rollback-safe phase boundary during restart ambiguity, reject overlapping rollback/re-forward resume ownership windows, and resume lineage apply only after replay-safe checkpoint confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -2065,13 +2110,15 @@ Completed milestones/slices:
 93. `I-0288`
 94. `I-0292`
 95. `I-0293`
+96. `I-0297`
+97. `I-0298`
 
 Active downstream queue from this plan:
-1. `I-0297`
-2. `I-0298`
+1. `I-0300`
+2. `I-0301`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M50-S2`
+1. `TBD by next planner slice after M51-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
