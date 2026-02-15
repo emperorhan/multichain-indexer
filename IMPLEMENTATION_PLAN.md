@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -122,6 +122,8 @@ Execution queue (dependency-ordered):
 111. `I-0328` (`M57-F1`) close M57 QA one-chain isolation gap with deterministic post-release-window epoch-rollover isolation coverage
 112. `I-0330` (`M58-S1`) auto-tune policy-manifest rollback checkpoint-fence post-epoch-rollover late-bridge reconciliation determinism hardening
 113. `I-0331` (`M58-S2`) QA counterexample gate for post-epoch-rollover late-bridge reconciliation determinism + invariant safety
+114. `I-0335` (`M59-S1`) auto-tune policy-manifest rollback checkpoint-fence post-late-bridge backlog-drain determinism hardening
+115. `I-0336` (`M59-S2`) QA counterexample gate for post-late-bridge backlog-drain determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -2196,7 +2198,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when release-window sta
 - Gate: epoch-rollover activation can race with late prior-epoch release markers and create non-deterministic epoch/watermark ownership arbitration near restart boundaries.
 - Fallback: enforce deterministic `(epoch, release_watermark)` ordering with explicit epoch-rollover lineage diagnostics, pin last verified rollback-safe pre-rollover boundary on ambiguity, and fail fast on unresolved cross-epoch ownership conflicts.
 
-### M58. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Epoch-Rollover Late-Bridge Reconciliation Determinism Tranche C0052 (P0, Next)
+### M58. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Epoch-Rollover Late-Bridge Reconciliation Determinism Tranche C0052 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when delayed rollback markers bridge multiple policy-manifest epochs, so single-epoch baseline, multi-epoch late-bridge replay, crash-during-bridge reconciliation restart, and rollback+re-forward after bridge adoption permutations converge to one deterministic canonical output set per chain.
@@ -2234,6 +2236,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when delayed rollback m
 #### Risk Gate + Fallback
 - Gate: late-bridge reconciliation across multiple epochs can race with live current-epoch markers and create non-deterministic cross-epoch ownership arbitration near restart boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, release_watermark)` ordering with explicit late-bridge lineage diagnostics, pin last verified rollback-safe pre-bridge boundary on ambiguity, and fail fast on unresolved cross-epoch bridge ownership conflicts.
+
+### M59. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Late-Bridge Backlog-Drain Determinism Tranche C0053 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when quarantined late-bridge markers are drained back into live flow, so no-backlog baseline, staged backlog-drain replay, crash-during-drain restart, and rollback+re-forward after-drain permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M58` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M59-S1` (`I-0335`): harden deterministic post-late-bridge backlog-drain reconciliation so drained delayed bridge markers and new live markers cannot interleave into stale ownership reopening, canonical ID re-emission, logical event suppression, or cursor monotonicity regression.
+2. `M59-S2` (`I-0336`): execute QA counterexample gate for post-late-bridge backlog-drain determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under no-backlog baseline, staged backlog-drain replay, crash-during-drain restart, and rollback+re-forward after-drain permutations converge to one canonical tuple output set per chain.
+2. Post-late-bridge backlog-drain transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under post-late-bridge backlog-drain replay/resume permutations.
+4. Replay/resume from post-late-bridge backlog-drain boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject no-backlog baseline, staged backlog-drain replay, crash-during-drain restart, and rollback+re-forward after-drain permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain post-late-bridge backlog-drain transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from post-late-bridge backlog-drain boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus post-late-bridge backlog-drain counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic no-backlog baseline, staged backlog-drain replay, crash-during-drain restart, and rollback+re-forward after-drain fixtures.
+2. `0` cross-chain control-coupling violations under one-chain post-late-bridge backlog-drain counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under post-late-bridge backlog-drain replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in post-late-bridge backlog-drain fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: backlog-drain activation can race with newly observed live bridge markers and create non-deterministic drain-order ownership arbitration near restart boundaries.
+- Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark)` ordering with explicit backlog-drain lineage diagnostics, pin last verified rollback-safe pre-drain boundary on ambiguity, and fail fast on unresolved post-bridge drain ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -2328,6 +2369,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when delayed rollback m
 23. `DP-0101-W`: auto-tune policy-manifest rollback checkpoint-fence post-epoch-rollover late-bridge reconciliation policy.
 - Preferred: deterministic chain-local late-bridge reconciliation state machine with explicit `(epoch, bridge_sequence, release_watermark)` ownership fences, replay-stable multi-epoch bridge lineage markers, and stale bridge marker ownership rejection.
 - Fallback: pin last verified rollback-safe pre-bridge boundary during cross-epoch bridge ambiguity, quarantine unresolved delayed bridge markers, and resume late-bridge reconciliation only after replay-safe multi-epoch lineage confirmation is proven.
+
+24. `DP-0101-X`: auto-tune policy-manifest rollback checkpoint-fence post-late-bridge backlog-drain policy.
+- Preferred: deterministic chain-local backlog-drain state machine with explicit `(epoch, bridge_sequence, drain_watermark)` ownership fences, replay-stable drained-bridge lineage markers, and stale drained-bridge marker ownership rejection.
+- Fallback: pin last verified rollback-safe pre-drain boundary during post-bridge drain ambiguity, keep delayed bridge backlog quarantined, and resume backlog drain only after replay-safe drain lineage confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -2444,13 +2489,15 @@ Completed milestones/slices:
 110. `I-0326`
 111. `I-0327`
 112. `I-0328`
+113. `I-0330`
+114. `I-0331`
 
 Active downstream queue from this plan:
-1. `I-0330`
-2. `I-0331`
+1. `I-0335`
+2. `I-0336`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M58-S2`
+1. `TBD by next planner slice after M59-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
