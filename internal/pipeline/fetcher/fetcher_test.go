@@ -646,6 +646,162 @@ func TestProcessJob_CursorBoundaryOverlapSuppressedAndProgressesAcrossMandatoryC
 	}
 }
 
+func TestProcessJob_SeamCarryoverSuppressesPreCursorSequenceWhenNewerSignaturesExistAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name                string
+		chain               model.Chain
+		network             model.Network
+		address             string
+		cursor              string
+		cursorSequence      int64
+		signatures          []chain.SignatureInfo
+		expectedHashes      []string
+		expectedSequence    int64
+		expectedCursorValue string
+	}
+
+	testCases := []testCase{
+		{
+			name:           "solana-devnet",
+			chain:          model.ChainSolana,
+			network:        model.NetworkDevnet,
+			address:        "sol-seam-addr",
+			cursor:         "sol-seam-boundary",
+			cursorSequence: 100,
+			signatures: []chain.SignatureInfo{
+				{Hash: "sol-seam-stale", Sequence: 99},
+				{Hash: " sol-seam-boundary ", Sequence: 100},
+				{Hash: "sol-seam-same-sequence", Sequence: 100},
+				{Hash: "sol-seam-new", Sequence: 101},
+			},
+			expectedHashes:      []string{"sol-seam-same-sequence", "sol-seam-new"},
+			expectedSequence:    101,
+			expectedCursorValue: "sol-seam-new",
+		},
+		{
+			name:           "base-sepolia",
+			chain:          model.ChainBase,
+			network:        model.NetworkSepolia,
+			address:        "0x1111111111111111111111111111111111111111",
+			cursor:         "0xAA00",
+			cursorSequence: 500,
+			signatures: []chain.SignatureInfo{
+				{Hash: "deadbeef", Sequence: 499},
+				{Hash: "AA00", Sequence: 500},
+				{Hash: "bb00", Sequence: 500},
+				{Hash: "0xCC00", Sequence: 501},
+			},
+			expectedHashes:      []string{"0xbb00", "0xcc00"},
+			expectedSequence:    501,
+			expectedCursorValue: "0xcc00",
+		},
+	}
+
+	signatureHashes := func(sigs []event.SignatureInfo) []string {
+		out := make([]string, 0, len(sigs))
+		for _, sig := range sigs {
+			out = append(out, sig.Hash)
+		}
+		return out
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+			rawBatchCh := make(chan event.RawBatch, 1)
+			f := &Fetcher{
+				adapter:          mockAdapter,
+				rawBatchCh:       rawBatchCh,
+				logger:           slog.Default(),
+				retryMaxAttempts: 1,
+			}
+
+			job := event.FetchJob{
+				Chain:          tc.chain,
+				Network:        tc.network,
+				Address:        tc.address,
+				CursorValue:    &tc.cursor,
+				CursorSequence: tc.cursorSequence,
+				BatchSize:      3,
+			}
+
+			mockAdapter.EXPECT().
+				FetchNewSignatures(gomock.Any(), tc.address, gomock.Any(), 4).
+				Return(tc.signatures, nil)
+
+			mockAdapter.EXPECT().
+				FetchTransactions(gomock.Any(), tc.expectedHashes).
+				DoAndReturn(func(_ context.Context, hashes []string) ([]json.RawMessage, error) {
+					raw := make([]json.RawMessage, 0, len(hashes))
+					for _, hash := range hashes {
+						raw = append(raw, json.RawMessage(fmt.Sprintf(`{"tx":"%s"}`, hash)))
+					}
+					return raw, nil
+				})
+
+			require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+			batch := <-rawBatchCh
+			assert.Equal(t, tc.expectedHashes, signatureHashes(batch.Signatures))
+			assert.Equal(t, tc.expectedSequence, batch.NewCursorSequence)
+			require.NotNil(t, batch.NewCursorValue)
+			assert.Equal(t, tc.expectedCursorValue, *batch.NewCursorValue)
+			assert.Equal(t, tc.cursorSequence, batch.PreviousCursorSequence)
+		})
+	}
+}
+
+func TestProcessJob_SeamCarryoverKeepsPreCursorSequenceWhenNoNewerSignatures(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+	rawBatchCh := make(chan event.RawBatch, 1)
+	f := &Fetcher{
+		adapter:          mockAdapter,
+		rawBatchCh:       rawBatchCh,
+		logger:           slog.Default(),
+		retryMaxAttempts: 1,
+	}
+
+	cursor := "sol-reorg-boundary"
+	job := event.FetchJob{
+		Chain:          model.ChainSolana,
+		Network:        model.NetworkDevnet,
+		Address:        "sol-reorg-addr",
+		CursorValue:    &cursor,
+		CursorSequence: 100,
+		BatchSize:      2,
+	}
+
+	mockAdapter.EXPECT().
+		FetchNewSignatures(gomock.Any(), job.Address, gomock.Any(), 3).
+		Return([]chain.SignatureInfo{
+			{Hash: "sol-reorg-older-1", Sequence: 98},
+			{Hash: "sol-reorg-older-2", Sequence: 99},
+		}, nil)
+
+	mockAdapter.EXPECT().
+		FetchTransactions(gomock.Any(), []string{"sol-reorg-older-1", "sol-reorg-older-2"}).
+		Return([]json.RawMessage{
+			json.RawMessage(`{"tx":"sol-reorg-older-1"}`),
+			json.RawMessage(`{"tx":"sol-reorg-older-2"}`),
+		}, nil)
+
+	require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+	batch := <-rawBatchCh
+	require.Len(t, batch.Signatures, 2)
+	assert.Equal(t, "sol-reorg-older-1", batch.Signatures[0].Hash)
+	assert.Equal(t, int64(98), batch.Signatures[0].Sequence)
+	assert.Equal(t, "sol-reorg-older-2", batch.Signatures[1].Hash)
+	assert.Equal(t, int64(99), batch.Signatures[1].Sequence)
+	require.NotNil(t, batch.NewCursorValue)
+	assert.Equal(t, "sol-reorg-older-2", *batch.NewCursorValue)
+	assert.Equal(t, int64(99), batch.NewCursorSequence)
+	assert.Equal(t, int64(100), batch.PreviousCursorSequence)
+}
+
 func TestProcessJob_BoundaryPartitionVarianceConvergesAcrossMandatoryChains(t *testing.T) {
 	type testCase struct {
 		name    string

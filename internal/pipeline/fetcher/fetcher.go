@@ -132,6 +132,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	// Canonicalize provider-returned ordering and suppress overlap duplicates.
 	sigs = canonicalizeSignatures(job.Chain, sigs)
 	sigs = suppressBoundaryCursorSignatures(job.Chain, sigs, canonicalCursor)
+	sigs = suppressPreCursorSequenceCarryover(sigs, job.CursorSequence)
 	if len(sigs) == 0 {
 		log.Debug("no canonical signatures after overlap suppression", "address", job.Address)
 		return nil
@@ -536,6 +537,33 @@ func suppressBoundaryCursorSignatures(chainID model.Chain, sigs []chain.Signatur
 	filtered := make([]chain.SignatureInfo, 0, len(sigs))
 	for _, sig := range sigs {
 		if canonicalSignatureIdentity(chainID, sig.Hash) == cursorIdentity {
+			continue
+		}
+		filtered = append(filtered, sig)
+	}
+	return filtered
+}
+
+func suppressPreCursorSequenceCarryover(sigs []chain.SignatureInfo, previousCursorSequence int64) []chain.SignatureInfo {
+	if len(sigs) == 0 || previousCursorSequence <= 0 {
+		return sigs
+	}
+
+	hasAtOrAfterCursor := false
+	for _, sig := range sigs {
+		if sig.Sequence >= previousCursorSequence {
+			hasAtOrAfterCursor = true
+			break
+		}
+	}
+	if !hasAtOrAfterCursor {
+		// Keep rollback candidates intact when all signatures are before cursor.
+		return sigs
+	}
+
+	filtered := make([]chain.SignatureInfo, 0, len(sigs))
+	for _, sig := range sigs {
+		if sig.Sequence < previousCursorSequence {
 			continue
 		}
 		filtered = append(filtered, sig)
