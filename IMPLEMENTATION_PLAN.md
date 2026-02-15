@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -93,6 +93,8 @@ Execution queue (dependency-ordered):
 82. `I-0265` (`M43-S2`) QA counterexample gate for auto-tune saturation/de-saturation determinism + invariant safety
 83. `I-0267` (`M44-S1`) auto-tune telemetry-staleness fallback determinism hardening
 84. `I-0268` (`M44-S2`) QA counterexample gate for auto-tune telemetry-staleness fallback determinism + invariant safety
+85. `I-0272` (`M45-S1`) auto-tune operator-override reconciliation determinism hardening
+86. `I-0273` (`M45-S2`) QA counterexample gate for auto-tune operator-override reconciliation determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1620,7 +1622,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when auto-tune enters s
 - Gate: prolonged saturation clamps can create non-deterministic de-saturation transitions and replay boundary drift when backlog pressure relaxes abruptly.
 - Fallback: enforce deterministic saturation-floor/cap reconciliation with bounded de-saturation steps, emit explicit saturation-transition diagnostics, and fail fast on unresolved saturation-boundary ambiguity.
 
-### M44. Auto-Tune Telemetry-Staleness Fallback Determinism Tranche C0038 (P0, Next)
+### M44. Auto-Tune Telemetry-Staleness Fallback Determinism Tranche C0038 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when auto-tune control telemetry becomes stale or partially unavailable, so fresh-telemetry, stale-telemetry fallback, and telemetry-recovery permutations converge to one deterministic canonical output set per chain.
@@ -1659,6 +1661,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when auto-tune control 
 - Gate: stale or partially missing control telemetry can cause non-deterministic fallback/profile toggling and replay boundary drift during telemetry recovery windows.
 - Fallback: enforce deterministic telemetry-staleness TTL gating with bounded fallback hold windows, emit explicit telemetry-fallback diagnostics, and fail fast on unresolved telemetry-boundary ambiguity.
 
+### M45. Auto-Tune Operator-Override Reconciliation Determinism Tranche C0039 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when operators pin, unpin, or temporarily disable auto-tune control policies, so auto-mode, manual-profile override, and operator-return-to-auto permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M44` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M45-S1` (`I-0272`): harden deterministic auto-tune operator-override reconciliation semantics so manual profile pinning/unpinning, temporary auto-tune disable, and return-to-auto transitions cannot induce duplicate canonical IDs, missing logical events, cross-chain control bleed, or cursor regression.
+2. `M45-S2` (`I-0273`): execute QA counterexample gate for auto-tune operator-override reconciliation determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under auto-mode, manual-profile override, and override-release-to-auto permutations converge to one canonical tuple output set per chain.
+2. Operator override transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under operator-override replay/resume permutations.
+4. Replay/resume from operator-override transition boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject auto-mode, manual-override hold, and override-release permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain manual-profile pin/unpin transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from operator-override boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus auto-tune operator-override reconciliation counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic auto-mode, manual-override hold, and override-release fixtures.
+2. `0` cross-chain control-coupling violations under one-chain operator-override transition counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under operator-override replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in operator-override recovery fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: operator override/unoverride transitions can race with backlog pressure and trigger non-deterministic control-state reconciliation near boundary ticks.
+- Fallback: enforce deterministic override state machine with explicit hold/release boundaries, emit per-chain operator-override diagnostics, and fail fast on unresolved override-boundary ambiguity.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -1696,6 +1737,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when auto-tune control 
 9. `DP-0101-I`: auto-tune telemetry-staleness fallback policy.
 - Preferred: deterministic chain-local telemetry-staleness TTL evaluation with explicit fallback hold/release semantics and per-chain telemetry-fallback diagnostics.
 - Fallback: pin deterministic conservative profile while telemetry freshness is unresolved, then replay from last-safe boundary once telemetry-freshness contracts are restored.
+
+10. `DP-0101-J`: auto-tune operator-override reconciliation policy.
+- Preferred: deterministic chain-local override state machine with explicit profile-pin hold semantics and deterministic release-to-auto boundaries.
+- Fallback: pin deterministic conservative profile during override transitions and resume auto-tune only after replay-safe boundary confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -1783,13 +1828,15 @@ Completed milestones/slices:
 81. `I-0260`
 82. `I-0264`
 83. `I-0265`
+84. `I-0267`
+85. `I-0268`
 
 Active downstream queue from this plan:
-1. `I-0267`
-2. `I-0268`
+1. `I-0272`
+2. `I-0273`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M44-S2`
+1. `TBD by next planner slice after M45-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

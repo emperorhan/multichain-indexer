@@ -142,6 +142,8 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 			"queue_low_pct", c.autoTune.queueLowWatermarkPct,
 			"hysteresis_ticks", c.autoTune.hysteresisTicks,
 			"cooldown_ticks", c.autoTune.cooldownTicks,
+			"telemetry_stale_ticks", c.autoTune.telemetryStaleTicks,
+			"telemetry_recovery_ticks", c.autoTune.telemetryRecoveryTicks,
 			"profile_transition", transitionMode == "profile_transition",
 			"transition_mode", transitionMode,
 			"seed_reason", seedReason,
@@ -262,12 +264,15 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			"lag_sequence", diagnostics.LagSequence,
 			"queue_depth", diagnostics.QueueDepth,
 			"queue_capacity", diagnostics.QueueCapacity,
+			"telemetry_state", diagnostics.TelemetryState,
 			"signal", diagnostics.Signal,
 			"decision", diagnostics.Decision,
 			"batch_before", diagnostics.BatchBefore,
 			"batch_after", diagnostics.BatchAfter,
 			"streak", diagnostics.Streak,
 			"cooldown", diagnostics.Cooldown,
+			"telemetry_stale_ticks", diagnostics.TelemetryStaleTicks,
+			"telemetry_recovery_ticks", diagnostics.TelemetryRecoveryTicks,
 		)
 	}
 

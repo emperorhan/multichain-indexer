@@ -445,3 +445,180 @@ func TestAutoTuneController_WarmStartAdoptsBoundedDeltaFromBaseline(t *testing.T
 	require.NotNil(t, warmStarted)
 	assert.Equal(t, 105, warmStarted.currentBatch, "warm-start adoption must be bounded to one downward control step from baseline")
 }
+
+func TestAutoTuneController_TelemetryStalenessFallbackHoldsThenDeterministicallyRecovers(t *testing.T) {
+	controller := newAutoTuneController(100, AutoTuneConfig{
+		Enabled:                true,
+		MinBatchSize:           60,
+		MaxBatchSize:           200,
+		StepUp:                 20,
+		StepDown:               10,
+		LagHighWatermark:       80,
+		LagLowWatermark:        20,
+		QueueHighWatermarkPct:  90,
+		QueueLowWatermarkPct:   10,
+		HysteresisTicks:        1,
+		CooldownTicks:          1,
+		TelemetryStaleTicks:    2,
+		TelemetryRecoveryTicks: 2,
+	})
+	require.NotNil(t, controller)
+
+	batch, d1 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       260,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "apply_increase", d1.Decision)
+	assert.Equal(t, "healthy", d1.TelemetryState)
+
+	batch, d2 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       95,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  101,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "defer_cooldown", d2.Decision)
+	assert.Equal(t, "healthy", d2.TelemetryState)
+
+	batch, d3 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       95,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  102,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold_telemetry_stale", d3.Decision)
+	assert.Equal(t, "stale_fallback", d3.TelemetryState)
+
+	batch, d4 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       95,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  103,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold_telemetry_stale", d4.Decision)
+	assert.Equal(t, "stale_fallback", d4.TelemetryState)
+
+	batch, d5 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       300,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  104,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold_telemetry_recovery", d5.Decision)
+	assert.Equal(t, "recovery_hold", d5.TelemetryState)
+
+	batch, d6 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       301,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  105,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold_telemetry_recovery", d6.Decision)
+	assert.Equal(t, "recovery_hold", d6.TelemetryState)
+
+	batch, d7 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       320,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  106,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 140, batch)
+	assert.Equal(t, "apply_increase", d7.Decision)
+	assert.Equal(t, "healthy", d7.TelemetryState)
+}
+
+func TestAutoTuneController_MissingTelemetryAfterBaselineTriggersFallback(t *testing.T) {
+	controller := newAutoTuneController(100, AutoTuneConfig{
+		Enabled:                true,
+		MinBatchSize:           60,
+		MaxBatchSize:           200,
+		StepUp:                 20,
+		StepDown:               10,
+		LagHighWatermark:       80,
+		LagLowWatermark:        20,
+		QueueHighWatermarkPct:  90,
+		QueueLowWatermarkPct:   10,
+		HysteresisTicks:        1,
+		CooldownTicks:          1,
+		TelemetryStaleTicks:    2,
+		TelemetryRecoveryTicks: 1,
+	})
+	require.NotNil(t, controller)
+
+	batch, d1 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       260,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "apply_increase", d1.Decision)
+
+	batch, d2 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      false,
+		HasMinCursorSignal: false,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold", d2.Decision)
+	assert.Equal(t, "healthy", d2.TelemetryState)
+
+	batch, d3 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      false,
+		HasMinCursorSignal: false,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold_telemetry_stale", d3.Decision)
+	assert.Equal(t, "stale_fallback", d3.TelemetryState)
+
+	batch, d4 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       320,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  101,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold_telemetry_recovery", d4.Decision)
+	assert.Equal(t, "recovery_hold", d4.TelemetryState)
+
+	batch, d5 := controller.Resolve(autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       321,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  102,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	})
+	assert.Equal(t, 140, batch)
+	assert.Equal(t, "apply_increase", d5.Decision)
+	assert.Equal(t, "healthy", d5.TelemetryState)
+}

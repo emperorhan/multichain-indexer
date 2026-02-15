@@ -1780,6 +1780,262 @@ func TestTick_AutoTuneSaturationReplayResumeConvergesAcrossMandatoryChains(t *te
 	}
 }
 
+func TestTick_AutoTuneTelemetryStalenessPermutationsConvergeCanonicalTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qtelemetrystale000000000000000000000000",
+		},
+	}
+
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:                true,
+		MinBatchSize:           60,
+		MaxBatchSize:           200,
+		StepUp:                 20,
+		StepDown:               10,
+		LagHighWatermark:       80,
+		LagLowWatermark:        20,
+		QueueHighWatermarkPct:  90,
+		QueueLowWatermarkPct:   10,
+		HysteresisTicks:        1,
+		CooldownTicks:          1,
+		TelemetryStaleTicks:    2,
+		TelemetryRecoveryTicks: 2,
+	}
+
+	freshHeads := []int64{260, 261, 262, 263, 264, 265, 266}
+	staleHeads := []int64{260, 95, 95, 95, 95, 95, 95}
+	recoveryHeads := []int64{260, 95, 95, 95, 300, 301, 302}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			freshHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, freshHeads, autoTuneCfg)
+			freshSnapshots, freshBatches := collectAutoTuneTrace(t, freshHarness, len(freshHeads))
+
+			staleHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, staleHeads, autoTuneCfg)
+			staleSnapshots, staleBatches := collectAutoTuneTrace(t, staleHarness, len(staleHeads))
+
+			recoveryHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, recoveryHeads, autoTuneCfg)
+			recoverySnapshots, recoveryBatches := collectAutoTuneTrace(t, recoveryHarness, len(recoveryHeads))
+
+			assert.Equal(t, freshSnapshots, staleSnapshots, "fresh and stale-fallback permutations must converge to one canonical tuple output set")
+			assert.Equal(t, freshSnapshots, recoverySnapshots, "fresh and telemetry-recovery permutations must converge to one canonical tuple output set")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, freshSnapshots, staleSnapshots, "fresh vs stale-fallback")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, freshSnapshots, recoverySnapshots, "fresh vs telemetry-recovery")
+			assert.NotEqual(t, freshBatches, staleBatches, "telemetry staleness fallback should deterministically alter control decisions")
+			assert.NotEqual(t, staleBatches, recoveryBatches, "telemetry recovery should deterministically release fallback hold")
+
+			assertCursorMonotonicByAddress(t, freshSnapshots)
+			assertCursorMonotonicByAddress(t, staleSnapshots)
+			assertCursorMonotonicByAddress(t, recoverySnapshots)
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainTelemetryBlackoutDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:                true,
+		MinBatchSize:           60,
+		MaxBatchSize:           200,
+		StepUp:                 20,
+		StepDown:               10,
+		LagHighWatermark:       80,
+		LagLowWatermark:        20,
+		QueueHighWatermarkPct:  90,
+		QueueLowWatermarkPct:   10,
+		HysteresisTicks:        1,
+		CooldownTicks:          1,
+		TelemetryStaleTicks:    2,
+		TelemetryRecoveryTicks: 2,
+	}
+
+	const tickCount = 6
+	healthyBaseAddress := "0x1111111111111111111111111111111111111111"
+	healthyBTCAddress := "tb1qtelemetryhealthy00000000000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+
+	healthyHeads := []int64{260, 261, 262, 263, 264, 265}
+	blackoutHeads := []int64{260, 95, 95, 95, 95, 95}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		100,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		100,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		100,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		100,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		blackoutHeads,
+		autoTuneCfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	for i := 0; i < tickCount; i++ {
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana telemetry blackout must not alter base canonical tuples")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana telemetry blackout must not alter base control decisions")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana telemetry blackout must not alter btc canonical tuples")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana telemetry blackout must not alter btc control decisions")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved telemetry blackout")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved telemetry blackout")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
+func TestTick_AutoTuneTelemetryFallbackReplayResumeConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qtelemetryreplay00000000000000000000000",
+		},
+	}
+
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:                true,
+		MinBatchSize:           60,
+		MaxBatchSize:           200,
+		StepUp:                 20,
+		StepDown:               10,
+		LagHighWatermark:       80,
+		LagLowWatermark:        20,
+		QueueHighWatermarkPct:  90,
+		QueueLowWatermarkPct:   10,
+		HysteresisTicks:        1,
+		CooldownTicks:          1,
+		TelemetryStaleTicks:    2,
+		TelemetryRecoveryTicks: 2,
+	}
+
+	heads := []int64{260, 95, 95, 95, 300, 301, 302}
+	const splitTick = 4
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			coldHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, autoTuneCfg)
+			coldSnapshots, _ := collectAutoTuneTrace(t, coldHarness, len(heads))
+
+			warmFirst := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads[:splitTick], autoTuneCfg)
+			warmSnapshots, _ := collectAutoTuneTrace(t, warmFirst, splitTick)
+			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, restartState)
+			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
+			require.NotNil(t, resumeCursor)
+
+			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				resumeCursor.CursorSequence,
+				heads[splitTick:],
+				autoTuneCfg,
+				restartState,
+			)
+			warmTailSnapshots, _ := collectAutoTuneTrace(t, warmSecond, len(heads)-splitTick)
+			warmSnapshots = append(warmSnapshots, warmTailSnapshots...)
+
+			assert.Equal(t, coldSnapshots, warmSnapshots, "telemetry-fallback replay/resume must converge to deterministic canonical tuples")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, coldSnapshots, warmSnapshots, "cold vs warm telemetry-fallback replay")
+			assertCursorMonotonicByAddress(t, warmSnapshots)
+		})
+	}
+}
+
 type lagAwareJobSnapshot struct {
 	Address        string
 	CursorValue    string

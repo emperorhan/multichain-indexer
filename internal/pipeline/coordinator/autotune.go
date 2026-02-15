@@ -16,6 +16,9 @@ type AutoTuneConfig struct {
 
 	HysteresisTicks int
 	CooldownTicks   int
+
+	TelemetryStaleTicks    int
+	TelemetryRecoveryTicks int
 }
 
 type autoTuneInputs struct {
@@ -28,15 +31,18 @@ type autoTuneInputs struct {
 }
 
 type autoTuneDiagnostics struct {
-	LagSequence   int64
-	QueueDepth    int
-	QueueCapacity int
-	Signal        string
-	Decision      string
-	BatchBefore   int
-	BatchAfter    int
-	Streak        int
-	Cooldown      int
+	LagSequence            int64
+	QueueDepth             int
+	QueueCapacity          int
+	TelemetryState         string
+	Signal                 string
+	Decision               string
+	BatchBefore            int
+	BatchAfter             int
+	Streak                 int
+	Cooldown               int
+	TelemetryStaleTicks    int
+	TelemetryRecoveryTicks int
 }
 
 type autoTuneSignal string
@@ -45,6 +51,14 @@ const (
 	autoTuneSignalHold     autoTuneSignal = "hold"
 	autoTuneSignalIncrease autoTuneSignal = "increase"
 	autoTuneSignalDecrease autoTuneSignal = "decrease"
+)
+
+type autoTuneTelemetryState string
+
+const (
+	autoTuneTelemetryHealthy       autoTuneTelemetryState = "healthy"
+	autoTuneTelemetryStaleFallback autoTuneTelemetryState = "stale_fallback"
+	autoTuneTelemetryRecoveryHold  autoTuneTelemetryState = "recovery_hold"
 )
 
 type autoTuneController struct {
@@ -59,14 +73,20 @@ type autoTuneController struct {
 	queueHighWatermarkPct int
 	queueLowWatermarkPct  int
 
-	hysteresisTicks  int
-	cooldownTicks    int
-	cooldownLeft     int
-	currentBatch     int
-	lastSignal       autoTuneSignal
-	lastApplied      autoTuneSignal
-	saturationSignal autoTuneSignal
-	streak           int
+	hysteresisTicks        int
+	cooldownTicks          int
+	cooldownLeft           int
+	telemetryStaleTicks    int
+	telemetryRecoveryTicks int
+	telemetryFallback      bool
+	telemetryArmed         bool
+	telemetryStaleObserved int
+	telemetryRecoverySeen  int
+	currentBatch           int
+	lastSignal             autoTuneSignal
+	lastApplied            autoTuneSignal
+	saturationSignal       autoTuneSignal
+	streak                 int
 }
 
 func newAutoTuneController(baseBatchSize int, cfg AutoTuneConfig) *autoTuneController {
@@ -145,6 +165,14 @@ func newAutoTuneControllerWithSeedMode(
 	if cooldownTicks == 0 {
 		cooldownTicks = hysteresisTicks
 	}
+	telemetryStaleTicks := cfg.TelemetryStaleTicks
+	if telemetryStaleTicks <= 0 {
+		telemetryStaleTicks = 2
+	}
+	telemetryRecoveryTicks := cfg.TelemetryRecoveryTicks
+	if telemetryRecoveryTicks <= 0 {
+		telemetryRecoveryTicks = 1
+	}
 
 	baseStartBatch := clampInt(baseBatchSize, minBatch, maxBatch)
 	if baseStartBatch <= 0 {
@@ -173,24 +201,27 @@ func newAutoTuneControllerWithSeedMode(
 	}
 
 	return &autoTuneController{
-		minBatchSize:          minBatch,
-		maxBatchSize:          maxBatch,
-		stepUp:                stepUp,
-		stepDown:              stepDown,
-		lagHighWatermark:      lagHigh,
-		lagLowWatermark:       lagLow,
-		queueHighWatermarkPct: queueHigh,
-		queueLowWatermarkPct:  queueLow,
-		hysteresisTicks:       hysteresisTicks,
-		cooldownTicks:         cooldownTicks,
-		currentBatch:          startBatch,
-		lastSignal:            autoTuneSignalHold,
-		lastApplied:           autoTuneSignalHold,
-		saturationSignal:      autoTuneSignalHold,
+		minBatchSize:           minBatch,
+		maxBatchSize:           maxBatch,
+		stepUp:                 stepUp,
+		stepDown:               stepDown,
+		lagHighWatermark:       lagHigh,
+		lagLowWatermark:        lagLow,
+		queueHighWatermarkPct:  queueHigh,
+		queueLowWatermarkPct:   queueLow,
+		hysteresisTicks:        hysteresisTicks,
+		cooldownTicks:          cooldownTicks,
+		telemetryStaleTicks:    telemetryStaleTicks,
+		telemetryRecoveryTicks: telemetryRecoveryTicks,
+		currentBatch:           startBatch,
+		lastSignal:             autoTuneSignalHold,
+		lastApplied:            autoTuneSignalHold,
+		saturationSignal:       autoTuneSignalHold,
 	}
 }
 
 func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagnostics) {
+	telemetryState := a.resolveTelemetryState(inputs)
 	lagSequence := int64(0)
 	if inputs.HasHeadSignal && inputs.HasMinCursorSignal {
 		lagSequence = inputs.HeadSequence - inputs.MinCursorSequence
@@ -199,7 +230,10 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		}
 	}
 
-	signal := a.classifySignal(inputs, lagSequence)
+	signal := autoTuneSignalHold
+	if telemetryState == autoTuneTelemetryHealthy {
+		signal = a.classifySignal(inputs, lagSequence)
+	}
 	decision := "hold"
 	before := a.currentBatch
 	appliedControl := false
@@ -279,18 +313,66 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 	if !appliedControl && a.cooldownLeft > 0 {
 		a.cooldownLeft--
 	}
+	if decision == "hold" {
+		switch telemetryState {
+		case autoTuneTelemetryStaleFallback:
+			decision = "hold_telemetry_stale"
+		case autoTuneTelemetryRecoveryHold:
+			decision = "hold_telemetry_recovery"
+		}
+	}
 
 	return a.currentBatch, autoTuneDiagnostics{
-		LagSequence:   lagSequence,
-		QueueDepth:    inputs.QueueDepth,
-		QueueCapacity: inputs.QueueCapacity,
-		Signal:        string(signal),
-		Decision:      decision,
-		BatchBefore:   before,
-		BatchAfter:    a.currentBatch,
-		Streak:        a.streak,
-		Cooldown:      a.cooldownLeft,
+		LagSequence:            lagSequence,
+		QueueDepth:             inputs.QueueDepth,
+		QueueCapacity:          inputs.QueueCapacity,
+		TelemetryState:         string(telemetryState),
+		Signal:                 string(signal),
+		Decision:               decision,
+		BatchBefore:            before,
+		BatchAfter:             a.currentBatch,
+		Streak:                 a.streak,
+		Cooldown:               a.cooldownLeft,
+		TelemetryStaleTicks:    a.telemetryStaleObserved,
+		TelemetryRecoveryTicks: a.telemetryRecoverySeen,
 	}
+}
+
+func (a *autoTuneController) resolveTelemetryState(inputs autoTuneInputs) autoTuneTelemetryState {
+	hasLagTelemetry := inputs.HasHeadSignal && inputs.HasMinCursorSignal
+	if hasLagTelemetry {
+		a.telemetryArmed = true
+	}
+	if !a.telemetryArmed {
+		return autoTuneTelemetryHealthy
+	}
+
+	telemetryInvalid := !hasLagTelemetry || inputs.HeadSequence < inputs.MinCursorSequence
+	if telemetryInvalid {
+		a.telemetryStaleObserved++
+		a.telemetryRecoverySeen = 0
+		if !a.telemetryFallback && a.telemetryStaleObserved >= a.telemetryStaleTicks {
+			a.telemetryFallback = true
+		}
+		if a.telemetryFallback {
+			return autoTuneTelemetryStaleFallback
+		}
+		return autoTuneTelemetryHealthy
+	}
+
+	a.telemetryStaleObserved = 0
+	if !a.telemetryFallback {
+		a.telemetryRecoverySeen = 0
+		return autoTuneTelemetryHealthy
+	}
+
+	a.telemetryRecoverySeen++
+	state := autoTuneTelemetryRecoveryHold
+	if a.telemetryRecoverySeen >= a.telemetryRecoveryTicks {
+		a.telemetryFallback = false
+		a.telemetryRecoverySeen = 0
+	}
+	return state
 }
 
 func (a *autoTuneController) isSaturatedBoundary(signal autoTuneSignal) bool {

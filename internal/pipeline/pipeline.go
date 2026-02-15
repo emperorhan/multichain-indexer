@@ -44,7 +44,9 @@ type CoordinatorAutoTuneConfig struct {
 	QueueHighWatermarkPct int
 	QueueLowWatermarkPct  int
 
-	HysteresisTicks int
+	HysteresisTicks        int
+	TelemetryStaleTicks    int
+	TelemetryRecoveryTicks int
 }
 
 type Pipeline struct {
@@ -96,16 +98,18 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		p.cfg.BatchSize, p.cfg.IndexingInterval,
 		jobCh, p.logger,
 	).WithHeadProvider(p.adapter).WithAutoTune(coordinator.AutoTuneConfig{
-		Enabled:               p.cfg.CoordinatorAutoTune.Enabled,
-		MinBatchSize:          p.cfg.CoordinatorAutoTune.MinBatchSize,
-		MaxBatchSize:          p.cfg.CoordinatorAutoTune.MaxBatchSize,
-		StepUp:                p.cfg.CoordinatorAutoTune.StepUp,
-		StepDown:              p.cfg.CoordinatorAutoTune.StepDown,
-		LagHighWatermark:      p.cfg.CoordinatorAutoTune.LagHighWatermark,
-		LagLowWatermark:       p.cfg.CoordinatorAutoTune.LagLowWatermark,
-		QueueHighWatermarkPct: p.cfg.CoordinatorAutoTune.QueueHighWatermarkPct,
-		QueueLowWatermarkPct:  p.cfg.CoordinatorAutoTune.QueueLowWatermarkPct,
-		HysteresisTicks:       p.cfg.CoordinatorAutoTune.HysteresisTicks,
+		Enabled:                p.cfg.CoordinatorAutoTune.Enabled,
+		MinBatchSize:           p.cfg.CoordinatorAutoTune.MinBatchSize,
+		MaxBatchSize:           p.cfg.CoordinatorAutoTune.MaxBatchSize,
+		StepUp:                 p.cfg.CoordinatorAutoTune.StepUp,
+		StepDown:               p.cfg.CoordinatorAutoTune.StepDown,
+		LagHighWatermark:       p.cfg.CoordinatorAutoTune.LagHighWatermark,
+		LagLowWatermark:        p.cfg.CoordinatorAutoTune.LagLowWatermark,
+		QueueHighWatermarkPct:  p.cfg.CoordinatorAutoTune.QueueHighWatermarkPct,
+		QueueLowWatermarkPct:   p.cfg.CoordinatorAutoTune.QueueLowWatermarkPct,
+		HysteresisTicks:        p.cfg.CoordinatorAutoTune.HysteresisTicks,
+		TelemetryStaleTicks:    p.cfg.CoordinatorAutoTune.TelemetryStaleTicks,
+		TelemetryRecoveryTicks: p.cfg.CoordinatorAutoTune.TelemetryRecoveryTicks,
 	})
 
 	fetch := fetcher.New(
