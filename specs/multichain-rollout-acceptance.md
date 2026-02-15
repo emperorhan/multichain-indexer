@@ -832,6 +832,78 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of saturation/de-saturation determinism, replay safety, and fail-fast safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0267 (M44-S1)
+Assertions:
+1. Equivalent tri-chain logical ranges processed under fresh telemetry, stale-telemetry fallback, and telemetry-recovery permutations converge to one deterministic canonical output set per chain.
+2. Telemetry-staleness fallback boundaries preserve deterministic canonical identity (`0` duplicate canonical IDs and `0` missing logical events).
+3. One-chain telemetry staleness or blackout does not induce cross-chain control bleed, cursor bleed, or fail-fast safety regression.
+4. Replay/resume from telemetry-fallback boundaries remains idempotent with cursor monotonicity and signed-delta/fee-event invariant continuity.
+
+Pass Evidence:
+- Deterministic tests inject fresh/stale/recovery telemetry permutations and show canonical tuple equivalence on all mandatory chains.
+- One-chain telemetry-staleness counterexamples show `0` cross-chain control-coupling violations and `0` duplicate/missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0268 (M44-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M44 invariants.
+2. QA executes at least one counterexample with fresh vs stale-fallback vs telemetry-recovery permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample with one-chain telemetry staleness/blackout and verifies no cross-chain control bleed, no duplicate/missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of telemetry-staleness fallback determinism, replay safety, and fail-fast safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
+### I-0272 (M45-S1)
+Assertions:
+1. Equivalent tri-chain logical ranges processed under auto-mode, manual-profile override, and override-release-to-auto permutations converge to one deterministic canonical output set per chain.
+2. Override hold/release boundaries preserve deterministic canonical identity (`0` duplicate canonical IDs and `0` missing logical events).
+3. One-chain override transitions do not induce cross-chain control bleed, cursor bleed, or fail-fast safety regression.
+4. Replay/resume from override transition boundaries remains idempotent with cursor monotonicity and signed-delta/fee-event invariant continuity.
+
+Pass Evidence:
+- Deterministic tests inject auto-mode/override-hold/release permutations and show canonical tuple equivalence on all mandatory chains.
+- One-chain override-transition counterexamples show `0` cross-chain control-coupling violations and `0` duplicate/missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0273 (M45-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M45 invariants.
+2. QA executes at least one counterexample with auto-mode vs override-hold vs override-release permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample with one-chain override transition and verifies no cross-chain control bleed, no duplicate/missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of operator-override reconciliation determinism, replay safety, and fail-fast safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
+### I-0277 (M46-S1)
+Assertions:
+1. Equivalent tri-chain logical ranges processed under policy-v1 baseline, policy-v2 rollout, and rollback/re-apply permutations converge to one deterministic canonical output set per chain.
+2. Policy-version rollout boundaries preserve deterministic canonical identity (`0` duplicate canonical IDs and `0` missing logical events).
+3. One-chain policy rollout/rollback does not induce cross-chain control bleed, cursor bleed, or fail-fast safety regression.
+4. Replay/resume from policy-version transition boundaries remains idempotent with cursor monotonicity and signed-delta/fee-event invariant continuity.
+
+Pass Evidence:
+- Deterministic tests inject policy-v1/policy-v2/rollback/re-apply permutations and show canonical tuple equivalence on all mandatory chains.
+- One-chain policy-transition counterexamples show `0` cross-chain control-coupling violations and `0` duplicate/missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0278 (M46-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M46 invariants.
+2. QA executes at least one counterexample with policy-v1 baseline vs policy-v2 rollout vs rollback/re-apply permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample with one-chain policy rollout/rollback transition and verifies no cross-chain control bleed, no duplicate/missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of policy-version rollout determinism, replay safety, and fail-fast safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -874,3 +946,9 @@ Release recommendation must be `fail` if any condition holds:
 38. Auto-tune saturation/de-saturation determinism cannot be proven (saturation-entry/sustained-saturation/de-saturation-recovery permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
 39. One-chain sustained-saturation isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under sustained-saturation permutations).
 40. Saturation/de-saturation replay safety cannot be proven (replay idempotency, cursor monotonicity, and signed-delta/fee-event continuity not evidenced for all mandatory chains).
+41. Auto-tune telemetry-staleness fallback determinism cannot be proven (fresh/stale-fallback/recovery permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
+42. One-chain telemetry-staleness isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under telemetry-staleness permutations).
+43. Auto-tune operator-override reconciliation determinism cannot be proven (auto-mode/override-hold/release permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
+44. One-chain override-transition isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under override-transition permutations).
+45. Auto-tune policy-version rollout determinism cannot be proven (policy-v1/policy-v2/rollback/re-apply permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
+46. One-chain policy-version transition isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under policy-rollout permutations).
