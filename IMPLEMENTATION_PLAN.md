@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -81,6 +81,8 @@ Execution queue (dependency-ordered):
 70. `I-0238` (`M37-S2`) QA counterexample gate for tri-chain volatility/interleaving determinism + invariant safety
 71. `I-0242` (`M38-S1`) tri-chain late-arrival backfill canonical closure determinism hardening
 72. `I-0243` (`M38-S2`) QA counterexample gate for tri-chain late-arrival closure determinism + invariant safety
+73. `I-0247` (`M39-S1`) tri-chain volatility-event completeness reconciliation determinism hardening
+74. `I-0248` (`M39-S2`) QA counterexample gate for tri-chain volatility-event completeness determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1374,7 +1376,7 @@ Eliminate duplicate/missing-event risk when `solana-devnet`, `base-sepolia`, and
 - Gate: tri-chain completion-order variance can reintroduce non-deterministic commit timing and hidden cross-chain starvation under volatility spikes.
 - Fallback: enforce deterministic chain-scoped commit fences with bounded backlog budgets, emit explicit tri-chain scheduler diagnostics, and fail fast on unresolved interleaving ambiguity.
 
-### M38. Tri-Chain Late-Arrival Backfill Canonical Closure Tranche C0032 (P0, Next)
+### M38. Tri-Chain Late-Arrival Backfill Canonical Closure Tranche C0032 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when late-arriving transactions are observed after initial tri-chain range processing (RPC lag, sidecar recovery, retry-after-timeout), so replay/backfill closure converges to one deterministic canonical output set per chain with fee/signed-delta invariants and cursor safety preserved.
@@ -1412,6 +1414,45 @@ Eliminate duplicate/missing-event risk when late-arriving transactions are obser
 #### Risk Gate + Fallback
 - Gate: delayed-arrival closure windows can become ambiguous near moving heads and reintroduce non-deterministic include/exclude behavior across replay/backfill passes.
 - Fallback: enforce deterministic closed-range reconciliation fences with explicit late-arrival diagnostics, fail fast on unresolved closure-window ambiguity, and replay from last committed safe boundary.
+
+### M39. Tri-Chain Volatility-Event Completeness Reconciliation Tranche C0033 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing volatility-event risk when tri-chain decode coverage shifts from partial to enriched across delayed sidecar/RPC discovery and replay/backfill boundaries, so equivalent logical ranges converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M38` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M39-S1` (`I-0247`): harden tri-chain volatility-event completeness reconciliation semantics so partial-decode->enriched-decode and delayed-enrichment permutations cannot induce duplicate canonical IDs, missing logical volatility events, fee/signed-delta drift, or cursor regression.
+2. `M39-S2` (`I-0248`): execute QA counterexample gate for tri-chain volatility-event completeness determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under partial-first and enriched-first decode permutations converge to one canonical tuple output set per chain.
+2. Delayed enrichment on one chain cannot induce duplicate/missing logical volatility events or cursor bleed on the other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under mixed partial/enriched replay/backfill permutations.
+4. Replay/resume from enrichment boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject at least two tri-chain decode-coverage permutations (partial-first then enriched, enriched-first baseline) for equivalent logical ranges and assert canonical tuple convergence to one deterministic output set.
+2. Deterministic tests inject one-chain delayed enrichment while the other two chains progress and assert `0` duplicate canonical IDs and `0` missing logical volatility events across chains.
+3. Deterministic replay/backfill tests from mixed enrichment boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus tri-chain volatility-completeness counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic tri-chain partial/enriched permutation fixtures.
+2. `0` duplicate canonical IDs and `0` missing logical volatility events under one-chain delayed-enrichment counterexample fixtures.
+3. `0` signed-delta conservation violations and `0` fee-event coverage regressions under tri-chain replay/backfill enrichment permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in tri-chain enrichment recovery fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: partial/enriched equivalence matching can collapse distinct volatility-event legs or re-emit enriched events as duplicates near late-discovery boundaries.
+- Fallback: enforce deterministic enrichment-lineage reconciliation keys with explicit lineage-collision diagnostics, fail fast on unresolved ambiguity, and replay from last committed safe boundary.
 
 ## Decision Register (Major + Fallback)
 
@@ -1505,10 +1546,12 @@ Completed milestones/slices:
 69. `I-0233`
 70. `I-0237`
 71. `I-0238`
+72. `I-0242`
+73. `I-0243`
 
 Active downstream queue from this plan:
-1. `I-0242`
-2. `I-0243`
+1. `I-0247`
+2. `I-0248`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -1528,3 +1571,4 @@ Superseded issues:
 - `I-0222` and `I-0223` are superseded by `I-0224` and `I-0225` to replace generic cycle placeholders with executable fee-component availability flap canonical convergence determinism slices.
 - `I-0235` and `I-0236` are superseded by `I-0237` and `I-0238` to replace generic cycle placeholders with executable tri-chain volatility/interleaving determinism slices.
 - `I-0240` and `I-0241` are superseded by `I-0242` and `I-0243` to replace generic cycle placeholders with executable tri-chain late-arrival closure determinism slices.
+- `I-0245` and `I-0246` are superseded by `I-0247` and `I-0248` to replace generic cycle placeholders with executable tri-chain volatility-event completeness determinism slices.

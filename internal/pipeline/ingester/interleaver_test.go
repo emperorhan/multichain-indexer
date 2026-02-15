@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -141,6 +142,174 @@ func TestTriChainInterleaving_BacklogRetryPressurePreservesIsolationAndReplayDet
 	assertMonotonicWrites(t, second.watermarkWrites, "tri-chain backlog watermark writes")
 }
 
+func TestTriChainInterleaving_LateArrivalPermutationsConvergeDeterministically(t *testing.T) {
+	ctx := context.Background()
+	maxSkew := 25 * time.Millisecond
+
+	runOnTime := func() triChainSnapshot {
+		state := newInterleaveState(nil)
+		ings := newTriChainIngesters(t, state, maxSkew)
+
+		errs := runTriChainBatches(ctx, ings, map[model.Chain]event.NormalizedBatch{
+			model.ChainSolana: buildTriChainInterleaveBatch(model.ChainSolana),
+			model.ChainBase:   buildTriChainInterleaveBatch(model.ChainBase),
+			model.ChainBTC:    buildTriChainInterleaveBatch(model.ChainBTC),
+		}, map[model.Chain]time.Duration{
+			model.ChainSolana: 2 * time.Millisecond,
+			model.ChainBase:   0,
+			model.ChainBTC:    5 * time.Millisecond,
+		})
+		require.Empty(t, errs)
+
+		errs = runTriChainBatches(ctx, ings, map[model.Chain]event.NormalizedBatch{
+			model.ChainSolana: buildTriChainClosureBatch(model.ChainSolana, "sig-tri-sol-101", 101),
+			model.ChainBase:   buildTriChainClosureBatch(model.ChainBase, "0xtri_base_201", 201),
+			model.ChainBTC:    buildTriChainClosureBatch(model.ChainBTC, "btc-tri-301", 301),
+		}, map[model.Chain]time.Duration{
+			model.ChainSolana: 1 * time.Millisecond,
+			model.ChainBase:   3 * time.Millisecond,
+			model.ChainBTC:    0,
+		})
+		require.Empty(t, errs)
+
+		return snapshotTriChainState(state)
+	}
+
+	runDelayed := func() triChainSnapshot {
+		state := newInterleaveState(nil)
+		ings := newTriChainIngesters(t, state, maxSkew)
+
+		errs := runTriChainBatches(ctx, ings, map[model.Chain]event.NormalizedBatch{
+			model.ChainSolana: buildTriChainInterleaveBatch(model.ChainSolana),
+			model.ChainBase:   buildTriChainInterleaveBatch(model.ChainBase),
+			model.ChainBTC:    buildTriChainClosureBatch(model.ChainBTC, "btc-tri-300", 300),
+		}, map[model.Chain]time.Duration{
+			model.ChainSolana: 4 * time.Millisecond,
+			model.ChainBase:   0,
+			model.ChainBTC:    1 * time.Millisecond,
+		})
+		require.Empty(t, errs)
+
+		errs = runTriChainBatches(ctx, ings, map[model.Chain]event.NormalizedBatch{
+			model.ChainSolana: buildTriChainInterleaveBatch(model.ChainSolana),
+			model.ChainBase:   buildTriChainInterleaveBatch(model.ChainBase),
+			model.ChainBTC:    buildTriChainClosureBatch(model.ChainBTC, "btc-tri-300", 300),
+		}, map[model.Chain]time.Duration{
+			model.ChainSolana: 0,
+			model.ChainBase:   5 * time.Millisecond,
+			model.ChainBTC:    2 * time.Millisecond,
+		})
+		require.Empty(t, errs)
+
+		errs = runTriChainBatches(ctx, ings, map[model.Chain]event.NormalizedBatch{
+			model.ChainSolana: buildTriChainClosureBatch(model.ChainSolana, "sig-tri-sol-101", 101),
+			model.ChainBase:   buildTriChainClosureBatch(model.ChainBase, "0xtri_base_201", 201),
+			model.ChainBTC:    buildTriChainInterleaveBatch(model.ChainBTC),
+		}, map[model.Chain]time.Duration{
+			model.ChainSolana: 1 * time.Millisecond,
+			model.ChainBase:   0,
+			model.ChainBTC:    6 * time.Millisecond,
+		})
+		require.Empty(t, errs)
+
+		return snapshotTriChainState(state)
+	}
+
+	onTime := runOnTime()
+	delayed := runDelayed()
+
+	assert.Equal(t, onTime.tupleKeys, delayed.tupleKeys)
+	assert.Equal(t, onTime.eventIDs, delayed.eventIDs)
+	assert.Equal(t, onTime.categoryCounts, delayed.categoryCounts)
+	assert.Equal(t, onTime.cursorSeq, delayed.cursorSeq)
+	assert.Equal(t, onTime.watermarks, delayed.watermarks)
+	assert.Equal(t, onTime.btcTotalDelta, delayed.btcTotalDelta)
+
+	assert.Equal(t, 8, len(delayed.eventIDs))
+	assert.Equal(t, 1, delayed.categoryCounts[chainCategoryKey(model.ChainSolana, model.EventCategoryFee)])
+	assert.Equal(t, 1, delayed.categoryCounts[chainCategoryKey(model.ChainBase, model.EventCategoryFeeExecutionL2)])
+	assert.Equal(t, 1, delayed.categoryCounts[chainCategoryKey(model.ChainBase, model.EventCategoryFeeDataL1)])
+	assert.Equal(t, "-1", delayed.btcTotalDelta)
+
+	assertNoDuplicateEventIDs(t, delayed.eventIDCounts)
+	assertMonotonicWrites(t, delayed.cursorWrites, "tri-chain late-arrival delayed cursor writes")
+	assertMonotonicWrites(t, delayed.watermarkWrites, "tri-chain late-arrival delayed watermark writes")
+}
+
+func TestTriChainInterleaving_OneChainDelayedClosurePressureStaysIsolated(t *testing.T) {
+	ctx := context.Background()
+	maxSkew := 25 * time.Millisecond
+
+	baselineState := newInterleaveState(nil)
+	baselineIngesters := newTriChainIngesters(t, baselineState, maxSkew)
+	baselineErrs := runTriChainBatches(ctx, baselineIngesters, map[model.Chain]event.NormalizedBatch{
+		model.ChainSolana: buildTriChainInterleaveBatch(model.ChainSolana),
+		model.ChainBase:   buildTriChainInterleaveBatch(model.ChainBase),
+		model.ChainBTC:    buildTriChainInterleaveBatch(model.ChainBTC),
+	}, map[model.Chain]time.Duration{
+		model.ChainSolana: 0,
+		model.ChainBase:   3 * time.Millisecond,
+		model.ChainBTC:    1 * time.Millisecond,
+	})
+	require.Empty(t, baselineErrs)
+	baseline := snapshotTriChainState(baselineState)
+
+	state := newInterleaveState(nil)
+	ings := newTriChainIngesters(t, state, maxSkew)
+
+	errs := runTriChainBatches(ctx, ings, map[model.Chain]event.NormalizedBatch{
+		model.ChainSolana: buildTriChainInterleaveBatch(model.ChainSolana),
+		model.ChainBase:   buildTriChainInterleaveBatch(model.ChainBase),
+		model.ChainBTC:    buildTriChainClosureBatch(model.ChainBTC, "btc-tri-300", 300),
+	}, map[model.Chain]time.Duration{
+		model.ChainSolana: 2 * time.Millisecond,
+		model.ChainBase:   0,
+		model.ChainBTC:    1 * time.Millisecond,
+	})
+	require.Empty(t, errs)
+
+	errs = runTriChainBatches(ctx, ings, map[model.Chain]event.NormalizedBatch{
+		model.ChainSolana: buildTriChainInterleaveBatch(model.ChainSolana),
+		model.ChainBase:   buildTriChainInterleaveBatch(model.ChainBase),
+		model.ChainBTC:    buildTriChainClosureBatch(model.ChainBTC, "btc-tri-300", 300),
+	}, map[model.Chain]time.Duration{
+		model.ChainSolana: 0,
+		model.ChainBase:   4 * time.Millisecond,
+		model.ChainBTC:    2 * time.Millisecond,
+	})
+	require.Empty(t, errs)
+
+	beforeLateArrival := snapshotTriChainState(state)
+	assert.Equal(t, 5, len(beforeLateArrival.eventIDs))
+	assert.Equal(t, chainEventIDSubset(baseline.eventIDs, model.ChainSolana), chainEventIDSubset(beforeLateArrival.eventIDs, model.ChainSolana))
+	assert.Equal(t, chainEventIDSubset(baseline.eventIDs, model.ChainBase), chainEventIDSubset(beforeLateArrival.eventIDs, model.ChainBase))
+	assert.Empty(t, chainEventIDSubset(beforeLateArrival.eventIDs, model.ChainBTC))
+
+	errs = runTriChainBatches(ctx, ings, map[model.Chain]event.NormalizedBatch{
+		model.ChainSolana: buildTriChainClosureBatch(model.ChainSolana, "sig-tri-sol-101", 101),
+		model.ChainBase:   buildTriChainClosureBatch(model.ChainBase, "0xtri_base_201", 201),
+		model.ChainBTC:    buildTriChainInterleaveBatch(model.ChainBTC),
+	}, map[model.Chain]time.Duration{
+		model.ChainSolana: 0,
+		model.ChainBase:   2 * time.Millisecond,
+		model.ChainBTC:    6 * time.Millisecond,
+	})
+	require.Empty(t, errs)
+
+	afterLateArrival := snapshotTriChainState(state)
+	assert.Equal(t, baseline.eventIDs, afterLateArrival.eventIDs)
+	assert.Equal(t, baseline.tupleKeys, afterLateArrival.tupleKeys)
+	assert.Equal(t, baseline.categoryCounts, afterLateArrival.categoryCounts)
+	assert.Equal(t, baseline.cursorSeq, afterLateArrival.cursorSeq)
+	assert.Equal(t, baseline.watermarks, afterLateArrival.watermarks)
+	assert.Equal(t, chainEventIDSubset(beforeLateArrival.eventIDs, model.ChainSolana), chainEventIDSubset(afterLateArrival.eventIDs, model.ChainSolana))
+	assert.Equal(t, chainEventIDSubset(beforeLateArrival.eventIDs, model.ChainBase), chainEventIDSubset(afterLateArrival.eventIDs, model.ChainBase))
+
+	assertNoDuplicateEventIDs(t, afterLateArrival.eventIDCounts)
+	assertMonotonicWrites(t, afterLateArrival.cursorWrites, "tri-chain one-chain-late cursor writes")
+	assertMonotonicWrites(t, afterLateArrival.watermarkWrites, "tri-chain one-chain-late watermark writes")
+}
+
 func TestDeterministicMandatoryChainInterleaver_FailedAttemptDoesNotAdvanceCheckpoint(t *testing.T) {
 	ctx := context.Background()
 
@@ -182,6 +351,30 @@ func TestDeterministicMandatoryChainInterleaver_FailedAttemptDoesNotAdvanceCheck
 	nextAfterCommittedBTC := interleaver.next
 	interleaver.mu.Unlock()
 	assert.Equal(t, 0, nextAfterCommittedBTC)
+}
+
+func TestDeterministicMandatoryChainInterleaver_NoOpClosureDoesNotAdvanceCheckpoint(t *testing.T) {
+	ctx := context.Background()
+
+	state := newInterleaveState(nil)
+	ings := newTriChainIngesters(t, state, 10*time.Millisecond)
+
+	interleaver, ok := ings.solana.commitInterleaver.(*deterministicMandatoryChainInterleaver)
+	require.True(t, ok)
+
+	require.NoError(t, ings.solana.processBatch(ctx, buildTriChainClosureBatch(model.ChainSolana, "sig-tri-sol-100", 100)))
+
+	interleaver.mu.Lock()
+	nextAfterNoOpClosure := interleaver.next
+	interleaver.mu.Unlock()
+	assert.Equal(t, 0, nextAfterNoOpClosure, "closure no-op must not advance checkpoint")
+
+	require.NoError(t, ings.solana.processBatch(ctx, buildTriChainInterleaveBatch(model.ChainSolana)))
+
+	interleaver.mu.Lock()
+	nextAfterMaterialCommit := interleaver.next
+	interleaver.mu.Unlock()
+	assert.Equal(t, 1, nextAfterMaterialCommit, "material commit should advance checkpoint")
 }
 
 func newTriChainIngesters(t *testing.T, state *interleaveState, maxSkew time.Duration) triChainIngesters {
@@ -235,6 +428,43 @@ func runTriChainPermutation(ctx context.Context, ings triChainIngesters, delays 
 			defer wg.Done()
 			time.Sleep(delays[chainID])
 			errCh <- ingesterForChain(ings, chainID).processBatch(ctx, buildTriChainInterleaveBatch(chainID))
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	errs := make([]error, 0, len(chains))
+	for err := range errCh {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
+
+func runTriChainBatches(
+	ctx context.Context,
+	ings triChainIngesters,
+	batches map[model.Chain]event.NormalizedBatch,
+	delays map[model.Chain]time.Duration,
+) []error {
+	chains := []model.Chain{model.ChainSolana, model.ChainBase, model.ChainBTC}
+	errCh := make(chan error, len(chains))
+	var wg sync.WaitGroup
+
+	for _, chainID := range chains {
+		batch, exists := batches[chainID]
+		if !exists {
+			continue
+		}
+		delay := delays[chainID]
+		chainID := chainID
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			time.Sleep(delay)
+			errCh <- ingesterForChain(ings, chainID).processBatch(ctx, batch)
 		}()
 	}
 
@@ -409,6 +639,20 @@ func buildTriChainInterleaveBatch(chainID model.Chain) event.NormalizedBatch {
 	}
 }
 
+func buildTriChainClosureBatch(chainID model.Chain, cursor string, sequence int64) event.NormalizedBatch {
+	previous := cursor
+	next := cursor
+	return event.NormalizedBatch{
+		Chain:                  chainID,
+		Network:                triChainNetwork(chainID),
+		Address:                triChainAddress(chainID),
+		PreviousCursorValue:    &previous,
+		PreviousCursorSequence: sequence,
+		NewCursorValue:         &next,
+		NewCursorSequence:      sequence,
+	}
+}
+
 func snapshotTriChainState(state *interleaveState) triChainSnapshot {
 	tuples := state.snapshotTuples()
 	tupleKeys := make(map[string]struct{}, len(tuples))
@@ -497,6 +741,19 @@ func triChainAddress(chainID model.Chain) string {
 	}
 }
 
+func triChainNetwork(chainID model.Chain) model.Network {
+	switch chainID {
+	case model.ChainSolana:
+		return model.NetworkDevnet
+	case model.ChainBase:
+		return model.NetworkSepolia
+	case model.ChainBTC:
+		return model.NetworkTestnet
+	default:
+		return ""
+	}
+}
+
 func chainCategoryKey(chainID model.Chain, category model.EventCategory) string {
 	return fmt.Sprintf("%s|%s", chainID, category)
 }
@@ -521,4 +778,15 @@ func assertNoDuplicateEventIDs(t *testing.T, counts map[string]int) {
 	for eventID, count := range counts {
 		assert.Equal(t, 1, count, "duplicate canonical event id detected: %s", eventID)
 	}
+}
+
+func chainEventIDSubset(eventIDs map[string]struct{}, chainID model.Chain) map[string]struct{} {
+	subset := make(map[string]struct{})
+	prefix := string(chainID) + "|"
+	for eventID := range eventIDs {
+		if strings.HasPrefix(eventID, prefix) {
+			subset[eventID] = struct{}{}
+		}
+	}
+	return subset
 }

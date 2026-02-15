@@ -73,9 +73,11 @@
 70. `I-0238` (`M37-S2`): QA counterexample gate for tri-chain volatility/interleaving determinism + invariant safety.
 71. `I-0242` (`M38-S1`): tri-chain late-arrival backfill canonical closure determinism hardening across delayed-discovery and replay/backfill permutations.
 72. `I-0243` (`M38-S2`): QA counterexample gate for tri-chain late-arrival closure determinism + invariant safety.
+73. `I-0247` (`M39-S1`): tri-chain volatility-event completeness reconciliation determinism hardening across partial/enriched decode transitions and delayed-enrichment replay/backfill permutations.
+74. `I-0248` (`M39-S2`): QA counterexample gate for tri-chain volatility-event completeness determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225 -> I-0226 -> I-0227 -> I-0228 -> I-0229 -> I-0232 -> I-0233 -> I-0237 -> I-0238 -> I-0242 -> I-0243`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225 -> I-0226 -> I-0227 -> I-0228 -> I-0229 -> I-0232 -> I-0233 -> I-0237 -> I-0238 -> I-0242 -> I-0243 -> I-0247 -> I-0248`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -155,6 +157,8 @@ Each slice must be independently releasable:
 68. Before `I-0238`: `I-0237` emits deterministic tri-chain interleaving evidence showing `0` duplicate/missing logical events with preserved fee/signed-delta invariants and chain-scoped cursor monotonicity.
 69. Before `I-0242`: `I-0238` QA report is `PASS` and no unresolved tri-chain interleaving determinism blocker remains.
 70. Before `I-0243`: `I-0242` emits deterministic tri-chain late-arrival closure evidence showing `0` duplicate/missing logical events with preserved fee/signed-delta invariants and chain-scoped cursor monotonicity.
+71. Before `I-0247`: `I-0243` QA report is `PASS` and no unresolved tri-chain late-arrival closure blocker remains.
+72. Before `I-0248`: `I-0247` emits deterministic tri-chain volatility-event completeness evidence showing `0` duplicate/missing logical events under partial/enriched decode transitions while preserving fee/signed-delta invariants and chain-scoped cursor monotonicity.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -190,6 +194,7 @@ Each slice must be independently releasable:
 31. If BTC reorg/finality flap reconciliation cannot deterministically resolve fork ancestry and replacement-branch tuple equivalence near moving head, preserve deterministic conservative rollback-window policy with explicit fork-ambiguity diagnostics and replay from last-safe cursor until reorg contracts are extended.
 32. If tri-chain interleaving reconciliation cannot deterministically preserve chain-scoped commit ordering and backlog fairness under volatility bursts, preserve deterministic chain-scoped commit fences with explicit scheduler-pressure diagnostics and replay from last-safe cursor until tri-chain scheduling contracts are extended.
 33. If tri-chain late-arrival closure reconciliation cannot deterministically preserve closed-range inclusion boundaries across delayed discovery and replay/backfill passes, preserve deterministic closed-range reconciliation fences with explicit late-arrival diagnostics and replay from last-safe cursor until closure contracts are extended.
+34. If tri-chain volatility-event completeness reconciliation cannot deterministically preserve logical event equivalence between partial and enriched decode coverage states, preserve deterministic conservative enrichment-lineage matching with explicit lineage-collision diagnostics and replay from last-safe cursor until completeness contracts are extended.
 
 ## Completion Evidence
 1. Developer slice output:

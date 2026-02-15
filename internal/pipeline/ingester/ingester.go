@@ -222,12 +222,32 @@ func shouldContinueCompetingBranchReplay(batch event.NormalizedBatch) bool {
 	return batch.Chain == model.ChainBTC && len(batch.Transactions) > 0
 }
 
+func shouldAdvanceCommitCheckpoint(batch event.NormalizedBatch) bool {
+	if len(batch.Transactions) > 0 {
+		return true
+	}
+	if batch.NewCursorSequence != batch.PreviousCursorSequence {
+		return true
+	}
+
+	previousCursor := canonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
+	newCursor := canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+	if previousCursor == nil && newCursor == nil {
+		return false
+	}
+	if previousCursor == nil || newCursor == nil {
+		return true
+	}
+	return *previousCursor != *newCursor
+}
+
 func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBatch) error {
 	if ing.reorgHandler == nil {
 		ing.reorgHandler = ing.rollbackCanonicalityDrift
 	}
 	batch.PreviousCursorValue = canonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
 	batch.NewCursorValue = canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+	advanceCommitCheckpoint := shouldAdvanceCommitCheckpoint(batch)
 	committed := false
 
 	releaseInterleave := func(bool) {}
@@ -239,7 +259,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		releaseInterleave = release
 	}
 	defer func() {
-		releaseInterleave(committed)
+		releaseInterleave(committed && advanceCommitCheckpoint)
 	}()
 
 	dbTx, err := ing.db.BeginTx(ctx, nil)
