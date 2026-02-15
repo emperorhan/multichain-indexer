@@ -95,3 +95,105 @@ func TestAutoTuneController_QueuePressureWorksWithoutHeadSignal(t *testing.T) {
 	assert.Equal(t, 40, batch)
 	assert.Equal(t, "hold", d2.Signal)
 }
+
+func TestAutoTuneController_ProfileTransitionSeedsCurrentBatch(t *testing.T) {
+	ramp := newAutoTuneController(80, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          40,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	})
+	require.NotNil(t, ramp)
+
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+	batch, _ := ramp.Resolve(highLag)
+	assert.Equal(t, 100, batch)
+	batch, _ = ramp.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+
+	seed := ramp.currentBatch
+	transitioned := newAutoTuneControllerWithSeed(80, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          40,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      5_000,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}, &seed)
+	require.NotNil(t, transitioned)
+	assert.Equal(t, 120, transitioned.currentBatch)
+
+	batch, diagnostics := transitioned.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold", diagnostics.Signal)
+	assert.Equal(t, "hold", diagnostics.Decision)
+}
+
+func TestAutoTuneController_ProfileTransitionClampsSeedToBounds(t *testing.T) {
+	seed := 170
+	transitioned := newAutoTuneControllerWithSeed(80, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          140,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}, &seed)
+	require.NotNil(t, transitioned)
+	assert.Equal(t, 140, transitioned.currentBatch)
+}
+
+func TestAutoTuneController_WarmStartAdoptsBoundedDeltaFromBaseline(t *testing.T) {
+	seed := 170
+	warmStarted := newAutoTuneControllerWithRestartSeed(80, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}, &seed)
+	require.NotNil(t, warmStarted)
+	assert.Equal(t, 100, warmStarted.currentBatch, "warm-start adoption must be bounded to one upward control step from baseline")
+
+	lowSeed := 20
+	warmStarted = newAutoTuneControllerWithRestartSeed(120, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              15,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}, &lowSeed)
+	require.NotNil(t, warmStarted)
+	assert.Equal(t, 105, warmStarted.currentBatch, "warm-start adoption must be bounded to one downward control step from baseline")
+}

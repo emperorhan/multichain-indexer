@@ -990,6 +990,337 @@ func TestTick_AutoTuneChainScopedOneChainLagDoesNotThrottleHealthyChain(t *testi
 	assert.Greater(t, maxIntSlice(laggingBatches), maxIntSlice(interleavedHealthyBatches), "lagging chain should scale independently without throttling healthy chain")
 }
 
+func TestTick_AutoTuneProfileTransitionPreservesBatchAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qprofiletransition000000000000000000000000",
+		},
+	}
+
+	rampCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+
+	transitionCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      5_000,
+		LagLowWatermark:       0,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			harness := newAutoTuneHarness(tc.chain, tc.network, tc.address, 100, 2000, 4, rampCfg)
+
+			first := harness.tickAndAdvance(t)
+			second := harness.tickAndAdvance(t)
+			require.Equal(t, 120, first.BatchSize)
+			require.Equal(t, 140, second.BatchSize)
+
+			harness.coordinator.WithAutoTune(transitionCfg)
+
+			third := harness.tickAndAdvance(t)
+			assert.Equal(t, second.BatchSize, third.BatchSize, "profile transition must preserve chain-local batch state")
+			assert.GreaterOrEqual(t, third.CursorSequence, second.CursorSequence, "cursor monotonicity must hold through profile transitions")
+		})
+	}
+}
+
+func TestTick_AutoTuneRestartPermutationsConvergeCanonicalTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name         string
+		chain        model.Chain
+		network      model.Network
+		address      string
+		headSequence int64
+	}
+
+	tests := []testCase{
+		{
+			name:         "solana-devnet",
+			chain:        model.ChainSolana,
+			network:      model.NetworkDevnet,
+			address:      "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+			headSequence: 2_000,
+		},
+		{
+			name:         "base-sepolia",
+			chain:        model.ChainBase,
+			network:      model.NetworkSepolia,
+			address:      "0x1111111111111111111111111111111111111111",
+			headSequence: 2_000,
+		},
+		{
+			name:         "btc-testnet",
+			chain:        model.ChainBTC,
+			network:      model.NetworkTestnet,
+			address:      "tb1qrestartprofile000000000000000000000000",
+			headSequence: 2_000,
+		},
+	}
+
+	baseCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+	transitionCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      5_000,
+		LagLowWatermark:       0,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+
+	const tickCount = 6
+	const splitTick = 3
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			coldHarness := newAutoTuneHarness(tc.chain, tc.network, tc.address, 100, tc.headSequence, tickCount, baseCfg)
+			coldSnapshots, _ := collectAutoTuneTrace(t, coldHarness, tickCount)
+
+			warmFirst := newAutoTuneHarness(tc.chain, tc.network, tc.address, 100, tc.headSequence, splitTick, baseCfg)
+			warmSnapshots, _ := collectAutoTuneTrace(t, warmFirst, splitTick)
+			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, restartState)
+			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
+			require.NotNil(t, resumeCursor)
+
+			warmSecond := newAutoTuneHarnessWithWarmStart(
+				tc.chain,
+				tc.network,
+				tc.address,
+				resumeCursor.CursorSequence,
+				tc.headSequence,
+				tickCount-splitTick,
+				baseCfg,
+				restartState,
+			)
+			warmTailSnapshots, _ := collectAutoTuneTrace(t, warmSecond, tickCount-splitTick)
+			warmSnapshots = append(warmSnapshots, warmTailSnapshots...)
+
+			profileHarness := newAutoTuneHarness(tc.chain, tc.network, tc.address, 100, tc.headSequence, tickCount, baseCfg)
+			profileSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+			for i := 0; i < tickCount; i++ {
+				if i == splitTick {
+					profileHarness.coordinator.WithAutoTune(transitionCfg)
+				}
+				job := profileHarness.tickAndAdvance(t)
+				profileSnapshots = append(profileSnapshots, snapshotFromFetchJob(job))
+			}
+
+			assert.Equal(t, coldSnapshots, warmSnapshots, "cold-start and warm-start permutations must converge to one canonical tuple output set")
+			assert.Equal(t, coldSnapshots, profileSnapshots, "cold-start and profile-transition permutations must converge to one canonical tuple output set")
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainRestartUnderLagPressureNoCrossChainBleed(t *testing.T) {
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+
+	const tickCount = 6
+	const restartTick = 3
+
+	healthyAddress := "0x1111111111111111111111111111111111111111"
+	laggingAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+
+	healthyBaseline := newAutoTuneHarness(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyAddress,
+		120,
+		130,
+		tickCount,
+		autoTuneCfg,
+	)
+	healthyBaselineSnapshots, healthyBaselineBatches := collectAutoTuneTrace(t, healthyBaseline, tickCount)
+
+	laggingBaseline := newAutoTuneHarness(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingAddress,
+		100,
+		2_000,
+		tickCount,
+		autoTuneCfg,
+	)
+	laggingBaselineSnapshots, _ := collectAutoTuneTrace(t, laggingBaseline, tickCount)
+
+	healthyInterleaved := newAutoTuneHarness(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyAddress,
+		120,
+		130,
+		tickCount,
+		autoTuneCfg,
+	)
+	laggingRestarted := newAutoTuneHarness(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingAddress,
+		100,
+		2_000,
+		tickCount,
+		autoTuneCfg,
+	)
+
+	healthyInterleavedSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	healthyInterleavedBatches := make([]int, 0, tickCount)
+	laggingRestartSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	for i := 0; i < tickCount; i++ {
+		if i == restartTick {
+			restartState := laggingRestarted.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, restartState)
+			resumeCursor := laggingRestarted.cursorRepo.GetByAddress(laggingAddress)
+			require.NotNil(t, resumeCursor)
+
+			laggingRestarted = newAutoTuneHarnessWithWarmStart(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingAddress,
+				resumeCursor.CursorSequence,
+				2_000,
+				tickCount-i,
+				autoTuneCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingRestarted.tickAndAdvance(t)
+		laggingRestartSnapshots = append(laggingRestartSnapshots, snapshotFromFetchJob(laggingJob))
+
+		healthyJob := healthyInterleaved.tickAndAdvance(t)
+		healthyInterleavedSnapshots = append(healthyInterleavedSnapshots, snapshotFromFetchJob(healthyJob))
+		healthyInterleavedBatches = append(healthyInterleavedBatches, healthyJob.BatchSize)
+	}
+
+	assert.Equal(t, healthyBaselineSnapshots, healthyInterleavedSnapshots, "lagging-chain restart must not change healthy-chain canonical tuples")
+	assert.Equal(t, healthyBaselineBatches, healthyInterleavedBatches, "lagging-chain restart must not alter healthy-chain control decisions")
+	assert.Equal(t, laggingBaselineSnapshots, laggingRestartSnapshots, "restart/resume under lag pressure must preserve lagging-chain canonical tuples")
+
+	assertCursorMonotonicByAddress(t, healthyInterleavedSnapshots)
+	assertCursorMonotonicByAddress(t, laggingRestartSnapshots)
+}
+
+func TestTick_AutoTuneWarmStartRejectsCrossChainState(t *testing.T) {
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+
+	solanaHarness := newAutoTuneHarness(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		"7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		100,
+		2_000,
+		2,
+		autoTuneCfg,
+	)
+	_ = solanaHarness.tickAndAdvance(t)
+	foreignState := solanaHarness.coordinator.ExportAutoTuneRestartState()
+	require.NotNil(t, foreignState)
+
+	coldStart := newAutoTuneHarness(
+		model.ChainBase,
+		model.NetworkSepolia,
+		"0x1111111111111111111111111111111111111111",
+		100,
+		2_000,
+		1,
+		autoTuneCfg,
+	)
+	coldJob := coldStart.tickAndAdvance(t)
+
+	rejectedWarmStart := newAutoTuneHarnessWithWarmStart(
+		model.ChainBase,
+		model.NetworkSepolia,
+		"0x1111111111111111111111111111111111111111",
+		100,
+		2_000,
+		1,
+		autoTuneCfg,
+		foreignState,
+	)
+	rejectedJob := rejectedWarmStart.tickAndAdvance(t)
+
+	assert.Equal(t, coldJob.BatchSize, rejectedJob.BatchSize, "cross-chain warm-start state must be rejected and behave as deterministic cold-start")
+	assert.Equal(t, snapshotFromFetchJob(coldJob), snapshotFromFetchJob(rejectedJob))
+}
+
 type lagAwareJobSnapshot struct {
 	Address        string
 	CursorValue    string
@@ -1257,6 +1588,28 @@ func newAutoTuneHarness(
 	tickCount int,
 	autoTuneCfg AutoTuneConfig,
 ) *autoTuneHarness {
+	return newAutoTuneHarnessWithWarmStart(
+		chain,
+		network,
+		address,
+		initialSequence,
+		headSequence,
+		tickCount,
+		autoTuneCfg,
+		nil,
+	)
+}
+
+func newAutoTuneHarnessWithWarmStart(
+	chain model.Chain,
+	network model.Network,
+	address string,
+	initialSequence int64,
+	headSequence int64,
+	tickCount int,
+	autoTuneCfg AutoTuneConfig,
+	warmState *AutoTuneRestartState,
+) *autoTuneHarness {
 	ticks := make([][]model.WatchedAddress, tickCount)
 	for i := range ticks {
 		ticks[i] = []model.WatchedAddress{{Address: address}}
@@ -1274,8 +1627,12 @@ func newAutoTuneHarness(
 	}
 	jobCh := make(chan event.FetchJob, tickCount+1)
 	coord := New(chain, network, watchedRepo, cursorRepo, 100, time.Second, jobCh, slog.Default()).
-		WithHeadProvider(&stubHeadProvider{head: headSequence}).
-		WithAutoTune(autoTuneCfg)
+		WithHeadProvider(&stubHeadProvider{head: headSequence})
+	if warmState != nil {
+		coord = coord.WithAutoTuneWarmStart(autoTuneCfg, warmState)
+	} else {
+		coord = coord.WithAutoTune(autoTuneCfg)
+	}
 
 	return &autoTuneHarness{
 		coordinator: coord,
@@ -1298,6 +1655,41 @@ func (h *autoTuneHarness) tickAndAdvance(t *testing.T) event.FetchJob {
 		CursorSequence: nextSeq,
 	}
 	return job
+}
+
+func collectAutoTuneTrace(t *testing.T, harness *autoTuneHarness, tickCount int) ([]lagAwareJobSnapshot, []int) {
+	t.Helper()
+	snapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	batches := make([]int, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		job := harness.tickAndAdvance(t)
+		snapshots = append(snapshots, snapshotFromFetchJob(job))
+		batches = append(batches, job.BatchSize)
+	}
+	return snapshots, batches
+}
+
+func snapshotFromFetchJob(job event.FetchJob) lagAwareJobSnapshot {
+	cursorValue := ""
+	if job.CursorValue != nil {
+		cursorValue = *job.CursorValue
+	}
+	return lagAwareJobSnapshot{
+		Address:        job.Address,
+		CursorValue:    cursorValue,
+		CursorSequence: job.CursorSequence,
+	}
+}
+
+func assertCursorMonotonicByAddress(t *testing.T, snapshots []lagAwareJobSnapshot) {
+	t.Helper()
+	seen := make(map[string]int64, len(snapshots))
+	for _, snapshot := range snapshots {
+		if last, ok := seen[snapshot.Address]; ok {
+			assert.GreaterOrEqual(t, snapshot.CursorSequence, last, "cursor sequence must remain monotonic per address")
+		}
+		seen[snapshot.Address] = snapshot.CursorSequence
+	}
 }
 
 func maxIntSlice(values []int) int {

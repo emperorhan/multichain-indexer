@@ -31,6 +31,12 @@ type headSequenceProvider interface {
 	GetHeadSequence(ctx context.Context) (int64, error)
 }
 
+type AutoTuneRestartState struct {
+	Chain     model.Chain
+	Network   model.Network
+	BatchSize int
+}
+
 func New(
 	chain model.Chain,
 	network model.Network,
@@ -59,7 +65,69 @@ func (c *Coordinator) WithHeadProvider(provider headSequenceProvider) *Coordinat
 }
 
 func (c *Coordinator) WithAutoTune(cfg AutoTuneConfig) *Coordinator {
-	c.autoTune = newAutoTuneController(c.batchSize, cfg)
+	return c.withAutoTune(cfg, nil)
+}
+
+func (c *Coordinator) WithAutoTuneWarmStart(cfg AutoTuneConfig, state *AutoTuneRestartState) *Coordinator {
+	return c.withAutoTune(cfg, state)
+}
+
+func (c *Coordinator) ExportAutoTuneRestartState() *AutoTuneRestartState {
+	if c.autoTune == nil {
+		return nil
+	}
+	return &AutoTuneRestartState{
+		Chain:     c.chain,
+		Network:   c.network,
+		BatchSize: c.autoTune.currentBatch,
+	}
+}
+
+func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestartState) *Coordinator {
+	transitionMode := "cold_start"
+	var seedBatch *int
+	seedReason := "none"
+
+	if warmState != nil {
+		switch {
+		case warmState.Chain != c.chain:
+			seedReason = "warm_state_chain_mismatch"
+			c.logger.Warn("coordinator auto-tune warm-start rejected",
+				"chain", c.chain,
+				"network", c.network,
+				"state_chain", warmState.Chain,
+				"state_network", warmState.Network,
+				"reason", seedReason,
+			)
+		case warmState.Network != c.network:
+			seedReason = "warm_state_network_mismatch"
+			c.logger.Warn("coordinator auto-tune warm-start rejected",
+				"chain", c.chain,
+				"network", c.network,
+				"state_chain", warmState.Chain,
+				"state_network", warmState.Network,
+				"reason", seedReason,
+			)
+		case warmState.BatchSize <= 0:
+			seedReason = "warm_state_empty_batch"
+		default:
+			seed := warmState.BatchSize
+			seedBatch = &seed
+			transitionMode = "warm_start"
+			seedReason = "warm_state_adopted"
+		}
+	} else if c.autoTune != nil {
+		seed := c.autoTune.currentBatch
+		seedBatch = &seed
+		transitionMode = "profile_transition"
+		seedReason = "profile_transition_seed"
+	}
+
+	if transitionMode == "warm_start" {
+		c.autoTune = newAutoTuneControllerWithRestartSeed(c.batchSize, cfg, seedBatch)
+	} else {
+		c.autoTune = newAutoTuneControllerWithSeed(c.batchSize, cfg, seedBatch)
+	}
 	if c.autoTune != nil {
 		c.logger.Info("coordinator auto-tune enabled",
 			"chain", c.chain,
@@ -73,6 +141,10 @@ func (c *Coordinator) WithAutoTune(cfg AutoTuneConfig) *Coordinator {
 			"queue_high_pct", c.autoTune.queueHighWatermarkPct,
 			"queue_low_pct", c.autoTune.queueLowWatermarkPct,
 			"hysteresis_ticks", c.autoTune.hysteresisTicks,
+			"profile_transition", transitionMode == "profile_transition",
+			"transition_mode", transitionMode,
+			"seed_reason", seedReason,
+			"seed_batch", c.autoTune.currentBatch,
 		)
 	}
 	return c

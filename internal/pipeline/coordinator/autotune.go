@@ -64,6 +64,23 @@ type autoTuneController struct {
 }
 
 func newAutoTuneController(baseBatchSize int, cfg AutoTuneConfig) *autoTuneController {
+	return newAutoTuneControllerWithSeed(baseBatchSize, cfg, nil)
+}
+
+func newAutoTuneControllerWithSeed(baseBatchSize int, cfg AutoTuneConfig, seedBatch *int) *autoTuneController {
+	return newAutoTuneControllerWithSeedMode(baseBatchSize, cfg, seedBatch, false)
+}
+
+func newAutoTuneControllerWithRestartSeed(baseBatchSize int, cfg AutoTuneConfig, seedBatch *int) *autoTuneController {
+	return newAutoTuneControllerWithSeedMode(baseBatchSize, cfg, seedBatch, true)
+}
+
+func newAutoTuneControllerWithSeedMode(
+	baseBatchSize int,
+	cfg AutoTuneConfig,
+	seedBatch *int,
+	boundedWarmStart bool,
+) *autoTuneController {
 	if !cfg.Enabled {
 		return nil
 	}
@@ -116,7 +133,28 @@ func newAutoTuneController(baseBatchSize int, cfg AutoTuneConfig) *autoTuneContr
 		hysteresisTicks = 2
 	}
 
-	startBatch := clampInt(baseBatchSize, minBatch, maxBatch)
+	baseStartBatch := clampInt(baseBatchSize, minBatch, maxBatch)
+	if baseStartBatch <= 0 {
+		baseStartBatch = minBatch
+	}
+
+	startBatchCandidate := baseStartBatch
+	if seedBatch != nil && *seedBatch > 0 {
+		seedBatchCandidate := clampInt(*seedBatch, minBatch, maxBatch)
+		if boundedWarmStart {
+			startBatchCandidate = boundedWarmStartBatch(
+				baseStartBatch,
+				seedBatchCandidate,
+				stepUp,
+				stepDown,
+				minBatch,
+				maxBatch,
+			)
+		} else {
+			startBatchCandidate = seedBatchCandidate
+		}
+	}
+	startBatch := clampInt(startBatchCandidate, minBatch, maxBatch)
 	if startBatch <= 0 {
 		startBatch = minBatch
 	}
@@ -243,6 +281,37 @@ func clampInt(v, minV, maxV int) int {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func boundedWarmStartBatch(baseBatch, seedBatch, stepUp, stepDown, minBatch, maxBatch int) int {
+	base := clampInt(baseBatch, minBatch, maxBatch)
+	seed := clampInt(seedBatch, minBatch, maxBatch)
+	if seed == base {
+		return base
+	}
+
+	if seed > base {
+		delta := seed - base
+		limit := maxInt(stepUp, 1)
+		if delta > limit {
+			delta = limit
+		}
+		return clampInt(base+delta, minBatch, maxBatch)
+	}
+
+	delta := base - seed
+	limit := maxInt(stepDown, 1)
+	if delta > limit {
+		delta = limit
+	}
+	return clampInt(base-delta, minBatch, maxBatch)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b
