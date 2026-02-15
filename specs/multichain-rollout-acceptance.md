@@ -928,6 +928,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of policy-manifest refresh determinism, replay safety, and fail-fast safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0287 (M48-S1)
+Assertions:
+1. Equivalent tri-chain logical ranges processed under sequence-complete baseline, sequence-gap hold, late gap-fill apply, and duplicate segment re-apply permutations converge to one deterministic canonical output set per chain.
+2. Policy-manifest sequence-gap recovery boundaries preserve deterministic canonical identity (`0` duplicate canonical IDs and `0` missing logical events).
+3. One-chain policy-manifest sequence-gap recovery transitions do not induce cross-chain control bleed, cursor bleed, or fail-fast safety regression.
+4. Replay/resume from policy-manifest sequence-gap recovery boundaries remains idempotent with cursor monotonicity and signed-delta/fee-event invariant continuity.
+
+Pass Evidence:
+- Deterministic tests inject sequence-complete baseline, sequence-gap hold, late gap-fill apply, and duplicate segment re-apply permutations and show canonical tuple equivalence on all mandatory chains.
+- One-chain policy-manifest sequence-gap recovery counterexamples show `0` cross-chain control-coupling violations and `0` duplicate/missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0288 (M48-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M48 invariants.
+2. QA executes at least one counterexample with sequence-complete baseline vs sequence-gap hold vs late gap-fill apply vs duplicate segment re-apply permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample with one-chain policy-manifest sequence-gap recovery transition and verifies no cross-chain control bleed, no duplicate/missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of policy-manifest sequence-gap recovery determinism, replay safety, and fail-fast safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -978,3 +1002,5 @@ Release recommendation must be `fail` if any condition holds:
 46. One-chain policy-version transition isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under policy-rollout permutations).
 47. Auto-tune policy-manifest refresh determinism cannot be proven (manifest-v2a/manifest-v2b/stale-refresh-reject/digest-reapply permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
 48. One-chain policy-manifest transition isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under policy-manifest refresh/reject permutations).
+49. Auto-tune policy-manifest sequence-gap recovery determinism cannot be proven (sequence-complete/gap-hold/late-gap-fill/duplicate-segment-reapply permutation convergence and no duplicate/missing logical events not evidenced for all mandatory chains).
+50. One-chain policy-manifest sequence-gap recovery isolation cannot be proven (no cross-chain control bleed, no cross-chain cursor bleed, and no failed-path progression regression under policy-manifest sequence-gap recovery permutations).

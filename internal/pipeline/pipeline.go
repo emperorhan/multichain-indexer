@@ -44,13 +44,15 @@ type CoordinatorAutoTuneConfig struct {
 	QueueHighWatermarkPct int
 	QueueLowWatermarkPct  int
 
-	HysteresisTicks           int
-	TelemetryStaleTicks       int
-	TelemetryRecoveryTicks    int
-	OperatorOverrideBatch     int
-	OperatorReleaseHoldTicks  int
-	PolicyVersion             string
-	PolicyActivationHoldTicks int
+	HysteresisTicks            int
+	TelemetryStaleTicks        int
+	TelemetryRecoveryTicks     int
+	OperatorOverrideBatch      int
+	OperatorReleaseHoldTicks   int
+	PolicyVersion              string
+	PolicyManifestDigest       string
+	PolicyManifestRefreshEpoch int64
+	PolicyActivationHoldTicks  int
 }
 
 type Pipeline struct {
@@ -102,22 +104,24 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		p.cfg.BatchSize, p.cfg.IndexingInterval,
 		jobCh, p.logger,
 	).WithHeadProvider(p.adapter).WithAutoTune(coordinator.AutoTuneConfig{
-		Enabled:                   p.cfg.CoordinatorAutoTune.Enabled,
-		MinBatchSize:              p.cfg.CoordinatorAutoTune.MinBatchSize,
-		MaxBatchSize:              p.cfg.CoordinatorAutoTune.MaxBatchSize,
-		StepUp:                    p.cfg.CoordinatorAutoTune.StepUp,
-		StepDown:                  p.cfg.CoordinatorAutoTune.StepDown,
-		LagHighWatermark:          p.cfg.CoordinatorAutoTune.LagHighWatermark,
-		LagLowWatermark:           p.cfg.CoordinatorAutoTune.LagLowWatermark,
-		QueueHighWatermarkPct:     p.cfg.CoordinatorAutoTune.QueueHighWatermarkPct,
-		QueueLowWatermarkPct:      p.cfg.CoordinatorAutoTune.QueueLowWatermarkPct,
-		HysteresisTicks:           p.cfg.CoordinatorAutoTune.HysteresisTicks,
-		TelemetryStaleTicks:       p.cfg.CoordinatorAutoTune.TelemetryStaleTicks,
-		TelemetryRecoveryTicks:    p.cfg.CoordinatorAutoTune.TelemetryRecoveryTicks,
-		OperatorOverrideBatchSize: p.cfg.CoordinatorAutoTune.OperatorOverrideBatch,
-		OperatorReleaseHoldTicks:  p.cfg.CoordinatorAutoTune.OperatorReleaseHoldTicks,
-		PolicyVersion:             p.cfg.CoordinatorAutoTune.PolicyVersion,
-		PolicyActivationHoldTicks: p.cfg.CoordinatorAutoTune.PolicyActivationHoldTicks,
+		Enabled:                    p.cfg.CoordinatorAutoTune.Enabled,
+		MinBatchSize:               p.cfg.CoordinatorAutoTune.MinBatchSize,
+		MaxBatchSize:               p.cfg.CoordinatorAutoTune.MaxBatchSize,
+		StepUp:                     p.cfg.CoordinatorAutoTune.StepUp,
+		StepDown:                   p.cfg.CoordinatorAutoTune.StepDown,
+		LagHighWatermark:           p.cfg.CoordinatorAutoTune.LagHighWatermark,
+		LagLowWatermark:            p.cfg.CoordinatorAutoTune.LagLowWatermark,
+		QueueHighWatermarkPct:      p.cfg.CoordinatorAutoTune.QueueHighWatermarkPct,
+		QueueLowWatermarkPct:       p.cfg.CoordinatorAutoTune.QueueLowWatermarkPct,
+		HysteresisTicks:            p.cfg.CoordinatorAutoTune.HysteresisTicks,
+		TelemetryStaleTicks:        p.cfg.CoordinatorAutoTune.TelemetryStaleTicks,
+		TelemetryRecoveryTicks:     p.cfg.CoordinatorAutoTune.TelemetryRecoveryTicks,
+		OperatorOverrideBatchSize:  p.cfg.CoordinatorAutoTune.OperatorOverrideBatch,
+		OperatorReleaseHoldTicks:   p.cfg.CoordinatorAutoTune.OperatorReleaseHoldTicks,
+		PolicyVersion:              p.cfg.CoordinatorAutoTune.PolicyVersion,
+		PolicyManifestDigest:       p.cfg.CoordinatorAutoTune.PolicyManifestDigest,
+		PolicyManifestRefreshEpoch: p.cfg.CoordinatorAutoTune.PolicyManifestRefreshEpoch,
+		PolicyActivationHoldTicks:  p.cfg.CoordinatorAutoTune.PolicyActivationHoldTicks,
 	})
 
 	fetch := fetcher.New(

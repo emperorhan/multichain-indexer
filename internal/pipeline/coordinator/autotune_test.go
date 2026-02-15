@@ -836,6 +836,90 @@ func TestAutoTuneController_PolicyVersionTransitionAppliesDeterministicActivatio
 	assert.Equal(t, 2, rollbackDecision.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_PolicyManifestRefreshRejectsStaleAndDigestReapplyIsDeterministic(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	baseCfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               260,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	baseController := newAutoTuneController(100, baseCfg)
+	require.NotNil(t, baseController)
+
+	batch, baselineDecision := baseController.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "apply_increase", baselineDecision.Decision)
+	assert.Equal(t, "manifest-v2a", baselineDecision.PolicyManifestDigest)
+	assert.Equal(t, int64(1), baselineDecision.PolicyEpoch)
+
+	refreshCfg := baseCfg
+	refreshCfg.PolicyManifestDigest = "manifest-v2b"
+	refreshCfg.PolicyManifestRefreshEpoch = 2
+	refreshSeed := baseController.currentBatch
+	refreshController := newAutoTuneControllerWithSeed(100, refreshCfg, &refreshSeed)
+	require.NotNil(t, refreshController)
+	refreshController.reconcilePolicyTransition(baseController.exportPolicyTransition())
+
+	batch, refreshDecision := refreshController.Resolve(highLag)
+	assert.Equal(t, refreshSeed, batch)
+	assert.Equal(t, "hold_policy_transition", refreshDecision.Decision)
+	assert.Equal(t, "manifest-v2b", refreshDecision.PolicyManifestDigest)
+	assert.Equal(t, int64(2), refreshDecision.PolicyEpoch)
+	assert.Equal(t, 1, refreshDecision.PolicyActivationTicks)
+
+	batch, refreshApplied := refreshController.Resolve(highLag)
+	assert.Equal(t, 140, batch)
+	assert.Equal(t, "apply_increase", refreshApplied.Decision)
+	assert.Equal(t, "manifest-v2b", refreshApplied.PolicyManifestDigest)
+	assert.Equal(t, int64(2), refreshApplied.PolicyEpoch)
+
+	staleCfg := baseCfg
+	staleSeed := refreshController.currentBatch
+	staleController := newAutoTuneControllerWithSeed(100, staleCfg, &staleSeed)
+	require.NotNil(t, staleController)
+	staleController.reconcilePolicyTransition(refreshController.exportPolicyTransition())
+
+	batch, staleDecision := staleController.Resolve(highLag)
+	assert.Equal(t, 160, batch)
+	assert.Equal(t, "apply_increase", staleDecision.Decision, "stale refresh must not re-open policy activation hold")
+	assert.Equal(t, "manifest-v2b", staleDecision.PolicyManifestDigest, "stale refresh must pin previously verified digest")
+	assert.Equal(t, int64(2), staleDecision.PolicyEpoch, "stale refresh must preserve previously verified lineage epoch")
+	assert.Equal(t, 0, staleDecision.PolicyActivationTicks)
+
+	reapplyCfg := refreshCfg
+	reapplySeed := staleController.currentBatch
+	reapplyController := newAutoTuneControllerWithSeed(100, reapplyCfg, &reapplySeed)
+	require.NotNil(t, reapplyController)
+	reapplyController.reconcilePolicyTransition(staleController.exportPolicyTransition())
+
+	batch, reapplyDecision := reapplyController.Resolve(highLag)
+	assert.Equal(t, 180, batch)
+	assert.Equal(t, "apply_increase", reapplyDecision.Decision, "digest re-apply must be replay-stable and avoid duplicate transition hold")
+	assert.Equal(t, "manifest-v2b", reapplyDecision.PolicyManifestDigest)
+	assert.Equal(t, int64(2), reapplyDecision.PolicyEpoch)
+	assert.Equal(t, 0, reapplyDecision.PolicyActivationTicks)
+}
+
 func intPtr(v int) *int {
 	return &v
 }

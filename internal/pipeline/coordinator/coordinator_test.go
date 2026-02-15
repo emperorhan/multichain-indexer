@@ -2687,6 +2687,399 @@ func TestTick_AutoTunePolicyVersionReplayResumeConvergesAcrossMandatoryChains(t 
 	}
 }
 
+func TestTick_AutoTunePolicyManifestPermutationsConvergeCanonicalTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestperm00000000000000000000000000",
+		},
+	}
+
+	manifestV2aCfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               400,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	manifestV2bCfg := manifestV2aCfg
+	manifestV2bCfg.PolicyManifestDigest = "manifest-v2b"
+	manifestV2bCfg.PolicyManifestRefreshEpoch = 2
+	staleManifestCfg := manifestV2aCfg
+	reapplyManifestCfg := manifestV2bCfg
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, manifestV2aCfg)
+			baselineSnapshots, baselineBatches := collectAutoTuneTrace(t, baselineHarness, len(heads))
+
+			refreshHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, manifestV2aCfg)
+			refreshSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			refreshBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					refreshHarness.coordinator.WithAutoTune(manifestV2bCfg)
+				}
+				job := refreshHarness.tickAndAdvance(t)
+				refreshSnapshots = append(refreshSnapshots, snapshotFromFetchJob(job))
+				refreshBatches = append(refreshBatches, job.BatchSize)
+			}
+
+			staleReapplyHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, manifestV2aCfg)
+			staleReapplySnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			staleReapplyBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					staleReapplyHarness.coordinator.WithAutoTune(manifestV2bCfg)
+				}
+				if i == 4 {
+					staleReapplyHarness.coordinator.WithAutoTune(staleManifestCfg)
+					state := staleReapplyHarness.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, manifestV2bCfg.PolicyManifestDigest, state.PolicyManifestDigest, "stale refresh must pin last verified manifest digest")
+					assert.Equal(t, manifestV2bCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch, "stale refresh must preserve last verified manifest epoch")
+				}
+				if i == 6 {
+					staleReapplyHarness.coordinator.WithAutoTune(reapplyManifestCfg)
+					state := staleReapplyHarness.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, manifestV2bCfg.PolicyManifestDigest, state.PolicyManifestDigest, "digest re-apply must remain deterministic")
+					assert.Equal(t, manifestV2bCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch, "digest re-apply must not fork lineage epoch")
+				}
+				job := staleReapplyHarness.tickAndAdvance(t)
+				staleReapplySnapshots = append(staleReapplySnapshots, snapshotFromFetchJob(job))
+				staleReapplyBatches = append(staleReapplyBatches, job.BatchSize)
+			}
+
+			assert.Equal(t, baselineSnapshots, refreshSnapshots, "manifest-v2a baseline and manifest-v2b refresh permutations must converge to one canonical tuple output set")
+			assert.Equal(t, baselineSnapshots, staleReapplySnapshots, "manifest-v2a/v2b stale-refresh-reject/re-apply permutations must converge to one canonical tuple output set")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, refreshSnapshots, "manifest-v2a baseline vs manifest-v2b refresh")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, staleReapplySnapshots, "manifest-v2a baseline vs stale-refresh-reject/re-apply")
+			assertCursorMonotonicByAddress(t, baselineSnapshots)
+			assertCursorMonotonicByAddress(t, refreshSnapshots)
+			assertCursorMonotonicByAddress(t, staleReapplySnapshots)
+
+			assert.NotEqual(t, baselineBatches, refreshBatches, "manifest refresh should alter control decisions deterministically at transition boundary")
+			assert.NotEqual(t, baselineBatches, staleReapplyBatches, "refresh permutation with stale-reject/re-apply should alter control decisions at refresh boundary only")
+			assert.Equal(t, refreshBatches[1], refreshBatches[2], "manifest refresh boundary must apply deterministic activation hold")
+			assert.Equal(t, staleReapplyBatches[1], staleReapplyBatches[2], "manifest-v2a->manifest-v2b boundary must hold deterministically")
+			assert.NotEqual(t, staleReapplyBatches[3], staleReapplyBatches[4], "stale refresh reject must not open an additional hold")
+			assert.NotEqual(t, staleReapplyBatches[5], staleReapplyBatches[6], "digest re-apply must not open an additional hold")
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
+	manifestV2aCfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               320,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	manifestV2bCfg := manifestV2aCfg
+	manifestV2bCfg.PolicyManifestDigest = "manifest-v2b"
+	manifestV2bCfg.PolicyManifestRefreshEpoch = 2
+	staleManifestCfg := manifestV2aCfg
+
+	const tickCount = 9
+	healthyBaseAddress := "0x1111111111111111111111111111111111111111"
+	healthyBTCAddress := "tb1qmanifesthealthy000000000000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+
+	healthyHeads := []int64{130, 131, 132, 133, 134, 135, 136, 137, 138}
+	laggingHeads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		manifestV2aCfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		manifestV2aCfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		manifestV2aCfg,
+	)
+	laggingBaselineSnapshots, laggingBaselineBatches := collectAutoTuneTrace(t, laggingBaseline, tickCount)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		manifestV2aCfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		manifestV2aCfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		manifestV2aCfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBatches := make([]int, 0, tickCount)
+
+	for i := 0; i < tickCount; i++ {
+		if i == 2 {
+			laggingInterleaved.coordinator.WithAutoTune(manifestV2bCfg)
+		}
+		if i == 5 {
+			laggingInterleaved.coordinator.WithAutoTune(staleManifestCfg)
+			state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, state)
+			assert.Equal(t, manifestV2bCfg.PolicyManifestDigest, state.PolicyManifestDigest, "stale one-chain refresh must remain pinned to verified digest")
+			assert.Equal(t, manifestV2bCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch, "stale one-chain refresh must preserve verified epoch")
+		}
+		if i == 7 {
+			laggingInterleaved.coordinator.WithAutoTune(manifestV2bCfg)
+			state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, state)
+			assert.Equal(t, manifestV2bCfg.PolicyManifestDigest, state.PolicyManifestDigest)
+			assert.Equal(t, manifestV2bCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+		laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana manifest transition must not alter base canonical tuples")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana manifest transition must not alter base control decisions")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana manifest transition must not alter btc canonical tuples")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana manifest transition must not alter btc control decisions")
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "manifest transition must preserve lagging-chain canonical tuples")
+	assert.NotEqual(t, laggingBaselineBatches, laggingBatches, "manifest transition should remain chain-scoped and alter only lagging-chain control decisions")
+	assert.Equal(t, laggingBatches[1], laggingBatches[2], "manifest refresh boundary hold should be chain-scoped to lagging chain")
+	assert.NotEqual(t, laggingBatches[4], laggingBatches[5], "stale manifest refresh reject should not add lagging-chain hold")
+	assert.NotEqual(t, laggingBatches[6], laggingBatches[7], "manifest digest re-apply should not add lagging-chain hold")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved manifest transition")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved manifest transition")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved manifest transition")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
+func TestTick_AutoTunePolicyManifestReplayResumeConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestreplay000000000000000000000000",
+		},
+	}
+
+	manifestV2aCfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               320,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  2,
+	}
+	manifestV2bCfg := manifestV2aCfg
+	manifestV2bCfg.PolicyManifestDigest = "manifest-v2b"
+	manifestV2bCfg.PolicyManifestRefreshEpoch = 2
+	staleManifestCfg := manifestV2aCfg
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269}
+	const splitTick = 3
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			coldHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, manifestV2aCfg)
+			coldSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			coldBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					coldHarness.coordinator.WithAutoTune(manifestV2bCfg)
+				}
+				if i == 4 {
+					coldHarness.coordinator.WithAutoTune(staleManifestCfg)
+				}
+				if i == 6 {
+					coldHarness.coordinator.WithAutoTune(manifestV2bCfg)
+				}
+				job := coldHarness.tickAndAdvance(t)
+				coldSnapshots = append(coldSnapshots, snapshotFromFetchJob(job))
+				coldBatches = append(coldBatches, job.BatchSize)
+			}
+
+			warmFirst := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads[:splitTick], manifestV2aCfg)
+			warmSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			warmBatches := make([]int, 0, len(heads))
+			for i := 0; i < splitTick; i++ {
+				if i == 2 {
+					warmFirst.coordinator.WithAutoTune(manifestV2bCfg)
+				}
+				job := warmFirst.tickAndAdvance(t)
+				warmSnapshots = append(warmSnapshots, snapshotFromFetchJob(job))
+				warmBatches = append(warmBatches, job.BatchSize)
+			}
+
+			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, restartState)
+			assert.Equal(t, manifestV2bCfg.PolicyVersion, restartState.PolicyVersion)
+			assert.Equal(t, manifestV2bCfg.PolicyManifestDigest, restartState.PolicyManifestDigest)
+			assert.Equal(t, manifestV2bCfg.PolicyManifestRefreshEpoch, restartState.PolicyEpoch)
+			assert.Greater(t, restartState.PolicyActivationRemaining, 0, "restart state must preserve policy-manifest activation hold countdown at refresh boundary")
+			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
+			require.NotNil(t, resumeCursor)
+
+			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				resumeCursor.CursorSequence,
+				heads[splitTick:],
+				manifestV2bCfg,
+				restartState,
+			)
+
+			for i := splitTick; i < len(heads); i++ {
+				if i == 4 {
+					warmSecond.coordinator.WithAutoTune(staleManifestCfg)
+					state := warmSecond.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, manifestV2bCfg.PolicyManifestDigest, state.PolicyManifestDigest, "replay stale refresh must be rejected deterministically")
+					assert.Equal(t, manifestV2bCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				if i == 6 {
+					warmSecond.coordinator.WithAutoTune(manifestV2bCfg)
+					state := warmSecond.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, state)
+					assert.Equal(t, manifestV2bCfg.PolicyManifestDigest, state.PolicyManifestDigest)
+					assert.Equal(t, manifestV2bCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+				}
+				job := warmSecond.tickAndAdvance(t)
+				warmSnapshots = append(warmSnapshots, snapshotFromFetchJob(job))
+				warmBatches = append(warmBatches, job.BatchSize)
+			}
+
+			assert.Equal(t, coldSnapshots, warmSnapshots, "policy-manifest replay/resume must converge to deterministic canonical tuples")
+			assert.Equal(t, coldBatches, warmBatches, "policy-manifest replay/resume must preserve deterministic control decisions")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, coldSnapshots, warmSnapshots, "cold vs warm policy-manifest replay")
+			assertCursorMonotonicByAddress(t, warmSnapshots)
+		})
+	}
+}
+
 type lagAwareJobSnapshot struct {
 	Address        string
 	CursorValue    string

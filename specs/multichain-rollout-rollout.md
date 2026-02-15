@@ -91,9 +91,11 @@
 88. `I-0278` (`M46-S2`): QA counterexample gate for auto-tune policy-version rollout determinism + invariant safety.
 89. `I-0282` (`M47-S1`): auto-tune policy-manifest refresh reconciliation determinism hardening across manifest-v2a baseline, manifest-v2b refresh, stale-refresh reject, and digest re-apply permutations.
 90. `I-0283` (`M47-S2`): QA counterexample gate for auto-tune policy-manifest refresh determinism + invariant safety.
+91. `I-0287` (`M48-S1`): auto-tune policy-manifest sequence-gap recovery reconciliation determinism hardening across sequence-complete baseline, sequence-gap hold, late gap-fill apply, and duplicate segment re-apply permutations.
+92. `I-0288` (`M48-S2`): QA counterexample gate for auto-tune policy-manifest sequence-gap recovery determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225 -> I-0226 -> I-0227 -> I-0228 -> I-0229 -> I-0232 -> I-0233 -> I-0237 -> I-0238 -> I-0242 -> I-0243 -> I-0247 -> I-0248 -> I-0249 -> I-0250 -> I-0254 -> I-0255 -> I-0259 -> I-0260 -> I-0264 -> I-0265 -> I-0267 -> I-0268 -> I-0272 -> I-0273 -> I-0277 -> I-0278 -> I-0282 -> I-0283`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225 -> I-0226 -> I-0227 -> I-0228 -> I-0229 -> I-0232 -> I-0233 -> I-0237 -> I-0238 -> I-0242 -> I-0243 -> I-0247 -> I-0248 -> I-0249 -> I-0250 -> I-0254 -> I-0255 -> I-0259 -> I-0260 -> I-0264 -> I-0265 -> I-0267 -> I-0268 -> I-0272 -> I-0273 -> I-0277 -> I-0278 -> I-0282 -> I-0283 -> I-0287 -> I-0288`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -191,6 +193,8 @@ Each slice must be independently releasable:
 86. Before `I-0278`: `I-0277` emits deterministic policy-version rollout evidence showing `0` canonical tuple diffs and `0` duplicate/missing logical events across policy-v1, policy-v2 rollout, and rollback/re-apply permutations.
 87. Before `I-0282`: `I-0278` QA report is `PASS` and no unresolved policy-version rollout determinism blocker remains.
 88. Before `I-0283`: `I-0282` emits deterministic policy-manifest refresh evidence showing `0` canonical tuple diffs and `0` duplicate/missing logical events across manifest-v2a baseline, manifest-v2b refresh, stale-refresh reject, and digest re-apply permutations.
+89. Before `I-0287`: `I-0283` QA report is `PASS` and no unresolved policy-manifest refresh determinism blocker remains.
+90. Before `I-0288`: `I-0287` emits deterministic policy-manifest sequence-gap recovery evidence showing `0` canonical tuple diffs and `0` duplicate/missing logical events across sequence-complete baseline, sequence-gap hold, late gap-fill apply, and duplicate segment re-apply permutations.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -235,6 +239,7 @@ Each slice must be independently releasable:
 40. If auto-tune operator-override reconciliation cannot deterministically preserve canonical output equivalence across override hold/release boundaries, force deterministic conservative profile pin with explicit override-transition diagnostics and replay from last-safe cursor until override contracts are extended.
 41. If auto-tune policy-version rollout reconciliation cannot deterministically preserve canonical output equivalence across roll-forward, rollback, and re-apply transitions, force deterministic conservative policy-version pin with explicit rollout-epoch diagnostics and replay from last-safe cursor until policy-rollout contracts are extended.
 42. If auto-tune policy-manifest refresh reconciliation cannot deterministically preserve canonical output equivalence across refresh, stale-refresh reject, and digest re-apply transitions, force deterministic last-verified manifest digest pin with explicit manifest-lineage diagnostics and replay from last-safe cursor until manifest-refresh contracts are extended.
+43. If auto-tune policy-manifest sequence-gap recovery reconciliation cannot deterministically preserve canonical output equivalence across sequence-gap hold, late gap-fill apply, and duplicate segment re-apply transitions, force deterministic contiguous-sequence pin with explicit sequence-gap diagnostics and replay from last-safe cursor until manifest-sequence contracts are extended.
 
 ## Completion Evidence
 1. Developer slice output:

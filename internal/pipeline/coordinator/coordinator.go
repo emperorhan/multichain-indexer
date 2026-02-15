@@ -38,6 +38,7 @@ type AutoTuneRestartState struct {
 	OverrideManualActive      bool
 	OverrideReleaseRemaining  int
 	PolicyVersion             string
+	PolicyManifestDigest      string
 	PolicyEpoch               int64
 	PolicyActivationRemaining int
 }
@@ -90,6 +91,7 @@ func (c *Coordinator) ExportAutoTuneRestartState() *AutoTuneRestartState {
 		OverrideManualActive:      override.WasManualOverride,
 		OverrideReleaseRemaining:  override.ReleaseHoldRemaining,
 		PolicyVersion:             policy.Version,
+		PolicyManifestDigest:      policy.ManifestDigest,
 		PolicyEpoch:               policy.Epoch,
 		PolicyActivationRemaining: policy.ActivationHoldRemaining,
 	}
@@ -135,6 +137,7 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 				ReleaseHoldRemaining: maxInt(warmState.OverrideReleaseRemaining, 0),
 			}
 			if strings.TrimSpace(warmState.PolicyVersion) != "" ||
+				strings.TrimSpace(warmState.PolicyManifestDigest) != "" ||
 				warmState.PolicyEpoch > 0 ||
 				warmState.PolicyActivationRemaining > 0 {
 				policyEpoch := warmState.PolicyEpoch
@@ -144,6 +147,7 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 				policyTransition = autoTunePolicyTransition{
 					HasState:                true,
 					Version:                 warmState.PolicyVersion,
+					ManifestDigest:          warmState.PolicyManifestDigest,
 					Epoch:                   policyEpoch,
 					ActivationHoldRemaining: maxInt(warmState.PolicyActivationRemaining, 0),
 				}
@@ -196,6 +200,7 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 			"operator_release_hold_ticks", c.autoTune.operatorReleaseHold,
 			"operator_release_remaining", c.autoTune.overrideReleaseLeft,
 			"policy_version", c.autoTune.policyVersion,
+			"policy_manifest_digest", c.autoTune.policyManifestDigest,
 			"policy_epoch", c.autoTune.policyEpoch,
 			"policy_activation_hold_ticks", c.autoTune.policyActivationHold,
 			"policy_activation_remaining", c.autoTune.policyActivationLeft,
@@ -331,6 +336,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			"telemetry_recovery_ticks", diagnostics.TelemetryRecoveryTicks,
 			"override_release_ticks", diagnostics.OverrideReleaseTicks,
 			"policy_version", diagnostics.PolicyVersion,
+			"policy_manifest_digest", diagnostics.PolicyManifestDigest,
 			"policy_epoch", diagnostics.PolicyEpoch,
 			"policy_activation_ticks", diagnostics.PolicyActivationTicks,
 		)

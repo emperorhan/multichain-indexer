@@ -22,10 +22,12 @@ type AutoTuneConfig struct {
 	TelemetryStaleTicks    int
 	TelemetryRecoveryTicks int
 
-	OperatorOverrideBatchSize int
-	OperatorReleaseHoldTicks  int
-	PolicyVersion             string
-	PolicyActivationHoldTicks int
+	OperatorOverrideBatchSize  int
+	OperatorReleaseHoldTicks   int
+	PolicyVersion              string
+	PolicyManifestDigest       string
+	PolicyManifestRefreshEpoch int64
+	PolicyActivationHoldTicks  int
 }
 
 type autoTuneInputs struct {
@@ -53,6 +55,7 @@ type autoTuneDiagnostics struct {
 	TelemetryRecoveryTicks int
 	OverrideReleaseTicks   int
 	PolicyVersion          string
+	PolicyManifestDigest   string
 	PolicyEpoch            int64
 	PolicyActivationTicks  int
 }
@@ -89,6 +92,7 @@ type autoTuneOverrideTransition struct {
 type autoTunePolicyTransition struct {
 	HasState                bool
 	Version                 string
+	ManifestDigest          string
 	Epoch                   int64
 	ActivationHoldRemaining int
 }
@@ -114,6 +118,7 @@ type autoTuneController struct {
 	operatorReleaseHold    int
 	overrideReleaseLeft    int
 	policyVersion          string
+	policyManifestDigest   string
 	policyActivationHold   int
 	policyActivationLeft   int
 	policyEpoch            int64
@@ -129,6 +134,7 @@ type autoTuneController struct {
 }
 
 const defaultAutoTunePolicyVersion = "policy-v1"
+const defaultAutoTunePolicyManifestDigest = "manifest-v1"
 
 func newAutoTuneController(baseBatchSize int, cfg AutoTuneConfig) *autoTuneController {
 	return newAutoTuneControllerWithSeed(baseBatchSize, cfg, nil)
@@ -223,6 +229,11 @@ func newAutoTuneControllerWithSeedMode(
 		policyActivationHold = 0
 	}
 	policyVersion := normalizePolicyVersion(cfg.PolicyVersion)
+	policyManifestDigest := normalizePolicyManifestDigest(cfg.PolicyManifestDigest)
+	policyManifestEpoch := cfg.PolicyManifestRefreshEpoch
+	if policyManifestEpoch < 0 {
+		policyManifestEpoch = 0
+	}
 	operatorOverrideBatch := 0
 	if cfg.OperatorOverrideBatchSize > 0 {
 		operatorOverrideBatch = clampInt(cfg.OperatorOverrideBatchSize, minBatch, maxBatch)
@@ -273,7 +284,9 @@ func newAutoTuneControllerWithSeedMode(
 		operatorOverrideBatch:  operatorOverrideBatch,
 		operatorReleaseHold:    operatorReleaseHold,
 		policyVersion:          policyVersion,
+		policyManifestDigest:   policyManifestDigest,
 		policyActivationHold:   policyActivationHold,
+		policyEpoch:            policyManifestEpoch,
 		currentBatch:           startBatch,
 		lastSignal:             autoTuneSignalHold,
 		lastApplied:            autoTuneSignalHold,
@@ -312,6 +325,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 			TelemetryRecoveryTicks: a.telemetryRecoverySeen,
 			OverrideReleaseTicks:   a.overrideReleaseLeft,
 			PolicyVersion:          a.policyVersion,
+			PolicyManifestDigest:   a.policyManifestDigest,
 			PolicyEpoch:            a.policyEpoch,
 			PolicyActivationTicks:  a.policyActivationLeft,
 		}
@@ -338,6 +352,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 			TelemetryRecoveryTicks: a.telemetryRecoverySeen,
 			OverrideReleaseTicks:   remainingBefore,
 			PolicyVersion:          a.policyVersion,
+			PolicyManifestDigest:   a.policyManifestDigest,
 			PolicyEpoch:            a.policyEpoch,
 			PolicyActivationTicks:  a.policyActivationLeft,
 		}
@@ -362,6 +377,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 			TelemetryRecoveryTicks: a.telemetryRecoverySeen,
 			OverrideReleaseTicks:   a.overrideReleaseLeft,
 			PolicyVersion:          a.policyVersion,
+			PolicyManifestDigest:   a.policyManifestDigest,
 			PolicyEpoch:            a.policyEpoch,
 			PolicyActivationTicks:  remainingBefore,
 		}
@@ -474,6 +490,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		TelemetryRecoveryTicks: a.telemetryRecoverySeen,
 		OverrideReleaseTicks:   a.overrideReleaseLeft,
 		PolicyVersion:          a.policyVersion,
+		PolicyManifestDigest:   a.policyManifestDigest,
 		PolicyEpoch:            a.policyEpoch,
 		PolicyActivationTicks:  a.policyActivationLeft,
 	}
@@ -490,6 +507,7 @@ func (a *autoTuneController) exportPolicyTransition() autoTunePolicyTransition {
 	return autoTunePolicyTransition{
 		HasState:                true,
 		Version:                 a.policyVersion,
+		ManifestDigest:          a.policyManifestDigest,
 		Epoch:                   a.policyEpoch,
 		ActivationHoldRemaining: a.policyActivationLeft,
 	}
@@ -517,21 +535,56 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 	if !transition.HasState {
 		return
 	}
-	incomingVersion := normalizePolicyVersion(transition.Version)
-	if incomingVersion == a.policyVersion {
-		if transition.Epoch > a.policyEpoch {
-			a.policyEpoch = transition.Epoch
+	previousVersion := normalizePolicyVersion(transition.Version)
+	previousDigest := normalizePolicyManifestDigest(transition.ManifestDigest)
+	previousEpoch := transition.Epoch
+	if previousEpoch < 0 {
+		previousEpoch = 0
+	}
+
+	incomingVersion := a.policyVersion
+	incomingDigest := normalizePolicyManifestDigest(a.policyManifestDigest)
+	incomingEpoch := a.policyEpoch
+	if incomingEpoch < 0 {
+		incomingEpoch = 0
+	}
+
+	if incomingVersion == previousVersion && incomingDigest == previousDigest {
+		a.policyManifestDigest = incomingDigest
+		if previousEpoch > a.policyEpoch {
+			a.policyEpoch = previousEpoch
 		}
-		if transition.ActivationHoldRemaining > 0 {
+		if transition.ActivationHoldRemaining > a.policyActivationLeft {
 			a.policyActivationLeft = transition.ActivationHoldRemaining
 			a.resetAdaptiveControlState()
 		}
 		return
 	}
 
-	a.policyEpoch = transition.Epoch + 1
-	a.policyActivationLeft = a.policyActivationHold
-	a.resetAdaptiveControlState()
+	if incomingVersion != previousVersion {
+		nextEpoch := maxInt64(previousEpoch+1, incomingEpoch)
+		a.policyManifestDigest = incomingDigest
+		a.policyEpoch = nextEpoch
+		a.policyActivationLeft = a.policyActivationHold
+		a.resetAdaptiveControlState()
+		return
+	}
+
+	if incomingEpoch > previousEpoch {
+		a.policyManifestDigest = incomingDigest
+		a.policyEpoch = incomingEpoch
+		a.policyActivationLeft = a.policyActivationHold
+		a.resetAdaptiveControlState()
+		return
+	}
+
+	// Reject stale/ambiguous refresh: pin previously verified manifest lineage.
+	a.policyManifestDigest = previousDigest
+	a.policyEpoch = previousEpoch
+	if transition.ActivationHoldRemaining > a.policyActivationLeft {
+		a.policyActivationLeft = transition.ActivationHoldRemaining
+		a.resetAdaptiveControlState()
+	}
 }
 
 func (a *autoTuneController) resolveOverrideState() autoTuneOverrideState {
@@ -703,10 +756,25 @@ func maxInt(a, b int) int {
 	return b
 }
 
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func normalizePolicyVersion(version string) string {
 	trimmed := strings.TrimSpace(strings.ToLower(version))
 	if trimmed == "" {
 		return defaultAutoTunePolicyVersion
+	}
+	return trimmed
+}
+
+func normalizePolicyManifestDigest(digest string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(digest))
+	if trimmed == "" {
+		return defaultAutoTunePolicyManifestDigest
 	}
 	return trimmed
 }

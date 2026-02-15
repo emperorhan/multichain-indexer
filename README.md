@@ -384,6 +384,14 @@ make lint           # Run golangci-lint
 | `COORDINATOR_AUTOTUNE_QUEUE_HIGH_PCT` | `80` | Job channel occupancy threshold to trigger decrease |
 | `COORDINATOR_AUTOTUNE_QUEUE_LOW_PCT` | `30` | Job channel occupancy threshold considered low pressure |
 | `COORDINATOR_AUTOTUNE_HYSTERESIS_TICKS` | `2` | Consecutive same-signal ticks required before changing batch |
+| `COORDINATOR_AUTOTUNE_TELEMETRY_STALE_TICKS` | `2` | Invalid/missing lag telemetry ticks before stale fallback hold |
+| `COORDINATOR_AUTOTUNE_TELEMETRY_RECOVERY_TICKS` | `1` | Healthy telemetry ticks required before leaving stale fallback hold |
+| `COORDINATOR_AUTOTUNE_OPERATOR_OVERRIDE_BATCH_SIZE` | `0` | Optional fixed manual batch override while non-zero |
+| `COORDINATOR_AUTOTUNE_OPERATOR_RELEASE_HOLD_TICKS` | `2` | Hold ticks after manual override release |
+| `COORDINATOR_AUTOTUNE_POLICY_VERSION` | `policy-v1` | Auto-tune policy version lineage key |
+| `COORDINATOR_AUTOTUNE_POLICY_MANIFEST_DIGEST` | `manifest-v1` | Policy-manifest digest lineage key used for deterministic refresh/reject/re-apply reconciliation |
+| `COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH` | `0` | Monotonic refresh epoch; stale or ambiguous manifest refreshes are rejected |
+| `COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS` | `1` | Hold ticks at accepted policy/manifest transition boundaries |
 | `SIDECAR_TIMEOUT_SEC` | `30` | gRPC decode timeout (s) |
 | `LOG_LEVEL` | `info` | Log level (debug/info/warn/error) |
 
