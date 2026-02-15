@@ -906,6 +906,131 @@ func parseRollbackFenceLateMarkerReleaseEpoch(digest string) (int64, bool) {
 	return 0, false
 }
 
+func parseRollbackFenceLateBridgeSequence(digest string) (int64, bool) {
+	const (
+		sequenceKeyHyphen = "rollback-fence-late-bridge-sequence="
+		sequenceKeyShort  = "rollback-fence-late-bridge-seq="
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, sequenceKeyHyphen):
+			value = strings.TrimSpace(strings.TrimPrefix(token, sequenceKeyHyphen))
+		case strings.HasPrefix(token, sequenceKeyShort):
+			value = strings.TrimSpace(strings.TrimPrefix(token, sequenceKeyShort))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		sequence, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || sequence < 0 {
+			return 0, false
+		}
+		return sequence, true
+	}
+
+	return 0, false
+}
+
+func parseRollbackFenceLateBridgeReleaseWatermark(digest string) (int64, bool) {
+	const (
+		watermarkKeyHyphen  = "rollback-fence-late-bridge-release-watermark="
+		watermarkKeyGeneric = "rollback-fence-release-watermark="
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, watermarkKeyHyphen):
+			value = strings.TrimSpace(strings.TrimPrefix(token, watermarkKeyHyphen))
+		case strings.HasPrefix(token, watermarkKeyGeneric):
+			value = strings.TrimSpace(strings.TrimPrefix(token, watermarkKeyGeneric))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		watermark, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || watermark < 0 {
+			return 0, false
+		}
+		return watermark, true
+	}
+
+	return 0, false
+}
+
+type rollbackFenceOwnershipOrdering struct {
+	epoch            int64
+	bridgeSequence   int64
+	releaseWatermark int64
+}
+
+func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
+	if epoch < 0 {
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	normalized := normalizePolicyManifestDigest(digest)
+	if !isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch, normalized) {
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	releaseEpoch, ok := parseRollbackFenceLateMarkerReleaseEpoch(normalized)
+	if !ok {
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	bridgeSequence, hasBridgeSequence := parseRollbackFenceLateBridgeSequence(normalized)
+	releaseWatermark, hasExplicitWatermark := parseRollbackFenceLateBridgeReleaseWatermark(normalized)
+	if hasBridgeSequence != hasExplicitWatermark {
+		// Quarantine ambiguous late-bridge markers until both sequence and
+		// release watermark are present for deterministic ordering.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	if !hasBridgeSequence {
+		bridgeSequence = 0
+		releaseWatermark = releaseEpoch
+	}
+	if releaseWatermark < releaseEpoch {
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	return rollbackFenceOwnershipOrdering{
+		epoch:            epoch,
+		bridgeSequence:   bridgeSequence,
+		releaseWatermark: releaseWatermark,
+	}, true
+}
+
+func compareRollbackFenceOwnershipOrdering(
+	left rollbackFenceOwnershipOrdering,
+	right rollbackFenceOwnershipOrdering,
+) int {
+	switch {
+	case left.epoch < right.epoch:
+		return -1
+	case left.epoch > right.epoch:
+		return 1
+	}
+	switch {
+	case left.bridgeSequence < right.bridgeSequence:
+		return -1
+	case left.bridgeSequence > right.bridgeSequence:
+		return 1
+	}
+	switch {
+	case left.releaseWatermark < right.releaseWatermark:
+		return -1
+	case left.releaseWatermark > right.releaseWatermark:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func isRollbackFenceTombstoneExpiryDigest(epoch int64, digest string) bool {
 	if epoch < 0 {
 		return false
@@ -1235,17 +1360,17 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	if sourceHoldEpoch != targetHoldEpoch {
 		return false
 	}
-	sourceReleaseEpoch, ok := parseRollbackFenceLateMarkerReleaseEpoch(sourceNormalized)
+	sourceOwnership, ok := parseRollbackFenceOwnershipOrdering(epoch, sourceNormalized)
 	if !ok {
 		return false
 	}
-	targetReleaseEpoch, ok := parseRollbackFenceLateMarkerReleaseEpoch(targetNormalized)
+	targetOwnership, ok := parseRollbackFenceOwnershipOrdering(epoch, targetNormalized)
 	if !ok {
 		return false
 	}
-	// Release windows are monotonic ownership markers: only strictly newer
-	// release watermarks can advance verified ownership.
-	return targetReleaseEpoch > sourceReleaseEpoch
+	// Ownership progression is strictly monotonic under explicit
+	// (epoch, bridge_sequence, release_watermark) ordering.
+	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }
 
 func isDeterministicRollbackFencePostReleaseWindowEpochRolloverStaleTransition(

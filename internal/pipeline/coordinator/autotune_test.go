@@ -1624,6 +1624,146 @@ func TestAutoTuneController_RollbackCheckpointFencePostReleaseWindowEpochRollove
 	assert.Equal(t, 1, liveRolloverHold.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFencePostEpochRolloverLateBridgeOrdersByBridgeSequenceAndReleaseWatermark(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	releaseWindowCfg := quarantineCfg
+	releaseWindowCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=7"
+	lateBridgeSeq1Cfg := releaseWindowCfg
+	lateBridgeSeq1Cfg.PolicyManifestDigest = releaseWindowCfg.PolicyManifestDigest +
+		"|rollback-fence-late-bridge-seq=1|rollback-fence-late-bridge-release-watermark=70"
+	lateBridgeSeq2Cfg := releaseWindowCfg
+	lateBridgeSeq2Cfg.PolicyManifestDigest = releaseWindowCfg.PolicyManifestDigest +
+		"|rollback-fence-late-bridge-seq=2|rollback-fence-late-bridge-release-watermark=80"
+	staleBridgeCfg := releaseWindowCfg
+	staleBridgeCfg.PolicyManifestDigest = releaseWindowCfg.PolicyManifestDigest +
+		"|rollback-fence-late-bridge-seq=1|rollback-fence-late-bridge-release-watermark=90"
+	ambiguousBridgeCfg := releaseWindowCfg
+	ambiguousBridgeCfg.PolicyManifestDigest = releaseWindowCfg.PolicyManifestDigest +
+		"|rollback-fence-late-bridge-seq=3"
+
+	releaseWindowSeed := 220
+	releaseWindowController := newAutoTuneControllerWithSeed(100, releaseWindowCfg, &releaseWindowSeed)
+	require.NotNil(t, releaseWindowController)
+	releaseWindowController.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:       true,
+		Version:        releaseCfg.PolicyVersion,
+		ManifestDigest: releaseCfg.PolicyManifestDigest,
+		Epoch:          releaseCfg.PolicyManifestRefreshEpoch,
+	})
+	batch, releaseWindowDecision := releaseWindowController.Resolve(highLag)
+	assert.Equal(t, releaseWindowSeed+20, batch)
+	assert.Equal(t, "apply_increase", releaseWindowDecision.Decision)
+	assert.Equal(t, releaseWindowCfg.PolicyManifestDigest, releaseWindowDecision.PolicyManifestDigest)
+	assert.Equal(t, releaseWindowCfg.PolicyManifestRefreshEpoch, releaseWindowDecision.PolicyEpoch)
+
+	bridgeSeq1Seed := releaseWindowController.currentBatch
+	bridgeSeq1Controller := newAutoTuneControllerWithSeed(100, lateBridgeSeq1Cfg, &bridgeSeq1Seed)
+	require.NotNil(t, bridgeSeq1Controller)
+	bridgeSeq1Controller.reconcilePolicyTransition(releaseWindowController.exportPolicyTransition())
+	batch, bridgeSeq1Decision := bridgeSeq1Controller.Resolve(highLag)
+	assert.Equal(t, bridgeSeq1Seed+20, batch)
+	assert.Equal(t, "apply_increase", bridgeSeq1Decision.Decision)
+	assert.Equal(t, lateBridgeSeq1Cfg.PolicyManifestDigest, bridgeSeq1Decision.PolicyManifestDigest)
+	assert.Equal(t, lateBridgeSeq1Cfg.PolicyManifestRefreshEpoch, bridgeSeq1Decision.PolicyEpoch)
+	assert.Equal(t, 0, bridgeSeq1Decision.PolicyActivationTicks)
+
+	bridgeSeq2Seed := bridgeSeq1Controller.currentBatch
+	bridgeSeq2Controller := newAutoTuneControllerWithSeed(100, lateBridgeSeq2Cfg, &bridgeSeq2Seed)
+	require.NotNil(t, bridgeSeq2Controller)
+	bridgeSeq2Controller.reconcilePolicyTransition(bridgeSeq1Controller.exportPolicyTransition())
+	batch, bridgeSeq2Decision := bridgeSeq2Controller.Resolve(highLag)
+	assert.Equal(t, bridgeSeq2Seed+20, batch)
+	assert.Equal(t, "apply_increase", bridgeSeq2Decision.Decision)
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestDigest, bridgeSeq2Decision.PolicyManifestDigest)
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestRefreshEpoch, bridgeSeq2Decision.PolicyEpoch)
+	assert.Equal(t, 0, bridgeSeq2Decision.PolicyActivationTicks)
+
+	staleBridgeSeed := bridgeSeq2Controller.currentBatch
+	staleBridgeController := newAutoTuneControllerWithSeed(100, staleBridgeCfg, &staleBridgeSeed)
+	require.NotNil(t, staleBridgeController)
+	staleBridgeController.reconcilePolicyTransition(bridgeSeq2Controller.exportPolicyTransition())
+	batch, staleBridgeDecision := staleBridgeController.Resolve(highLag)
+	assert.Equal(t, staleBridgeSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleBridgeDecision.Decision)
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestDigest, staleBridgeDecision.PolicyManifestDigest, "lower bridge sequence must not reopen stale ownership even with higher watermark")
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestRefreshEpoch, staleBridgeDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleBridgeDecision.PolicyActivationTicks)
+
+	ambiguousBridgeSeed := staleBridgeController.currentBatch
+	ambiguousBridgeController := newAutoTuneControllerWithSeed(100, ambiguousBridgeCfg, &ambiguousBridgeSeed)
+	require.NotNil(t, ambiguousBridgeController)
+	ambiguousBridgeController.reconcilePolicyTransition(staleBridgeController.exportPolicyTransition())
+	batch, ambiguousBridgeDecision := ambiguousBridgeController.Resolve(highLag)
+	assert.Equal(t, ambiguousBridgeSeed+20, batch)
+	assert.Equal(t, "apply_increase", ambiguousBridgeDecision.Decision)
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestDigest, ambiguousBridgeDecision.PolicyManifestDigest, "ambiguous late-bridge markers must remain quarantined until ordering tuple is complete")
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestRefreshEpoch, ambiguousBridgeDecision.PolicyEpoch)
+	assert.Equal(t, 0, ambiguousBridgeDecision.PolicyActivationTicks)
+
+	staleRollbackAtRolloverCfg := rollbackCfg
+	staleRollbackAtRolloverCfg.PolicyManifestRefreshEpoch = 3
+	staleRolloverSeed := ambiguousBridgeController.currentBatch
+	staleRolloverController := newAutoTuneControllerWithSeed(100, staleRollbackAtRolloverCfg, &staleRolloverSeed)
+	require.NotNil(t, staleRolloverController)
+	staleRolloverController.reconcilePolicyTransition(ambiguousBridgeController.exportPolicyTransition())
+	batch, staleRolloverDecision := staleRolloverController.Resolve(highLag)
+	assert.Equal(t, staleRolloverSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleRolloverDecision.Decision)
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestDigest, staleRolloverDecision.PolicyManifestDigest, "post-epoch-rollover stale rollback markers must stay pinned behind adopted late-bridge ownership")
+	assert.Equal(t, lateBridgeSeq2Cfg.PolicyManifestRefreshEpoch, staleRolloverDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleRolloverDecision.PolicyActivationTicks)
+
+	liveRolloverSeed := staleRolloverController.currentBatch
+	liveRolloverController := newAutoTuneControllerWithSeed(100, segment3Cfg, &liveRolloverSeed)
+	require.NotNil(t, liveRolloverController)
+	liveRolloverController.reconcilePolicyTransition(staleRolloverController.exportPolicyTransition())
+	batch, liveRolloverHold := liveRolloverController.Resolve(highLag)
+	assert.Equal(t, liveRolloverSeed, batch)
+	assert.Equal(t, "hold_policy_transition", liveRolloverHold.Decision, "rollback+re-forward after late-bridge adoption must preserve deterministic one-tick activation hold")
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, liveRolloverHold.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, liveRolloverHold.PolicyEpoch)
+	assert.Equal(t, 1, liveRolloverHold.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,
