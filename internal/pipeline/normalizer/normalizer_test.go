@@ -4029,3 +4029,721 @@ func TestProcessBatch_DecoderVersionTransitionReplayResumeIdempotentAcrossMandat
 		})
 	}
 }
+
+func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name                   string
+		chain                  model.Chain
+		network                model.Network
+		address                string
+		signature              string
+		sequence               int64
+		expectedCursor         string
+		buildSparseEquivalent  func(string, int64) *sidecarv1.TransactionResult
+		buildEnrichedComplete  func(string, int64) *sidecarv1.TransactionResult
+		buildSparsePartial     func(string, int64) *sidecarv1.TransactionResult
+		buildEnrichedPartial   func(string, int64) *sidecarv1.TransactionResult
+		expectedTransferEvents int
+	}
+
+	canonicalEventIDSet := func(batches ...event.NormalizedBatch) map[string]struct{} {
+		out := make(map[string]struct{})
+		for _, batch := range batches {
+			for _, tx := range batch.Transactions {
+				for _, be := range tx.BalanceEvents {
+					out[be.EventID] = struct{}{}
+				}
+			}
+		}
+		return out
+	}
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+	countCategory := func(batch event.NormalizedBatch, category model.EventCategory) int {
+		count := 0
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				if be.EventCategory == category {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	testCases := []testCase{
+		{
+			name:                   "solana-devnet",
+			chain:                  model.ChainSolana,
+			network:                model.NetworkDevnet,
+			address:                "sol-coverage-owner",
+			signature:              "sol-coverage-1201",
+			sequence:               1201,
+			expectedCursor:         "sol-coverage-1201",
+			expectedTransferEvents: 3,
+			buildSparseEquivalent: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					FeeAmount:   "5000",
+					FeePayer:    "sol-coverage-owner",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_1",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-10",
+							CounterpartyAddress:   "sol-coverage-counterparty-1",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"decoder_version": "solana-decoder-v0",
+							},
+						},
+						{
+							OuterInstructionIndex: 1,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_2",
+							ProgramId:             "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "4",
+							CounterpartyAddress:   "sol-coverage-counterparty-2",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"decoder_version": "solana-decoder-v0",
+							},
+						},
+						{
+							OuterInstructionIndex: 2,
+							InnerInstructionIndex: 0,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_3",
+							ProgramId:             "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-2",
+							CounterpartyAddress:   "sol-coverage-counterparty-3",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"decoder_version": "solana-decoder-v0",
+							},
+						},
+					},
+				}
+			},
+			buildEnrichedComplete: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					FeeAmount:   "5000",
+					FeePayer:    "sol-coverage-owner",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 7,
+							InnerInstructionIndex: 9,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_1",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-10",
+							CounterpartyAddress:   "sol-coverage-counterparty-1",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"event_path":      "outer:0|inner:-1",
+								"decoder_version": "solana-decoder-v2",
+								"schema_version":  "v2",
+							},
+						},
+						{
+							OuterInstructionIndex: 11,
+							InnerInstructionIndex: 6,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_2",
+							ProgramId:             "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "4",
+							CounterpartyAddress:   "sol-coverage-counterparty-2",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"event_path":      "outer:1|inner:-1",
+								"decoder_version": "solana-decoder-v2",
+								"schema_version":  "v2",
+							},
+						},
+						{
+							OuterInstructionIndex: 19,
+							InnerInstructionIndex: 4,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_3",
+							ProgramId:             "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-2",
+							CounterpartyAddress:   "sol-coverage-counterparty-3",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"event_path":      "outer:2|inner:0",
+								"decoder_version": "solana-decoder-v2",
+								"schema_version":  "v2",
+							},
+						},
+					},
+				}
+			},
+			buildSparsePartial: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					FeeAmount:   "5000",
+					FeePayer:    "sol-coverage-owner",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_1",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-10",
+							CounterpartyAddress:   "sol-coverage-counterparty-1",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"decoder_version": "solana-decoder-v0",
+							},
+						},
+						{
+							OuterInstructionIndex: 1,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_2",
+							ProgramId:             "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "4",
+							CounterpartyAddress:   "sol-coverage-counterparty-2",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"decoder_version": "solana-decoder-v0",
+							},
+						},
+					},
+				}
+			},
+			buildEnrichedPartial: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					FeeAmount:   "5000",
+					FeePayer:    "sol-coverage-owner",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 7,
+							InnerInstructionIndex: 9,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_1",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-10",
+							CounterpartyAddress:   "sol-coverage-counterparty-1",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"event_path":      "outer:0|inner:-1",
+								"decoder_version": "solana-decoder-v2",
+								"schema_version":  "v2",
+							},
+						},
+						{
+							OuterInstructionIndex: 19,
+							InnerInstructionIndex: 4,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_3",
+							ProgramId:             "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+							Address:               "sol-coverage-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-2",
+							CounterpartyAddress:   "sol-coverage-counterparty-3",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata: map[string]string{
+								"event_path":      "outer:2|inner:0",
+								"decoder_version": "solana-decoder-v2",
+								"schema_version":  "v2",
+							},
+						},
+					},
+				}
+			},
+		},
+		{
+			name:                   "base-sepolia",
+			chain:                  model.ChainBase,
+			network:                model.NetworkSepolia,
+			address:                "0xABCD0000000000000000000000000000000000CC",
+			signature:              "ABCD1201",
+			sequence:               2201,
+			expectedCursor:         "0xabcd1201",
+			expectedTransferEvents: 3,
+			buildSparseEquivalent: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					FeeAmount:   "100",
+					FeePayer:    "0xABCD0000000000000000000000000000000000CC",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_1",
+							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
+							Address:               "0xABCD0000000000000000000000000000000000CC",
+							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
+							Delta:                 "-7",
+							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CC",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"log_index":        "10",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v0",
+							},
+						},
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_2",
+							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
+							Address:               "0xABCD0000000000000000000000000000000000CC",
+							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
+							Delta:                 "3",
+							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CD",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"log_index":        "11",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v0",
+							},
+						},
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_3",
+							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
+							Address:               "0xABCD0000000000000000000000000000000000CC",
+							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
+							Delta:                 "-1",
+							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CE",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"log_index":        "12",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v0",
+							},
+						},
+					},
+				}
+			},
+			buildEnrichedComplete: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      "0x" + strings.ToLower(signature),
+					BlockCursor: sequence,
+					FeeAmount:   "100",
+					FeePayer:    "0xabcd0000000000000000000000000000000000cc",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 13,
+							InnerInstructionIndex: 0,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_1",
+							ProgramId:             "0xabcdef00000000000000000000000000000000cc",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
+							ContractAddress:       "0xabcdef00000000000000000000000000000000cc",
+							Delta:                 "-7",
+							CounterpartyAddress:   "0xdcba0000000000000000000000000000000000cc",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"event_path":       "log:10",
+								"base_event_path":  "log:10",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v2",
+							},
+						},
+						{
+							OuterInstructionIndex: 14,
+							InnerInstructionIndex: 0,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_2",
+							ProgramId:             "0xabcdef00000000000000000000000000000000cc",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
+							ContractAddress:       "0xabcdef00000000000000000000000000000000cc",
+							Delta:                 "3",
+							CounterpartyAddress:   "0xdcba0000000000000000000000000000000000cd",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"event_path":       "log:11",
+								"base_event_path":  "log:11",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v2",
+							},
+						},
+						{
+							OuterInstructionIndex: 15,
+							InnerInstructionIndex: 0,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_3",
+							ProgramId:             "0xabcdef00000000000000000000000000000000cc",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
+							ContractAddress:       "0xabcdef00000000000000000000000000000000cc",
+							Delta:                 "-1",
+							CounterpartyAddress:   "0xdcba0000000000000000000000000000000000ce",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"event_path":       "log:12",
+								"base_event_path":  "log:12",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v2",
+							},
+						},
+					},
+				}
+			},
+			buildSparsePartial: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					FeeAmount:   "100",
+					FeePayer:    "0xABCD0000000000000000000000000000000000CC",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_1",
+							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
+							Address:               "0xABCD0000000000000000000000000000000000CC",
+							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
+							Delta:                 "-7",
+							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CC",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"log_index":        "10",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v0",
+							},
+						},
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "sparse_transfer_2",
+							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
+							Address:               "0xABCD0000000000000000000000000000000000CC",
+							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
+							Delta:                 "3",
+							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CD",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"log_index":        "11",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v0",
+							},
+						},
+					},
+				}
+			},
+			buildEnrichedPartial: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      "0x" + strings.ToLower(signature),
+					BlockCursor: sequence,
+					FeeAmount:   "100",
+					FeePayer:    "0xabcd0000000000000000000000000000000000cc",
+					Status:      "SUCCESS",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 13,
+							InnerInstructionIndex: 0,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_1",
+							ProgramId:             "0xabcdef00000000000000000000000000000000cc",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
+							ContractAddress:       "0xabcdef00000000000000000000000000000000cc",
+							Delta:                 "-7",
+							CounterpartyAddress:   "0xdcba0000000000000000000000000000000000cc",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"event_path":       "log:10",
+								"base_event_path":  "log:10",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v2",
+							},
+						},
+						{
+							OuterInstructionIndex: 15,
+							InnerInstructionIndex: 0,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "enriched_transfer_3",
+							ProgramId:             "0xabcdef00000000000000000000000000000000cc",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
+							ContractAddress:       "0xabcdef00000000000000000000000000000000cc",
+							Delta:                 "-1",
+							CounterpartyAddress:   "0xdcba0000000000000000000000000000000000ce",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata: map[string]string{
+								"event_path":       "log:12",
+								"base_event_path":  "log:12",
+								"fee_execution_l2": "70",
+								"fee_data_l1":      "30",
+								"decoder_version":  "base-decoder-v2",
+							},
+						},
+					},
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runOnce := func(resp *sidecarv1.DecodeSolanaTransactionBatchResponse, runBatch event.RawBatch) event.NormalizedBatch {
+				ctrl := gomock.NewController(t)
+				mockClient := mocks.NewMockChainDecoderClient(ctrl)
+				normalizedCh := make(chan event.NormalizedBatch, 1)
+				n := &Normalizer{
+					sidecarTimeout: 30 * time.Second,
+					normalizedCh:   normalizedCh,
+					logger:         slog.Default(),
+				}
+				mockClient.EXPECT().
+					DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(resp, nil).
+					Times(1)
+				require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, runBatch))
+				return <-normalizedCh
+			}
+
+			batch := event.RawBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorValue:    strPtr("prior"),
+				PreviousCursorSequence: tc.sequence - 1,
+				NewCursorValue:         strPtr(tc.signature),
+				NewCursorSequence:      tc.sequence,
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":"coverage"}`),
+				},
+				Signatures: []event.SignatureInfo{
+					{Hash: tc.signature, Sequence: tc.sequence},
+				},
+			}
+
+			enrichedBaseline := runOnce(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: []*sidecarv1.TransactionResult{
+					tc.buildEnrichedComplete(tc.signature, tc.sequence),
+				},
+			}, batch)
+
+			sparseOnlyEquivalent := runOnce(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: []*sidecarv1.TransactionResult{
+					tc.buildSparseEquivalent(tc.signature, tc.sequence),
+				},
+			}, batch)
+
+			mixedEquivalentSparseFirst := runOnce(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: []*sidecarv1.TransactionResult{
+					tc.buildSparseEquivalent(tc.signature, tc.sequence),
+					tc.buildEnrichedComplete(tc.signature, tc.sequence),
+				},
+			}, batch)
+			mixedEquivalentEnrichedFirst := runOnce(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: []*sidecarv1.TransactionResult{
+					tc.buildEnrichedComplete(tc.signature, tc.sequence),
+					tc.buildSparseEquivalent(tc.signature, tc.sequence),
+				},
+			}, batch)
+
+			assert.Equal(t, orderedCanonicalTuples(enrichedBaseline), orderedCanonicalTuples(sparseOnlyEquivalent))
+			assert.Equal(t, orderedCanonicalTuples(enrichedBaseline), orderedCanonicalTuples(mixedEquivalentSparseFirst))
+			assert.Equal(t, orderedCanonicalTuples(mixedEquivalentSparseFirst), orderedCanonicalTuples(mixedEquivalentEnrichedFirst))
+
+			assertNoDuplicateCanonicalIDs(t, enrichedBaseline)
+			assertNoDuplicateCanonicalIDs(t, sparseOnlyEquivalent)
+			assertNoDuplicateCanonicalIDs(t, mixedEquivalentSparseFirst)
+			assertNoDuplicateCanonicalIDs(t, mixedEquivalentEnrichedFirst)
+
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+			normalizedCh := make(chan event.NormalizedBatch, 3)
+			n := &Normalizer{
+				sidecarTimeout: 30 * time.Second,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			responses := []*sidecarv1.DecodeSolanaTransactionBatchResponse{
+				{
+					Results: []*sidecarv1.TransactionResult{
+						tc.buildSparsePartial(tc.signature, tc.sequence),
+					},
+				},
+				{
+					Results: []*sidecarv1.TransactionResult{
+						tc.buildSparsePartial(tc.signature, tc.sequence),
+						tc.buildEnrichedPartial(tc.signature, tc.sequence),
+					},
+				},
+				{
+					Results: []*sidecarv1.TransactionResult{
+						tc.buildEnrichedPartial(tc.signature, tc.sequence),
+						tc.buildSparsePartial(tc.signature, tc.sequence),
+					},
+				},
+			}
+			call := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(len(responses)).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					resp := responses[call]
+					call++
+					return resp, nil
+				})
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			sparseRun := <-normalizedCh
+
+			firstReplayBatch := batch
+			firstReplayBatch.PreviousCursorValue = sparseRun.NewCursorValue
+			firstReplayBatch.PreviousCursorSequence = sparseRun.NewCursorSequence
+			firstReplayBatch.NewCursorValue = sparseRun.NewCursorValue
+			firstReplayBatch.NewCursorSequence = sparseRun.NewCursorSequence
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, firstReplayBatch))
+			convergedRun := <-normalizedCh
+
+			secondReplayBatch := batch
+			secondReplayBatch.PreviousCursorValue = convergedRun.NewCursorValue
+			secondReplayBatch.PreviousCursorSequence = convergedRun.NewCursorSequence
+			secondReplayBatch.NewCursorValue = convergedRun.NewCursorValue
+			secondReplayBatch.NewCursorSequence = convergedRun.NewCursorSequence
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, secondReplayBatch))
+			replayConvergedRun := <-normalizedCh
+
+			assert.NotEqual(t, canonicalEventIDSet(enrichedBaseline), canonicalEventIDSet(sparseRun))
+			assert.Equal(t, canonicalEventIDSet(enrichedBaseline), canonicalEventIDSet(convergedRun))
+			assert.Equal(t, canonicalEventIDSet(convergedRun), canonicalEventIDSet(replayConvergedRun))
+
+			assert.Greater(
+				t,
+				len(canonicalEventIDSet(convergedRun)),
+				len(canonicalEventIDSet(sparseRun)),
+				"incremental enriched coverage should emit newly discovered events once while preserving existing canonical IDs",
+			)
+
+			assertNoDuplicateCanonicalIDs(t, sparseRun)
+			assertNoDuplicateCanonicalIDs(t, convergedRun)
+			assertNoDuplicateCanonicalIDs(t, replayConvergedRun)
+
+			assert.Equal(t, tc.expectedTransferEvents, countCategory(convergedRun, model.EventCategoryTransfer))
+			assert.Equal(t, tc.expectedTransferEvents, countCategory(replayConvergedRun, model.EventCategoryTransfer))
+
+			if tc.chain == model.ChainSolana {
+				assert.Equal(t, 1, countCategory(convergedRun, model.EventCategoryFee))
+				assert.Equal(t, 1, countCategory(replayConvergedRun, model.EventCategoryFee))
+			} else {
+				assert.Equal(t, 1, countCategory(convergedRun, model.EventCategoryFeeExecutionL2))
+				assert.Equal(t, 1, countCategory(convergedRun, model.EventCategoryFeeDataL1))
+				assert.Equal(t, 1, countCategory(replayConvergedRun, model.EventCategoryFeeExecutionL2))
+				assert.Equal(t, 1, countCategory(replayConvergedRun, model.EventCategoryFeeDataL1))
+			}
+
+			require.NotNil(t, sparseRun.NewCursorValue)
+			require.NotNil(t, convergedRun.NewCursorValue)
+			require.NotNil(t, replayConvergedRun.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *sparseRun.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *convergedRun.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *replayConvergedRun.NewCursorValue)
+			assert.GreaterOrEqual(t, sparseRun.NewCursorSequence, sparseRun.PreviousCursorSequence)
+			assert.GreaterOrEqual(t, convergedRun.NewCursorSequence, convergedRun.PreviousCursorSequence)
+			assert.GreaterOrEqual(t, replayConvergedRun.NewCursorSequence, replayConvergedRun.PreviousCursorSequence)
+			assert.GreaterOrEqual(t, replayConvergedRun.NewCursorSequence, convergedRun.NewCursorSequence)
+		})
+	}
+}

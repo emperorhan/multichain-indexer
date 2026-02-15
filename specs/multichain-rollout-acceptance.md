@@ -688,6 +688,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of incremental decode-coverage determinism and replay/resume invariant safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0219 (M32-S1)
+Assertions:
+1. Equivalent logical ranges under enriched-first, sparse-regression, and re-enriched decode permutations converge to one deterministic canonical output set on both mandatory chains.
+2. Decode-coverage regression flap reconciliation preserves deterministic canonical identity boundaries with `0` duplicate canonical IDs and `0` missing logical events.
+3. Coverage flap permutations preserve signed-delta conservation and explicit fee-event coexistence expectations where source fields exist.
+4. Replay/resume from decode-coverage flap boundaries remains idempotent with cursor monotonicity and no balance double-apply side effects.
+
+Pass Evidence:
+- Deterministic tests inject enriched-first, sparse-regression, and re-enriched permutations on `solana-devnet` and `base-sepolia` and show canonical tuple equivalence against stable enriched baselines.
+- Deterministic coverage-flap reconciliation tests show `0` duplicate canonical IDs and `0` missing logical events while signed-delta and explicit fee-event checks remain satisfied.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0220 (M32-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M32 invariants.
+2. QA executes at least one counterexample with enriched->sparse->re-enriched decode-coverage flap permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample validating coverage-flap replay/resume safety with no duplicate canonical IDs, no missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of decode-coverage regression flap determinism and replay/resume invariant safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -718,3 +742,4 @@ Release recommendation must be `fail` if any condition holds:
 26. Live/backfill overlap canonical convergence determinism cannot be proven (source-order permutation convergence, overlap reconciliation stability, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
 27. Decoder-version transition canonical convergence determinism cannot be proven (legacy-vs-upgraded decode permutation convergence, mixed-version reconciliation stability, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
 28. Incremental decode-coverage canonical convergence determinism cannot be proven (sparse-vs-enriched decode permutation convergence, one-time enrichment emission stability, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
+29. Decode-coverage regression flap canonical stability determinism cannot be proven (enriched->sparse->re-enriched permutation convergence, previously discovered enriched-event persistence during sparse fallback, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).

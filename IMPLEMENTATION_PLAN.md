@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -67,6 +67,8 @@ Execution queue (dependency-ordered):
 56. `I-0210` (`M30-S2`) QA counterexample gate for decoder-version transition determinism + invariant safety
 57. `I-0214` (`M31-S1`) incremental decode-coverage canonical convergence determinism hardening
 58. `I-0215` (`M31-S2`) QA counterexample gate for incremental decode-coverage determinism + invariant safety
+59. `I-0219` (`M32-S1`) decode-coverage regression flap canonical stability determinism hardening
+60. `I-0220` (`M32-S2`) QA counterexample gate for decode-coverage regression flap determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1096,7 +1098,7 @@ Eliminate duplicate/missing-event risk when decoder output shape or metadata fid
 - Gate: over-aggressive cross-version equivalence matching can collapse truly distinct logical events, while under-constrained matching can re-emit duplicate canonical events across upgrade boundaries.
 - Fallback: keep deterministic conservative version-bridge reconciliation with explicit version-conflict diagnostics, fail fast on unresolved equivalence ambiguity, and replay from last-safe cursor until decoder transition contracts are extended.
 
-### M31. Incremental Decode-Coverage Canonical Convergence Determinism Reliability Tranche C0025 (P0, Next)
+### M31. Incremental Decode-Coverage Canonical Convergence Determinism Reliability Tranche C0025 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when decoder coverage evolves from partial extraction to enriched extraction for the same transaction/signature, so all economically meaningful asset-volatility events are indexed exactly once under mixed live/replay/backfill operation.
@@ -1131,6 +1133,42 @@ Eliminate duplicate/missing-event risk when decoder coverage evolves from partia
 #### Risk Gate + Fallback
 - Gate: over-aggressive sparse-vs-enriched equivalence matching can suppress legitimate newly discovered logical events, while under-constrained matching can re-emit already-materialized events as duplicates.
 - Fallback: keep deterministic conservative coverage-lineage reconciliation with explicit coverage-conflict diagnostics, fail fast on unresolved sparse/enriched ambiguity, and replay from last-safe cursor until incremental-coverage contracts are extended.
+
+### M32. Decode-Coverage Regression Flap Canonical Stability Determinism Reliability Tranche C0026 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when decode coverage regresses from enriched back to sparse (and later re-enriches) for the same transaction/signature range, so coverage flapping cannot erase previously learned logical events or reintroduce duplicate canonical emissions.
+
+#### Entry Gate
+- `M31` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M32-S1` (`I-0219`): implement deterministic coverage-regression reconciliation semantics so enriched->sparse->enriched flap permutations cannot induce duplicate canonical IDs, missing logical events, or signed-delta/fee-event drift.
+2. `M32-S2` (`I-0220`): execute QA counterexample gate for decode-coverage regression flap determinism and invariant evidence across mandatory chains.
+
+#### Definition Of Done
+1. Equivalent logical ranges processed with enriched-first, sparse-regression, and re-enriched permutations converge to one canonical tuple output set on both mandatory chains.
+2. Coverage regression handling preserves already-materialized logical events during sparse fallback and avoids duplicate re-emission when enrichment returns.
+3. Replay/resume from coverage-flap boundaries remains idempotent with `0` missing logical events, chain-scoped cursor monotonicity, and no balance double-apply side effects.
+4. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject equivalent Solana/Base logical ranges under enriched-first, sparse-regression, and re-enriched permutations and assert one canonical output set against enriched-baseline expectations.
+2. Deterministic tests inject multi-cycle enrichment flap permutations and assert `0` duplicate canonical IDs plus stable persistence of previously discovered logical events.
+3. Deterministic replay/resume tests from coverage-flap boundaries assert chain-scoped cursor monotonicity, signed-delta conservation, and explicit fee-event coexistence with `0` balance drift.
+4. QA executes required validation commands plus coverage-regression-flap counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across decode-coverage regression flap permutation fixtures on mandatory chains.
+2. `0` missing logical events when comparing flap permutations against deterministic enriched baseline fixtures.
+3. `0` cursor monotonicity regressions across decode-coverage flap replay/resume fixtures.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: naive sparse-regression handling can either drop previously discovered enriched logical events or repeatedly re-emit them when enrichment returns.
+- Fallback: keep deterministic conservative coverage-floor reconciliation with explicit regression-conflict diagnostics, fail fast on unresolved coverage flap ambiguity, and replay from last-safe cursor until flap contracts are extended.
 
 ## Decision Register (Major + Fallback)
 
@@ -1205,10 +1243,12 @@ Completed milestones/slices:
 54. `I-0205`
 55. `I-0209`
 56. `I-0210`
+57. `I-0214`
+58. `I-0215`
 
 Active downstream queue from this plan:
-1. `I-0214`
-2. `I-0215`
+1. `I-0219`
+2. `I-0220`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -1224,3 +1264,4 @@ Superseded issues:
 - `I-0202` and `I-0203` are superseded by `I-0204` and `I-0205` to replace generic cycle placeholders with executable live/backfill overlap canonical convergence determinism slices.
 - `I-0207` and `I-0208` are superseded by `I-0209` and `I-0210` to replace generic cycle placeholders with executable decoder-version transition canonical convergence determinism slices.
 - `I-0212` and `I-0213` are superseded by `I-0214` and `I-0215` to replace generic cycle placeholders with executable incremental decode-coverage canonical convergence determinism slices.
+- `I-0217` and `I-0218` are superseded by `I-0219` and `I-0220` to replace generic cycle placeholders with executable decode-coverage regression flap canonical stability determinism slices.

@@ -21,6 +21,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -231,16 +232,10 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		}
 		if _, ok := expectedSignatures[signatureKey]; !ok {
 			unexpectedResults[signatureKey] = struct{}{}
-			existing, exists := unexpectedResultBySignature[signatureKey]
-			if !exists || shouldReplaceDecodedResult(batch.Chain, existing, result) {
-				unexpectedResultBySignature[signatureKey] = result
-			}
+			unexpectedResultBySignature[signatureKey] = reconcileDecodedResultCoverage(batch.Chain, unexpectedResultBySignature[signatureKey], result)
 			continue
 		}
-		existing, ok := resultBySignature[signatureKey]
-		if !ok || shouldReplaceDecodedResult(batch.Chain, existing, result) {
-			resultBySignature[signatureKey] = result
-		}
+		resultBySignature[signatureKey] = reconcileDecodedResultCoverage(batch.Chain, resultBySignature[signatureKey], result)
 	}
 	unexpectedSignatures := sortedSignatureKeys(unexpectedResults)
 	if len(unexpectedSignatures) > 0 {
@@ -1268,6 +1263,177 @@ func shouldReplaceDecodedResult(chainID model.Chain, existing, incoming *sidecar
 		return incomingScore.fingerprint < existingScore.fingerprint
 	}
 	return false
+}
+
+func reconcileDecodedResultCoverage(chainID model.Chain, existing, incoming *sidecarv1.TransactionResult) *sidecarv1.TransactionResult {
+	if existing == nil {
+		return cloneDecodedResult(incoming)
+	}
+	if incoming == nil {
+		return cloneDecodedResult(existing)
+	}
+
+	preferred := existing
+	secondary := incoming
+	if shouldReplaceDecodedResult(chainID, existing, incoming) {
+		preferred = incoming
+		secondary = existing
+	}
+
+	out := cloneDecodedResult(preferred)
+	out.BalanceEvents = mergeDecodedBalanceEvents(chainID, preferred.BalanceEvents, secondary.BalanceEvents)
+	return out
+}
+
+func mergeDecodedBalanceEvents(chainID model.Chain, primary, secondary []*sidecarv1.BalanceEventInfo) []*sidecarv1.BalanceEventInfo {
+	if len(primary) == 0 && len(secondary) == 0 {
+		return nil
+	}
+
+	byKey := make(map[string]*sidecarv1.BalanceEventInfo, len(primary)+len(secondary))
+	addEvent := func(be *sidecarv1.BalanceEventInfo) {
+		if be == nil {
+			return
+		}
+		key := decodedCoverageEventKey(chainID, be)
+		if key == "" {
+			key = decodedEventFingerprint(chainID, be)
+		}
+		if key == "" {
+			return
+		}
+		existing, ok := byKey[key]
+		if !ok || shouldReplaceDecodedCoverageEvent(chainID, existing, be) {
+			byKey[key] = cloneDecodedBalanceEvent(be)
+		}
+	}
+
+	for _, be := range primary {
+		addEvent(be)
+	}
+	for _, be := range secondary {
+		addEvent(be)
+	}
+
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	out := make([]*sidecarv1.BalanceEventInfo, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+func shouldReplaceDecodedCoverageEvent(chainID model.Chain, existing, incoming *sidecarv1.BalanceEventInfo) bool {
+	if existing == nil {
+		return incoming != nil
+	}
+	if incoming == nil {
+		return false
+	}
+
+	existingScore := decodedCoverageEventSelectionScore(chainID, existing)
+	incomingScore := decodedCoverageEventSelectionScore(chainID, incoming)
+	if existingScore.pathHint != incomingScore.pathHint {
+		return incomingScore.pathHint
+	}
+	if existingScore.metadataCount != incomingScore.metadataCount {
+		return incomingScore.metadataCount > existingScore.metadataCount
+	}
+	if existingScore.populatedFieldCount != incomingScore.populatedFieldCount {
+		return incomingScore.populatedFieldCount > existingScore.populatedFieldCount
+	}
+	if existingScore.fingerprint != incomingScore.fingerprint {
+		return incomingScore.fingerprint < existingScore.fingerprint
+	}
+	return false
+}
+
+type decodedCoverageEventScore struct {
+	pathHint            bool
+	metadataCount       int
+	populatedFieldCount int
+	fingerprint         string
+}
+
+func decodedCoverageEventSelectionScore(chainID model.Chain, be *sidecarv1.BalanceEventInfo) decodedCoverageEventScore {
+	if be == nil {
+		return decodedCoverageEventScore{}
+	}
+	score := decodedCoverageEventScore{
+		metadataCount: len(be.Metadata),
+		fingerprint:   decodedEventFingerprint(chainID, be),
+	}
+	score.pathHint = resolveBaseMetadataEventPath(be.Metadata) != "" || hasSolanaInstructionPathHint(be.Metadata)
+
+	for _, value := range []string{
+		strings.TrimSpace(be.EventCategory),
+		strings.TrimSpace(be.EventAction),
+		strings.TrimSpace(be.ProgramId),
+		strings.TrimSpace(be.Address),
+		strings.TrimSpace(be.ContractAddress),
+		strings.TrimSpace(be.CounterpartyAddress),
+		strings.TrimSpace(be.TokenSymbol),
+		strings.TrimSpace(be.TokenName),
+		strings.TrimSpace(be.Delta),
+	} {
+		if value != "" {
+			score.populatedFieldCount++
+		}
+	}
+	if be.TokenDecimals != 0 {
+		score.populatedFieldCount++
+	}
+	if strings.TrimSpace(be.TokenType) != "" {
+		score.populatedFieldCount++
+	}
+	return score
+}
+
+func decodedCoverageEventKey(chainID model.Chain, be *sidecarv1.BalanceEventInfo) string {
+	if be == nil {
+		return ""
+	}
+	path := decodedEventPath(chainID, be)
+	address := canonicalizeAddressIdentity(chainID, be.Address)
+	if address == "" {
+		address = strings.TrimSpace(be.Address)
+	}
+	assetID := canonicalizeAddressIdentity(chainID, be.ContractAddress)
+	if assetID == "" {
+		assetID = strings.TrimSpace(be.ContractAddress)
+	}
+	category := strings.ToUpper(strings.TrimSpace(be.EventCategory))
+	if category == "" {
+		category = strings.ToUpper(strings.TrimSpace(be.EventAction))
+	}
+	return fmt.Sprintf("%s|%s|%s|%s", path, address, assetID, category)
+}
+
+func cloneDecodedResult(result *sidecarv1.TransactionResult) *sidecarv1.TransactionResult {
+	if result == nil {
+		return nil
+	}
+	cloned, ok := proto.Clone(result).(*sidecarv1.TransactionResult)
+	if !ok {
+		return nil
+	}
+	return cloned
+}
+
+func cloneDecodedBalanceEvent(be *sidecarv1.BalanceEventInfo) *sidecarv1.BalanceEventInfo {
+	if be == nil {
+		return nil
+	}
+	cloned, ok := proto.Clone(be).(*sidecarv1.BalanceEventInfo)
+	if !ok {
+		return nil
+	}
+	return cloned
 }
 
 type decodedResultScore struct {
