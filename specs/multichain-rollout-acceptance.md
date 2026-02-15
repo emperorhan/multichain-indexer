@@ -376,6 +376,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of watched-address fan-in determinism and partition-variance continuity behavior on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0160 (M19-S1)
+Assertions:
+1. Divergent-cursor watched-address overlap scenarios on both mandatory chains preserve union-baseline logical-event coverage while maintaining deterministic duplicate suppression.
+2. Fan-in membership churn scenarios (address add/remove/reorder across ticks) produce deterministic canonical tuple equivalence with zero duplicate or missing logical canonical events.
+3. Replay/resume from partial fan-in progress remains idempotent and preserves cursor monotonicity without balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject divergent-cursor fan-in overlap scenarios on `solana-devnet` and `base-sepolia` and show parity with union-address baseline logical-event sets.
+- Deterministic fan-in membership-churn permutation tests show `0` canonical tuple diffs with `0` duplicate/missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0161 (M19-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M19 invariants.
+2. QA executes at least one counterexample with divergent fan-in cursor progress and verifies deterministic completeness (no missing logical events) plus duplicate suppression.
+3. QA executes at least one counterexample with fan-in membership churn and verifies canonical tuple equivalence across permutations.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of lag-aware fan-in completeness and churn-variance determinism on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -393,3 +417,4 @@ Release recommendation must be `fail` if any condition holds:
 13. Rollback-after-finality convergence determinism cannot be proven (fork-replacement convergence, stale-canonical suppression, replay idempotency, and cursor monotonicity not evidenced for both mandatory chains).
 14. Cursor-boundary continuity determinism cannot be proven (boundary-overlap convergence, restart-from-boundary completeness, partition-variance equivalence, and no duplicate/missing boundary events not evidenced for both mandatory chains).
 15. Watched-address fan-in determinism cannot be proven (overlap convergence, watched-address partition/order variance equivalence, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
+16. Lag-aware fan-in cursor continuity determinism cannot be proven (divergent-cursor completeness parity to union baseline, fan-in membership-churn permutation equivalence, and no duplicate/missing logical canonical events not evidenced for both mandatory chains).
