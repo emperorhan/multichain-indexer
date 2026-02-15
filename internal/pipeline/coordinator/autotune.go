@@ -15,6 +15,7 @@ type AutoTuneConfig struct {
 	QueueLowWatermarkPct  int
 
 	HysteresisTicks int
+	CooldownTicks   int
 }
 
 type autoTuneInputs struct {
@@ -35,6 +36,7 @@ type autoTuneDiagnostics struct {
 	BatchBefore   int
 	BatchAfter    int
 	Streak        int
+	Cooldown      int
 }
 
 type autoTuneSignal string
@@ -58,8 +60,11 @@ type autoTuneController struct {
 	queueLowWatermarkPct  int
 
 	hysteresisTicks int
+	cooldownTicks   int
+	cooldownLeft    int
 	currentBatch    int
 	lastSignal      autoTuneSignal
+	lastApplied     autoTuneSignal
 	streak          int
 }
 
@@ -132,6 +137,13 @@ func newAutoTuneControllerWithSeedMode(
 	if hysteresisTicks <= 0 {
 		hysteresisTicks = 2
 	}
+	cooldownTicks := cfg.CooldownTicks
+	if cooldownTicks < 0 {
+		cooldownTicks = 0
+	}
+	if cooldownTicks == 0 {
+		cooldownTicks = hysteresisTicks
+	}
 
 	baseStartBatch := clampInt(baseBatchSize, minBatch, maxBatch)
 	if baseStartBatch <= 0 {
@@ -169,8 +181,10 @@ func newAutoTuneControllerWithSeedMode(
 		queueHighWatermarkPct: queueHigh,
 		queueLowWatermarkPct:  queueLow,
 		hysteresisTicks:       hysteresisTicks,
+		cooldownTicks:         cooldownTicks,
 		currentBatch:          startBatch,
 		lastSignal:            autoTuneSignalHold,
+		lastApplied:           autoTuneSignalHold,
 	}
 }
 
@@ -186,42 +200,57 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 	signal := a.classifySignal(inputs, lagSequence)
 	decision := "hold"
 	before := a.currentBatch
+	appliedControl := false
+	blockedByCooldown := a.cooldownLeft > 0 && isOppositeSignal(signal, a.lastApplied)
 
-	switch signal {
-	case autoTuneSignalHold:
+	if blockedByCooldown {
+		decision = "defer_cooldown"
 		a.lastSignal = autoTuneSignalHold
 		a.streak = 0
-	case autoTuneSignalIncrease, autoTuneSignalDecrease:
-		if a.lastSignal == signal {
-			a.streak++
-		} else {
-			a.lastSignal = signal
-			a.streak = 1
-		}
-
-		if a.streak >= a.hysteresisTicks {
-			switch signal {
-			case autoTuneSignalIncrease:
-				next := clampInt(a.currentBatch+a.stepUp, a.minBatchSize, a.maxBatchSize)
-				if next > a.currentBatch {
-					decision = "apply_increase"
-				} else {
-					decision = "clamped_increase"
-				}
-				a.currentBatch = next
-			case autoTuneSignalDecrease:
-				next := clampInt(a.currentBatch-a.stepDown, a.minBatchSize, a.maxBatchSize)
-				if next < a.currentBatch {
-					decision = "apply_decrease"
-				} else {
-					decision = "clamped_decrease"
-				}
-				a.currentBatch = next
-			}
+	} else {
+		switch signal {
+		case autoTuneSignalHold:
+			a.lastSignal = autoTuneSignalHold
 			a.streak = 0
-		} else {
-			decision = "defer_hysteresis"
+		case autoTuneSignalIncrease, autoTuneSignalDecrease:
+			if a.lastSignal == signal {
+				a.streak++
+			} else {
+				a.lastSignal = signal
+				a.streak = 1
+			}
+
+			if a.streak >= a.hysteresisTicks {
+				switch signal {
+				case autoTuneSignalIncrease:
+					next := clampInt(a.currentBatch+a.stepUp, a.minBatchSize, a.maxBatchSize)
+					if next > a.currentBatch {
+						decision = "apply_increase"
+					} else {
+						decision = "clamped_increase"
+					}
+					a.currentBatch = next
+				case autoTuneSignalDecrease:
+					next := clampInt(a.currentBatch-a.stepDown, a.minBatchSize, a.maxBatchSize)
+					if next < a.currentBatch {
+						decision = "apply_decrease"
+					} else {
+						decision = "clamped_decrease"
+					}
+					a.currentBatch = next
+				}
+				a.streak = 0
+				a.lastApplied = signal
+				a.cooldownLeft = a.cooldownTicks
+				appliedControl = true
+			} else {
+				decision = "defer_hysteresis"
+			}
 		}
+	}
+
+	if !appliedControl && a.cooldownLeft > 0 {
+		a.cooldownLeft--
 	}
 
 	return a.currentBatch, autoTuneDiagnostics{
@@ -233,6 +262,18 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		BatchBefore:   before,
 		BatchAfter:    a.currentBatch,
 		Streak:        a.streak,
+		Cooldown:      a.cooldownLeft,
+	}
+}
+
+func isOppositeSignal(signal autoTuneSignal, lastApplied autoTuneSignal) bool {
+	switch signal {
+	case autoTuneSignalIncrease:
+		return lastApplied == autoTuneSignalDecrease
+	case autoTuneSignalDecrease:
+		return lastApplied == autoTuneSignalIncrease
+	default:
+		return false
 	}
 }
 

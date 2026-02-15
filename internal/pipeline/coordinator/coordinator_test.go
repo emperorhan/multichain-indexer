@@ -19,14 +19,24 @@ import (
 
 type stubHeadProvider struct {
 	head  int64
+	heads []int64
 	err   error
 	calls int
+	idx   int
 }
 
 func (s *stubHeadProvider) GetHeadSequence(context.Context) (int64, error) {
 	s.calls++
 	if s.err != nil {
 		return 0, s.err
+	}
+	if len(s.heads) > 0 {
+		if s.idx >= len(s.heads) {
+			return s.heads[len(s.heads)-1], nil
+		}
+		head := s.heads[s.idx]
+		s.idx++
+		return head, nil
 	}
 	return s.head, nil
 }
@@ -1321,6 +1331,177 @@ func TestTick_AutoTuneWarmStartRejectsCrossChainState(t *testing.T) {
 	assert.Equal(t, snapshotFromFetchJob(coldJob), snapshotFromFetchJob(rejectedJob))
 }
 
+func TestTick_AutoTuneSignalFlapPermutationsConvergeCanonicalTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qflapperm000000000000000000000000000000",
+		},
+	}
+
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+		CooldownTicks:         2,
+	}
+
+	steadyHeads := []int64{260, 261, 262, 263, 264, 265}
+	jitterHeads := []int64{260, 115, 260, 115, 260, 115}
+	recoveryHeads := []int64{260, 115, 260, 115, 260, 261}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			steadyHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, steadyHeads, autoTuneCfg)
+			steadySnapshots, steadyBatches := collectAutoTuneTrace(t, steadyHarness, len(steadyHeads))
+
+			jitterHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, jitterHeads, autoTuneCfg)
+			jitterSnapshots, jitterBatches := collectAutoTuneTrace(t, jitterHarness, len(jitterHeads))
+
+			recoveryHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, recoveryHeads, autoTuneCfg)
+			recoverySnapshots, _ := collectAutoTuneTrace(t, recoveryHarness, len(recoveryHeads))
+
+			assert.Equal(t, steadySnapshots, jitterSnapshots, "steady-state and threshold-jitter permutations must converge to one canonical tuple output set")
+			assert.Equal(t, steadySnapshots, recoverySnapshots, "steady-state and recovery permutations must converge to one canonical tuple output set")
+			assert.NotEqual(t, steadyBatches, jitterBatches, "signal-flap jitter should exercise different control decisions without changing canonical tuples")
+			assertNoImmediateDirectionFlip(t, jitterBatches)
+
+			assertCursorMonotonicByAddress(t, steadySnapshots)
+			assertCursorMonotonicByAddress(t, jitterSnapshots)
+			assertCursorMonotonicByAddress(t, recoverySnapshots)
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainOscillationDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+		CooldownTicks:         2,
+	}
+
+	const tickCount = 6
+	healthyBaseAddress := "0x1111111111111111111111111111111111111111"
+	healthyBTCAddress := "tb1qoscillationhealthy000000000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+
+	healthyHeads := []int64{130, 130, 130, 130, 130, 130}
+	laggingFlapHeads := []int64{260, 115, 260, 115, 260, 115}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingFlapHeads,
+		autoTuneCfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBatches := make([]int, 0, tickCount)
+
+	for i := 0; i < tickCount; i++ {
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+		laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana oscillation pressure must not alter base canonical tuples")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana oscillation pressure must not alter base control decisions")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana oscillation pressure must not alter btc canonical tuples")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana oscillation pressure must not alter btc control decisions")
+	assertNoImmediateDirectionFlip(t, laggingBatches)
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 type lagAwareJobSnapshot struct {
 	Address        string
 	CursorValue    string
@@ -1641,6 +1822,27 @@ func newAutoTuneHarnessWithWarmStart(
 	}
 }
 
+func newAutoTuneHarnessWithHeadSeries(
+	chain model.Chain,
+	network model.Network,
+	address string,
+	initialSequence int64,
+	headSeries []int64,
+	autoTuneCfg AutoTuneConfig,
+) *autoTuneHarness {
+	harness := newAutoTuneHarness(
+		chain,
+		network,
+		address,
+		initialSequence,
+		0,
+		len(headSeries),
+		autoTuneCfg,
+	)
+	harness.coordinator.WithHeadProvider(&stubHeadProvider{heads: append([]int64(nil), headSeries...)})
+	return harness
+}
+
 func (h *autoTuneHarness) tickAndAdvance(t *testing.T) event.FetchJob {
 	t.Helper()
 	require.NoError(t, h.coordinator.tick(context.Background()))
@@ -1700,6 +1902,28 @@ func maxIntSlice(values []int) int {
 		}
 	}
 	return maxValue
+}
+
+func assertNoImmediateDirectionFlip(t *testing.T, batches []int) {
+	t.Helper()
+	lastDirection := 0
+	for i := 1; i < len(batches); i++ {
+		delta := batches[i] - batches[i-1]
+		direction := 0
+		if delta > 0 {
+			direction = 1
+		}
+		if delta < 0 {
+			direction = -1
+		}
+		if direction == 0 {
+			continue
+		}
+		if lastDirection != 0 {
+			assert.NotEqual(t, -lastDirection, direction, "batch control direction must not flip on adjacent ticks under cooldown")
+		}
+		lastDirection = direction
+	}
 }
 
 func strPtr(v string) *string {

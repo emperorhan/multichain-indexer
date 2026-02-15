@@ -141,6 +141,7 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 			"queue_high_pct", c.autoTune.queueHighWatermarkPct,
 			"queue_low_pct", c.autoTune.queueLowWatermarkPct,
 			"hysteresis_ticks", c.autoTune.hysteresisTicks,
+			"cooldown_ticks", c.autoTune.cooldownTicks,
 			"profile_transition", transitionMode == "profile_transition",
 			"transition_mode", transitionMode,
 			"seed_reason", seedReason,
@@ -266,6 +267,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			"batch_before", diagnostics.BatchBefore,
 			"batch_after", diagnostics.BatchAfter,
 			"streak", diagnostics.Streak,
+			"cooldown", diagnostics.Cooldown,
 		)
 	}
 
