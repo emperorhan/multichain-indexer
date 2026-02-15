@@ -61,9 +61,11 @@
 58. `I-0215` (`M31-S2`): QA counterexample gate for incremental decode-coverage determinism + invariant safety.
 59. `I-0219` (`M32-S1`): decode-coverage regression flap canonical stability determinism hardening across enriched->sparse->re-enriched permutations.
 60. `I-0220` (`M32-S2`): QA counterexample gate for decode-coverage regression flap determinism + invariant safety.
+61. `I-0224` (`M33-S1`): fee-component availability flap canonical convergence determinism hardening across full-fee, partial-fee, and recovered-fee permutations.
+62. `I-0225` (`M33-S2`): QA counterexample gate for fee-component availability flap determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -131,6 +133,8 @@ Each slice must be independently releasable:
 56. Before `I-0215`: `I-0214` emits deterministic evidence that sparse/enriched decode-coverage permutations converge with zero duplicate/missing logical events while preserving signed-delta and explicit fee-event invariants.
 57. Before `I-0219`: `I-0215` QA report is `PASS` and no unresolved incremental decode-coverage determinism blocker remains.
 58. Before `I-0220`: `I-0219` emits deterministic evidence that enriched->sparse->re-enriched coverage flap permutations converge with zero duplicate/missing logical events while preserving signed-delta and explicit fee-event invariants.
+59. Before `I-0224`: `I-0220` QA report is `PASS` and no unresolved decode-coverage regression flap determinism blocker remains.
+60. Before `I-0225`: `I-0224` emits deterministic evidence that full-fee, partial-fee, and recovered-fee permutations converge with zero duplicate/missing logical events while preserving signed-delta and explicit fee-event invariants.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -162,6 +166,7 @@ Each slice must be independently releasable:
 27. If decoder-version transition reconciliation cannot deterministically prove cross-version logical equivalence for the same event range, preserve deterministic conservative version-bridge matching with explicit version-conflict diagnostics and replay from last-safe cursor until decoder transition contracts are extended.
 28. If incremental decode-coverage reconciliation cannot deterministically prove sparse/enriched logical equivalence and one-time enrichment emission for the same event range, preserve deterministic conservative coverage-lineage matching with explicit coverage-conflict diagnostics and replay from last-safe cursor until incremental-coverage contracts are extended.
 29. If decode-coverage regression flap reconciliation cannot deterministically preserve enriched discoveries during sparse fallback while preventing duplicate re-emission on re-enrichment, preserve deterministic conservative coverage-floor matching with explicit regression-conflict diagnostics and replay from last-safe cursor until flap contracts are extended.
+30. If fee-component availability flap reconciliation cannot deterministically preserve Base fee split semantics while preventing duplicate fee-event re-emission across missing->recovered fee-field transitions, preserve deterministic conservative fee-floor matching with explicit fee-availability diagnostics and replay from last-safe cursor until fee-availability contracts are extended.
 
 ## Completion Evidence
 1. Developer slice output:

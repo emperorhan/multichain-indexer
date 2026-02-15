@@ -712,6 +712,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of decode-coverage regression flap determinism and replay/resume invariant safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0224 (M33-S1)
+Assertions:
+1. Equivalent logical ranges under full-fee, partial-fee (`fee_data_l1` unavailable), and recovered-fee permutations converge to one deterministic canonical output set on both mandatory chains.
+2. Fee-component availability reconciliation preserves deterministic canonical identity boundaries with `0` duplicate canonical IDs and `0` missing logical fee events.
+3. Fee availability flap permutations preserve signed-delta conservation, Solana fee-event continuity, and Base fee split coexistence expectations where source fields exist.
+4. Replay/resume from fee-availability flap boundaries remains idempotent with cursor monotonicity and no balance double-apply side effects.
+
+Pass Evidence:
+- Deterministic tests inject full-fee, partial-fee, and recovered-fee permutations on `solana-devnet` and `base-sepolia` and show canonical tuple equivalence against deterministic baseline expectations.
+- Deterministic fee-availability reconciliation tests show `0` duplicate canonical IDs and `0` missing required fee logical events while signed-delta and explicit fee-event checks remain satisfied.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0225 (M33-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M33 invariants.
+2. QA executes at least one counterexample with full-fee vs partial-fee vs recovered-fee permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample validating fee-availability-flap replay/resume safety with no duplicate canonical IDs, no missing logical fee events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of fee-component availability flap determinism and replay/resume invariant safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -743,3 +767,4 @@ Release recommendation must be `fail` if any condition holds:
 27. Decoder-version transition canonical convergence determinism cannot be proven (legacy-vs-upgraded decode permutation convergence, mixed-version reconciliation stability, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
 28. Incremental decode-coverage canonical convergence determinism cannot be proven (sparse-vs-enriched decode permutation convergence, one-time enrichment emission stability, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
 29. Decode-coverage regression flap canonical stability determinism cannot be proven (enriched->sparse->re-enriched permutation convergence, previously discovered enriched-event persistence during sparse fallback, and no duplicate/missing logical canonical outputs with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
+30. Fee-component availability flap canonical convergence determinism cannot be proven (full-fee vs partial-fee vs recovered-fee permutation convergence, deterministic Base fee split coexistence/unavailable-marker behavior, and no duplicate/missing logical fee events with signed-delta/fee-event invariants and cursor monotonicity not evidenced for both mandatory chains).
