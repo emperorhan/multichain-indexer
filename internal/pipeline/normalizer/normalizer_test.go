@@ -440,6 +440,313 @@ func TestProcessBatch_BaseResultMatching_DeterministicAcrossResponseOrderAndHash
 	assert.Equal(t, "0xabcdef", *second.NewCursorValue)
 }
 
+func TestProcessBatch_AliasIdentityConvergenceAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name           string
+		chain          model.Chain
+		network        model.Network
+		address        string
+		signatures     []event.SignatureInfo
+		expectedTxs    []string
+		expectedCursor string
+		responseRunOne []*sidecarv1.TransactionResult
+		responseRunTwo []*sidecarv1.TransactionResult
+	}
+
+	buildTransfer := func(txHash string, cursor int64, address string) *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      txHash,
+			BlockCursor: cursor,
+			Status:      "SUCCESS",
+			FeeAmount:   "1",
+			FeePayer:    address,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "transfer",
+					ProgramId:             "program",
+					Address:               address,
+					ContractAddress:       "ETH",
+					Delta:                 "-1",
+					TokenSymbol:           "ETH",
+					TokenName:             "Ether",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeNative),
+				},
+			},
+		}
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "solana-addr-1",
+			signatures: []event.SignatureInfo{
+				{Hash: " sig-alias-1 ", Sequence: 10},
+				{Hash: "sig-alias-2", Sequence: 11},
+			},
+			expectedTxs:    []string{"sig-alias-1", "sig-alias-2"},
+			expectedCursor: "sig-alias-2",
+			responseRunOne: []*sidecarv1.TransactionResult{
+				buildTransfer("sig-alias-2", 11, "solana-addr-1"),
+				buildTransfer("sig-alias-1", 10, "solana-addr-1"),
+			},
+			responseRunTwo: []*sidecarv1.TransactionResult{
+				buildTransfer(" sig-alias-1 ", 10, "solana-addr-1"),
+				buildTransfer("sig-alias-2", 11, "solana-addr-1"),
+			},
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			signatures: []event.SignatureInfo{
+				{Hash: "ABCDEF", Sequence: 20},
+				{Hash: "0x1234", Sequence: 21},
+			},
+			expectedTxs:    []string{"0xabcdef", "0x1234"},
+			expectedCursor: "0x1234",
+			responseRunOne: []*sidecarv1.TransactionResult{
+				buildTransfer("0xabcdef", 20, "0x1111111111111111111111111111111111111111"),
+				buildTransfer("0x1234", 21, "0x1111111111111111111111111111111111111111"),
+			},
+			responseRunTwo: []*sidecarv1.TransactionResult{
+				buildTransfer("ABCDEF", 20, "0x1111111111111111111111111111111111111111"),
+				buildTransfer("1234", 21, "0x1111111111111111111111111111111111111111"),
+			},
+		},
+	}
+
+	txHashes := func(batch event.NormalizedBatch) []string {
+		out := make([]string, 0, len(batch.Transactions))
+		for _, tx := range batch.Transactions {
+			out = append(out, tx.TxHash)
+		}
+		return out
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+			normalizedCh := make(chan event.NormalizedBatch, 2)
+			n := &Normalizer{
+				sidecarTimeout: 30 * time.Second,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			batch := event.RawBatch{
+				Chain:   tc.chain,
+				Network: tc.network,
+				Address: tc.address,
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":1}`),
+					json.RawMessage(`{"tx":2}`),
+				},
+				Signatures: tc.signatures,
+			}
+
+			call := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(2).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					call++
+					if call == 1 {
+						return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: tc.responseRunOne}, nil
+					}
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: tc.responseRunTwo}, nil
+				})
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			first := <-normalizedCh
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			second := <-normalizedCh
+
+			assert.Equal(t, tc.expectedTxs, txHashes(first))
+			assert.Equal(t, tc.expectedTxs, txHashes(second))
+			assert.Equal(t, orderedCanonicalTuples(first), orderedCanonicalTuples(second))
+			require.NotNil(t, first.NewCursorValue)
+			require.NotNil(t, second.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *first.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *second.NewCursorValue)
+		})
+	}
+}
+
+func TestProcessBatch_AliasOverlapDuplicatesSuppressedAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name           string
+		chain          model.Chain
+		network        model.Network
+		address        string
+		signatures     []event.SignatureInfo
+		expectedTxs    []string
+		expectedCursor string
+		responseA      []*sidecarv1.TransactionResult
+		responseB      []*sidecarv1.TransactionResult
+	}
+
+	buildTransfer := func(txHash string, cursor int64, address string, contract string) *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      txHash,
+			BlockCursor: cursor,
+			Status:      "SUCCESS",
+			FeeAmount:   "1",
+			FeePayer:    address,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "transfer",
+					ProgramId:             "program",
+					Address:               address,
+					ContractAddress:       contract,
+					Delta:                 "-1",
+					TokenSymbol:           "ETH",
+					TokenName:             "Ether",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeNative),
+				},
+			},
+		}
+	}
+
+	testCases := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "sol-overlap-addr",
+			signatures: []event.SignatureInfo{
+				{Hash: "sol-overlap-1", Sequence: 30},
+				{Hash: " sol-overlap-1 ", Sequence: 30},
+				{Hash: "sol-overlap-2", Sequence: 31},
+				{Hash: "sol-overlap-2", Sequence: 31},
+			},
+			expectedTxs:    []string{"sol-overlap-1", "sol-overlap-2"},
+			expectedCursor: "sol-overlap-2",
+			responseA: []*sidecarv1.TransactionResult{
+				buildTransfer("sol-overlap-1", 30, "sol-overlap-addr", "SOL"),
+				buildTransfer(" sol-overlap-1 ", 30, "sol-overlap-addr", "SOL"),
+				buildTransfer("sol-overlap-2", 31, "sol-overlap-addr", "SOL"),
+			},
+			responseB: []*sidecarv1.TransactionResult{
+				buildTransfer("sol-overlap-2", 31, "sol-overlap-addr", "SOL"),
+				buildTransfer("sol-overlap-1", 30, "sol-overlap-addr", "SOL"),
+				buildTransfer(" sol-overlap-1 ", 30, "sol-overlap-addr", "SOL"),
+			},
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+			signatures: []event.SignatureInfo{
+				{Hash: "ABCDEF", Sequence: 40},
+				{Hash: "0xABCDEF", Sequence: 40},
+				{Hash: "0x123", Sequence: 41},
+				{Hash: "123", Sequence: 41},
+			},
+			expectedTxs:    []string{"0xabcdef", "0x123"},
+			expectedCursor: "0x123",
+			responseA: []*sidecarv1.TransactionResult{
+				buildTransfer("0xabcdef", 40, "0x1111111111111111111111111111111111111111", "ETH"),
+				buildTransfer("ABCDEF", 40, "0x1111111111111111111111111111111111111111", "ETH"),
+				buildTransfer("0x123", 41, "0x1111111111111111111111111111111111111111", "ETH"),
+			},
+			responseB: []*sidecarv1.TransactionResult{
+				buildTransfer("123", 41, "0x1111111111111111111111111111111111111111", "ETH"),
+				buildTransfer("ABCDEF", 40, "0x1111111111111111111111111111111111111111", "ETH"),
+				buildTransfer("0xabcdef", 40, "0x1111111111111111111111111111111111111111", "ETH"),
+			},
+		},
+	}
+
+	txHashes := func(batch event.NormalizedBatch) []string {
+		out := make([]string, 0, len(batch.Transactions))
+		for _, tx := range batch.Transactions {
+			out = append(out, tx.TxHash)
+		}
+		return out
+	}
+
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+			normalizedCh := make(chan event.NormalizedBatch, 2)
+			n := &Normalizer{
+				sidecarTimeout: 30 * time.Second,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			rawTxs := make([]json.RawMessage, len(tc.signatures))
+			for i := range rawTxs {
+				rawTxs[i] = json.RawMessage(`{"tx":"overlap"}`)
+			}
+
+			batch := event.RawBatch{
+				Chain:           tc.chain,
+				Network:         tc.network,
+				Address:         tc.address,
+				RawTransactions: rawTxs,
+				Signatures:      tc.signatures,
+			}
+
+			call := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(2).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					call++
+					if call == 1 {
+						return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: tc.responseA}, nil
+					}
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: tc.responseB}, nil
+				})
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			first := <-normalizedCh
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			second := <-normalizedCh
+
+			assert.Equal(t, tc.expectedTxs, txHashes(first))
+			assert.Equal(t, tc.expectedTxs, txHashes(second))
+			assert.Equal(t, orderedCanonicalTuples(first), orderedCanonicalTuples(second))
+			assertNoDuplicateCanonicalIDs(t, first)
+			assertNoDuplicateCanonicalIDs(t, second)
+			require.NotNil(t, first.NewCursorValue)
+			require.NotNil(t, second.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *first.NewCursorValue)
+			assert.Equal(t, tc.expectedCursor, *second.NewCursorValue)
+		})
+	}
+}
+
 func TestProcessBatch_PersistedArtifactsReplayHasZeroCanonicalTupleDiff(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockChainDecoderClient(ctrl)

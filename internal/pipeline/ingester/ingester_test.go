@@ -169,6 +169,15 @@ func Test_isCanonicalityDrift(t *testing.T) {
 		PreviousCursorSequence: 20,
 		NewCursorSequence:      10,
 	}))
+	basePrev := "ABCDEF"
+	baseNew := "0xabcdef"
+	assert.False(t, isCanonicalityDrift(event.NormalizedBatch{
+		Chain:                  model.ChainBase,
+		PreviousCursorValue:    &basePrev,
+		NewCursorValue:         &baseNew,
+		PreviousCursorSequence: 10,
+		NewCursorSequence:      10,
+	}))
 }
 
 func TestProcessBatch_ReorgDrift_TriggersDeterministicRollbackPath(t *testing.T) {
@@ -328,6 +337,97 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 
 	assert.Greater(t, cursorRepo.Upserts[2], cursorRepo.Upserts[1])
 	assert.GreaterOrEqual(t, configRepo.HighestWatermark, cursorRepo.Upserts[2])
+}
+
+func TestProcessBatch_BaseAliasCanonicalizesTxHashAndCursor(t *testing.T) {
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_ = ctrl
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+
+	txID := uuid.New()
+	tokenID := uuid.New()
+	aliasTxHash := "ABCDEF"
+	canonicalTxHash := "0xabcdef"
+	cursorAlias := "ABCDEF"
+	canonicalCursor := "0xabcdef"
+
+	batch := event.NormalizedBatch{
+		Chain:   model.ChainBase,
+		Network: model.NetworkSepolia,
+		Address: "0x1111111111111111111111111111111111111111",
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:      aliasTxHash,
+				BlockCursor: 150,
+				FeeAmount:   "0",
+				FeePayer:    "0x1111111111111111111111111111111111111111",
+				Status:      model.TxStatusSuccess,
+				ChainData:   json.RawMessage("{}"),
+				BalanceEvents: []event.NormalizedBalanceEvent{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         model.EventCategoryTransfer,
+						EventAction:           "transfer",
+						ProgramID:             "0xbase-program",
+						ContractAddress:       "ETH",
+						Address:               "0x1111111111111111111111111111111111111111",
+						CounterpartyAddress:   "0x2222222222222222222222222222222222222222",
+						Delta:                 "-1",
+						EventID:               "event-base-alias",
+						TokenType:             model.TokenTypeNative,
+					},
+				},
+			},
+		},
+		NewCursorValue:    &cursorAlias,
+		NewCursorSequence: 150,
+	}
+
+	setupBeginTx(mockDB)
+
+	mockTxRepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tx *model.Transaction) (uuid.UUID, error) {
+			assert.Equal(t, canonicalTxHash, tx.TxHash)
+			return txID, nil
+		})
+
+	mockTokenRepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(tokenID, nil)
+
+	mockBERepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+			assert.Equal(t, canonicalTxHash, be.TxHash)
+			return true, nil
+		})
+
+	mockBalanceRepo.EXPECT().
+		AdjustBalanceTx(
+			gomock.Any(), gomock.Any(),
+			model.ChainBase, model.NetworkSepolia, "0x1111111111111111111111111111111111111111",
+			tokenID, nil, nil,
+			"-1", int64(150), canonicalTxHash,
+		).
+		Return(nil)
+
+	mockCursorRepo.EXPECT().
+		UpsertTx(
+			gomock.Any(), gomock.Any(),
+			model.ChainBase, model.NetworkSepolia, "0x1111111111111111111111111111111111111111",
+			&canonicalCursor, int64(150), int64(1),
+		).
+		Return(nil)
+
+	mockConfigRepo.EXPECT().
+		UpdateWatermarkTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, int64(150)).
+		Return(nil)
+
+	require.NoError(t, ing.processBatch(context.Background(), batch))
 }
 
 func TestProcessBatch_Deposit(t *testing.T) {

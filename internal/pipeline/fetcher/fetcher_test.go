@@ -533,6 +533,33 @@ func TestProcessJob_TransientSignatureFetchExhaustion_StageDiagnostic(t *testing
 	assert.Contains(t, err.Error(), "transient_recovery_exhausted stage=fetcher.fetch_signatures")
 }
 
+func TestProcessJob_BaseCanonicalizesOptionalPrefixCursorAlias(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+	f := &Fetcher{
+		adapter:    mockAdapter,
+		rawBatchCh: make(chan event.RawBatch, 1),
+		logger:     slog.Default(),
+	}
+
+	cursor := "ABCDEF1234"
+	job := event.FetchJob{
+		Chain:       model.ChainBase,
+		Network:     model.NetworkSepolia,
+		Address:     "0x1111111111111111111111111111111111111111",
+		CursorValue: &cursor,
+		BatchSize:   16,
+	}
+
+	canonicalCursor := "0xabcdef1234"
+	mockAdapter.EXPECT().
+		FetchNewSignatures(gomock.Any(), job.Address, &canonicalCursor, 16).
+		Return([]chain.SignatureInfo{}, nil)
+
+	require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+}
+
 func TestProcessJob_CanonicalizesFetchOrderAndSuppressesOverlapDuplicatesAcrossMandatoryChains(t *testing.T) {
 	type testCase struct {
 		name           string
@@ -578,18 +605,18 @@ func TestProcessJob_CanonicalizesFetchOrderAndSuppressesOverlapDuplicatesAcrossM
 			network: model.NetworkSepolia,
 			address: "0x1111111111111111111111111111111111111111",
 			permutationA: []chain.SignatureInfo{
-				{Hash: "0xCCC", Sequence: 30},
-				{Hash: "0xAaA", Sequence: 10},
-				{Hash: "0xbBb", Sequence: 20},
+				{Hash: "CCC", Sequence: 30},
+				{Hash: "AaA", Sequence: 10},
+				{Hash: "bBb", Sequence: 20},
 				{Hash: "0xBBB", Sequence: 20},
 				{Hash: "0xaaa", Sequence: 10},
 			},
 			permutationB: []chain.SignatureInfo{
 				{Hash: "0xBBB", Sequence: 20},
-				{Hash: "0xccc", Sequence: 30},
-				{Hash: "0xAAA", Sequence: 10},
+				{Hash: "ccc", Sequence: 30},
+				{Hash: "AAA", Sequence: 10},
 				{Hash: "0xbbb", Sequence: 20},
-				{Hash: "0xaaa", Sequence: 10},
+				{Hash: "aaa", Sequence: 10},
 			},
 			expectedHash:   []string{"0xaaa", "0xbbb", "0xccc"},
 			expectedSeqs:   []int64{10, 20, 30},

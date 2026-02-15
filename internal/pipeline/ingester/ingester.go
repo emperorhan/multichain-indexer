@@ -145,11 +145,19 @@ func isCanonicalityDrift(batch event.NormalizedBatch) bool {
 	if batch.PreviousCursorSequence == 0 {
 		return false
 	}
+	prevIdentity := canonicalSignatureIdentity(batch.Chain, *batch.PreviousCursorValue)
+	if prevIdentity == "" {
+		prevIdentity = strings.TrimSpace(*batch.PreviousCursorValue)
+	}
+	newIdentity := canonicalSignatureIdentity(batch.Chain, *batch.NewCursorValue)
+	if newIdentity == "" {
+		newIdentity = strings.TrimSpace(*batch.NewCursorValue)
+	}
 	if batch.NewCursorSequence < batch.PreviousCursorSequence {
 		return true
 	}
 	if batch.NewCursorSequence == batch.PreviousCursorSequence &&
-		*batch.PreviousCursorValue != *batch.NewCursorValue {
+		prevIdentity != newIdentity {
 		return true
 	}
 	return false
@@ -159,6 +167,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	if ing.reorgHandler == nil {
 		ing.reorgHandler = ing.rollbackCanonicalityDrift
 	}
+	batch.PreviousCursorValue = canonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
+	batch.NewCursorValue = canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
 
 	dbTx, err := ing.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -196,11 +206,16 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	var totalEvents int
 
 	for _, ntx := range batch.Transactions {
+		canonicalTxHash := canonicalSignatureIdentity(batch.Chain, ntx.TxHash)
+		if canonicalTxHash == "" {
+			canonicalTxHash = strings.TrimSpace(ntx.TxHash)
+		}
+
 		// 1. Upsert transaction
 		txModel := &model.Transaction{
 			Chain:       batch.Chain,
 			Network:     batch.Network,
-			TxHash:      ntx.TxHash,
+			TxHash:      canonicalTxHash,
 			BlockCursor: ntx.BlockCursor,
 			BlockTime:   ntx.BlockTime,
 			FeeAmount:   ntx.FeeAmount,
@@ -250,7 +265,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				Chain:                 batch.Chain,
 				Network:               batch.Network,
 				TransactionID:         txID,
-				TxHash:                ntx.TxHash,
+				TxHash:                canonicalTxHash,
 				OuterInstructionIndex: be.OuterInstructionIndex,
 				InnerInstructionIndex: be.InnerInstructionIndex,
 				TokenID:               tokenID,
@@ -291,7 +306,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 					ctx, dbTx,
 					batch.Chain, batch.Network, be.Address,
 					tokenID, batch.WalletID, batch.OrgID,
-					be.Delta, ntx.BlockCursor, ntx.TxHash,
+					be.Delta, ntx.BlockCursor, canonicalTxHash,
 				); err != nil {
 					return fmt.Errorf("adjust balance: %w", err)
 				}
@@ -515,6 +530,57 @@ func negateDecimalString(value string) (string, error) {
 	}
 	delta.Neg(&delta)
 	return delta.String(), nil
+}
+
+func canonicalizeCursorValue(chainID model.Chain, cursor *string) *string {
+	if cursor == nil {
+		return nil
+	}
+	identity := canonicalSignatureIdentity(chainID, *cursor)
+	if identity == "" {
+		return nil
+	}
+	value := identity
+	return &value
+}
+
+func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
+	trimmed := strings.TrimSpace(hash)
+	if trimmed == "" {
+		return ""
+	}
+	if !isEVMChain(chainID) {
+		return trimmed
+	}
+
+	withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
+	if withoutPrefix == "" {
+		return ""
+	}
+	if isHexString(withoutPrefix) {
+		return "0x" + strings.ToLower(withoutPrefix)
+	}
+	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
+		return "0x" + strings.ToLower(withoutPrefix)
+	}
+	return trimmed
+}
+
+func isEVMChain(chainID model.Chain) bool {
+	return chainID == model.ChainBase || chainID == model.ChainEthereum
+}
+
+func isHexString(v string) bool {
+	for _, ch := range v {
+		switch {
+		case ch >= '0' && ch <= '9':
+		case ch >= 'a' && ch <= 'f':
+		case ch >= 'A' && ch <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func defaultTokenSymbol(be event.NormalizedBalanceEvent) string {

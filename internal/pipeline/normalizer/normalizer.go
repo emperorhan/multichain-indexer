@@ -169,6 +169,12 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	if len(batch.RawTransactions) != len(batch.Signatures) {
 		return fmt.Errorf("raw/signature length mismatch: raw=%d signatures=%d", len(batch.RawTransactions), len(batch.Signatures))
 	}
+	canonicalSignatures := canonicalizeBatchSignatures(batch.Chain, batch.Signatures)
+	if len(canonicalSignatures) == 0 && len(batch.Signatures) > 0 {
+		return fmt.Errorf("decode collapse stage=%s no canonical signatures in batch", decodeStage)
+	}
+	canonicalPrevCursor := canonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
+	canonicalNewCursor := canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
 
 	// Build gRPC request
 	rawTxs := make([]*sidecarv1.RawTransaction, len(batch.RawTransactions))
@@ -203,17 +209,17 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		}
 		fallbackResults = append(fallbackResults, result)
 
-		signatureKey := canonicalSignatureIdentity(result.TxHash)
+		signatureKey := canonicalSignatureIdentity(batch.Chain, result.TxHash)
 		if signatureKey == "" {
 			continue
 		}
 		existing, ok := resultBySignature[signatureKey]
-		if !ok || shouldReplaceDecodedResult(existing, result) {
+		if !ok || shouldReplaceDecodedResult(batch.Chain, existing, result) {
 			resultBySignature[signatureKey] = result
 		}
 	}
 	sort.Slice(fallbackResults, func(i, j int) bool {
-		return compareDecodedResultOrder(fallbackResults[i], fallbackResults[j]) < 0
+		return compareDecodedResultOrder(batch.Chain, fallbackResults[i], fallbackResults[j]) < 0
 	})
 
 	errorBySignature := make(map[string]string, len(resp.Errors))
@@ -221,7 +227,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		if decErr == nil {
 			continue
 		}
-		signatureKey := canonicalSignatureIdentity(decErr.Signature)
+		signatureKey := canonicalSignatureIdentity(batch.Chain, decErr.Signature)
 		if signatureKey == "" {
 			continue
 		}
@@ -239,9 +245,9 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		Address:                batch.Address,
 		WalletID:               batch.WalletID,
 		OrgID:                  batch.OrgID,
-		PreviousCursorValue:    batch.PreviousCursorValue,
+		PreviousCursorValue:    canonicalPrevCursor,
 		PreviousCursorSequence: batch.PreviousCursorSequence,
-		NewCursorValue:         batch.NewCursorValue,
+		NewCursorValue:         canonicalNewCursor,
 		NewCursorSequence:      batch.NewCursorSequence,
 	}
 
@@ -252,11 +258,11 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		signature string
 		reason    string
 	}
-	decodeFailures := make([]decodeFailure, 0, len(batch.Signatures))
+	decodeFailures := make([]decodeFailure, 0, len(canonicalSignatures))
 
-	for _, sig := range batch.Signatures {
+	for _, sig := range canonicalSignatures {
 		signature := strings.TrimSpace(sig.Hash)
-		signatureKey := canonicalSignatureIdentity(signature)
+		signatureKey := canonicalSignatureIdentity(batch.Chain, signature)
 		if signatureKey == "" {
 			decodeFailures = append(decodeFailures, decodeFailure{
 				signature: "<empty>",
@@ -314,7 +320,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		processed++
 	}
 
-	if processed == 0 && len(batch.Signatures) > 0 {
+	if processed == 0 && len(canonicalSignatures) > 0 {
 		diagnostics := make([]string, 0, len(decodeFailures))
 		for _, failure := range decodeFailures {
 			diagnostics = append(diagnostics, fmt.Sprintf("%s=%s", failure.signature, failure.reason))
@@ -351,8 +357,12 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 }
 
 func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sidecarv1.TransactionResult) event.NormalizedTransaction {
+	txHash := canonicalSignatureIdentity(batch.Chain, result.TxHash)
+	if txHash == "" {
+		txHash = strings.TrimSpace(result.TxHash)
+	}
 	tx := event.NormalizedTransaction{
-		TxHash:      result.TxHash,
+		TxHash:      txHash,
 		BlockCursor: result.BlockCursor,
 		FeeAmount:   result.FeeAmount,
 		FeePayer:    result.FeePayer,
@@ -373,7 +383,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 		tx.BalanceEvents = buildCanonicalBaseBalanceEvents(
 			batch.Chain,
 			batch.Network,
-			result.TxHash,
+			txHash,
 			result.Status,
 			result.FeePayer,
 			result.FeeAmount,
@@ -383,7 +393,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 		tx.BalanceEvents = buildCanonicalSolanaBalanceEvents(
 			batch.Chain,
 			batch.Network,
-			result.TxHash,
+			txHash,
 			result.Status,
 			result.FeePayer,
 			result.FeeAmount,
@@ -973,18 +983,82 @@ func balanceEventPath(outerInstructionIndex, innerInstructionIndex int32) string
 	return fmt.Sprintf("outer:%d|inner:%d", outerInstructionIndex, innerInstructionIndex)
 }
 
-func canonicalSignatureIdentity(hash string) string {
+func canonicalizeBatchSignatures(chainID model.Chain, sigs []event.SignatureInfo) []event.SignatureInfo {
+	if len(sigs) == 0 {
+		return []event.SignatureInfo{}
+	}
+
+	byIdentity := make(map[string]event.SignatureInfo, len(sigs))
+	for _, sig := range sigs {
+		identity := canonicalSignatureIdentity(chainID, sig.Hash)
+		if identity == "" {
+			continue
+		}
+		candidate := event.SignatureInfo{
+			Hash:     identity,
+			Sequence: sig.Sequence,
+		}
+		existing, ok := byIdentity[identity]
+		if !ok || shouldReplaceCanonicalSignature(existing, candidate) {
+			byIdentity[identity] = candidate
+		}
+	}
+
+	ordered := make([]event.SignatureInfo, 0, len(byIdentity))
+	for _, sig := range byIdentity {
+		ordered = append(ordered, sig)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Sequence != ordered[j].Sequence {
+			return ordered[i].Sequence < ordered[j].Sequence
+		}
+		return ordered[i].Hash < ordered[j].Hash
+	})
+	return ordered
+}
+
+func shouldReplaceCanonicalSignature(existing, incoming event.SignatureInfo) bool {
+	if existing.Sequence != incoming.Sequence {
+		return incoming.Sequence > existing.Sequence
+	}
+	return incoming.Hash < existing.Hash
+}
+
+func canonicalizeCursorValue(chainID model.Chain, cursor *string) *string {
+	if cursor == nil {
+		return nil
+	}
+	identity := canonicalSignatureIdentity(chainID, *cursor)
+	if identity == "" {
+		return nil
+	}
+	value := identity
+	return &value
+}
+
+func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
 	trimmed := strings.TrimSpace(hash)
 	if trimmed == "" {
 		return ""
 	}
+	if !isEVMChain(chainID) {
+		return trimmed
+	}
+
+	withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
+	if withoutPrefix == "" {
+		return ""
+	}
+	if isHexString(withoutPrefix) {
+		return "0x" + strings.ToLower(withoutPrefix)
+	}
 	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
-		return strings.ToLower(trimmed)
+		return "0x" + strings.ToLower(withoutPrefix)
 	}
 	return trimmed
 }
 
-func shouldReplaceDecodedResult(existing, incoming *sidecarv1.TransactionResult) bool {
+func shouldReplaceDecodedResult(chainID model.Chain, existing, incoming *sidecarv1.TransactionResult) bool {
 	if existing == nil {
 		return incoming != nil
 	}
@@ -1013,16 +1087,18 @@ func shouldReplaceDecodedResult(existing, incoming *sidecarv1.TransactionResult)
 		return incomingFee < existingFee
 	}
 
-	existingPayer := canonicalSignatureIdentity(existing.FeePayer)
-	incomingPayer := canonicalSignatureIdentity(incoming.FeePayer)
+	existingPayer := canonicalSignatureIdentity(chainID, existing.FeePayer)
+	incomingPayer := canonicalSignatureIdentity(chainID, incoming.FeePayer)
 	if existingPayer != incomingPayer {
 		return incomingPayer < existingPayer
 	}
 
-	return strings.TrimSpace(incoming.TxHash) < strings.TrimSpace(existing.TxHash)
+	incomingHash := canonicalSignatureIdentity(chainID, incoming.TxHash)
+	existingHash := canonicalSignatureIdentity(chainID, existing.TxHash)
+	return incomingHash < existingHash
 }
 
-func compareDecodedResultOrder(left, right *sidecarv1.TransactionResult) int {
+func compareDecodedResultOrder(chainID model.Chain, left, right *sidecarv1.TransactionResult) int {
 	if left == nil && right == nil {
 		return 0
 	}
@@ -1033,8 +1109,8 @@ func compareDecodedResultOrder(left, right *sidecarv1.TransactionResult) int {
 		return -1
 	}
 
-	leftHash := canonicalSignatureIdentity(left.TxHash)
-	rightHash := canonicalSignatureIdentity(right.TxHash)
+	leftHash := canonicalSignatureIdentity(chainID, left.TxHash)
+	rightHash := canonicalSignatureIdentity(chainID, right.TxHash)
 	if leftHash != rightHash {
 		if leftHash < rightHash {
 			return -1
@@ -1058,8 +1134,8 @@ func compareDecodedResultOrder(left, right *sidecarv1.TransactionResult) int {
 		return 1
 	}
 
-	leftFeePayer := canonicalSignatureIdentity(left.FeePayer)
-	rightFeePayer := canonicalSignatureIdentity(right.FeePayer)
+	leftFeePayer := canonicalSignatureIdentity(chainID, left.FeePayer)
+	rightFeePayer := canonicalSignatureIdentity(chainID, right.FeePayer)
 	if leftFeePayer != rightFeePayer {
 		if leftFeePayer < rightFeePayer {
 			return -1
@@ -1077,6 +1153,23 @@ func compareDecodedResultOrder(left, right *sidecarv1.TransactionResult) int {
 	}
 
 	return 0
+}
+
+func isEVMChain(chainID model.Chain) bool {
+	return chainID == model.ChainBase || chainID == model.ChainEthereum
+}
+
+func isHexString(v string) bool {
+	for _, ch := range v {
+		switch {
+		case ch >= '0' && ch <= '9':
+		case ch >= 'a' && ch <= 'f':
+		case ch >= 'A' && ch <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (n *Normalizer) effectiveRetryMaxAttempts() int {

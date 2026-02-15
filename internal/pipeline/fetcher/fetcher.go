@@ -12,6 +12,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 )
 
@@ -109,9 +110,10 @@ func (f *Fetcher) worker(ctx context.Context, workerID int) {
 
 func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.FetchJob) error {
 	requestedBatch := f.resolveBatchSize(job.Address, job.BatchSize)
+	canonicalCursor := canonicalizeCursorValue(job.Chain, job.CursorValue)
 
 	// 1. Fetch new signatures with retry/backoff and adaptive batch size reduction.
-	sigs, sigBatchSize, err := f.fetchSignaturesWithRetry(ctx, log, job, requestedBatch)
+	sigs, sigBatchSize, err := f.fetchSignaturesWithRetry(ctx, log, job, canonicalCursor, requestedBatch)
 	if err != nil {
 		f.setAdaptiveBatchSize(job.Address, sigBatchSize)
 		return err
@@ -123,7 +125,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	}
 
 	// Canonicalize provider-returned ordering and suppress overlap duplicates.
-	sigs = canonicalizeSignatures(sigs)
+	sigs = canonicalizeSignatures(job.Chain, sigs)
 	if len(sigs) == 0 {
 		log.Debug("no canonical signatures after overlap suppression", "address", job.Address)
 		return nil
@@ -155,7 +157,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 		Address:                job.Address,
 		WalletID:               job.WalletID,
 		OrgID:                  job.OrgID,
-		PreviousCursorValue:    job.CursorValue,
+		PreviousCursorValue:    canonicalCursor,
 		PreviousCursorSequence: job.CursorSequence,
 		RawTransactions:        rawTxs,
 		Signatures:             sigInfos,
@@ -181,7 +183,13 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	return nil
 }
 
-func (f *Fetcher) fetchSignaturesWithRetry(ctx context.Context, log *slog.Logger, job event.FetchJob, batchSize int) ([]chain.SignatureInfo, int, error) {
+func (f *Fetcher) fetchSignaturesWithRetry(
+	ctx context.Context,
+	log *slog.Logger,
+	job event.FetchJob,
+	cursor *string,
+	batchSize int,
+) ([]chain.SignatureInfo, int, error) {
 	const stage = "fetcher.fetch_signatures"
 
 	currentBatch := batchSize
@@ -193,7 +201,7 @@ func (f *Fetcher) fetchSignaturesWithRetry(ctx context.Context, log *slog.Logger
 		Reason: "unset",
 	}
 	for attempt := 1; attempt <= attempts; attempt++ {
-		sigs, err := f.adapter.FetchNewSignatures(ctx, job.Address, job.CursorValue, currentBatch)
+		sigs, err := f.adapter.FetchNewSignatures(ctx, job.Address, cursor, currentBatch)
 		if err == nil {
 			return sigs, currentBatch, nil
 		}
@@ -468,14 +476,14 @@ func (f *Fetcher) effectiveAdaptiveMinBatch() int {
 	return f.adaptiveMinBatch
 }
 
-func canonicalizeSignatures(sigs []chain.SignatureInfo) []chain.SignatureInfo {
+func canonicalizeSignatures(chainID model.Chain, sigs []chain.SignatureInfo) []chain.SignatureInfo {
 	if len(sigs) == 0 {
 		return []chain.SignatureInfo{}
 	}
 
 	byIdentity := make(map[string]chain.SignatureInfo, len(sigs))
 	for _, sig := range sigs {
-		identity := canonicalSignatureIdentity(sig.Hash)
+		identity := canonicalSignatureIdentity(chainID, sig.Hash)
 		if identity == "" {
 			continue
 		}
@@ -525,14 +533,55 @@ func shouldReplaceCanonicalSignature(existing, incoming chain.SignatureInfo) boo
 	return incoming.Hash < existing.Hash
 }
 
-func canonicalSignatureIdentity(hash string) string {
+func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
 	trimmed := strings.TrimSpace(hash)
 	if trimmed == "" {
 		return ""
 	}
-	// EVM tx hashes are hex and case-insensitive; normalize to suppress case-only duplicates.
+	if !isEVMChain(chainID) {
+		return trimmed
+	}
+
+	withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
+	if withoutPrefix == "" {
+		return ""
+	}
+	if isHexString(withoutPrefix) {
+		// Canonical EVM identity: lowercase hex with 0x prefix.
+		return "0x" + strings.ToLower(withoutPrefix)
+	}
+	// Keep non-hex provider artifacts deterministic while still normalizing case.
 	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
-		return strings.ToLower(trimmed)
+		return "0x" + strings.ToLower(withoutPrefix)
 	}
 	return trimmed
+}
+
+func canonicalizeCursorValue(chainID model.Chain, cursor *string) *string {
+	if cursor == nil {
+		return nil
+	}
+	identity := canonicalSignatureIdentity(chainID, *cursor)
+	if identity == "" {
+		return nil
+	}
+	value := identity
+	return &value
+}
+
+func isEVMChain(chainID model.Chain) bool {
+	return chainID == model.ChainBase || chainID == model.ChainEthereum
+}
+
+func isHexString(v string) bool {
+	for _, ch := range v {
+		switch {
+		case ch >= '0' && ch <= '9':
+		case ch >= 'a' && ch <= 'f':
+		case ch >= 'A' && ch <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
