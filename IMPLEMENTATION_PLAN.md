@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -45,6 +45,8 @@ Execution queue (dependency-ordered):
 34. `I-0161` (`M19-S2`) QA counterexample gate for lag-aware fan-in cursor continuity + invariant safety
 35. `I-0165` (`M20-S1`) dual-chain tick interleaving determinism hardening
 36. `I-0166` (`M20-S2`) QA counterexample gate for dual-chain interleaving determinism + invariant safety
+37. `I-0170` (`M21-S1`) tick checkpoint crash-recovery determinism hardening
+38. `I-0171` (`M21-S2`) QA counterexample gate for crash-point permutation determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -680,7 +682,7 @@ Eliminate missing-event risk when overlapping watched-address groups have diverg
 - Gate: overly conservative lag-aware cursor reconciliation can widen replay windows and increase duplicate-pressure/performance cost.
 - Fallback: keep lag reconciliation deterministic with bounded replay-window guardrails, emit explicit lag-merge diagnostics on ambiguous overlap ranges, and fail fast until fan-in lag-window contracts are extended.
 
-### M20. Dual-Chain Tick Interleaving Determinism Reliability Tranche C0014 (P0, Next)
+### M20. Dual-Chain Tick Interleaving Determinism Reliability Tranche C0014 (P0, Completed)
 
 #### Objective
 Eliminate missing/duplicate-event risk from nondeterministic mandatory-chain tick completion order so equivalent dual-chain runs converge to one deterministic canonical output and cursor state.
@@ -714,6 +716,41 @@ Eliminate missing/duplicate-event risk from nondeterministic mandatory-chain tic
 #### Risk Gate + Fallback
 - Gate: deterministic interleaving barriers can reduce throughput or increase tick latency under asymmetric provider delay.
 - Fallback: keep ordering rules chain-scoped with bounded skew guardrails, emit explicit interleaving-skew diagnostics, and fail fast on ambiguous commit ordering until the contract is extended.
+
+### M21. Tick Checkpoint Crash-Recovery Determinism Reliability Tranche C0015 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when process crashes occur at partial dual-chain tick progress boundaries, so restart/resume always converges to one deterministic canonical output and cursor state.
+
+#### Entry Gate
+- `M20` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M21-S1` (`I-0170`): implement deterministic crash-safe tick checkpointing and resume reconciliation so crash-point permutations cannot change canonical outputs, induce duplicate canonical IDs, or regress chain-scoped cursors.
+2. `M21-S2` (`I-0171`): execute QA counterexample gate for crash-point permutation determinism and restart/resume invariant evidence.
+
+#### Definition Of Done
+1. Restart after any modeled crash cutpoint in mixed Solana/Base tick execution converges to one canonical event set for equivalent logical input.
+2. Partial pre-crash progress cannot cause missing logical events, duplicate canonical IDs, or cross-chain cursor bleed/regression on resume.
+3. Replay/resume under repeated crash/restart permutations remains idempotent with stable canonical tuple ordering and no balance double-apply side effects.
+4. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject crash cutpoints around fetch/normalize/ingest/cursor-commit boundaries across opposite Solana/Base completion-order permutations and assert `0` canonical tuple diffs for equivalent ranges.
+2. Deterministic tests assert resume from every cutpoint preserves chain-scoped cursor monotonicity and `0` missing logical events on the non-crashed chain path.
+3. Deterministic repeated crash/restart replay loops assert `0` duplicate canonical IDs and `0` balance drift.
+4. QA executes required validation commands plus crash-point permutation counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across crash-point permutation fixtures on mandatory chains.
+2. `0` duplicate canonical IDs and `0` missing logical events after crash/restart resume fixtures.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: strict checkpoint ordering and resume reconciliation may increase tick latency or replay window size under repeated crashes.
+- Fallback: use deterministic replay-from-last-safe-checkpoint semantics with explicit crash-cutpoint diagnostics and bounded replay window guardrails until optimized checkpoint granularity is proven safe.
 
 ## Decision Register (Major + Fallback)
 
@@ -766,10 +803,12 @@ Completed milestones/slices:
 32. `I-0156`
 33. `I-0160`
 34. `I-0161`
+35. `I-0165`
+36. `I-0166`
 
 Active downstream queue from this plan:
-1. `I-0165`
-2. `I-0166`
+1. `I-0170`
+2. `I-0171`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -777,3 +816,4 @@ Superseded issue:
 - `I-0153` and `I-0154` are superseded by `I-0155` and `I-0156` to replace generic cycle placeholders with executable watched-address fan-in reliability slices.
 - `I-0158` and `I-0159` are superseded by `I-0160` and `I-0161` to replace generic cycle placeholders with executable lag-aware fan-in cursor continuity reliability slices.
 - `I-0163` and `I-0164` are superseded by `I-0165` and `I-0166` to replace generic cycle placeholders with executable dual-chain tick interleaving reliability slices.
+- `I-0168` and `I-0169` are superseded by `I-0170` and `I-0171` to replace generic cycle placeholders with executable crash-recovery checkpoint determinism slices.
