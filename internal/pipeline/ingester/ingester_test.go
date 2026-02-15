@@ -216,6 +216,46 @@ func Test_isCanonicalityDrift(t *testing.T) {
 	}))
 }
 
+func TestRollbackForkCursorSequence_BTCEarliestCompetingWindow(t *testing.T) {
+	t.Run("non-btc-keeps-new-cursor-sequence", func(t *testing.T) {
+		batch := event.NormalizedBatch{
+			Chain:                  model.ChainSolana,
+			PreviousCursorSequence: 102,
+			NewCursorSequence:      101,
+			Transactions: []event.NormalizedTransaction{
+				{BlockCursor: 100},
+				{BlockCursor: 101},
+			},
+		}
+		assert.Equal(t, int64(101), rollbackForkCursorSequence(batch))
+	})
+
+	t.Run("btc-uses-earliest-replacement-sequence", func(t *testing.T) {
+		batch := event.NormalizedBatch{
+			Chain:                  model.ChainBTC,
+			PreviousCursorSequence: 102,
+			NewCursorSequence:      101,
+			Transactions: []event.NormalizedTransaction{
+				{BlockCursor: 100},
+				{BlockCursor: 101},
+			},
+		}
+		assert.Equal(t, int64(100), rollbackForkCursorSequence(batch))
+	})
+
+	t.Run("btc-falls-back-to-new-sequence-when-window-single-height", func(t *testing.T) {
+		batch := event.NormalizedBatch{
+			Chain:                  model.ChainBTC,
+			PreviousCursorSequence: 102,
+			NewCursorSequence:      101,
+			Transactions: []event.NormalizedTransaction{
+				{BlockCursor: 101},
+			},
+		}
+		assert.Equal(t, int64(101), rollbackForkCursorSequence(batch))
+	})
+}
+
 func TestProcessBatch_ReorgDrift_TriggersDeterministicRollbackPath(t *testing.T) {
 	ctrl, mockDB, _, _, _, _, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
@@ -1742,6 +1782,265 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 			assert.Equal(t, []string{"confirmed", "finalized", "finalized", "finalized"}, writtenFinality)
 		})
 	}
+}
+
+func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministically(t *testing.T) {
+	type eventBlueprint struct {
+		category model.EventCategory
+		action   string
+		path     string
+		delta    string
+	}
+
+	type scenarioResult struct {
+		tupleKeys             map[string]struct{}
+		eventIDs              map[string]struct{}
+		eventIDCounts         map[string]int
+		totalDelta            string
+		cursorValue           string
+		cursorSequence        int64
+		watermark             int64
+		cursorWrites          []int64
+		watermarkWrites       []int64
+		rollbackForkSequences []int64
+	}
+
+	eventIDFor := func(txHash, path string, category model.EventCategory) string {
+		canonicalTx := canonicalSignatureIdentity(model.ChainBTC, txHash)
+		return strings.Join([]string{
+			string(model.ChainBTC),
+			string(model.NetworkTestnet),
+			canonicalTx,
+			"path:" + path,
+			"addr:btc-reorg-addr",
+			"asset:BTC",
+			"cat:" + string(category),
+		}, "|")
+	}
+
+	buildTx := func(hash string, sequence int64, events []eventBlueprint) event.NormalizedTransaction {
+		normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(events))
+		for _, spec := range events {
+			normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
+				OuterInstructionIndex: 0,
+				InnerInstructionIndex: -1,
+				EventCategory:         spec.category,
+				EventAction:           spec.action,
+				ProgramID:             "btc",
+				ContractAddress:       "BTC",
+				Address:               "btc-reorg-addr",
+				CounterpartyAddress:   "btc-reorg-counterparty",
+				Delta:                 spec.delta,
+				EventID:               eventIDFor(hash, spec.path, spec.category),
+				TokenType:             model.TokenTypeNative,
+				EventPath:             spec.path,
+				EventPathType:         "btc_utxo",
+				AssetType:             "native",
+				AssetID:               "BTC",
+				FinalityState:         "confirmed",
+				DecoderVersion:        "btc-decoder-v1",
+				SchemaVersion:         "cex_v1",
+			})
+		}
+
+		return event.NormalizedTransaction{
+			TxHash:        hash,
+			BlockCursor:   sequence,
+			FeeAmount:     "0",
+			FeePayer:      "btc-reorg-addr",
+			Status:        model.TxStatusSuccess,
+			ChainData:     json.RawMessage("{}"),
+			BalanceEvents: normalizedEvents,
+		}
+	}
+
+	buildBatch := func(prevCursor *string, prevSeq int64, nextCursor string, nextSeq int64, txs ...event.NormalizedTransaction) event.NormalizedBatch {
+		next := nextCursor
+		return event.NormalizedBatch{
+			Chain:                  model.ChainBTC,
+			Network:                model.NetworkTestnet,
+			Address:                "btc-reorg-addr",
+			PreviousCursorValue:    prevCursor,
+			PreviousCursorSequence: prevSeq,
+			NewCursorValue:         &next,
+			NewCursorSequence:      nextSeq,
+			Transactions:           txs,
+		}
+	}
+
+	runScenario := func(t *testing.T, batches []event.NormalizedBatch) scenarioResult {
+		t.Helper()
+
+		state := newInterleaveState(nil)
+		db := openFakeDB()
+		t.Cleanup(func() { _ = db.Close() })
+
+		cursorRepo := &interleaveCursorRepo{state: state}
+		configRepo := &interleaveConfigRepo{state: state}
+
+		ing := New(
+			&interleaveTxBeginner{db: db},
+			&interleaveTxRepo{state: state},
+			&interleaveBalanceEventRepo{state: state},
+			&interleaveBalanceRepo{state: state},
+			&interleaveTokenRepo{state: state},
+			cursorRepo,
+			configRepo,
+			nil,
+			slog.Default(),
+		)
+
+		rollbackForkSequences := make([]int64, 0, 2)
+		ing.reorgHandler = func(ctx context.Context, tx *sql.Tx, got event.NormalizedBatch) error {
+			rollbackForkSequences = append(rollbackForkSequences, got.PreviousCursorSequence)
+			rewindValue, rewindSequence, err := state.rollbackFromCursor(got.Chain, got.Network, got.Address, got.PreviousCursorSequence)
+			if err != nil {
+				return err
+			}
+			if err := cursorRepo.UpsertTx(ctx, tx, got.Chain, got.Network, got.Address, rewindValue, rewindSequence, 0); err != nil {
+				return err
+			}
+			if err := configRepo.UpdateWatermarkTx(ctx, tx, got.Chain, got.Network, rewindSequence); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		for _, batch := range batches {
+			require.NoError(t, ing.processBatch(context.Background(), batch))
+		}
+
+		tuples := state.snapshotTuples()
+		tupleKeys := make(map[string]struct{}, len(tuples))
+		eventIDs := make(map[string]struct{}, len(tuples))
+		eventIDCounts := make(map[string]int, len(tuples))
+		totalDelta := "0"
+		for _, tuple := range tuples {
+			tupleKeys[interleaveTupleKey(tuple)] = struct{}{}
+			eventIDs[tuple.EventID] = struct{}{}
+			eventIDCounts[tuple.EventID]++
+			var err error
+			totalDelta, err = addDecimalStringsForTest(totalDelta, tuple.Delta)
+			require.NoError(t, err)
+		}
+
+		chainKey := interleaveKey(model.ChainBTC, model.NetworkTestnet)
+		cursorKey := chainKey + "|btc-reorg-addr"
+		cursors := state.snapshotCursors()
+		watermarks := state.snapshotWatermarks()
+		require.Contains(t, cursors, cursorKey)
+		require.NotNil(t, cursors[cursorKey])
+		require.NotNil(t, cursors[cursorKey].CursorValue)
+
+		state.mu.Lock()
+		cursorWrites := append([]int64(nil), state.cursorWrites[cursorKey]...)
+		watermarkWrites := append([]int64(nil), state.watermarkWrites[chainKey]...)
+		state.mu.Unlock()
+
+		return scenarioResult{
+			tupleKeys:             tupleKeys,
+			eventIDs:              eventIDs,
+			eventIDCounts:         eventIDCounts,
+			totalDelta:            totalDelta,
+			cursorValue:           *cursors[cursorKey].CursorValue,
+			cursorSequence:        cursors[cursorKey].CursorSequence,
+			watermark:             watermarks[chainKey],
+			cursorWrites:          cursorWrites,
+			watermarkWrites:       watermarkWrites,
+			rollbackForkSequences: rollbackForkSequences,
+		}
+	}
+
+	stable100 := buildTx("btc-stable-100", 100, []eventBlueprint{
+		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:0", delta: "10"},
+		{category: model.EventCategoryFee, action: "miner_fee", path: "fee", delta: "-2"},
+	})
+	stable101 := buildTx("btc-stable-101", 101, []eventBlueprint{
+		{category: model.EventCategoryTransfer, action: "vin_debit", path: "vin:0", delta: "-6"},
+		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:1", delta: "4"},
+	})
+	new102 := buildTx("btc-new-102", 102, []eventBlueprint{
+		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:0", delta: "3"},
+		{category: model.EventCategoryFee, action: "miner_fee", path: "fee", delta: "-1"},
+	})
+	old100 := buildTx("btc-old-100", 100, []eventBlueprint{
+		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:0", delta: "7"},
+		{category: model.EventCategoryFee, action: "miner_fee", path: "fee", delta: "-1"},
+	})
+	old101 := buildTx("btc-old-101", 101, []eventBlueprint{
+		{category: model.EventCategoryTransfer, action: "vin_debit", path: "vin:0", delta: "-4"},
+		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:1", delta: "1"},
+	})
+	old102 := buildTx("btc-old-102", 102, []eventBlueprint{
+		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:0", delta: "9"},
+		{category: model.EventCategoryFee, action: "miner_fee", path: "fee", delta: "-4"},
+	})
+
+	cursor99 := "btc-cursor-99"
+	stable101Cursor := "btc-stable-101"
+	old102Cursor := "btc-old-102"
+	new102Cursor := "btc-new-102"
+
+	baseline := runScenario(t, []event.NormalizedBatch{
+		buildBatch(&cursor99, 99, stable101Cursor, 101, stable100, stable101),
+		buildBatch(&stable101Cursor, 101, new102Cursor, 102, new102),
+	})
+
+	oneBlockReorg := runScenario(t, []event.NormalizedBatch{
+		buildBatch(&cursor99, 99, old102Cursor, 102, stable100, stable101, old102),
+		buildBatch(&old102Cursor, 102, stable101Cursor, 101, stable101),
+		buildBatch(&stable101Cursor, 101, new102Cursor, 102, new102),
+	})
+
+	multiBlockReorg := runScenario(t, []event.NormalizedBatch{
+		buildBatch(&cursor99, 99, old102Cursor, 102, old100, old101, old102),
+		buildBatch(&old102Cursor, 102, stable101Cursor, 101, stable100, stable101),
+		buildBatch(&stable101Cursor, 101, new102Cursor, 102, new102),
+	})
+
+	assert.Equal(t, baseline.tupleKeys, oneBlockReorg.tupleKeys)
+	assert.Equal(t, baseline.tupleKeys, multiBlockReorg.tupleKeys)
+	assert.Equal(t, baseline.eventIDs, oneBlockReorg.eventIDs)
+	assert.Equal(t, baseline.eventIDs, multiBlockReorg.eventIDs)
+	assert.Equal(t, "8", baseline.totalDelta)
+	assert.Equal(t, baseline.totalDelta, oneBlockReorg.totalDelta)
+	assert.Equal(t, baseline.totalDelta, multiBlockReorg.totalDelta)
+
+	// Orphaned branch events must not survive rollback.
+	assert.NotContains(t, oneBlockReorg.eventIDs, eventIDFor("btc-old-102", "vout:0", model.EventCategoryTransfer))
+	assert.NotContains(t, oneBlockReorg.eventIDs, eventIDFor("btc-old-102", "fee", model.EventCategoryFee))
+	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-100", "vout:0", model.EventCategoryTransfer))
+	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-101", "vin:0", model.EventCategoryTransfer))
+	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-102", "vout:0", model.EventCategoryTransfer))
+
+	// Replacement-branch emissions are one-time even across rollback + replay.
+	assert.Equal(t, 1, oneBlockReorg.eventIDCounts[eventIDFor("btc-stable-101", "vin:0", model.EventCategoryTransfer)])
+	assert.Equal(t, 1, oneBlockReorg.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.EventCategoryTransfer)])
+	assert.Equal(t, 1, multiBlockReorg.eventIDCounts[eventIDFor("btc-stable-100", "vout:0", model.EventCategoryTransfer)])
+	assert.Equal(t, 1, multiBlockReorg.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.EventCategoryTransfer)])
+
+	expectedCursor := canonicalSignatureIdentity(model.ChainBTC, "btc-new-102")
+	assert.Equal(t, expectedCursor, baseline.cursorValue)
+	assert.Equal(t, expectedCursor, oneBlockReorg.cursorValue)
+	assert.Equal(t, expectedCursor, multiBlockReorg.cursorValue)
+	assert.Equal(t, int64(102), baseline.cursorSequence)
+	assert.Equal(t, int64(102), oneBlockReorg.cursorSequence)
+	assert.Equal(t, int64(102), multiBlockReorg.cursorSequence)
+	assert.Equal(t, int64(102), baseline.watermark)
+	assert.Equal(t, int64(102), oneBlockReorg.watermark)
+	assert.Equal(t, int64(102), multiBlockReorg.watermark)
+
+	assert.Equal(t, []int64{101, 102}, baseline.cursorWrites)
+	assert.Equal(t, []int64{102, 100, 101, 102}, oneBlockReorg.cursorWrites)
+	assert.Equal(t, []int64{102, 0, 101, 102}, multiBlockReorg.cursorWrites)
+	assert.Equal(t, []int64{101, 102}, baseline.watermarkWrites)
+	assert.Equal(t, []int64{102, 102, 102, 102}, oneBlockReorg.watermarkWrites)
+	assert.Equal(t, []int64{102, 102, 102, 102}, multiBlockReorg.watermarkWrites)
+	assertMonotonicWrites(t, map[string][]int64{"one-block": oneBlockReorg.watermarkWrites}, "btc one-block watermark")
+	assertMonotonicWrites(t, map[string][]int64{"multi-block": multiBlockReorg.watermarkWrites}, "btc multi-block watermark")
+
+	assert.Equal(t, []int64{101}, oneBlockReorg.rollbackForkSequences)
+	assert.Equal(t, []int64{100}, multiBlockReorg.rollbackForkSequences)
 }
 
 func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {

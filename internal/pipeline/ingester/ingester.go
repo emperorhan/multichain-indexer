@@ -169,6 +169,9 @@ func isCanonicalityDrift(batch event.NormalizedBatch) bool {
 
 func rollbackForkCursorSequence(batch event.NormalizedBatch) int64 {
 	if batch.NewCursorSequence < batch.PreviousCursorSequence {
+		if btcFloor, ok := rollbackBTCEarliestCompetingSequence(batch); ok {
+			return btcFloor
+		}
 		return batch.NewCursorSequence
 	}
 	return batch.PreviousCursorSequence
@@ -178,6 +181,30 @@ func withRollbackForkCursor(batch event.NormalizedBatch) event.NormalizedBatch {
 	adjusted := batch
 	adjusted.PreviousCursorSequence = rollbackForkCursorSequence(batch)
 	return adjusted
+}
+
+func rollbackBTCEarliestCompetingSequence(batch event.NormalizedBatch) (int64, bool) {
+	if batch.Chain != model.ChainBTC || len(batch.Transactions) == 0 {
+		return 0, false
+	}
+
+	var earliest int64
+	for _, tx := range batch.Transactions {
+		if tx.BlockCursor <= 0 {
+			continue
+		}
+		if earliest == 0 || tx.BlockCursor < earliest {
+			earliest = tx.BlockCursor
+		}
+	}
+	if earliest == 0 || earliest >= batch.NewCursorSequence {
+		return 0, false
+	}
+	return earliest, true
+}
+
+func shouldContinueCompetingBranchReplay(batch event.NormalizedBatch) bool {
+	return batch.Chain == model.ChainBTC && len(batch.Transactions) > 0
 }
 
 func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBatch) error {
@@ -207,18 +234,28 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 			return fmt.Errorf("handle reorg path: %w", err)
 		}
 
-		if err := dbTx.Commit(); err != nil {
-			return fmt.Errorf("commit rollback path: %w", err)
-		}
-		committed = true
+		if shouldContinueCompetingBranchReplay(batch) {
+			ing.logger.Info("rollback path executed; continuing with competing branch replay",
+				"address", batch.Address,
+				"previous_cursor", batch.PreviousCursorValue,
+				"new_cursor", batch.NewCursorValue,
+				"fork_cursor_sequence", rollbackBatch.PreviousCursorSequence,
+				"replacement_txs", len(batch.Transactions),
+			)
+		} else {
+			if err := dbTx.Commit(); err != nil {
+				return fmt.Errorf("commit rollback path: %w", err)
+			}
+			committed = true
 
-		ing.logger.Info("rollback path executed",
-			"address", batch.Address,
-			"previous_cursor", batch.PreviousCursorValue,
-			"new_cursor", batch.NewCursorValue,
-			"fork_cursor_sequence", rollbackBatch.PreviousCursorSequence,
-		)
-		return nil
+			ing.logger.Info("rollback path executed",
+				"address", batch.Address,
+				"previous_cursor", batch.PreviousCursorValue,
+				"new_cursor", batch.NewCursorValue,
+				"fork_cursor_sequence", rollbackBatch.PreviousCursorSequence,
+			)
+			return nil
+		}
 	}
 
 	var totalEvents int

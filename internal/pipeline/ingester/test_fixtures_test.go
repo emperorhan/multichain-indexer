@@ -14,13 +14,20 @@ import (
 )
 
 type interleaveTuple struct {
-	Chain    model.Chain
-	Network  model.Network
-	EventID  string
-	TxHash   string
-	Address  string
-	Category model.EventCategory
-	Delta    string
+	Chain          model.Chain
+	Network        model.Network
+	EventID        string
+	TxHash         string
+	Address        string
+	WatchedAddress string
+	Category       model.EventCategory
+	Delta          string
+	BlockCursor    int64
+	TokenID        uuid.UUID
+}
+
+type interleaveStoredEvent struct {
+	Tuple interleaveTuple
 }
 
 type interleaveTxBeginner struct {
@@ -39,6 +46,7 @@ type interleaveState struct {
 	txIDs          map[string]uuid.UUID
 	tokenIDs       map[string]uuid.UUID
 	insertedEvents map[string]struct{}
+	eventRecords   map[string]interleaveStoredEvent
 	tuples         []interleaveTuple
 	upsertAttempts int
 
@@ -61,6 +69,7 @@ func newInterleaveState(txFailures map[string]error) *interleaveState {
 		txIDs:           make(map[string]uuid.UUID),
 		tokenIDs:        make(map[string]uuid.UUID),
 		insertedEvents:  make(map[string]struct{}),
+		eventRecords:    make(map[string]interleaveStoredEvent),
 		balances:        make(map[string]string),
 		cursors:         make(map[string]*model.AddressCursor),
 		watermarks:      make(map[string]int64),
@@ -166,16 +175,26 @@ func (r *interleaveBalanceEventRepo) UpsertTx(_ context.Context, _ *sql.Tx, be *
 		return false, nil
 	}
 
+	watchedAddress := be.Address
+	if be.WatchedAddress != nil {
+		watchedAddress = *be.WatchedAddress
+	}
+
+	tuple := interleaveTuple{
+		Chain:          be.Chain,
+		Network:        be.Network,
+		EventID:        be.EventID,
+		TxHash:         be.TxHash,
+		Address:        be.Address,
+		WatchedAddress: watchedAddress,
+		Category:       be.EventCategory,
+		Delta:          be.Delta,
+		BlockCursor:    be.BlockCursor,
+		TokenID:        be.TokenID,
+	}
 	r.state.insertedEvents[be.EventID] = struct{}{}
-	r.state.tuples = append(r.state.tuples, interleaveTuple{
-		Chain:    be.Chain,
-		Network:  be.Network,
-		EventID:  be.EventID,
-		TxHash:   be.TxHash,
-		Address:  be.Address,
-		Category: be.EventCategory,
-		Delta:    be.Delta,
-	})
+	r.state.eventRecords[be.EventID] = interleaveStoredEvent{Tuple: tuple}
+	r.state.tuples = append(r.state.tuples, tuple)
 	return true, nil
 }
 
@@ -196,7 +215,7 @@ func (r *interleaveBalanceRepo) AdjustBalanceTx(
 	_ int64,
 	_ string,
 ) error {
-	primaryKey := fmt.Sprintf("%s|%s|%s", interleaveKey(chain, network), address, tokenID.String())
+	primaryKey := interleaveBalanceKey(chain, network, address, tokenID)
 
 	r.state.mu.Lock()
 	defer r.state.mu.Unlock()
@@ -217,7 +236,7 @@ func (r *interleaveBalanceRepo) GetAmountTx(
 	address string,
 	tokenID uuid.UUID,
 ) (string, error) {
-	primaryKey := fmt.Sprintf("%s|%s|%s", interleaveKey(chain, network), address, tokenID.String())
+	primaryKey := interleaveBalanceKey(chain, network, address, tokenID)
 	r.state.mu.Lock()
 	defer r.state.mu.Unlock()
 	amount, exists := r.state.balances[primaryKey]
@@ -280,6 +299,80 @@ func (r *interleaveCursorRepo) UpsertTx(
 	return nil
 }
 
+func (s *interleaveState) rollbackFromCursor(
+	chain model.Chain,
+	network model.Network,
+	watchedAddress string,
+	forkCursor int64,
+) (*string, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	toDelete := make(map[string]interleaveStoredEvent)
+	for eventID, record := range s.eventRecords {
+		tuple := record.Tuple
+		if tuple.Chain != chain || tuple.Network != network {
+			continue
+		}
+		if tuple.WatchedAddress != watchedAddress {
+			continue
+		}
+		if tuple.BlockCursor < forkCursor {
+			continue
+		}
+		toDelete[eventID] = record
+	}
+
+	for eventID, record := range toDelete {
+		tuple := record.Tuple
+		invertedDelta, err := negateDecimalString(tuple.Delta)
+		if err != nil {
+			return nil, 0, err
+		}
+		balanceKey := interleaveBalanceKey(tuple.Chain, tuple.Network, tuple.Address, tuple.TokenID)
+		current := s.balances[balanceKey]
+		next, err := addDecimalStringsForTest(current, invertedDelta)
+		if err != nil {
+			return nil, 0, err
+		}
+		s.balances[balanceKey] = next
+		delete(s.insertedEvents, eventID)
+		delete(s.eventRecords, eventID)
+	}
+
+	filtered := make([]interleaveTuple, 0, len(s.tuples))
+	for _, tuple := range s.tuples {
+		if _, exists := s.insertedEvents[tuple.EventID]; !exists {
+			continue
+		}
+		filtered = append(filtered, tuple)
+	}
+	s.tuples = filtered
+
+	var rewindSeq int64
+	var rewindCursor string
+	for _, tuple := range s.tuples {
+		if tuple.Chain != chain || tuple.Network != network {
+			continue
+		}
+		if tuple.WatchedAddress != watchedAddress {
+			continue
+		}
+		if tuple.BlockCursor >= forkCursor {
+			continue
+		}
+		if tuple.BlockCursor > rewindSeq || (tuple.BlockCursor == rewindSeq && tuple.TxHash > rewindCursor) {
+			rewindSeq = tuple.BlockCursor
+			rewindCursor = tuple.TxHash
+		}
+	}
+	if rewindSeq == 0 {
+		return nil, 0, nil
+	}
+
+	return &rewindCursor, rewindSeq, nil
+}
+
 func (*interleaveCursorRepo) EnsureExists(context.Context, model.Chain, model.Network, string) error {
 	return nil
 }
@@ -332,6 +425,10 @@ func addDecimalStringsForTest(current, delta string) (string, error) {
 
 func interleaveKey(chain model.Chain, network model.Network) string {
 	return fmt.Sprintf("%s-%s", chain, network)
+}
+
+func interleaveBalanceKey(chain model.Chain, network model.Network, address string, tokenID uuid.UUID) string {
+	return fmt.Sprintf("%s|%s|%s", interleaveKey(chain, network), address, tokenID.String())
 }
 
 func interleaveTupleKey(tuple interleaveTuple) string {
