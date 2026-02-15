@@ -2741,6 +2741,258 @@ func TestProcessBatch_MixedTerminalDecodeFailures_DeterministicContinuationAcros
 	}
 }
 
+func TestProcessBatch_DeferredRecoveryBackfillPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name             string
+		chain            model.Chain
+		network          model.Network
+		address          string
+		firstSig         string
+		secondSig        string
+		thirdSig         string
+		recoveredSecond  string
+		alreadyDecoded   string
+		orphanSig        string
+		previousSig      string
+		previousSequence int64
+		buildResult      func(*testing.T, string, int64) *sidecarv1.TransactionResult
+	}
+
+	testCases := []testCase{
+		{
+			name:             "solana-devnet",
+			chain:            model.ChainSolana,
+			network:          model.NetworkDevnet,
+			address:          "addr-sidecar-recovery-sol",
+			firstSig:         "sol-recovery-1201",
+			secondSig:        "sol-recovery-1202",
+			thirdSig:         "sol-recovery-1203",
+			recoveredSecond:  "sol-recovery-1202",
+			alreadyDecoded:   "sol-recovery-1203",
+			orphanSig:        "aaa-sol-prior-range-0999",
+			previousSig:      "sol-prior-range-1200",
+			previousSequence: 1200,
+			buildResult: func(t *testing.T, signature string, sequence int64) *sidecarv1.TransactionResult {
+				result := loadSolanaFixture(t, "solana_cpi_ownership_scoped.json")
+				result.TxHash = signature
+				result.BlockCursor = sequence
+				return result
+			},
+		},
+		{
+			name:             "base-sepolia",
+			chain:            model.ChainBase,
+			network:          model.NetworkSepolia,
+			address:          "0x1111111111111111111111111111111111111111",
+			firstSig:         "0xAbCd1201",
+			secondSig:        "0xAbCd1202",
+			thirdSig:         "0xAbCd1203",
+			recoveredSecond:  "ABCD1202",
+			alreadyDecoded:   "abcd1203",
+			orphanSig:        "0x00000000000000000000000000000000000000000000000000000000000000aa",
+			previousSig:      "0xAbCd1200",
+			previousSequence: 2200,
+			buildResult: func(t *testing.T, signature string, sequence int64) *sidecarv1.TransactionResult {
+				result := loadBaseFeeFixture(t, "base_fee_decomposition_complete.json")
+				result.TxHash = signature
+				result.BlockCursor = sequence
+				return result
+			},
+		},
+	}
+
+	canonicalEventIDSet := func(batches ...event.NormalizedBatch) map[string]struct{} {
+		out := make(map[string]struct{})
+		for _, batch := range batches {
+			for _, tx := range batch.Transactions {
+				for _, be := range tx.BalanceEvents {
+					out[be.EventID] = struct{}{}
+				}
+			}
+		}
+		return out
+	}
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+	txHashes := func(batch event.NormalizedBatch) []string {
+		out := make([]string, 0, len(batch.Transactions))
+		for _, tx := range batch.Transactions {
+			out = append(out, tx.TxHash)
+		}
+		return out
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			firstSeq := tc.previousSequence + 1
+			secondSeq := tc.previousSequence + 2
+			thirdSeq := tc.previousSequence + 3
+
+			canonicalFirst := canonicalSignatureIdentity(tc.chain, tc.firstSig)
+			canonicalSecond := canonicalSignatureIdentity(tc.chain, tc.secondSig)
+			canonicalThird := canonicalSignatureIdentity(tc.chain, tc.thirdSig)
+			require.NotEmpty(t, canonicalFirst)
+			require.NotEmpty(t, canonicalSecond)
+			require.NotEmpty(t, canonicalThird)
+
+			baseBatch := event.RawBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorValue:    strPtr(tc.previousSig),
+				PreviousCursorSequence: tc.previousSequence,
+				NewCursorValue:         strPtr(tc.thirdSig),
+				NewCursorSequence:      thirdSeq,
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":"one"}`),
+					json.RawMessage(`{"tx":"two"}`),
+					json.RawMessage(`{"tx":"three"}`),
+				},
+				Signatures: []event.SignatureInfo{
+					{Hash: tc.firstSig, Sequence: firstSeq},
+					{Hash: tc.secondSig, Sequence: secondSeq},
+					{Hash: tc.thirdSig, Sequence: thirdSeq},
+				},
+			}
+
+			runOnce := func(resp *sidecarv1.DecodeSolanaTransactionBatchResponse, runBatch event.RawBatch) event.NormalizedBatch {
+				ctrl := gomock.NewController(t)
+				mockClient := mocks.NewMockChainDecoderClient(ctrl)
+				normalizedCh := make(chan event.NormalizedBatch, 1)
+				n := &Normalizer{
+					sidecarTimeout: 30 * time.Second,
+					normalizedCh:   normalizedCh,
+					logger:         slog.Default(),
+				}
+
+				mockClient.EXPECT().
+					DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(resp, nil).
+					Times(1)
+
+				require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, runBatch))
+				return <-normalizedCh
+			}
+
+			baseline := runOnce(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: []*sidecarv1.TransactionResult{
+					tc.buildResult(t, tc.thirdSig, thirdSeq),
+					tc.buildResult(t, tc.firstSig, firstSeq),
+					tc.buildResult(t, tc.secondSig, secondSeq),
+				},
+			}, baseBatch)
+
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+			normalizedCh := make(chan event.NormalizedBatch, 2)
+			n := &Normalizer{
+				sidecarTimeout: 30 * time.Second,
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			call := 0
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(2).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					call++
+					if call == 1 {
+						return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+							Results: []*sidecarv1.TransactionResult{
+								tc.buildResult(t, tc.firstSig, firstSeq),
+								tc.buildResult(t, tc.thirdSig, thirdSeq),
+							},
+							Errors: []*sidecarv1.DecodeError{
+								{Signature: tc.secondSig, Error: "decode schema mismatch"},
+							},
+						}, nil
+					}
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+						Results: []*sidecarv1.TransactionResult{
+							tc.buildResult(t, tc.orphanSig, tc.previousSequence-1),
+							tc.buildResult(t, tc.recoveredSecond, secondSeq),
+							tc.buildResult(t, tc.alreadyDecoded, thirdSeq),
+						},
+					}, nil
+				})
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, baseBatch))
+			degraded := <-normalizedCh
+			require.NotNil(t, degraded.NewCursorValue)
+
+			recoveryBatch := baseBatch
+			recoveryBatch.PreviousCursorValue = degraded.NewCursorValue
+			recoveryBatch.PreviousCursorSequence = degraded.NewCursorSequence
+			recoveryBatch.NewCursorValue = degraded.NewCursorValue
+			recoveryBatch.NewCursorSequence = degraded.NewCursorSequence
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, recoveryBatch))
+			recovered := <-normalizedCh
+
+			assertNoDuplicateCanonicalIDs(t, baseline)
+			assertNoDuplicateCanonicalIDs(t, degraded)
+			assertNoDuplicateCanonicalIDs(t, recovered)
+			assert.Equal(t, canonicalEventIDSet(baseline), canonicalEventIDSet(degraded, recovered), "degradation->recovery output must reconcile to fully decodable baseline")
+
+			recoveredTxHashes := txHashes(recovered)
+			assert.Contains(t, recoveredTxHashes, canonicalSecond)
+			assert.Contains(t, recoveredTxHashes, canonicalThird)
+			assert.NotContains(t, recoveredTxHashes, canonicalSignatureIdentity(tc.chain, tc.orphanSig))
+
+			require.NotNil(t, recovered.NewCursorValue)
+			assert.Equal(t, degraded.NewCursorSequence, recovered.NewCursorSequence)
+			assert.Equal(t, *degraded.NewCursorValue, *recovered.NewCursorValue)
+			assert.GreaterOrEqual(t, recovered.NewCursorSequence, recoveryBatch.PreviousCursorSequence)
+
+			ctrlRetry := gomock.NewController(t)
+			retryClient := mocks.NewMockChainDecoderClient(ctrlRetry)
+			retryCh := make(chan event.NormalizedBatch, 1)
+			nRetry := &Normalizer{
+				sidecarTimeout:   30 * time.Second,
+				normalizedCh:     retryCh,
+				logger:           slog.Default(),
+				retryMaxAttempts: 2,
+				retryDelayStart:  0,
+				retryDelayMax:    0,
+				sleepFn:          func(context.Context, time.Duration) error { return nil },
+			}
+			retryAttempts := 0
+			retryClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(2).
+				DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+					retryAttempts++
+					if retryAttempts == 1 {
+						return nil, retry.Transient(errors.New("sidecar unavailable"))
+					}
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+						Results: []*sidecarv1.TransactionResult{
+							tc.buildResult(t, tc.firstSig, firstSeq),
+							tc.buildResult(t, tc.secondSig, secondSeq),
+							tc.buildResult(t, tc.thirdSig, thirdSeq),
+						},
+					}, nil
+				})
+			require.NoError(t, nRetry.processBatchWithRetry(context.Background(), slog.Default(), retryClient, baseBatch))
+			require.Equal(t, 2, retryAttempts)
+			retryRecovered := <-retryCh
+			assert.Equal(t, orderedCanonicalTuples(baseline), orderedCanonicalTuples(retryRecovered), "temporary unavailable recovery must converge to fully decodable baseline")
+		})
+	}
+}
+
 func TestProcessBatchWithRetry_TransientDecodeErrorsInResponse_BlockCursorAdvanceAcrossMandatoryChains(t *testing.T) {
 	type testCase struct {
 		name          string

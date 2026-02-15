@@ -206,16 +206,34 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		))
 	}
 
-	fallbackResults := make([]*sidecarv1.TransactionResult, 0, len(resp.Results))
+	expectedSignatures := make(map[string]struct{}, len(canonicalSignatures))
+	for _, sig := range canonicalSignatures {
+		signatureKey := canonicalSignatureIdentity(batch.Chain, sig.Hash)
+		if signatureKey == "" {
+			continue
+		}
+		expectedSignatures[signatureKey] = struct{}{}
+	}
+
 	resultBySignature := make(map[string]*sidecarv1.TransactionResult, len(resp.Results))
+	unexpectedResults := make(map[string]struct{})
+	unexpectedResultBySignature := make(map[string]*sidecarv1.TransactionResult)
 	for _, result := range resp.Results {
 		if result == nil {
 			continue
 		}
-		fallbackResults = append(fallbackResults, result)
 
 		signatureKey := canonicalSignatureIdentity(batch.Chain, result.TxHash)
 		if signatureKey == "" {
+			unexpectedResults["<empty>"] = struct{}{}
+			continue
+		}
+		if _, ok := expectedSignatures[signatureKey]; !ok {
+			unexpectedResults[signatureKey] = struct{}{}
+			existing, exists := unexpectedResultBySignature[signatureKey]
+			if !exists || shouldReplaceDecodedResult(batch.Chain, existing, result) {
+				unexpectedResultBySignature[signatureKey] = result
+			}
 			continue
 		}
 		existing, ok := resultBySignature[signatureKey]
@@ -223,9 +241,14 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 			resultBySignature[signatureKey] = result
 		}
 	}
-	sort.Slice(fallbackResults, func(i, j int) bool {
-		return compareDecodedResultOrder(batch.Chain, fallbackResults[i], fallbackResults[j]) < 0
-	})
+	unexpectedSignatures := sortedSignatureKeys(unexpectedResults)
+	if len(unexpectedSignatures) > 0 {
+		log.Warn("decode recovery collision isolated",
+			"stage", decodeStage,
+			"address", batch.Address,
+			"unexpected_signatures", strings.Join(unexpectedSignatures, ","),
+		)
+	}
 
 	errorBySignature := terminalDecodeErrors
 
@@ -238,13 +261,15 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		OrgID:                  batch.OrgID,
 		PreviousCursorValue:    canonicalPrevCursor,
 		PreviousCursorSequence: batch.PreviousCursorSequence,
-		NewCursorValue:         canonicalNewCursor,
-		NewCursorSequence:      batch.NewCursorSequence,
+		NewCursorValue:         canonicalPrevCursor,
+		NewCursorSequence:      batch.PreviousCursorSequence,
+	}
+	if normalized.NewCursorValue == nil {
+		normalized.NewCursorValue = canonicalNewCursor
+		normalized.NewCursorSequence = batch.NewCursorSequence
 	}
 
 	processed := 0
-	fallbackIndex := 0
-	consumedResults := make(map[*sidecarv1.TransactionResult]struct{}, len(fallbackResults))
 	type decodeFailure struct {
 		signature string
 		reason    string
@@ -280,34 +305,37 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		if result, ok = resultBySignature[signatureKey]; ok {
 			delete(resultBySignature, signatureKey)
 		}
-		if result == nil {
-			for fallbackIndex < len(fallbackResults) {
-				candidate := fallbackResults[fallbackIndex]
-				fallbackIndex++
-				if candidate == nil {
-					continue
-				}
-				if _, used := consumedResults[candidate]; used {
-					continue
-				}
-				result = candidate
-				break
+		if result == nil && len(canonicalSignatures) == 1 {
+			result = singleSignatureFallbackResult(unexpectedResultBySignature)
+			if result != nil {
+				delete(unexpectedResultBySignature, canonicalSignatureIdentity(batch.Chain, result.TxHash))
+				log.Warn("decode single-signature fallback applied",
+					"stage", decodeStage,
+					"address", batch.Address,
+					"signature", signature,
+					"fallback_tx_hash", result.TxHash,
+				)
 			}
 		}
 		if result == nil {
-			log.Warn("signature decode isolated", "stage", decodeStage, "signature", signature, "error", "missing decode result")
+			reason := "missing decode result"
+			if len(unexpectedSignatures) > 0 {
+				reason = fmt.Sprintf("missing decode result (unexpected=%s)", strings.Join(unexpectedSignatures, "|"))
+			}
+			log.Warn("signature decode isolated", "stage", decodeStage, "signature", signature, "error", reason)
 			decodeFailures = append(decodeFailures, decodeFailure{
 				signature: signature,
-				reason:    "missing decode result",
+				reason:    reason,
 			})
 			continue
 		}
-		consumedResults[result] = struct{}{}
 
 		normalized.Transactions = append(normalized.Transactions, n.normalizedTxFromResult(batch, result))
-		cursorValue := signatureKey
-		normalized.NewCursorValue = &cursorValue
-		normalized.NewCursorSequence = sig.Sequence
+		if shouldAdvanceCanonicalCursor(normalized.NewCursorSequence, normalized.NewCursorValue, sig.Sequence, signatureKey) {
+			cursorValue := signatureKey
+			normalized.NewCursorValue = &cursorValue
+			normalized.NewCursorSequence = sig.Sequence
+		}
 		processed++
 	}
 
@@ -1112,69 +1140,47 @@ func shouldReplaceDecodedResult(chainID model.Chain, existing, incoming *sidecar
 	return incomingHash < existingHash
 }
 
-func compareDecodedResultOrder(chainID model.Chain, left, right *sidecarv1.TransactionResult) int {
-	if left == nil && right == nil {
-		return 0
+func sortedSignatureKeys(values map[string]struct{}) []string {
+	if len(values) == 0 {
+		return nil
 	}
-	if left == nil {
-		return 1
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
 	}
-	if right == nil {
-		return -1
-	}
+	sort.Strings(out)
+	return out
+}
 
-	leftHash := canonicalSignatureIdentity(chainID, left.TxHash)
-	rightHash := canonicalSignatureIdentity(chainID, right.TxHash)
-	if leftHash != rightHash {
-		if leftHash < rightHash {
-			return -1
-		}
-		return 1
+func singleSignatureFallbackResult(results map[string]*sidecarv1.TransactionResult) *sidecarv1.TransactionResult {
+	if len(results) != 1 {
+		return nil
 	}
+	for _, result := range results {
+		return result
+	}
+	return nil
+}
 
-	if left.BlockCursor != right.BlockCursor {
-		if left.BlockCursor < right.BlockCursor {
-			return -1
-		}
-		return 1
+func shouldAdvanceCanonicalCursor(currentSequence int64, currentValue *string, candidateSequence int64, candidateValue string) bool {
+	if candidateSequence > currentSequence {
+		return true
 	}
-	leftFinality := resolveResultFinalityState(chainID, left)
-	rightFinality := resolveResultFinalityState(chainID, right)
-	if cmp := compareFinalityStateStrength(leftFinality, rightFinality); cmp != 0 {
-		if cmp < 0 {
-			return 1
-		}
-		return -1
+	if candidateSequence < currentSequence {
+		return false
 	}
-
-	leftStatus := strings.TrimSpace(left.Status)
-	rightStatus := strings.TrimSpace(right.Status)
-	if leftStatus != rightStatus {
-		if leftStatus < rightStatus {
-			return -1
-		}
-		return 1
+	candidate := strings.TrimSpace(candidateValue)
+	if candidate == "" {
+		return false
 	}
-
-	leftFeePayer := canonicalSignatureIdentity(chainID, left.FeePayer)
-	rightFeePayer := canonicalSignatureIdentity(chainID, right.FeePayer)
-	if leftFeePayer != rightFeePayer {
-		if leftFeePayer < rightFeePayer {
-			return -1
-		}
-		return 1
+	if currentValue == nil {
+		return true
 	}
-
-	leftFeeAmount := strings.TrimSpace(left.FeeAmount)
-	rightFeeAmount := strings.TrimSpace(right.FeeAmount)
-	if leftFeeAmount != rightFeeAmount {
-		if leftFeeAmount < rightFeeAmount {
-			return -1
-		}
-		return 1
+	current := strings.TrimSpace(*currentValue)
+	if current == "" {
+		return true
 	}
-
-	return 0
+	return candidate > current
 }
 
 func classifyDecodeErrors(

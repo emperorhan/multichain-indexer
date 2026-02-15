@@ -366,6 +366,273 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 	assert.GreaterOrEqual(t, configRepo.HighestWatermark, cursorRepo.Upserts[2])
 }
 
+func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcrossMandatoryChains(t *testing.T) {
+	testCases := []struct {
+		name             string
+		chain            model.Chain
+		network          model.Network
+		address          string
+		firstSig         string
+		secondSig        string
+		thirdSig         string
+		contractAddress  string
+		programID        string
+		counterparty     string
+		tokenType        model.TokenType
+		previousSequence int64
+	}{
+		{
+			name:             "solana-devnet",
+			chain:            model.ChainSolana,
+			network:          model.NetworkDevnet,
+			address:          "addr-ingester-sidecar-recovery-sol",
+			firstSig:         "sig-ingester-recovery-sol-1",
+			secondSig:        "sig-ingester-recovery-sol-2",
+			thirdSig:         "sig-ingester-recovery-sol-3",
+			contractAddress:  "11111111111111111111111111111111",
+			programID:        "11111111111111111111111111111111",
+			counterparty:     "sol-counterparty",
+			tokenType:        model.TokenTypeNative,
+			previousSequence: 1000,
+		},
+		{
+			name:             "base-sepolia",
+			chain:            model.ChainBase,
+			network:          model.NetworkSepolia,
+			address:          "0x7777777777777777777777777777777777777777",
+			firstSig:         "0xAbCd3401",
+			secondSig:        "0xabCD3402",
+			thirdSig:         "ABCD3403",
+			contractAddress:  "ETH",
+			programID:        "0xbase-program",
+			counterparty:     "0x8888888888888888888888888888888888888888",
+			tokenType:        model.TokenTypeNative,
+			previousSequence: 2000,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+
+			firstSeq := tc.previousSequence + 1
+			secondSeq := tc.previousSequence + 2
+			thirdSeq := tc.previousSequence + 3
+			canonicalFirst := canonicalSignatureIdentity(tc.chain, tc.firstSig)
+			canonicalSecond := canonicalSignatureIdentity(tc.chain, tc.secondSig)
+			canonicalThird := canonicalSignatureIdentity(tc.chain, tc.thirdSig)
+			require.NotEmpty(t, canonicalFirst)
+			require.NotEmpty(t, canonicalSecond)
+			require.NotEmpty(t, canonicalThird)
+
+			eventIDFor := func(txHash string) string {
+				return strings.Join([]string{
+					string(tc.chain),
+					string(tc.network),
+					txHash,
+					"outer:0|inner:-1",
+					tc.address,
+					tc.contractAddress,
+					string(model.EventCategoryTransfer),
+				}, "|")
+			}
+			firstEventID := eventIDFor(canonicalFirst)
+			secondEventID := eventIDFor(canonicalSecond)
+			thirdEventID := eventIDFor(canonicalThird)
+			expectedEventIDs := map[string]struct{}{
+				firstEventID:  {},
+				secondEventID: {},
+				thirdEventID:  {},
+			}
+
+			previousCursor := canonicalSignatureIdentity(tc.chain, "cursor-prev")
+			if previousCursor == "" {
+				previousCursor = "cursor-prev"
+			}
+			firstBatch := event.NormalizedBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorValue:    &previousCursor,
+				PreviousCursorSequence: tc.previousSequence,
+				NewCursorValue:         &canonicalThird,
+				NewCursorSequence:      thirdSeq,
+				Transactions: []event.NormalizedTransaction{
+					{
+						TxHash:      tc.firstSig,
+						BlockCursor: firstSeq,
+						FeeAmount:   "0",
+						FeePayer:    tc.address,
+						Status:      model.TxStatusSuccess,
+						ChainData:   json.RawMessage("{}"),
+						BalanceEvents: []event.NormalizedBalanceEvent{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         model.EventCategoryTransfer,
+								EventAction:           "transfer",
+								ProgramID:             tc.programID,
+								ContractAddress:       tc.contractAddress,
+								Address:               tc.address,
+								CounterpartyAddress:   tc.counterparty,
+								Delta:                 "-1",
+								EventID:               firstEventID,
+								TokenType:             tc.tokenType,
+							},
+						},
+					},
+					{
+						TxHash:      tc.thirdSig,
+						BlockCursor: thirdSeq,
+						FeeAmount:   "0",
+						FeePayer:    tc.address,
+						Status:      model.TxStatusSuccess,
+						ChainData:   json.RawMessage("{}"),
+						BalanceEvents: []event.NormalizedBalanceEvent{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         model.EventCategoryTransfer,
+								EventAction:           "transfer",
+								ProgramID:             tc.programID,
+								ContractAddress:       tc.contractAddress,
+								Address:               tc.address,
+								CounterpartyAddress:   tc.counterparty,
+								Delta:                 "-1",
+								EventID:               thirdEventID,
+								TokenType:             tc.tokenType,
+							},
+						},
+					},
+				},
+			}
+
+			recoveryBatch := event.NormalizedBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorValue:    &canonicalThird,
+				PreviousCursorSequence: thirdSeq,
+				NewCursorValue:         &canonicalThird,
+				NewCursorSequence:      thirdSeq,
+				Transactions: []event.NormalizedTransaction{
+					{
+						TxHash:      tc.secondSig,
+						BlockCursor: secondSeq,
+						FeeAmount:   "0",
+						FeePayer:    tc.address,
+						Status:      model.TxStatusSuccess,
+						ChainData:   json.RawMessage("{}"),
+						BalanceEvents: []event.NormalizedBalanceEvent{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         model.EventCategoryTransfer,
+								EventAction:           "transfer",
+								ProgramID:             tc.programID,
+								ContractAddress:       tc.contractAddress,
+								Address:               tc.address,
+								CounterpartyAddress:   tc.counterparty,
+								Delta:                 "-1",
+								EventID:               secondEventID,
+								TokenType:             tc.tokenType,
+							},
+						},
+					},
+					{
+						TxHash:      tc.thirdSig,
+						BlockCursor: thirdSeq,
+						FeeAmount:   "0",
+						FeePayer:    tc.address,
+						Status:      model.TxStatusSuccess,
+						ChainData:   json.RawMessage("{}"),
+						BalanceEvents: []event.NormalizedBalanceEvent{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         model.EventCategoryTransfer,
+								EventAction:           "transfer",
+								ProgramID:             tc.programID,
+								ContractAddress:       tc.contractAddress,
+								Address:               tc.address,
+								CounterpartyAddress:   tc.counterparty,
+								Delta:                 "-1",
+								EventID:               thirdEventID,
+								TokenType:             tc.tokenType,
+							},
+						},
+					},
+				},
+			}
+
+			setupBeginTx(mockDB)
+			setupBeginTx(mockDB)
+
+			txID := uuid.New()
+			tokenID := uuid.New()
+			mockTxRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(txID, nil).
+				Times(4)
+			mockTokenRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(tokenID, nil).
+				Times(4)
+
+			seenEventIDs := make(map[string]struct{})
+			insertedEventIDs := make(map[string]struct{})
+			mockBERepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+					if _, exists := seenEventIDs[be.EventID]; exists {
+						return false, nil
+					}
+					seenEventIDs[be.EventID] = struct{}{}
+					insertedEventIDs[be.EventID] = struct{}{}
+					return true, nil
+				}).
+				Times(4)
+
+			adjustments := 0
+			mockBalanceRepo.EXPECT().
+				AdjustBalanceTx(
+					gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, tc.address,
+					tokenID, nil, nil, "-1",
+					gomock.Any(), gomock.Any(),
+				).
+				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, uuid.UUID, *string, *string, string, int64, string) error {
+					adjustments++
+					return nil
+				}).
+				Times(3)
+
+			cursorWrites := make([]int64, 0, 2)
+			mockCursorRepo.EXPECT().
+				UpsertTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.address, &canonicalThird, thirdSeq, gomock.Any()).
+				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
+					cursorWrites = append(cursorWrites, thirdSeq)
+					return nil
+				}).
+				Times(2)
+			mockConfigRepo.EXPECT().
+				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, thirdSeq).
+				Return(nil).
+				Times(2)
+
+			require.NoError(t, ing.processBatch(context.Background(), firstBatch))
+			require.NoError(t, ing.processBatch(context.Background(), recoveryBatch))
+
+			assert.Equal(t, expectedEventIDs, insertedEventIDs, "deferred recovery replay must reconcile to fully decodable logical event set")
+			assert.Equal(t, 3, adjustments, "already-decoded replay events must not double-apply balances")
+			require.Len(t, cursorWrites, 2)
+			assert.GreaterOrEqual(t, cursorWrites[1], cursorWrites[0], "cursor progression must remain monotonic across deferred-recovery boundary")
+		})
+	}
+}
+
 func TestProcessBatch_BaseAliasCanonicalizesTxHashAndCursor(t *testing.T) {
 	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
