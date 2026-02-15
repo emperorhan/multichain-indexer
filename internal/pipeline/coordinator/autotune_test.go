@@ -58,11 +58,11 @@ func TestAutoTuneController_BoundedStepAndHysteresis(t *testing.T) {
 	batch, _ = controller.Resolve(highQueue)
 	assert.Equal(t, 120, batch)
 	batch, d6 := controller.Resolve(highQueue)
-	assert.Equal(t, 120, batch)
-	assert.Equal(t, "defer_hysteresis", d6.Decision)
+	assert.Equal(t, 105, batch)
+	assert.Equal(t, "apply_decrease", d6.Decision)
 	batch, d7 := controller.Resolve(highQueue)
 	assert.Equal(t, 105, batch)
-	assert.Equal(t, "apply_decrease", d7.Decision)
+	assert.Equal(t, "defer_hysteresis", d7.Decision)
 }
 
 func TestAutoTuneController_QueuePressureWorksWithoutHeadSignal(t *testing.T) {
@@ -149,6 +149,64 @@ func TestAutoTuneController_CooldownDefersOppositeSignalJitter(t *testing.T) {
 	batch, d4 := controller.Resolve(lowLag)
 	assert.Equal(t, 90, batch)
 	assert.Equal(t, "apply_decrease", d4.Decision)
+}
+
+func TestAutoTuneController_CooldownPreservesOppositeStreakForDeterministicRecovery(t *testing.T) {
+	controller := newAutoTuneController(80, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          40,
+		MaxBatchSize:          160,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       3,
+		CooldownTicks:         2,
+	})
+	require.NotNil(t, controller)
+
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+	lowLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       115,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	batch, d1 := controller.Resolve(highLag)
+	assert.Equal(t, 80, batch)
+	assert.Equal(t, "defer_hysteresis", d1.Decision)
+
+	batch, d2 := controller.Resolve(highLag)
+	assert.Equal(t, 80, batch)
+	assert.Equal(t, "defer_hysteresis", d2.Decision)
+
+	batch, d3 := controller.Resolve(highLag)
+	assert.Equal(t, 100, batch)
+	assert.Equal(t, "apply_increase", d3.Decision)
+
+	batch, d4 := controller.Resolve(lowLag)
+	assert.Equal(t, 100, batch)
+	assert.Equal(t, "defer_cooldown", d4.Decision)
+
+	batch, d5 := controller.Resolve(lowLag)
+	assert.Equal(t, 100, batch)
+	assert.Equal(t, "defer_cooldown", d5.Decision)
+
+	batch, d6 := controller.Resolve(lowLag)
+	assert.Equal(t, 90, batch)
+	assert.Equal(t, "apply_decrease", d6.Decision, "opposite-pressure streak observed during cooldown should deterministically recover immediately at cooldown release")
 }
 
 func TestAutoTuneController_CooldownAllowsSustainedSameDirectionPressure(t *testing.T) {

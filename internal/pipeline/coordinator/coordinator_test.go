@@ -1392,6 +1392,8 @@ func TestTick_AutoTuneSignalFlapPermutationsConvergeCanonicalTuplesAcrossMandato
 
 			assert.Equal(t, steadySnapshots, jitterSnapshots, "steady-state and threshold-jitter permutations must converge to one canonical tuple output set")
 			assert.Equal(t, steadySnapshots, recoverySnapshots, "steady-state and recovery permutations must converge to one canonical tuple output set")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, steadySnapshots, jitterSnapshots, "steady-state vs threshold-jitter")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, steadySnapshots, recoverySnapshots, "steady-state vs recovery")
 			assert.NotEqual(t, steadyBatches, jitterBatches, "signal-flap jitter should exercise different control decisions without changing canonical tuples")
 			assertNoImmediateDirectionFlip(t, jitterBatches)
 
@@ -1495,6 +1497,8 @@ func TestTick_AutoTuneOneChainOscillationDoesNotBleedControlAcrossOtherMandatory
 	assert.Equal(t, baseBaselineBatches, baseBatches, "solana oscillation pressure must not alter base control decisions")
 	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana oscillation pressure must not alter btc canonical tuples")
 	assert.Equal(t, btcBaselineBatches, btcBatches, "solana oscillation pressure must not alter btc control decisions")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved oscillation")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved oscillation")
 	assertNoImmediateDirectionFlip(t, laggingBatches)
 
 	assertCursorMonotonicByAddress(t, baseSnapshots)
@@ -1892,6 +1896,39 @@ func assertCursorMonotonicByAddress(t *testing.T, snapshots []lagAwareJobSnapsho
 		}
 		seen[snapshot.Address] = snapshot.CursorSequence
 	}
+}
+
+func assertNoDuplicateOrMissingLogicalSnapshots(
+	t *testing.T,
+	baseline []lagAwareJobSnapshot,
+	candidate []lagAwareJobSnapshot,
+	comparison string,
+) {
+	t.Helper()
+	assert.Len(t, candidate, len(baseline), "%s must preserve logical snapshot cardinality", comparison)
+
+	expected := make(map[string]int, len(baseline))
+	for _, snapshot := range baseline {
+		expected[snapshotIdentityKey(snapshot)]++
+	}
+
+	for _, snapshot := range candidate {
+		key := snapshotIdentityKey(snapshot)
+		count := expected[key]
+		assert.Greater(t, count, 0, "%s produced duplicate/unexpected logical snapshot %s", comparison, key)
+		if count == 0 {
+			continue
+		}
+		expected[key] = count - 1
+	}
+
+	for key, count := range expected {
+		assert.Equal(t, 0, count, "%s is missing logical snapshot %s", comparison, key)
+	}
+}
+
+func snapshotIdentityKey(snapshot lagAwareJobSnapshot) string {
+	return fmt.Sprintf("%s|%d|%s", snapshot.Address, snapshot.CursorSequence, snapshot.CursorValue)
 }
 
 func maxIntSlice(values []int) int {

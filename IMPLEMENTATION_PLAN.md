@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -89,6 +89,8 @@ Execution queue (dependency-ordered):
 78. `I-0255` (`M41-S2`) QA counterexample gate for auto-tune restart/profile-transition determinism + invariant safety
 79. `I-0259` (`M42-S1`) auto-tune signal-flap hysteresis determinism hardening
 80. `I-0260` (`M42-S2`) QA counterexample gate for auto-tune signal-flap hysteresis determinism + invariant safety
+81. `I-0264` (`M43-S1`) auto-tune saturation/de-saturation envelope determinism hardening
+82. `I-0265` (`M43-S2`) QA counterexample gate for auto-tune saturation/de-saturation determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1538,7 +1540,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when auto-tune-enabled 
 - Gate: restart/profile-transition handling can reset or over-apply control state, causing non-deterministic throughput envelopes and replay drift near boundary ticks.
 - Fallback: enforce deterministic reset-to-baseline plus bounded warm-start adoption guarded by chain-local proofs, emit explicit restart-profile diagnostics, and fail fast on unresolved boundary ambiguity.
 
-### M42. Auto-Tune Signal-Flap Hysteresis Determinism Tranche C0036 (P0, Next)
+### M42. Auto-Tune Signal-Flap Hysteresis Determinism Tranche C0036 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when auto-tune operates under noisy lag/latency signal flaps, so hysteresis-boundary crossings, cooldown windows, and recovery-to-steady-state permutations converge to one deterministic canonical output set per chain.
@@ -1577,6 +1579,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when auto-tune operates
 - Gate: noisy control signals can trigger hysteresis boundary chatter and nondeterministic knob toggling that amplifies replay boundary sensitivity.
 - Fallback: enforce deterministic debounced hysteresis with bounded cooldown floors, emit explicit control-flap diagnostics, and fail fast on unresolved oscillation-boundary ambiguity.
 
+### M43. Auto-Tune Saturation/De-Saturation Envelope Determinism Tranche C0037 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when auto-tune enters sustained saturation and recovers during backlog drain, so saturation-entry, clamp-held, and de-saturation recovery permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M42` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M43-S1` (`I-0264`): harden deterministic auto-tune saturation/de-saturation envelope semantics so sustained lag pressure and backlog-drain transitions cannot induce duplicate canonical IDs, missing logical events, cross-chain throttle bleed, or cursor regression.
+2. `M43-S2` (`I-0265`): execute QA counterexample gate for auto-tune saturation/de-saturation determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under saturation-entry, sustained-saturation, and de-saturation recovery permutations converge to one canonical tuple output set per chain.
+2. Sustained saturation on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under saturation/de-saturation replay/resume permutations.
+4. Replay/resume from saturation clamp and de-saturation boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject saturation-entry, sustained-saturation, and de-saturation recovery permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain sustained saturation while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from saturation clamp/de-saturation boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus auto-tune saturation/de-saturation counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic saturation-entry, sustained-saturation, and de-saturation recovery fixtures.
+2. `0` cross-chain control-coupling violations under one-chain sustained-saturation counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under saturation/de-saturation replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in saturation/de-saturation recovery fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: prolonged saturation clamps can create non-deterministic de-saturation transitions and replay boundary drift when backlog pressure relaxes abruptly.
+- Fallback: enforce deterministic saturation-floor/cap reconciliation with bounded de-saturation steps, emit explicit saturation-transition diagnostics, and fail fast on unresolved saturation-boundary ambiguity.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -1606,6 +1647,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when auto-tune operates
 7. `DP-0101-G`: auto-tune signal-flap hysteresis policy.
 - Preferred: deterministic chain-local hysteresis/debounce evaluation with bounded cooldown transitions and explicit flap diagnostics.
 - Fallback: pin deterministic conservative control profile during sustained signal-flap windows until hysteresis contracts are extended.
+
+8. `DP-0101-H`: auto-tune saturation/de-saturation policy.
+- Preferred: deterministic chain-local saturation-cap enforcement with bounded de-saturation transitions and explicit saturation-boundary diagnostics.
+- Fallback: pin deterministic conservative profile while saturation pressure is unresolved, then replay from last-safe boundary once saturation-transition contracts are restored.
 
 ## Local Queue Mapping
 
@@ -1689,13 +1734,15 @@ Completed milestones/slices:
 77. `I-0250`
 78. `I-0254`
 79. `I-0255`
+80. `I-0259`
+81. `I-0260`
 
 Active downstream queue from this plan:
-1. `I-0259`
-2. `I-0260`
+1. `I-0264`
+2. `I-0265`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M42-S2`
+1. `TBD by next planner slice after M43-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -1717,3 +1764,4 @@ Superseded issues:
 - `I-0240` and `I-0241` are superseded by `I-0242` and `I-0243` to replace generic cycle placeholders with executable tri-chain late-arrival closure determinism slices.
 - `I-0245` and `I-0246` are superseded by `I-0247` and `I-0248` to replace generic cycle placeholders with executable tri-chain volatility-event completeness determinism slices.
 - `I-0257` and `I-0258` are superseded by `I-0259` and `I-0260` to replace generic cycle placeholders with executable auto-tune signal-flap hysteresis determinism slices.
+- `I-0262` and `I-0263` are superseded by `I-0264` and `I-0265` to replace generic cycle placeholders with executable auto-tune saturation/de-saturation determinism slices.

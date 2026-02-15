@@ -205,8 +205,14 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 
 	if blockedByCooldown {
 		decision = "defer_cooldown"
-		a.lastSignal = autoTuneSignalHold
-		a.streak = 0
+		// Preserve opposite-pressure continuity while cooldown is active so
+		// recovery after cooldown remains deterministic at the hysteresis boundary.
+		if a.lastSignal == signal {
+			a.streak++
+		} else {
+			a.lastSignal = signal
+			a.streak = 1
+		}
 	} else {
 		switch signal {
 		case autoTuneSignalHold:
