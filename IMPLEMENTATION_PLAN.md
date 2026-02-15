@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -141,6 +141,8 @@ Execution queue (dependency-ordered):
 130. `I-0367` (`M66-F1`) close M66 QA mandatory-chain coverage gap with deterministic spillover permutation/no-bleed tests
 131. `I-0369` (`M67-S1`) auto-tune policy-manifest rollback checkpoint-fence post-late-spillover rejoin-window determinism hardening
 132. `I-0370` (`M67-S2`) QA counterexample gate for post-late-spillover rejoin-window determinism + invariant safety
+133. `I-0374` (`M68-S1`) auto-tune policy-manifest rollback checkpoint-fence post-rejoin-window steady-seal determinism hardening
+134. `I-0375` (`M68-S2`) QA counterexample gate for post-rejoin-window steady-seal determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -2567,7 +2569,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when delayed markers ar
 - Gate: late spillover markers can race with active settle-window state and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch)` spillover ordering with explicit spillover lineage diagnostics, pin last verified rollback-safe pre-spillover boundary on ambiguity, quarantine unresolved spillover markers, and fail fast on unresolved ownership conflicts.
 
-### M67. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Late-Spillover Rejoin-Window Determinism Tranche C0061 (P0, Next)
+### M67. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Late-Spillover Rejoin-Window Determinism Tranche C0061 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when spillover ownership transitions back into steady flow, so rejoin-window baseline, rejoin-window replay, crash-during-rejoin restart, and rollback+re-forward across rejoin-window permutations converge to one deterministic canonical output set per chain.
@@ -2605,6 +2607,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when spillover ownershi
 #### Risk Gate + Fallback
 - Gate: spillover-drain completion can race with concurrent live markers and create non-deterministic rejoin-window ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch)` rejoin ordering with explicit spillover rejoin lineage diagnostics, pin last verified rollback-safe pre-rejoin boundary on ambiguity, quarantine unresolved rejoin markers, and fail fast on unresolved ownership conflicts.
+
+### M68. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Rejoin-Window Steady-Seal Determinism Tranche C0062 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when rejoin-window ownership seals back into steady-state authority, so steady-seal baseline, steady-seal replay, crash-during-steady-seal restart, and rollback+re-forward across steady-seal permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M67` exit gate green with QA evidence for rejoin-window deterministic convergence and no-bleed safety.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M68-S1` (`I-0374`): harden deterministic post-rejoin-window steady-seal reconciliation so rejoin completion and steady-flow seal markers cannot reopen stale ownership, re-emit canonical IDs, suppress valid logical events, or regress cursor monotonicity.
+2. `M68-S2` (`I-0375`): execute QA counterexample gate for post-rejoin-window steady-seal determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under steady-seal baseline, steady-seal replay, crash-during-steady-seal restart, and rollback+re-forward across steady-seal permutations converge to one canonical tuple output set per chain.
+2. Post-rejoin-window steady-seal transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under post-rejoin-window steady-seal replay/resume permutations.
+4. Replay/resume from post-rejoin-window steady-seal boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject steady-seal baseline, steady-seal replay, crash-during-steady-seal restart, and rollback+re-forward across steady-seal permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain post-rejoin-window steady-seal transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from post-rejoin-window steady-seal boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus post-rejoin-window steady-seal counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic steady-seal baseline, steady-seal replay, crash-during-steady-seal restart, and rollback+re-forward across steady-seal fixtures.
+2. `0` cross-chain control-coupling violations under one-chain post-rejoin-window steady-seal counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under post-rejoin-window steady-seal replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in post-rejoin-window steady-seal fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: rejoin-window completion can race with steady-flow seal markers and create non-deterministic steady-seal ownership arbitration across restart-time rollback/re-forward boundaries.
+- Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch)` steady-seal ordering with explicit rejoin-seal lineage diagnostics, pin last verified rollback-safe pre-seal boundary on ambiguity, quarantine unresolved seal markers, and fail fast on unresolved ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -2735,6 +2776,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when spillover ownershi
 32. `DP-0101-AF`: auto-tune policy-manifest rollback checkpoint-fence post-late-spillover rejoin-window policy.
 - Preferred: deterministic chain-local spillover-rejoin state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch)` ownership fences, replay-stable rejoin lineage markers, and stale rejoin marker ownership rejection.
 - Fallback: pin last verified rollback-safe pre-rejoin boundary during rejoin ambiguity, quarantine unresolved rejoin markers, and resume spillover rejoin progression only after replay-safe lineage confirmation is proven.
+
+33. `DP-0101-AG`: auto-tune policy-manifest rollback checkpoint-fence post-rejoin-window steady-seal policy.
+- Preferred: deterministic chain-local rejoin-to-steady-seal state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch)` ownership fences, replay-stable steady-seal lineage markers, and stale post-rejoin seal marker ownership rejection.
+- Fallback: pin last verified rollback-safe pre-seal boundary during steady-seal ambiguity, quarantine unresolved seal markers, and resume steady-seal progression only after replay-safe lineage confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -2870,13 +2915,15 @@ Completed milestones/slices:
 129. `I-0365`
 130. `I-0366`
 131. `I-0367`
+132. `I-0369`
+133. `I-0370`
 
 Active downstream queue from this plan:
-1. `I-0369`
-2. `I-0370`
+1. `I-0374`
+2. `I-0375`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M67-S2`
+1. `TBD by next planner slice after M68-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -2911,3 +2958,4 @@ Superseded issues:
 - `I-0350` and `I-0351` are superseded by `I-0352` and `I-0353` to replace generic cycle placeholders with an executable post-baseline-rotation generation-prune reliability tranche.
 - `I-0355` and `I-0356` are superseded by `I-0357` and `I-0358` to replace generic cycle placeholders with an executable post-generation-prune retention-floor-lift reliability tranche.
 - `I-0360` and `I-0361` are superseded by `I-0362` and `I-0363` to replace generic cycle placeholders with an executable post-retention-floor-lift settle-window reliability tranche.
+- `I-0372` and `I-0373` are superseded by `I-0374` and `I-0375` to replace generic cycle placeholders with executable post-rejoin-window steady-seal determinism slices.
