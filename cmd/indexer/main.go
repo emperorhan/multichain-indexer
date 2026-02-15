@@ -17,10 +17,13 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
 	"golang.org/x/sync/errgroup"
 )
+
+const deterministicInterleaveMaxSkew = 250 * time.Millisecond
 
 type runtimeTarget struct {
 	chain   model.Chain
@@ -142,6 +145,7 @@ func main() {
 	}
 
 	pipelines := make([]*pipeline.Pipeline, 0, len(targets))
+	commitInterleaver := ingester.NewDeterministicDualChainInterleaver(deterministicInterleaveMaxSkew)
 	for _, target := range targets {
 		pipelineCfg := pipeline.Config{
 			Chain:             target.chain,
@@ -153,6 +157,7 @@ func main() {
 			ChannelBufferSize: cfg.Pipeline.ChannelBufferSize,
 			SidecarAddr:       cfg.Sidecar.Addr,
 			SidecarTimeout:    cfg.Sidecar.Timeout,
+			CommitInterleaver: commitInterleaver,
 		}
 		pipelines = append(pipelines, pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL)))
 	}

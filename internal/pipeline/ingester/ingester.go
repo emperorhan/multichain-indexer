@@ -26,20 +26,29 @@ const (
 
 // Ingester is a single-writer that processes NormalizedBatches into the database.
 type Ingester struct {
-	db               store.TxBeginner
-	txRepo           store.TransactionRepository
-	balanceEventRepo store.BalanceEventRepository
-	balanceRepo      store.BalanceRepository
-	tokenRepo        store.TokenRepository
-	cursorRepo       store.CursorRepository
-	configRepo       store.IndexerConfigRepository
-	normalizedCh     <-chan event.NormalizedBatch
-	logger           *slog.Logger
-	reorgHandler     func(context.Context, *sql.Tx, event.NormalizedBatch) error
-	retryMaxAttempts int
-	retryDelayStart  time.Duration
-	retryDelayMax    time.Duration
-	sleepFn          func(context.Context, time.Duration) error
+	db                store.TxBeginner
+	txRepo            store.TransactionRepository
+	balanceEventRepo  store.BalanceEventRepository
+	balanceRepo       store.BalanceRepository
+	tokenRepo         store.TokenRepository
+	cursorRepo        store.CursorRepository
+	configRepo        store.IndexerConfigRepository
+	normalizedCh      <-chan event.NormalizedBatch
+	logger            *slog.Logger
+	commitInterleaver CommitInterleaver
+	reorgHandler      func(context.Context, *sql.Tx, event.NormalizedBatch) error
+	retryMaxAttempts  int
+	retryDelayStart   time.Duration
+	retryDelayMax     time.Duration
+	sleepFn           func(context.Context, time.Duration) error
+}
+
+type Option func(*Ingester)
+
+func WithCommitInterleaver(interleaver CommitInterleaver) Option {
+	return func(ing *Ingester) {
+		ing.commitInterleaver = interleaver
+	}
 }
 
 func New(
@@ -52,8 +61,9 @@ func New(
 	configRepo store.IndexerConfigRepository,
 	normalizedCh <-chan event.NormalizedBatch,
 	logger *slog.Logger,
+	opts ...Option,
 ) *Ingester {
-	return &Ingester{
+	ing := &Ingester{
 		db:               db,
 		txRepo:           txRepo,
 		balanceEventRepo: balanceEventRepo,
@@ -69,6 +79,12 @@ func New(
 		retryDelayMax:    defaultRetryDelayMax,
 		sleepFn:          sleepContext,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(ing)
+		}
+	}
+	return ing
 }
 
 func (ing *Ingester) Run(ctx context.Context) error {
@@ -182,6 +198,16 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	}
 	batch.PreviousCursorValue = canonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
 	batch.NewCursorValue = canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+
+	releaseInterleave := func() {}
+	if ing.commitInterleaver != nil {
+		release, err := ing.commitInterleaver.Acquire(ctx, batch.Chain, batch.Network)
+		if err != nil {
+			return err
+		}
+		releaseInterleave = release
+	}
+	defer releaseInterleave()
 
 	dbTx, err := ing.db.BeginTx(ctx, nil)
 	if err != nil {
