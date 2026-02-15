@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -33,6 +33,8 @@ Execution queue (dependency-ordered):
 22. `I-0139` (`M13-S2`) QA counterexample gate for fetch-order/overlap dedupe determinism + invariant safety
 23. `I-0141` (`M14-S1`) canonical identity alias normalization + duplicate-suppression boundary hardening
 24. `I-0142` (`M14-S2`) QA counterexample gate for canonical identity alias determinism + invariant safety
+25. `I-0144` (`M15-S1`) finality-transition canonical dedupe/update hardening
+26. `I-0145` (`M15-S2`) QA counterexample gate for finality-transition determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -458,7 +460,7 @@ Eliminate provider-ordering and overlapping-page nondeterminism by canonicalizin
 - Gate: over-aggressive overlap dedupe keying can suppress legitimate distinct records when identity boundaries are underspecified.
 - Fallback: enforce conservative dedupe key (`chain + cursor-scope + canonical transaction/signature identity`) and fail-fast with deterministic diagnostics on ambiguous collisions until key contract is extended.
 
-### M14. Canonical Identity Alias Determinism Reliability Tranche C0008 (P0, Next)
+### M14. Canonical Identity Alias Determinism Reliability Tranche C0008 (P0, Completed)
 
 #### Objective
 Eliminate canonical identity alias drift (case/prefix/format variance) across fetch->normalize->ingest boundaries so logically identical transactions/signatures always map to one deterministic canonical identity without duplicate canonical emission or replay/cursor drift.
@@ -492,6 +494,41 @@ Eliminate canonical identity alias drift (case/prefix/format variance) across fe
 #### Risk Gate + Fallback
 - Gate: over-normalizing alias inputs can accidentally collapse legitimately distinct chain identifiers.
 - Fallback: keep canonicalization chain-scoped and format-conservative; emit deterministic diagnostics and fail fast on ambiguous alias collisions until contract extensions are added.
+
+### M15. Finality-Transition Determinism Reliability Tranche C0009 (P0, Next)
+
+#### Objective
+Prevent duplicate canonical emission during finality-state transitions by ensuring replay-equivalent events observed at different finality levels converge to one canonical identity with deterministic state evolution.
+
+#### Entry Gate
+- `M14` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M15-S1` (`I-0144`): implement deterministic finality-transition canonical dedupe/update semantics across mandatory-chain fetch/normalize/ingest paths.
+2. `M15-S2` (`I-0145`): execute QA counterexample gate for finality-transition equivalence and duplicate-suppression determinism.
+
+#### Definition Of Done
+1. Replays containing the same logical transaction/signature at weaker and stronger finality states produce one canonical event identity per logical balance delta.
+2. Finality-state promotion is deterministic and does not produce duplicate canonical IDs or double-apply balances.
+3. Mixed-finality overlap/replay fixtures remain idempotent with stable canonical tuple ordering.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject weaker->stronger finality observations for both `solana-devnet` and `base-sepolia` and assert stable canonical tuple sets with one canonical ID per logical event.
+2. Deterministic tests combine finality transitions with overlap duplicates and assert no duplicate canonical IDs or balance double-apply side effects.
+3. Replay/idempotency/cursor tests remain green with no regressions on `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, and `chain_adapter_runtime_wired`.
+4. QA executes required validation commands plus finality-transition counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across mixed-finality replay fixtures on mandatory chains.
+2. `0` canonical tuple diffs across independent runs of equivalent mixed-finality inputs.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-aggressive finality unification may collapse legitimately distinct lifecycle events if canonical identity boundaries are underspecified.
+- Fallback: keep finality transition handling chain-scoped and contract-conservative; emit deterministic diagnostics and fail fast on ambiguous transition collisions until model extension is approved.
 
 ## Decision Register (Major + Fallback)
 
@@ -532,10 +569,12 @@ Completed milestones/slices:
 20. `I-0136`
 21. `I-0138`
 22. `I-0139`
+23. `I-0141`
+24. `I-0142`
 
 Active downstream queue from this plan:
-1. `I-0141`
-2. `I-0142`
+1. `I-0144`
+2. `I-0145`
 
 Superseded issue:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

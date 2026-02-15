@@ -280,6 +280,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of both alias-equivalence determinism and alias+overlap duplicate suppression behavior on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0144 (M15-S1)
+Assertions:
+1. Replay-equivalent logical events observed at weaker and stronger finality states converge to one deterministic canonical identity per logical balance delta on both mandatory chains.
+2. Finality-state promotion/update semantics do not create duplicate canonical IDs and do not double-apply balances.
+3. Mixed-finality overlap/replay runs preserve canonical no-dup behavior and cursor monotonicity with stable canonical tuple ordering.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject mixed-finality observations on `solana-devnet` and `base-sepolia` and show `0` duplicate canonical IDs with stable canonical tuples.
+- Finality-transition + overlap counterexample tests show no balance double-apply side effects.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0145 (M15-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M15 invariants.
+2. QA executes at least one counterexample with weaker->stronger finality transitions and verifies deterministic canonical tuple equivalence.
+3. QA executes at least one counterexample combining finality transitions with overlap duplicates and verifies deterministic duplicate suppression and no balance double-apply behavior.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of finality-transition determinism and finality+overlap duplicate suppression behavior on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -293,3 +317,4 @@ Release recommendation must be `fail` if any condition holds:
 9. Decode-error isolation determinism cannot be proven (partial-failure suffix continuity and full-batch fail-fast behavior not evidenced for both mandatory chains).
 10. Fetch-order canonicalization determinism cannot be proven (order-permutation equivalence and overlap-dedupe stability not evidenced for both mandatory chains).
 11. Canonical identity alias determinism cannot be proven (alias-equivalent identity convergence and alias+overlap duplicate suppression not evidenced for both mandatory chains).
+12. Finality-transition determinism cannot be proven (mixed-finality equivalence, finality+overlap duplicate suppression, and no balance double-apply behavior not evidenced for both mandatory chains).

@@ -25,9 +25,11 @@
 22. `I-0139` (`M13-S2`): QA counterexample gate for fetch-order/overlap dedupe determinism + invariant safety.
 23. `I-0141` (`M14-S1`): canonical identity alias normalization + duplicate-suppression boundary hardening across mandatory-chain runtime paths.
 24. `I-0142` (`M14-S2`): QA counterexample gate for canonical identity alias determinism + invariant safety.
+25. `I-0144` (`M15-S1`): finality-transition canonical dedupe/update hardening across mandatory-chain runtime paths.
+26. `I-0145` (`M15-S2`): QA counterexample gate for finality-transition determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -59,6 +61,8 @@ Each slice must be independently releasable:
 20. Before `I-0139`: `I-0138` emits deterministic evidence that order-permuted and overlap-duplicated fetch inputs converge to identical canonical tuple outputs with zero duplicate canonical IDs.
 21. Before `I-0141`: `I-0139` QA report is `PASS` and no unresolved fetch-order/overlap dedupe blocker remains.
 22. Before `I-0142`: `I-0141` emits deterministic evidence that canonical identity alias variants converge to one canonical tuple output set with zero duplicate canonical IDs.
+23. Before `I-0144`: `I-0142` QA report is `PASS` and no unresolved canonical identity alias determinism blocker remains.
+24. Before `I-0145`: `I-0144` emits deterministic evidence that mixed-finality replay-equivalent inputs converge to one canonical identity set with zero duplicate canonical IDs and no balance double-apply side effects.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -72,6 +76,7 @@ Each slice must be independently releasable:
 9. If decode-error isolation risks masking broad sidecar outages, keep deterministic full-batch-collapse fail-fast guardrails while allowing bounded per-signature isolation for partial decode failures.
 10. If overlap dedupe boundaries are ambiguous, use conservative dedupe keying and deterministic collision diagnostics, then fail fast for unresolved ambiguity instead of silently dropping records.
 11. If identity alias normalization introduces ambiguous collisions, keep chain-scoped conservative normalization, emit deterministic alias-collision diagnostics, and fail fast until alias contracts are explicitly extended.
+12. If finality-transition unification boundaries are ambiguous, keep chain-scoped conservative transition handling, emit deterministic transition-collision diagnostics, and fail fast until explicit lifecycle contracts are extended.
 
 ## Completion Evidence
 1. Developer slice output:
