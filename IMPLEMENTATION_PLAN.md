@@ -2112,7 +2112,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when rollback markers a
 - Gate: late rollback markers can arrive after expiry pruning and race with quarantine-release checkpoints, creating non-deterministic stale-ownership resurrection near restart boundaries.
 - Fallback: enforce deterministic late-marker quarantine epochs with explicit post-expiry lineage diagnostics, pin last verified rollback-safe pre-release boundary on ambiguity, and fail fast on unresolved post-expiry marker ownership conflicts.
 
-### M56. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Quarantine Release-Window Determinism Tranche C0050 (P0, Next)
+### M56. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Quarantine Release-Window Determinism Tranche C0050 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when quarantined rollback markers are released under concurrent live marker flow, so deterministic release-only baseline, staggered release window, crash-during-release restart, and rollback+re-forward after-release-window permutations converge to one deterministic canonical output set per chain.
@@ -2150,6 +2150,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when quarantined rollba
 #### Risk Gate + Fallback
 - Gate: release-window batching can race with freshly observed rollback markers and create non-deterministic marker-order ownership arbitration near restart boundaries.
 - Fallback: enforce deterministic release-window sequencing with explicit release-watermark lineage diagnostics, pin last verified rollback-safe pre-release-window boundary on ambiguity, and fail fast on unresolved release-window ownership conflicts.
+
+### M57. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Release-Window Epoch-Rollover Determinism Tranche C0051 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when release-window state crosses policy-manifest epoch boundaries, so release-window-closed baseline, epoch-rollover adoption, crash-during-rollover restart, and rollback+re-forward after-rollover permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M56` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M57-S1` (`I-0326`): harden deterministic rollback checkpoint-fence post-release-window epoch-rollover reconciliation so prior-epoch delayed markers and current-epoch live markers cannot interleave into stale ownership reopening, canonical ID re-emission, logical event suppression, or cursor monotonicity regression.
+2. `M57-S2` (`I-0327`): execute QA counterexample gate for rollback checkpoint-fence post-release-window epoch-rollover determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under release-window-closed baseline, epoch-rollover adoption, crash-during-rollover restart, and rollback+re-forward after-rollover permutations converge to one canonical tuple output set per chain.
+2. Post-release-window epoch-rollover transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under rollback checkpoint-fence post-release-window epoch-rollover replay/resume permutations.
+4. Replay/resume from rollback checkpoint-fence post-release-window epoch-rollover boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject release-window-closed baseline, epoch-rollover adoption, crash-during-rollover restart, and rollback+re-forward after-rollover permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain rollback checkpoint-fence post-release-window epoch-rollover transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from rollback checkpoint-fence post-release-window epoch-rollover boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus rollback checkpoint-fence post-release-window epoch-rollover counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic release-window-closed baseline, epoch-rollover adoption, crash-during-rollover restart, and rollback+re-forward after-rollover fixtures.
+2. `0` cross-chain control-coupling violations under one-chain rollback checkpoint-fence post-release-window epoch-rollover counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under rollback checkpoint-fence post-release-window epoch-rollover replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in rollback checkpoint-fence post-release-window epoch-rollover fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: epoch-rollover activation can race with late prior-epoch release markers and create non-deterministic epoch/watermark ownership arbitration near restart boundaries.
+- Fallback: enforce deterministic `(epoch, release_watermark)` ordering with explicit epoch-rollover lineage diagnostics, pin last verified rollback-safe pre-rollover boundary on ambiguity, and fail fast on unresolved cross-epoch ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -2236,6 +2275,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when quarantined rollba
 21. `DP-0101-U`: auto-tune policy-manifest rollback checkpoint-fence post-quarantine release-window policy.
 - Preferred: deterministic chain-local release-window state machine with explicit release sequence fences, replay-stable release-watermark markers, and stale/duplicate release marker ownership rejection.
 - Fallback: pin last verified rollback-safe pre-release-window boundary during release ambiguity, keep delayed markers quarantined, and resume release only after replay-safe release-window confirmation is proven.
+
+22. `DP-0101-V`: auto-tune policy-manifest rollback checkpoint-fence post-release-window epoch-rollover policy.
+- Preferred: deterministic chain-local epoch-rollover state machine with explicit `(epoch, release_watermark)` fences, replay-stable cross-epoch lineage markers, and stale prior-epoch marker ownership rejection.
+- Fallback: pin last verified rollback-safe pre-rollover boundary during cross-epoch ambiguity, quarantine unresolved prior-epoch delayed markers, and resume epoch rollover only after replay-safe epoch lineage confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -2347,13 +2390,15 @@ Completed milestones/slices:
 105. `I-0314`
 106. `I-0318`
 107. `I-0319`
+108. `I-0321`
+109. `I-0322`
 
 Active downstream queue from this plan:
-1. `I-0321`
-2. `I-0322`
+1. `I-0326`
+2. `I-0327`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M56-S2`
+1. `TBD by next planner slice after M57-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -2384,3 +2429,4 @@ Superseded issues:
 - `I-0303` and `I-0304` are superseded by `I-0305` and `I-0306` to replace generic cycle placeholders with executable auto-tune policy-manifest rollback checkpoint-fence determinism slices.
 - `I-0311` and `I-0312` are superseded by `I-0313` and `I-0314` to replace generic cycle placeholders with executable auto-tune policy-manifest rollback checkpoint-fence tombstone-expiry determinism slices.
 - `I-0316` and `I-0317` are superseded by `I-0318` and `I-0319` to replace generic cycle placeholders with executable post-expiry late-marker quarantine determinism slices.
+- `I-0324` and `I-0325` are superseded by `I-0326` and `I-0327` to replace generic cycle placeholders with executable post-release-window epoch-rollover determinism slices.

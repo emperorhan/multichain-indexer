@@ -653,6 +653,21 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 			a.policyEpoch = incomingEpoch
 			return
 		}
+		if isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(previousEpoch, previousDigest, incomingDigest) {
+			// Same-epoch post-quarantine release-window progression is metadata
+			// ownership only and must converge deterministically at release
+			// watermark boundaries.
+			a.policyManifestDigest = incomingDigest
+			a.policyEpoch = incomingEpoch
+			return
+		}
+		if isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(previousEpoch, incomingDigest, previousDigest) {
+			// Reject stale/duplicate post-quarantine release-window ownership once
+			// a newer release watermark is verified for this lineage.
+			a.policyManifestDigest = previousDigest
+			a.policyEpoch = previousEpoch
+			return
+		}
 		if isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(previousEpoch, incomingDigest, previousDigest) {
 			// Reject stale post-release quarantine ownership reactivation once
 			// quarantine-release ownership is verified for this lineage.
@@ -1143,6 +1158,77 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(
 		return false
 	}
 	return targetReleaseEpoch > targetHoldEpoch
+}
+
+func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
+	epoch int64,
+	sourceDigest string,
+	targetDigest string,
+) bool {
+	if epoch < 0 {
+		return false
+	}
+	sourceNormalized := normalizePolicyManifestDigest(sourceDigest)
+	targetNormalized := normalizePolicyManifestDigest(targetDigest)
+	if !isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch, sourceNormalized) {
+		return false
+	}
+	if !isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch, targetNormalized) {
+		return false
+	}
+	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
+		return false
+	}
+	if sourceToSeq != epoch || targetToSeq != epoch {
+		return false
+	}
+	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
+		return false
+	}
+	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
+		return false
+	}
+	sourceExpiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetExpiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceExpiryEpoch != targetExpiryEpoch {
+		return false
+	}
+	sourceHoldEpoch, ok := parseRollbackFenceLateMarkerHoldEpoch(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetHoldEpoch, ok := parseRollbackFenceLateMarkerHoldEpoch(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceHoldEpoch != targetHoldEpoch {
+		return false
+	}
+	sourceReleaseEpoch, ok := parseRollbackFenceLateMarkerReleaseEpoch(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetReleaseEpoch, ok := parseRollbackFenceLateMarkerReleaseEpoch(targetNormalized)
+	if !ok {
+		return false
+	}
+	// Release windows are monotonic ownership markers: only strictly newer
+	// release watermarks can advance verified ownership.
+	return targetReleaseEpoch > sourceReleaseEpoch
 }
 
 func (a *autoTuneController) resolveOverrideState() autoTuneOverrideState {

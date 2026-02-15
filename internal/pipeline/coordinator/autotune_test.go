@@ -1360,7 +1360,7 @@ func TestAutoTuneController_RollbackCheckpointFenceEpochCompactionRejectsStaleFe
 	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
 }
 
-func TestAutoTuneController_RollbackCheckpointFencePostExpiryLateMarkerQuarantineRejectsStaleReactivation(t *testing.T) {
+func TestAutoTuneController_RollbackCheckpointFencePostQuarantineReleaseWindowRejectsStaleReactivation(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,
 		HeadSequence:       1_000,
@@ -1403,6 +1403,8 @@ func TestAutoTuneController_RollbackCheckpointFencePostExpiryLateMarkerQuarantin
 	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
 	releaseCfg := quarantineCfg
 	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	releaseWindowCfg := quarantineCfg
+	releaseWindowCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=7"
 
 	segment1Controller := newAutoTuneController(100, segment1Cfg)
 	require.NotNil(t, segment1Controller)
@@ -1484,15 +1486,37 @@ func TestAutoTuneController_RollbackCheckpointFencePostExpiryLateMarkerQuarantin
 	assert.Equal(t, releaseCfg.PolicyManifestRefreshEpoch, releaseDecision.PolicyEpoch)
 	assert.Equal(t, 0, releaseDecision.PolicyActivationTicks)
 
-	staleQuarantineSeed := releaseController.currentBatch
+	releaseWindowSeed := releaseController.currentBatch
+	releaseWindowController := newAutoTuneControllerWithSeed(100, releaseWindowCfg, &releaseWindowSeed)
+	require.NotNil(t, releaseWindowController)
+	releaseWindowController.reconcilePolicyTransition(releaseController.exportPolicyTransition())
+	batch, releaseWindowDecision := releaseWindowController.Resolve(highLag)
+	assert.Equal(t, releaseWindowSeed+20, batch)
+	assert.Equal(t, "apply_increase", releaseWindowDecision.Decision)
+	assert.Equal(t, releaseWindowCfg.PolicyManifestDigest, releaseWindowDecision.PolicyManifestDigest)
+	assert.Equal(t, releaseWindowCfg.PolicyManifestRefreshEpoch, releaseWindowDecision.PolicyEpoch)
+	assert.Equal(t, 0, releaseWindowDecision.PolicyActivationTicks)
+
+	staleReleaseSeed := releaseWindowController.currentBatch
+	staleReleaseController := newAutoTuneControllerWithSeed(100, releaseCfg, &staleReleaseSeed)
+	require.NotNil(t, staleReleaseController)
+	staleReleaseController.reconcilePolicyTransition(releaseWindowController.exportPolicyTransition())
+	batch, staleReleaseDecision := staleReleaseController.Resolve(highLag)
+	assert.Equal(t, staleReleaseSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleReleaseDecision.Decision)
+	assert.Equal(t, releaseWindowCfg.PolicyManifestDigest, staleReleaseDecision.PolicyManifestDigest, "stale release watermark must remain pinned to latest release-window ownership")
+	assert.Equal(t, releaseWindowCfg.PolicyManifestRefreshEpoch, staleReleaseDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleReleaseDecision.PolicyActivationTicks)
+
+	staleQuarantineSeed := staleReleaseController.currentBatch
 	staleQuarantineController := newAutoTuneControllerWithSeed(100, quarantineCfg, &staleQuarantineSeed)
 	require.NotNil(t, staleQuarantineController)
-	staleQuarantineController.reconcilePolicyTransition(releaseController.exportPolicyTransition())
+	staleQuarantineController.reconcilePolicyTransition(staleReleaseController.exportPolicyTransition())
 	batch, staleQuarantineDecision := staleQuarantineController.Resolve(highLag)
 	assert.Equal(t, staleQuarantineSeed+20, batch)
 	assert.Equal(t, "apply_increase", staleQuarantineDecision.Decision)
-	assert.Equal(t, releaseCfg.PolicyManifestDigest, staleQuarantineDecision.PolicyManifestDigest, "stale post-release quarantine marker must not reactivate")
-	assert.Equal(t, releaseCfg.PolicyManifestRefreshEpoch, staleQuarantineDecision.PolicyEpoch)
+	assert.Equal(t, releaseWindowCfg.PolicyManifestDigest, staleQuarantineDecision.PolicyManifestDigest, "stale post-release quarantine marker must not reactivate")
+	assert.Equal(t, releaseWindowCfg.PolicyManifestRefreshEpoch, staleQuarantineDecision.PolicyEpoch)
 	assert.Equal(t, 0, staleQuarantineDecision.PolicyActivationTicks)
 
 	reForwardSeed := staleQuarantineController.currentBatch
