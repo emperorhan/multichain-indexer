@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -115,6 +115,8 @@ Execution queue (dependency-ordered):
 104. `I-0314` (`M54-S2`) QA counterexample gate for auto-tune rollback checkpoint-fence tombstone-expiry determinism + invariant safety
 105. `I-0318` (`M55-S1`) auto-tune policy-manifest rollback checkpoint-fence post-expiry late-marker quarantine determinism hardening
 106. `I-0319` (`M55-S2`) QA counterexample gate for auto-tune rollback checkpoint-fence post-expiry late-marker quarantine determinism + invariant safety
+107. `I-0321` (`M56-S1`) auto-tune policy-manifest rollback checkpoint-fence post-quarantine release-window determinism hardening
+108. `I-0322` (`M56-S2`) QA counterexample gate for auto-tune rollback checkpoint-fence post-quarantine release-window determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -2071,7 +2073,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when rollback checkpoin
 - Gate: tombstone-expiry windows can race with late rollback replay markers and create non-deterministic post-expiry stale-fence ownership reactivation near restart boundaries.
 - Fallback: enforce deterministic minimum-retention expiry epochs with explicit tombstone-expiry lineage diagnostics, pin last verified rollback-safe pre-expiry boundary on ambiguity, and fail fast on unresolved post-expiry ownership conflicts.
 
-### M55. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Expiry Late-Marker Quarantine Determinism Tranche C0049 (P0, Next)
+### M55. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Expiry Late-Marker Quarantine Determinism Tranche C0049 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when rollback markers arrive after tombstone expiry, so on-time marker baseline, late-marker quarantine, crash-during-quarantine restart, and rollback+re-forward after-quarantine-release permutations converge to one deterministic canonical output set per chain.
@@ -2109,6 +2111,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when rollback markers a
 #### Risk Gate + Fallback
 - Gate: late rollback markers can arrive after expiry pruning and race with quarantine-release checkpoints, creating non-deterministic stale-ownership resurrection near restart boundaries.
 - Fallback: enforce deterministic late-marker quarantine epochs with explicit post-expiry lineage diagnostics, pin last verified rollback-safe pre-release boundary on ambiguity, and fail fast on unresolved post-expiry marker ownership conflicts.
+
+### M56. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Quarantine Release-Window Determinism Tranche C0050 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when quarantined rollback markers are released under concurrent live marker flow, so deterministic release-only baseline, staggered release window, crash-during-release restart, and rollback+re-forward after-release-window permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M55` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M56-S1` (`I-0321`): harden deterministic rollback checkpoint-fence post-quarantine release-window reconciliation so released delayed rollback markers and live markers cannot interleave into stale ownership reopening, canonical ID re-emission, logical event suppression, or cursor monotonicity regression.
+2. `M56-S2` (`I-0322`): execute QA counterexample gate for rollback checkpoint-fence post-quarantine release-window determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under deterministic release-only baseline, staggered release window, crash-during-release restart, and rollback+re-forward after-release-window permutations converge to one canonical tuple output set per chain.
+2. Post-quarantine release-window transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under rollback checkpoint-fence post-quarantine release-window replay/resume permutations.
+4. Replay/resume from rollback checkpoint-fence post-quarantine release boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject release-only baseline, staggered release window, crash-during-release restart, and rollback+re-forward after-release-window permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain rollback checkpoint-fence post-quarantine release-window transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from rollback checkpoint-fence post-quarantine release boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus rollback checkpoint-fence post-quarantine release-window counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic release-only baseline, staggered release window, crash-during-release restart, and rollback+re-forward after-release-window fixtures.
+2. `0` cross-chain control-coupling violations under one-chain rollback checkpoint-fence post-quarantine release-window counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under rollback checkpoint-fence post-quarantine release replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in rollback checkpoint-fence post-quarantine release-window fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: release-window batching can race with freshly observed rollback markers and create non-deterministic marker-order ownership arbitration near restart boundaries.
+- Fallback: enforce deterministic release-window sequencing with explicit release-watermark lineage diagnostics, pin last verified rollback-safe pre-release-window boundary on ambiguity, and fail fast on unresolved release-window ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -2191,6 +2232,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when rollback markers a
 20. `DP-0101-T`: auto-tune policy-manifest rollback checkpoint-fence post-expiry late-marker quarantine policy.
 - Preferred: deterministic chain-local late-marker quarantine state machine with explicit post-expiry marker-hold epochs, replay-stable quarantine-release boundaries, and stale post-expiry marker ownership rejection.
 - Fallback: pin last verified rollback-safe pre-release boundary during late-marker ambiguity, reject quarantine-release windows with unresolved delayed marker overlap, and resume post-expiry marker release only after replay-safe boundary confirmation is proven.
+
+21. `DP-0101-U`: auto-tune policy-manifest rollback checkpoint-fence post-quarantine release-window policy.
+- Preferred: deterministic chain-local release-window state machine with explicit release sequence fences, replay-stable release-watermark markers, and stale/duplicate release marker ownership rejection.
+- Fallback: pin last verified rollback-safe pre-release-window boundary during release ambiguity, keep delayed markers quarantined, and resume release only after replay-safe release-window confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -2300,13 +2345,15 @@ Completed milestones/slices:
 103. `I-0309`
 104. `I-0313`
 105. `I-0314`
+106. `I-0318`
+107. `I-0319`
 
 Active downstream queue from this plan:
-1. `I-0318`
-2. `I-0319`
+1. `I-0321`
+2. `I-0322`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M55-S2`
+1. `TBD by next planner slice after M56-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
