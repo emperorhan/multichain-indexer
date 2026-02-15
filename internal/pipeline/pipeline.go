@@ -44,11 +44,13 @@ type CoordinatorAutoTuneConfig struct {
 	QueueHighWatermarkPct int
 	QueueLowWatermarkPct  int
 
-	HysteresisTicks          int
-	TelemetryStaleTicks      int
-	TelemetryRecoveryTicks   int
-	OperatorOverrideBatch    int
-	OperatorReleaseHoldTicks int
+	HysteresisTicks           int
+	TelemetryStaleTicks       int
+	TelemetryRecoveryTicks    int
+	OperatorOverrideBatch     int
+	OperatorReleaseHoldTicks  int
+	PolicyVersion             string
+	PolicyActivationHoldTicks int
 }
 
 type Pipeline struct {
@@ -114,6 +116,8 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		TelemetryRecoveryTicks:    p.cfg.CoordinatorAutoTune.TelemetryRecoveryTicks,
 		OperatorOverrideBatchSize: p.cfg.CoordinatorAutoTune.OperatorOverrideBatch,
 		OperatorReleaseHoldTicks:  p.cfg.CoordinatorAutoTune.OperatorReleaseHoldTicks,
+		PolicyVersion:             p.cfg.CoordinatorAutoTune.PolicyVersion,
+		PolicyActivationHoldTicks: p.cfg.CoordinatorAutoTune.PolicyActivationHoldTicks,
 	})
 
 	fetch := fetcher.New(

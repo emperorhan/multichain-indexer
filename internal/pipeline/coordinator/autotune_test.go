@@ -765,6 +765,77 @@ func TestAutoTuneController_OperatorReleaseHoldStatePersistsAcrossWarmRestartSee
 	assert.Equal(t, "apply_increase", d3.Decision)
 }
 
+func TestAutoTuneController_PolicyVersionTransitionAppliesDeterministicActivationFence(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	baseCfg := AutoTuneConfig{
+		Enabled:                   true,
+		MinBatchSize:              60,
+		MaxBatchSize:              260,
+		StepUp:                    20,
+		StepDown:                  10,
+		LagHighWatermark:          80,
+		LagLowWatermark:           20,
+		QueueHighWatermarkPct:     90,
+		QueueLowWatermarkPct:      10,
+		HysteresisTicks:           1,
+		CooldownTicks:             1,
+		PolicyVersion:             "policy-v1",
+		PolicyActivationHoldTicks: 2,
+	}
+	v1Controller := newAutoTuneController(100, baseCfg)
+	require.NotNil(t, v1Controller)
+
+	batch, d1 := v1Controller.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "apply_increase", d1.Decision)
+
+	v2Cfg := baseCfg
+	v2Cfg.PolicyVersion = "policy-v2"
+	seed := v1Controller.currentBatch
+	v2Controller := newAutoTuneControllerWithSeed(100, v2Cfg, &seed)
+	require.NotNil(t, v2Controller)
+	v2Controller.reconcilePolicyTransition(v1Controller.exportPolicyTransition())
+
+	batch, d2 := v2Controller.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold_policy_transition", d2.Decision)
+	assert.Equal(t, "policy-v2", d2.PolicyVersion)
+	assert.Equal(t, int64(1), d2.PolicyEpoch)
+	assert.Equal(t, 2, d2.PolicyActivationTicks)
+
+	batch, d3 := v2Controller.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "hold_policy_transition", d3.Decision)
+	assert.Equal(t, int64(1), d3.PolicyEpoch)
+	assert.Equal(t, 1, d3.PolicyActivationTicks)
+
+	batch, d4 := v2Controller.Resolve(highLag)
+	assert.Equal(t, 140, batch)
+	assert.Equal(t, "apply_increase", d4.Decision)
+	assert.Equal(t, int64(1), d4.PolicyEpoch)
+
+	rollbackCfg := baseCfg
+	rollbackSeed := v2Controller.currentBatch
+	rollbackController := newAutoTuneControllerWithSeed(100, rollbackCfg, &rollbackSeed)
+	require.NotNil(t, rollbackController)
+	rollbackController.reconcilePolicyTransition(v2Controller.exportPolicyTransition())
+
+	batch, rollbackDecision := rollbackController.Resolve(highLag)
+	assert.Equal(t, rollbackSeed, batch)
+	assert.Equal(t, "hold_policy_transition", rollbackDecision.Decision)
+	assert.Equal(t, "policy-v1", rollbackDecision.PolicyVersion)
+	assert.Equal(t, int64(2), rollbackDecision.PolicyEpoch)
+	assert.Equal(t, 2, rollbackDecision.PolicyActivationTicks)
+}
+
 func intPtr(v int) *int {
 	return &v
 }

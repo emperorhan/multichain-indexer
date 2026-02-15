@@ -2351,6 +2351,342 @@ func TestTick_AutoTuneOperatorOverrideReplayResumeConvergesAcrossMandatoryChains
 	}
 }
 
+func TestTick_AutoTunePolicyVersionPermutationsConvergeCanonicalTuplesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qpolicyperm0000000000000000000000000000",
+		},
+	}
+
+	policyV1Cfg := AutoTuneConfig{
+		Enabled:                   true,
+		MinBatchSize:              60,
+		MaxBatchSize:              400,
+		StepUp:                    20,
+		StepDown:                  10,
+		LagHighWatermark:          80,
+		LagLowWatermark:           20,
+		QueueHighWatermarkPct:     90,
+		QueueLowWatermarkPct:      10,
+		HysteresisTicks:           1,
+		CooldownTicks:             1,
+		PolicyVersion:             "policy-v1",
+		PolicyActivationHoldTicks: 1,
+	}
+	policyV2Cfg := policyV1Cfg
+	policyV2Cfg.PolicyVersion = "policy-v2"
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, policyV1Cfg)
+			baselineSnapshots, baselineBatches := collectAutoTuneTrace(t, baselineHarness, len(heads))
+
+			rolloutHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, policyV1Cfg)
+			rolloutSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			rolloutBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					rolloutHarness.coordinator.WithAutoTune(policyV2Cfg)
+				}
+				job := rolloutHarness.tickAndAdvance(t)
+				rolloutSnapshots = append(rolloutSnapshots, snapshotFromFetchJob(job))
+				rolloutBatches = append(rolloutBatches, job.BatchSize)
+			}
+
+			rollbackHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, policyV1Cfg)
+			rollbackSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			rollbackBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					rollbackHarness.coordinator.WithAutoTune(policyV2Cfg)
+				}
+				if i == 4 {
+					rollbackHarness.coordinator.WithAutoTune(policyV1Cfg)
+				}
+				if i == 6 {
+					rollbackHarness.coordinator.WithAutoTune(policyV2Cfg)
+				}
+				job := rollbackHarness.tickAndAdvance(t)
+				rollbackSnapshots = append(rollbackSnapshots, snapshotFromFetchJob(job))
+				rollbackBatches = append(rollbackBatches, job.BatchSize)
+			}
+
+			assert.Equal(t, baselineSnapshots, rolloutSnapshots, "policy-v1 baseline and policy-v2 rollout permutations must converge to one canonical tuple output set")
+			assert.Equal(t, baselineSnapshots, rollbackSnapshots, "policy rollback/re-apply permutations must converge to one canonical tuple output set")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, rolloutSnapshots, "policy-v1 baseline vs policy-v2 rollout")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, rollbackSnapshots, "policy-v1 baseline vs rollback/re-apply")
+			assertCursorMonotonicByAddress(t, baselineSnapshots)
+			assertCursorMonotonicByAddress(t, rolloutSnapshots)
+			assertCursorMonotonicByAddress(t, rollbackSnapshots)
+
+			assert.NotEqual(t, baselineBatches, rolloutBatches, "policy rollout should alter control decisions deterministically at transition boundaries")
+			assert.NotEqual(t, baselineBatches, rollbackBatches, "rollback/re-apply should alter control decisions deterministically at transition boundaries")
+			assert.Equal(t, rolloutBatches[1], rolloutBatches[2], "policy rollout boundary must apply deterministic activation hold")
+			assert.Equal(t, rollbackBatches[1], rollbackBatches[2], "policy-v1->policy-v2 boundary must hold deterministically")
+			assert.Equal(t, rollbackBatches[3], rollbackBatches[4], "policy-v2->policy-v1 boundary must hold deterministically")
+			assert.Equal(t, rollbackBatches[5], rollbackBatches[6], "policy-v1->policy-v2 re-apply boundary must hold deterministically")
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyVersionTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
+	policyV1Cfg := AutoTuneConfig{
+		Enabled:                   true,
+		MinBatchSize:              60,
+		MaxBatchSize:              320,
+		StepUp:                    20,
+		StepDown:                  10,
+		LagHighWatermark:          80,
+		LagLowWatermark:           20,
+		QueueHighWatermarkPct:     90,
+		QueueLowWatermarkPct:      10,
+		HysteresisTicks:           1,
+		CooldownTicks:             1,
+		PolicyVersion:             "policy-v1",
+		PolicyActivationHoldTicks: 1,
+	}
+	policyV2Cfg := policyV1Cfg
+	policyV2Cfg.PolicyVersion = "policy-v2"
+
+	const tickCount = 8
+	healthyBaseAddress := "0x1111111111111111111111111111111111111111"
+	healthyBTCAddress := "tb1qpolicyhealthy00000000000000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+
+	healthyHeads := []int64{130, 131, 132, 133, 134, 135, 136, 137}
+	laggingHeads := []int64{260, 261, 262, 263, 264, 265, 266, 267}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		policyV1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		policyV1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		policyV1Cfg,
+	)
+	laggingBaselineSnapshots, laggingBaselineBatches := collectAutoTuneTrace(t, laggingBaseline, tickCount)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		policyV1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		policyV1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		policyV1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBatches := make([]int, 0, tickCount)
+
+	for i := 0; i < tickCount; i++ {
+		if i == 2 {
+			laggingInterleaved.coordinator.WithAutoTune(policyV2Cfg)
+		}
+		if i == 5 {
+			laggingInterleaved.coordinator.WithAutoTune(policyV1Cfg)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+		laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana policy transition must not alter base canonical tuples")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana policy transition must not alter base control decisions")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana policy transition must not alter btc canonical tuples")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana policy transition must not alter btc control decisions")
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "policy transition must preserve lagging-chain canonical tuples")
+	assert.NotEqual(t, laggingBaselineBatches, laggingBatches, "policy transition should remain chain-scoped and alter only lagging-chain control decisions")
+	assert.Equal(t, laggingBatches[1], laggingBatches[2], "policy rollout boundary hold should be chain-scoped to lagging chain")
+	assert.Equal(t, laggingBatches[4], laggingBatches[5], "policy rollback boundary hold should be chain-scoped to lagging chain")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved policy transition")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved policy transition")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved policy transition")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
+func TestTick_AutoTunePolicyVersionReplayResumeConvergesAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qpolicyreplay0000000000000000000000000",
+		},
+	}
+
+	policyV1Cfg := AutoTuneConfig{
+		Enabled:                   true,
+		MinBatchSize:              60,
+		MaxBatchSize:              320,
+		StepUp:                    20,
+		StepDown:                  10,
+		LagHighWatermark:          80,
+		LagLowWatermark:           20,
+		QueueHighWatermarkPct:     90,
+		QueueLowWatermarkPct:      10,
+		HysteresisTicks:           1,
+		CooldownTicks:             1,
+		PolicyVersion:             "policy-v1",
+		PolicyActivationHoldTicks: 2,
+	}
+	policyV2Cfg := policyV1Cfg
+	policyV2Cfg.PolicyVersion = "policy-v2"
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267}
+	const splitTick = 3
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			coldHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, policyV1Cfg)
+			coldSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			coldBatches := make([]int, 0, len(heads))
+			for i := 0; i < len(heads); i++ {
+				if i == 2 {
+					coldHarness.coordinator.WithAutoTune(policyV2Cfg)
+				}
+				job := coldHarness.tickAndAdvance(t)
+				coldSnapshots = append(coldSnapshots, snapshotFromFetchJob(job))
+				coldBatches = append(coldBatches, job.BatchSize)
+			}
+
+			warmFirst := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads[:splitTick], policyV1Cfg)
+			warmSnapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+			warmBatches := make([]int, 0, len(heads))
+			for i := 0; i < splitTick; i++ {
+				if i == 2 {
+					warmFirst.coordinator.WithAutoTune(policyV2Cfg)
+				}
+				job := warmFirst.tickAndAdvance(t)
+				warmSnapshots = append(warmSnapshots, snapshotFromFetchJob(job))
+				warmBatches = append(warmBatches, job.BatchSize)
+			}
+
+			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
+			require.NotNil(t, restartState)
+			assert.Equal(t, "policy-v2", restartState.PolicyVersion)
+			assert.Equal(t, int64(1), restartState.PolicyEpoch)
+			assert.Greater(t, restartState.PolicyActivationRemaining, 0, "restart state must preserve policy activation hold countdown at rollout boundary")
+			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
+			require.NotNil(t, resumeCursor)
+
+			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				tc.chain,
+				tc.network,
+				tc.address,
+				resumeCursor.CursorSequence,
+				heads[splitTick:],
+				policyV2Cfg,
+				restartState,
+			)
+			warmTailSnapshots, warmTailBatches := collectAutoTuneTrace(t, warmSecond, len(heads)-splitTick)
+			warmSnapshots = append(warmSnapshots, warmTailSnapshots...)
+			warmBatches = append(warmBatches, warmTailBatches...)
+
+			assert.Equal(t, coldSnapshots, warmSnapshots, "policy-version replay/resume must converge to deterministic canonical tuples")
+			assert.Equal(t, coldBatches, warmBatches, "policy-version replay/resume must preserve deterministic control decisions")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, coldSnapshots, warmSnapshots, "cold vs warm policy-version replay")
+			assertCursorMonotonicByAddress(t, warmSnapshots)
+		})
+	}
+}
+
 type lagAwareJobSnapshot struct {
 	Address        string
 	CursorValue    string

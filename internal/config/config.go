@@ -70,29 +70,31 @@ type RuntimeConfig struct {
 }
 
 type PipelineConfig struct {
-	WatchedAddresses                          []string // legacy alias of SolanaWatchedAddresses
-	SolanaWatchedAddresses                    []string
-	BaseWatchedAddresses                      []string
-	BTCWatchedAddresses                       []string
-	FetchWorkers                              int
-	NormalizerWorkers                         int
-	BatchSize                                 int
-	IndexingIntervalMs                        int
-	ChannelBufferSize                         int
-	CoordinatorAutoTuneEnabled                bool
-	CoordinatorAutoTuneMinBatchSize           int
-	CoordinatorAutoTuneMaxBatchSize           int
-	CoordinatorAutoTuneStepUp                 int
-	CoordinatorAutoTuneStepDown               int
-	CoordinatorAutoTuneLagHighWatermark       int64
-	CoordinatorAutoTuneLagLowWatermark        int64
-	CoordinatorAutoTuneQueueHighPct           int
-	CoordinatorAutoTuneQueueLowPct            int
-	CoordinatorAutoTuneHysteresisTicks        int
-	CoordinatorAutoTuneTelemetryStaleTicks    int
-	CoordinatorAutoTuneTelemetryRecoveryTicks int
-	CoordinatorAutoTuneOperatorOverrideBatch  int
-	CoordinatorAutoTuneOperatorReleaseTicks   int
+	WatchedAddresses                             []string // legacy alias of SolanaWatchedAddresses
+	SolanaWatchedAddresses                       []string
+	BaseWatchedAddresses                         []string
+	BTCWatchedAddresses                          []string
+	FetchWorkers                                 int
+	NormalizerWorkers                            int
+	BatchSize                                    int
+	IndexingIntervalMs                           int
+	ChannelBufferSize                            int
+	CoordinatorAutoTuneEnabled                   bool
+	CoordinatorAutoTuneMinBatchSize              int
+	CoordinatorAutoTuneMaxBatchSize              int
+	CoordinatorAutoTuneStepUp                    int
+	CoordinatorAutoTuneStepDown                  int
+	CoordinatorAutoTuneLagHighWatermark          int64
+	CoordinatorAutoTuneLagLowWatermark           int64
+	CoordinatorAutoTuneQueueHighPct              int
+	CoordinatorAutoTuneQueueLowPct               int
+	CoordinatorAutoTuneHysteresisTicks           int
+	CoordinatorAutoTuneTelemetryStaleTicks       int
+	CoordinatorAutoTuneTelemetryRecoveryTicks    int
+	CoordinatorAutoTuneOperatorOverrideBatch     int
+	CoordinatorAutoTuneOperatorReleaseTicks      int
+	CoordinatorAutoTunePolicyVersion             string
+	CoordinatorAutoTunePolicyActivationHoldTicks int
 }
 
 type ServerConfig struct {
@@ -137,25 +139,27 @@ func Load() (*Config, error) {
 			LikeGroup:      strings.ToLower(getEnv("RUNTIME_LIKE_GROUP", "")),
 		},
 		Pipeline: PipelineConfig{
-			FetchWorkers:                              getEnvInt("FETCH_WORKERS", 2),
-			NormalizerWorkers:                         getEnvInt("NORMALIZER_WORKERS", 2),
-			BatchSize:                                 pipelineBatchSize,
-			IndexingIntervalMs:                        getEnvInt("INDEXING_INTERVAL_MS", 5000),
-			ChannelBufferSize:                         getEnvInt("CHANNEL_BUFFER_SIZE", 10),
-			CoordinatorAutoTuneEnabled:                getEnvBool("COORDINATOR_AUTOTUNE_ENABLED", false),
-			CoordinatorAutoTuneMinBatchSize:           getEnvInt("COORDINATOR_AUTOTUNE_MIN_BATCH_SIZE", 10),
-			CoordinatorAutoTuneMaxBatchSize:           getEnvInt("COORDINATOR_AUTOTUNE_MAX_BATCH_SIZE", pipelineBatchSize),
-			CoordinatorAutoTuneStepUp:                 getEnvInt("COORDINATOR_AUTOTUNE_STEP_UP", 10),
-			CoordinatorAutoTuneStepDown:               getEnvInt("COORDINATOR_AUTOTUNE_STEP_DOWN", 10),
-			CoordinatorAutoTuneLagHighWatermark:       int64(getEnvInt("COORDINATOR_AUTOTUNE_LAG_HIGH_WATERMARK", 500)),
-			CoordinatorAutoTuneLagLowWatermark:        int64(getEnvInt("COORDINATOR_AUTOTUNE_LAG_LOW_WATERMARK", 100)),
-			CoordinatorAutoTuneQueueHighPct:           getEnvInt("COORDINATOR_AUTOTUNE_QUEUE_HIGH_PCT", 80),
-			CoordinatorAutoTuneQueueLowPct:            getEnvInt("COORDINATOR_AUTOTUNE_QUEUE_LOW_PCT", 30),
-			CoordinatorAutoTuneHysteresisTicks:        getEnvInt("COORDINATOR_AUTOTUNE_HYSTERESIS_TICKS", 2),
-			CoordinatorAutoTuneTelemetryStaleTicks:    getEnvInt("COORDINATOR_AUTOTUNE_TELEMETRY_STALE_TICKS", 2),
-			CoordinatorAutoTuneTelemetryRecoveryTicks: getEnvInt("COORDINATOR_AUTOTUNE_TELEMETRY_RECOVERY_TICKS", 1),
-			CoordinatorAutoTuneOperatorOverrideBatch:  getEnvInt("COORDINATOR_AUTOTUNE_OPERATOR_OVERRIDE_BATCH_SIZE", 0),
-			CoordinatorAutoTuneOperatorReleaseTicks:   getEnvInt("COORDINATOR_AUTOTUNE_OPERATOR_RELEASE_HOLD_TICKS", 2),
+			FetchWorkers:                                 getEnvInt("FETCH_WORKERS", 2),
+			NormalizerWorkers:                            getEnvInt("NORMALIZER_WORKERS", 2),
+			BatchSize:                                    pipelineBatchSize,
+			IndexingIntervalMs:                           getEnvInt("INDEXING_INTERVAL_MS", 5000),
+			ChannelBufferSize:                            getEnvInt("CHANNEL_BUFFER_SIZE", 10),
+			CoordinatorAutoTuneEnabled:                   getEnvBool("COORDINATOR_AUTOTUNE_ENABLED", false),
+			CoordinatorAutoTuneMinBatchSize:              getEnvInt("COORDINATOR_AUTOTUNE_MIN_BATCH_SIZE", 10),
+			CoordinatorAutoTuneMaxBatchSize:              getEnvInt("COORDINATOR_AUTOTUNE_MAX_BATCH_SIZE", pipelineBatchSize),
+			CoordinatorAutoTuneStepUp:                    getEnvInt("COORDINATOR_AUTOTUNE_STEP_UP", 10),
+			CoordinatorAutoTuneStepDown:                  getEnvInt("COORDINATOR_AUTOTUNE_STEP_DOWN", 10),
+			CoordinatorAutoTuneLagHighWatermark:          int64(getEnvInt("COORDINATOR_AUTOTUNE_LAG_HIGH_WATERMARK", 500)),
+			CoordinatorAutoTuneLagLowWatermark:           int64(getEnvInt("COORDINATOR_AUTOTUNE_LAG_LOW_WATERMARK", 100)),
+			CoordinatorAutoTuneQueueHighPct:              getEnvInt("COORDINATOR_AUTOTUNE_QUEUE_HIGH_PCT", 80),
+			CoordinatorAutoTuneQueueLowPct:               getEnvInt("COORDINATOR_AUTOTUNE_QUEUE_LOW_PCT", 30),
+			CoordinatorAutoTuneHysteresisTicks:           getEnvInt("COORDINATOR_AUTOTUNE_HYSTERESIS_TICKS", 2),
+			CoordinatorAutoTuneTelemetryStaleTicks:       getEnvInt("COORDINATOR_AUTOTUNE_TELEMETRY_STALE_TICKS", 2),
+			CoordinatorAutoTuneTelemetryRecoveryTicks:    getEnvInt("COORDINATOR_AUTOTUNE_TELEMETRY_RECOVERY_TICKS", 1),
+			CoordinatorAutoTuneOperatorOverrideBatch:     getEnvInt("COORDINATOR_AUTOTUNE_OPERATOR_OVERRIDE_BATCH_SIZE", 0),
+			CoordinatorAutoTuneOperatorReleaseTicks:      getEnvInt("COORDINATOR_AUTOTUNE_OPERATOR_RELEASE_HOLD_TICKS", 2),
+			CoordinatorAutoTunePolicyVersion:             getEnv("COORDINATOR_AUTOTUNE_POLICY_VERSION", "policy-v1"),
+			CoordinatorAutoTunePolicyActivationHoldTicks: getEnvInt("COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS", 1),
 		},
 		Server: ServerConfig{
 			HealthPort: getEnvInt("HEALTH_PORT", 8080),
