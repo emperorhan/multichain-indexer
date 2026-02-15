@@ -98,6 +98,7 @@ type autoTunePolicyTransition struct {
 	ManifestDigest          string
 	Epoch                   int64
 	ActivationHoldRemaining int
+	FromWarmCheckpoint      bool
 }
 
 type autoTuneController struct {
@@ -538,6 +539,7 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 	if !transition.HasState {
 		return
 	}
+	normalizedActivationHold := normalizeTransitionActivationHold(transition)
 	previousVersion := normalizePolicyVersion(transition.Version)
 	previousDigest := normalizePolicyManifestDigest(transition.ManifestDigest)
 	previousEpoch := transition.Epoch
@@ -563,8 +565,8 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 			a.policyManifestDigest = previousDigest
 			a.policyEpoch = previousEpoch
 		}
-		if transition.ActivationHoldRemaining > a.policyActivationLeft {
-			a.policyActivationLeft = transition.ActivationHoldRemaining
+		if normalizedActivationHold > a.policyActivationLeft {
+			a.policyActivationLeft = normalizedActivationHold
 			a.resetAdaptiveControlState()
 		}
 		return
@@ -597,8 +599,8 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 		// Reject sequence-gap transitions: pin previously verified contiguous lineage.
 		a.policyManifestDigest = previousDigest
 		a.policyEpoch = previousEpoch
-		if transition.ActivationHoldRemaining > a.policyActivationLeft {
-			a.policyActivationLeft = transition.ActivationHoldRemaining
+		if normalizedActivationHold > a.policyActivationLeft {
+			a.policyActivationLeft = normalizedActivationHold
 			a.resetAdaptiveControlState()
 		}
 		return
@@ -615,8 +617,8 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 		// Reject stale/ambiguous rollback: pin previously verified rollback-safe lineage.
 		a.policyManifestDigest = previousDigest
 		a.policyEpoch = previousEpoch
-		if transition.ActivationHoldRemaining > a.policyActivationLeft {
-			a.policyActivationLeft = transition.ActivationHoldRemaining
+		if normalizedActivationHold > a.policyActivationLeft {
+			a.policyActivationLeft = normalizedActivationHold
 			a.resetAdaptiveControlState()
 		}
 		return
@@ -625,10 +627,41 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 	// Reject stale/ambiguous refresh: pin previously verified manifest lineage.
 	a.policyManifestDigest = previousDigest
 	a.policyEpoch = previousEpoch
-	if transition.ActivationHoldRemaining > a.policyActivationLeft {
-		a.policyActivationLeft = transition.ActivationHoldRemaining
+	if normalizedActivationHold > a.policyActivationLeft {
+		a.policyActivationLeft = normalizedActivationHold
 		a.resetAdaptiveControlState()
 	}
+}
+
+func normalizeTransitionActivationHold(transition autoTunePolicyTransition) int {
+	remaining := maxInt(transition.ActivationHoldRemaining, 0)
+	if remaining == 0 || !transition.FromWarmCheckpoint {
+		return remaining
+	}
+	if !isRollbackFenceTransition(transition.Epoch, transition.ManifestDigest) {
+		return remaining
+	}
+	// Warm-restore snapshots can race with rollback fence flush timing and
+	// persist either pre- or post-flush hold counts. Collapse to one
+	// deterministic restore hold tick to avoid replay drift.
+	if remaining > 1 {
+		return 1
+	}
+	return remaining
+}
+
+func isRollbackFenceTransition(epoch int64, digest string) bool {
+	if epoch < 0 {
+		return false
+	}
+	rollbackFromSeq, rollbackToSeq, _, ok := parseRollbackLineage(normalizePolicyManifestDigest(digest))
+	if !ok {
+		return false
+	}
+	if rollbackToSeq != epoch {
+		return false
+	}
+	return rollbackFromSeq > rollbackToSeq
 }
 
 func (a *autoTuneController) resolveOverrideState() autoTuneOverrideState {

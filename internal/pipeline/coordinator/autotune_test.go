@@ -1250,6 +1250,62 @@ func TestAutoTuneController_PolicyManifestRollbackLineageRequiresDeterministicFe
 	assert.Equal(t, 0, reapplyDecision.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	rollbackCfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               260,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3",
+		PolicyManifestRefreshEpoch: 2,
+		PolicyActivationHoldTicks:  2,
+	}
+
+	seed := 140
+	controller := newAutoTuneControllerWithSeed(100, rollbackCfg, &seed)
+	require.NotNil(t, controller)
+	controller.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:                true,
+		Version:                 rollbackCfg.PolicyVersion,
+		ManifestDigest:          rollbackCfg.PolicyManifestDigest,
+		Epoch:                   rollbackCfg.PolicyManifestRefreshEpoch,
+		ActivationHoldRemaining: 2,
+		FromWarmCheckpoint:      true,
+	})
+
+	batch, hold := controller.Resolve(highLag)
+	assert.Equal(t, seed, batch)
+	assert.Equal(t, "hold_policy_transition", hold.Decision)
+	assert.Equal(
+		t,
+		1,
+		hold.PolicyActivationTicks,
+		"warm rollback fence restore should collapse ambiguous pre/post-flush hold windows to one deterministic hold tick",
+	)
+
+	batch, applied := controller.Resolve(highLag)
+	assert.Equal(t, seed+20, batch)
+	assert.Equal(t, "apply_increase", applied.Decision)
+	assert.Equal(t, 0, applied.PolicyActivationTicks)
+}
+
 func intPtr(v int) *int {
 	return &v
 }

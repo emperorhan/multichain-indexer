@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -109,6 +109,8 @@ Execution queue (dependency-ordered):
 98. `I-0301` (`M51-S2`) QA counterexample gate for auto-tune policy-manifest rollback-crashpoint determinism + invariant safety
 99. `I-0305` (`M52-S1`) auto-tune policy-manifest rollback-crashpoint checkpoint-fence determinism hardening
 100. `I-0306` (`M52-S2`) QA counterexample gate for auto-tune policy-manifest rollback-crashpoint checkpoint-fence determinism + invariant safety
+101. `I-0308` (`M53-S1`) auto-tune policy-manifest rollback checkpoint-fence epoch-compaction determinism hardening
+102. `I-0309` (`M53-S2`) QA counterexample gate for auto-tune rollback checkpoint-fence epoch-compaction determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1948,7 +1950,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when process abort/rest
 - Gate: rollback transition phase checkpoints can race with in-flight re-forward application and create non-deterministic resume ownership near process restart boundaries.
 - Fallback: enforce deterministic rollback phase fences with explicit checkpoint-phase diagnostics, pin last verified rollback-safe phase boundary on ambiguity, and fail fast on unresolved rollback phase ownership conflicts.
 
-### M52. Auto-Tune Policy-Manifest Rollback-Crashpoint Checkpoint-Fence Determinism Tranche C0046 (P0, Next)
+### M52. Auto-Tune Policy-Manifest Rollback-Crashpoint Checkpoint-Fence Determinism Tranche C0046 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when rollback-crashpoint recovery replays across checkpoint flush/ownership fence boundaries, so no-fence baseline, crash-before-fence-flush, crash-after-fence-flush, and rollback+re-forward fence-resume permutations converge to one deterministic canonical output set per chain.
@@ -1986,6 +1988,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when rollback-crashpoin
 #### Risk Gate + Fallback
 - Gate: checkpoint-fence ownership state can diverge from persisted rollback phase markers under crash timing races near flush/restore boundaries.
 - Fallback: enforce deterministic fence ownership epochs with explicit fence-state diagnostics, pin last verified rollback-safe fence boundary on ambiguity, and fail fast on unresolved fence ownership conflicts.
+
+### M53. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Epoch-Compaction Determinism Tranche C0047 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when long-running rollback checkpoint-fence state is compacted or epoch-pruned, so no-compaction baseline, live compaction, crash-during-compaction restart, and rollback+re-forward after compaction permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M52` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M53-S1` (`I-0308`): harden deterministic rollback checkpoint-fence epoch-compaction reconciliation so compaction/pruning and restart timing cannot reactivate stale fence ownership, induce duplicate canonical IDs, suppress valid logical events, or regress cursor monotonicity.
+2. `M53-S2` (`I-0309`): execute QA counterexample gate for rollback checkpoint-fence epoch-compaction determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under no-compaction baseline, live compaction, crash-during-compaction restart, and rollback+re-forward after compaction permutations converge to one canonical tuple output set per chain.
+2. Compaction/pruning transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under rollback checkpoint-fence epoch-compaction replay/resume permutations.
+4. Replay/resume from rollback checkpoint-fence compaction boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject no-compaction baseline, live compaction, crash-during-compaction restart, and rollback+re-forward after-compaction permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain rollback checkpoint-fence compaction/replay transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from rollback checkpoint-fence compaction boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus rollback checkpoint-fence compaction counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic no-compaction baseline, live compaction, crash-during-compaction restart, and rollback+re-forward after-compaction fixtures.
+2. `0` cross-chain control-coupling violations under one-chain rollback checkpoint-fence compaction counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under rollback checkpoint-fence compaction replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in rollback checkpoint-fence compaction fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: epoch-compaction pruning can race with rollback fence replay markers and create non-deterministic stale-fence reactivation near restart boundaries.
+- Fallback: enforce deterministic fence-epoch tombstones with explicit compaction-lineage diagnostics, pin last verified rollback-safe compaction boundary on ambiguity, and fail fast on unresolved stale-fence ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -2056,6 +2097,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when rollback-crashpoin
 17. `DP-0101-Q`: auto-tune policy-manifest rollback checkpoint-fence ownership policy.
 - Preferred: deterministic chain-local checkpoint-fence ownership epochs with replay-stable fence flush/restore markers, explicit crash-boundary fence arbitration, and stale-fence replay rejection.
 - Fallback: pin last verified rollback-safe fence boundary during restart ambiguity, reject overlapping fence ownership windows, and resume lineage apply only after replay-safe fence confirmation is proven.
+
+18. `DP-0101-R`: auto-tune policy-manifest rollback checkpoint-fence epoch-compaction policy.
+- Preferred: deterministic chain-local fence-epoch compaction state machine with explicit tombstone lineage markers, replay-stable compaction boundaries, and stale-epoch ownership rejection.
+- Fallback: pin last verified rollback-safe pre-compaction boundary during lineage ambiguity, reject compaction windows with unresolved stale-fence ownership overlap, and resume compaction only after replay-safe boundary confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -2159,13 +2204,15 @@ Completed milestones/slices:
 97. `I-0298`
 98. `I-0300`
 99. `I-0301`
+100. `I-0305`
+101. `I-0306`
 
 Active downstream queue from this plan:
-1. `I-0305`
-2. `I-0306`
+1. `I-0308`
+2. `I-0309`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M52-S2`
+1. `TBD by next planner slice after M53-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

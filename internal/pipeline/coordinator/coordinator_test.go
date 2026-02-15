@@ -4429,6 +4429,321 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCrashpointDoesNotBleedAcross
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKfence01",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestrollbackfence0000000000000000",
+		},
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               320,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  2,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	staleRollbackCfg := segment1Cfg
+	staleRollbackCfg.PolicyManifestDigest = "manifest-tail-v2a|rollback-from-seq=3|rollback-to-seq=1|rollback-forward-seq=3"
+	staleRollbackCfg.PolicyManifestRefreshEpoch = 1
+
+	policySchedule := map[int]AutoTuneConfig{
+		2:  segment2Cfg,
+		4:  segment3Cfg,
+		6:  rollbackCfg,
+		8:  staleRollbackCfg,
+		10: segment3Cfg,
+		12: segment3Cfg,
+	}
+
+	heads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272}
+	permutations := []struct {
+		name                  string
+		staleFenceCaptureTick map[int]struct{}
+		crashpoints           []autoTuneCheckpointFenceCrashpoint
+	}{
+		{
+			name: "no-fence-baseline",
+		},
+		{
+			name:                  "crash-before-fence-flush",
+			staleFenceCaptureTick: map[int]struct{}{6: {}},
+			crashpoints: []autoTuneCheckpointFenceCrashpoint{
+				{Tick: 7, UseStaleFenceState: true},
+			},
+		},
+		{
+			name:        "crash-after-fence-flush",
+			crashpoints: []autoTuneCheckpointFenceCrashpoint{{Tick: 7}},
+		},
+		{
+			name:                  "rollback-reforward-fence-resume",
+			staleFenceCaptureTick: map[int]struct{}{6: {}},
+			crashpoints: []autoTuneCheckpointFenceCrashpoint{
+				{Tick: 7, UseStaleFenceState: true},
+				{Tick: 11},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				segment1Cfg,
+				policySchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						segment1Cfg,
+						policySchedule,
+						permutation.staleFenceCaptureTick,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "rollback checkpoint-fence permutations must converge to deterministic canonical tuples")
+					assert.Equal(t, baselineBatches, candidateBatches, "rollback checkpoint-fence permutations must preserve deterministic control decisions")
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "rollback checkpoint-fence baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFenceDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               320,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  2,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	staleRollbackCfg := segment1Cfg
+	staleRollbackCfg.PolicyManifestDigest = "manifest-tail-v2a|rollback-from-seq=3|rollback-to-seq=1|rollback-forward-seq=3"
+	staleRollbackCfg.PolicyManifestRefreshEpoch = 1
+
+	policySchedule := map[int]AutoTuneConfig{
+		2:  segment2Cfg,
+		4:  segment3Cfg,
+		6:  rollbackCfg,
+		8:  staleRollbackCfg,
+		10: segment3Cfg,
+		12: segment3Cfg,
+	}
+
+	const tickCount = 13
+	healthyBaseAddress := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	healthyBTCAddress := "tb1qmanifestrollbackfencehealthy00000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKfence01"
+
+	healthyHeads := []int64{130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142}
+	laggingHeads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, laggingBaselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+		policySchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	laggingBatches := make([]int, 0, tickCount)
+
+	activeLaggingCfg := segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{6: {}}
+	crashpoints := map[int]bool{7: true, 11: false}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := policySchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "stale fence crashpoint requires captured pre-flush state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+		laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana rollback checkpoint-fence transition must not alter base canonical tuples")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana rollback checkpoint-fence transition must not alter base control decisions")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana rollback checkpoint-fence transition must not alter btc canonical tuples")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana rollback checkpoint-fence transition must not alter btc control decisions")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging rollback checkpoint-fence replay/resume must preserve canonical tuples")
+	assert.Equal(t, laggingBaselineBatches, laggingBatches, "lagging rollback checkpoint-fence replay/resume must preserve deterministic control decisions")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging no-crash vs lagging checkpoint-fence replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
@@ -4912,6 +5227,14 @@ func cloneAddressCursor(cursor *model.AddressCursor) *model.AddressCursor {
 	return &cloned
 }
 
+func cloneAutoTuneRestartState(state *AutoTuneRestartState) *AutoTuneRestartState {
+	if state == nil {
+		return nil
+	}
+	cloned := *state
+	return &cloned
+}
+
 func runAutoTuneTickScenario(
 	t *testing.T,
 	chain model.Chain,
@@ -5020,6 +5343,91 @@ func runAutoTuneTraceWithPolicyScheduleAndCrashpoints(
 		if cfg, ok := policySchedule[i]; ok {
 			activeCfg = cfg
 			harness.coordinator.WithAutoTune(cfg)
+		}
+
+		job := harness.tickAndAdvance(t)
+		snapshots = append(snapshots, snapshotFromFetchJob(job))
+		batches = append(batches, job.BatchSize)
+	}
+
+	return snapshots, batches
+}
+
+type autoTuneCheckpointFenceCrashpoint struct {
+	Tick               int
+	UseStaleFenceState bool
+}
+
+func runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+	t *testing.T,
+	chain model.Chain,
+	network model.Network,
+	address string,
+	initialSequence int64,
+	heads []int64,
+	initialCfg AutoTuneConfig,
+	policySchedule map[int]AutoTuneConfig,
+	staleFenceCaptureTicks map[int]struct{},
+	crashpoints []autoTuneCheckpointFenceCrashpoint,
+) ([]lagAwareJobSnapshot, []int) {
+	t.Helper()
+
+	for i, crashpoint := range crashpoints {
+		if crashpoint.Tick <= 0 || crashpoint.Tick >= len(heads) {
+			t.Fatalf("checkpoint-fence crash tick must be within (0,%d), got %d", len(heads), crashpoint.Tick)
+		}
+		if i > 0 && crashpoint.Tick <= crashpoints[i-1].Tick {
+			t.Fatalf("checkpoint-fence crash ticks must be strictly increasing, got %+v", crashpoints)
+		}
+	}
+
+	harness := newAutoTuneHarnessWithHeadSeries(
+		chain,
+		network,
+		address,
+		initialSequence,
+		heads,
+		initialCfg,
+	)
+	activeCfg := initialCfg
+	var latestStaleFenceState *AutoTuneRestartState
+
+	snapshots := make([]lagAwareJobSnapshot, 0, len(heads))
+	batches := make([]int, 0, len(heads))
+
+	crashIndex := 0
+	for i := 0; i < len(heads); i++ {
+		if cfg, ok := policySchedule[i]; ok {
+			activeCfg = cfg
+			harness.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(harness.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+		}
+
+		if crashIndex < len(crashpoints) && i == crashpoints[crashIndex].Tick {
+			var restartState *AutoTuneRestartState
+			if crashpoints[crashIndex].UseStaleFenceState {
+				require.NotNil(t, latestStaleFenceState, "stale fence crashpoint requires captured pre-flush restart state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = harness.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, restartState)
+			}
+
+			resumeCursor := harness.cursorRepo.GetByAddress(address)
+			require.NotNil(t, resumeCursor)
+			harness = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				chain,
+				network,
+				address,
+				resumeCursor.CursorSequence,
+				heads[i:],
+				activeCfg,
+				restartState,
+			)
+			crashIndex++
 		}
 
 		job := harness.tickAndAdvance(t)

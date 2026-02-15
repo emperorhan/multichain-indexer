@@ -101,9 +101,11 @@
 98. `I-0301` (`M51-S2`): QA counterexample gate for auto-tune policy-manifest rollback-crashpoint replay determinism + invariant safety.
 99. `I-0305` (`M52-S1`): auto-tune policy-manifest rollback-crashpoint checkpoint-fence determinism hardening across no-fence baseline, crash-before-fence-flush, crash-after-fence-flush, and rollback+re-forward fence-resume permutations.
 100. `I-0306` (`M52-S2`): QA counterexample gate for auto-tune policy-manifest rollback-crashpoint checkpoint-fence determinism + invariant safety.
+101. `I-0308` (`M53-S1`): auto-tune policy-manifest rollback checkpoint-fence epoch-compaction determinism hardening across no-compaction baseline, live compaction, crash-during-compaction restart, and rollback+re-forward after-compaction permutations.
+102. `I-0309` (`M53-S2`): QA counterexample gate for auto-tune policy-manifest rollback checkpoint-fence epoch-compaction determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225 -> I-0226 -> I-0227 -> I-0228 -> I-0229 -> I-0232 -> I-0233 -> I-0237 -> I-0238 -> I-0242 -> I-0243 -> I-0247 -> I-0248 -> I-0249 -> I-0250 -> I-0254 -> I-0255 -> I-0259 -> I-0260 -> I-0264 -> I-0265 -> I-0267 -> I-0268 -> I-0272 -> I-0273 -> I-0277 -> I-0278 -> I-0282 -> I-0283 -> I-0287 -> I-0288 -> I-0292 -> I-0293 -> I-0297 -> I-0298 -> I-0300 -> I-0301 -> I-0305 -> I-0306`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192 -> I-0194 -> I-0195 -> I-0199 -> I-0200 -> I-0204 -> I-0205 -> I-0209 -> I-0210 -> I-0214 -> I-0215 -> I-0219 -> I-0220 -> I-0224 -> I-0225 -> I-0226 -> I-0227 -> I-0228 -> I-0229 -> I-0232 -> I-0233 -> I-0237 -> I-0238 -> I-0242 -> I-0243 -> I-0247 -> I-0248 -> I-0249 -> I-0250 -> I-0254 -> I-0255 -> I-0259 -> I-0260 -> I-0264 -> I-0265 -> I-0267 -> I-0268 -> I-0272 -> I-0273 -> I-0277 -> I-0278 -> I-0282 -> I-0283 -> I-0287 -> I-0288 -> I-0292 -> I-0293 -> I-0297 -> I-0298 -> I-0300 -> I-0301 -> I-0305 -> I-0306 -> I-0308 -> I-0309`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -205,6 +207,8 @@ Each slice must be independently releasable:
 90. Before `I-0288`: `I-0287` emits deterministic policy-manifest sequence-gap recovery evidence showing `0` canonical tuple diffs and `0` duplicate/missing logical events across sequence-complete baseline, sequence-gap hold, late gap-fill apply, and duplicate segment re-apply permutations.
 91. Before `I-0292`: `I-0288` QA report is `PASS` and no unresolved policy-manifest sequence-gap recovery determinism blocker remains.
 92. Before `I-0293`: `I-0292` emits deterministic policy-manifest snapshot-cutover evidence showing `0` canonical tuple diffs and `0` duplicate/missing logical events across sequence-tail baseline, snapshot-cutover apply, stale snapshot reject, and snapshot+tail re-apply permutations.
+93. Before `I-0308`: `I-0306` QA report is `PASS` and no unresolved rollback checkpoint-fence determinism blocker remains.
+94. Before `I-0309`: `I-0308` emits deterministic rollback checkpoint-fence epoch-compaction evidence showing `0` canonical tuple diffs and `0` duplicate/missing logical events across no-compaction baseline, live compaction, crash-during-compaction restart, and rollback+re-forward after-compaction permutations.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.

@@ -150,6 +150,7 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 					ManifestDigest:          warmState.PolicyManifestDigest,
 					Epoch:                   policyEpoch,
 					ActivationHoldRemaining: maxInt(warmState.PolicyActivationRemaining, 0),
+					FromWarmCheckpoint:      true,
 				}
 			}
 		}
