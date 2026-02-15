@@ -6000,6 +6000,214 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostQuarantin
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReleaseWindowEpochRolloverDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  2,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	compactionCfg := rollbackCfg
+	compactionCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone=1"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	releaseWindowCfg := quarantineCfg
+	releaseWindowCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=7"
+	staleRollbackAtRolloverCfg := rollbackCfg
+	staleRollbackAtRolloverCfg.PolicyManifestRefreshEpoch = 3
+
+	releaseOnlyRolloverBaselineSchedule := map[int]AutoTuneConfig{
+		2:  segment2Cfg,
+		4:  segment3Cfg,
+		6:  rollbackCfg,
+		8:  compactionCfg,
+		10: expiryCfg,
+		11: quarantineCfg,
+		12: releaseCfg,
+		13: segment3Cfg,
+		14: segment3Cfg,
+		15: segment3Cfg,
+		16: segment3Cfg,
+	}
+	releaseWindowEpochRolloverReplaySchedule := map[int]AutoTuneConfig{
+		2:  segment2Cfg,
+		4:  segment3Cfg,
+		6:  rollbackCfg,
+		8:  compactionCfg,
+		10: expiryCfg,
+		11: quarantineCfg,
+		12: releaseCfg,
+		13: releaseWindowCfg,
+		14: staleRollbackAtRolloverCfg,
+		15: segment3Cfg,
+		16: segment3Cfg,
+	}
+
+	const tickCount = 17
+	healthyBaseAddress := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbee57"
+	healthyBTCAddress := "tb1qmanifestrolloverhealthy000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp57"
+
+	healthyHeads := []int64{130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146}
+	laggingHeads := []int64{260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+		releaseOnlyRolloverBaselineSchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{13: {}}
+	crashpoints := map[int]bool{14: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := releaseWindowEpochRolloverReplaySchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 14 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, releaseWindowCfg.PolicyManifestDigest, state.PolicyManifestDigest, "stale prior-epoch rollback fence at epoch-rollover must remain pinned to release-window ownership")
+				assert.Equal(t, releaseWindowCfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "stale rollover crashpoint requires captured release-window state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-release-window epoch-rollover transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-release-window epoch-rollover transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-release-window epoch-rollover transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-release-window epoch-rollover transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-release-window epoch-rollover replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-release-window epoch-rollover")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-release-window epoch-rollover")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-release-window epoch-rollover replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
