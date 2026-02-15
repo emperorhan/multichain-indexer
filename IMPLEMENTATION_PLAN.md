@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -77,6 +77,8 @@ Execution queue (dependency-ordered):
 66. `I-0229` (`M35-S2`) QA golden/invariant/topology-parity gate for BTC-like activation
 67. `I-0232` (`M36-S1`) BTC reorg/finality flap canonical convergence determinism hardening
 68. `I-0233` (`M36-S2`) QA counterexample gate for BTC reorg/finality flap recovery determinism + invariant safety
+69. `I-0237` (`M37-S1`) tri-chain volatility-burst interleaving deterministic convergence hardening
+70. `I-0238` (`M37-S2`) QA counterexample gate for tri-chain volatility/interleaving determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -1292,7 +1294,7 @@ Activate `btc-like` runtime support (`btc-testnet`) with deterministic UTXO cano
 - Gate: RPC/script-decoder heterogeneity can destabilize deterministic vin/vout ownership classification.
 - Fallback: enforce deterministic conservative ownership rules with explicit unresolved-script diagnostics and fail fast on ambiguity that threatens canonical correctness.
 
-### M36. BTC Reorg/Finality Flap Canonical Convergence Tranche C0030 (P0, Next)
+### M36. BTC Reorg/Finality Flap Canonical Convergence Tranche C0030 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when BTC branch history reorgs across runtime passes (including one-block and deeper rollback windows), so post-reorg replay converges to one deterministic canonical output set with preserved signed-delta conservation and cursor safety.
@@ -1330,6 +1332,45 @@ Eliminate duplicate/missing-event risk when BTC branch history reorgs across run
 #### Risk Gate + Fallback
 - Gate: ambiguous BTC fork ancestry near moving head can destabilize rollback-window selection and replacement-branch ordering.
 - Fallback: enforce deterministic conservative rollback-window policy with explicit fork-ambiguity diagnostics, fail fast on unresolved ancestry ambiguity, and replay from last committed safe boundary.
+
+### M37. Tri-Chain Volatility-Burst Interleaving Determinism Tranche C0031 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when `solana-devnet`, `base-sepolia`, and `btc-testnet` emit concurrent volatility bursts with asymmetric latency/retry pressure, so equivalent logical ranges converge to one deterministic canonical output set per chain without cursor bleed or fee/signed-delta regressions.
+
+#### Entry Gate
+- `M36` exit gate green.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M37-S1` (`I-0237`): harden tri-chain scheduler/interleaving convergence semantics so completion-order and backlog-pressure permutations cannot induce duplicate canonical IDs, missing logical events, signed-delta drift, fee-coverage regressions, or cursor regression.
+2. `M37-S2` (`I-0238`): execute QA counterexample gate for tri-chain volatility/interleaving determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under deterministic completion-order permutations converge to one canonical tuple output set per chain.
+2. Chain-local backlog or retry pressure on any one chain cannot induce duplicate/missing logical events on the other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under mixed interleaving + replay/resume permutations.
+4. Replay/resume from mixed tri-chain boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject at least two tri-chain completion-order permutations for equivalent logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain backlog/retry pressure while the other two chains progress and assert `0` duplicate canonical IDs and `0` missing logical events across chains.
+3. Deterministic replay/resume tests from mixed tri-chain boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus tri-chain interleaving counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic tri-chain completion-order permutation fixtures.
+2. `0` duplicate canonical IDs and `0` missing logical events under one-chain backlog/retry counterexample fixtures.
+3. `0` signed-delta conservation violations and `0` fee-event coverage regressions under tri-chain replay/resume permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in tri-chain replay/recovery fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: tri-chain completion-order variance can reintroduce non-deterministic commit timing and hidden cross-chain starvation under volatility spikes.
+- Fallback: enforce deterministic chain-scoped commit fences with bounded backlog budgets, emit explicit tri-chain scheduler diagnostics, and fail fast on unresolved interleaving ambiguity.
 
 ## Decision Register (Major + Fallback)
 
@@ -1419,10 +1460,12 @@ Completed milestones/slices:
 65. `I-0228`
 66. `I-0229`
 67. `I-0230`
+68. `I-0232`
+69. `I-0233`
 
 Active downstream queue from this plan:
-1. `I-0232`
-2. `I-0233`
+1. `I-0237`
+2. `I-0238`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -1440,3 +1483,4 @@ Superseded issues:
 - `I-0212` and `I-0213` are superseded by `I-0214` and `I-0215` to replace generic cycle placeholders with executable incremental decode-coverage canonical convergence determinism slices.
 - `I-0217` and `I-0218` are superseded by `I-0219` and `I-0220` to replace generic cycle placeholders with executable decode-coverage regression flap canonical stability determinism slices.
 - `I-0222` and `I-0223` are superseded by `I-0224` and `I-0225` to replace generic cycle placeholders with executable fee-component availability flap canonical convergence determinism slices.
+- `I-0235` and `I-0236` are superseded by `I-0237` and `I-0238` to replace generic cycle placeholders with executable tri-chain volatility/interleaving determinism slices.
