@@ -17,39 +17,18 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline"
-	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
 	"golang.org/x/sync/errgroup"
 )
 
-const deterministicInterleaveMaxSkew = 250 * time.Millisecond
-
 type runtimeTarget struct {
 	chain   model.Chain
 	network model.Network
+	group   string
 	watched []string
 	adapter chain.ChainAdapter
 	rpcURL  string
-}
-
-type mandatoryRuntimeTarget struct {
-	chain        model.Chain
-	network      model.Network
-	adapterChain string
-}
-
-var mandatoryRuntimeTargets = []mandatoryRuntimeTarget{
-	{
-		chain:        model.ChainSolana,
-		network:      model.NetworkDevnet,
-		adapterChain: model.ChainSolana.String(),
-	},
-	{
-		chain:        model.ChainBase,
-		network:      model.NetworkSepolia,
-		adapterChain: model.ChainBase.String(),
-	},
 }
 
 func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarget {
@@ -57,6 +36,7 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 		{
 			chain:   model.ChainSolana,
 			network: model.Network(cfg.Solana.Network),
+			group:   config.RuntimeLikeGroupSolana,
 			watched: cfg.Pipeline.SolanaWatchedAddresses,
 			adapter: solana.NewAdapter(cfg.Solana.RPCURL, logger),
 			rpcURL:  cfg.Solana.RPCURL,
@@ -64,6 +44,7 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 		{
 			chain:   model.ChainBase,
 			network: model.Network(cfg.Base.Network),
+			group:   config.RuntimeLikeGroupEVM,
 			watched: cfg.Pipeline.BaseWatchedAddresses,
 			adapter: base.NewAdapter(cfg.Base.RPCURL, logger),
 			rpcURL:  cfg.Base.RPCURL,
@@ -127,11 +108,22 @@ func main() {
 		Config:       postgres.NewIndexerConfigRepo(db),
 	}
 
-	targets := buildRuntimeTargets(cfg, logger)
+	allTargets := buildRuntimeTargets(cfg, logger)
+	targets, err := selectRuntimeTargets(allTargets, cfg.Runtime)
+	if err != nil {
+		logger.Error("failed to select runtime targets", "error", err)
+		os.Exit(1)
+	}
 	if err := validateRuntimeWiring(targets); err != nil {
 		logger.Error("runtime wiring preflight failed", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("runtime targets selected",
+		"deployment_mode", cfg.Runtime.DeploymentMode,
+		"like_group", cfg.Runtime.LikeGroup,
+		"chain_targets", strings.Join(cfg.Runtime.ChainTargets, ","),
+		"selected_targets", strings.Join(runtimeTargetKeys(targets), ","),
+	)
 
 	for _, target := range targets {
 		if err := syncWatchedAddresses(context.Background(), repos.WatchedAddr, repos.Cursor, target.chain, target.network, target.watched); err != nil {
@@ -145,7 +137,6 @@ func main() {
 	}
 
 	pipelines := make([]*pipeline.Pipeline, 0, len(targets))
-	commitInterleaver := ingester.NewDeterministicDualChainInterleaver(deterministicInterleaveMaxSkew)
 	for _, target := range targets {
 		pipelineCfg := pipeline.Config{
 			Chain:             target.chain,
@@ -157,7 +148,6 @@ func main() {
 			ChannelBufferSize: cfg.Pipeline.ChannelBufferSize,
 			SidecarAddr:       cfg.Sidecar.Addr,
 			SidecarTimeout:    cfg.Sidecar.Timeout,
-			CommitInterleaver: commitInterleaver,
 		}
 		pipelines = append(pipelines, pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL)))
 	}
@@ -205,47 +195,113 @@ func main() {
 }
 
 func validateRuntimeWiring(targets []runtimeTarget) error {
-	targetsByKey := make(map[string][]runtimeTarget, len(targets))
-	for _, target := range targets {
-		key := runtimeTargetKey(target.chain, target.network)
-		targetsByKey[key] = append(targetsByKey[key], target)
+	if len(targets) == 0 {
+		return fmt.Errorf("runtime wiring preflight failed: no runtime targets selected")
 	}
 
+	targetsByKey := make(map[string]runtimeTarget, len(targets))
 	failures := make([]string, 0)
-	for _, mandatory := range mandatoryRuntimeTargets {
-		key := runtimeTargetKey(mandatory.chain, mandatory.network)
-		wiredTargets := targetsByKey[key]
-		if len(wiredTargets) == 0 {
-			failures = append(failures, fmt.Sprintf("missing target %s", key))
+	for _, target := range targets {
+		key := runtimeTargetKey(target.chain, target.network)
+		if _, exists := targetsByKey[key]; exists {
+			failures = append(failures, fmt.Sprintf("duplicate target %s", key))
 			continue
 		}
-		if len(wiredTargets) > 1 {
-			failures = append(failures, fmt.Sprintf("duplicate target %s (%d wired)", key, len(wiredTargets)))
-		}
+		targetsByKey[key] = target
 
-		validAdapter := false
-		for _, target := range wiredTargets {
-			if target.adapter == nil {
-				failures = append(failures, fmt.Sprintf("nil adapter for target %s", key))
-				continue
-			}
-			adapterChain := target.adapter.Chain()
-			if adapterChain != mandatory.adapterChain {
-				failures = append(failures, fmt.Sprintf("adapter mismatch for %s (expected=%s got=%s)", key, mandatory.adapterChain, adapterChain))
-				continue
-			}
-			validAdapter = true
+		if target.adapter == nil {
+			failures = append(failures, fmt.Sprintf("nil adapter for target %s", key))
+			continue
 		}
-		if !validAdapter {
-			failures = append(failures, fmt.Sprintf("no valid adapter wired for %s", key))
+		adapterChain := target.adapter.Chain()
+		expectedChain := target.chain.String()
+		if adapterChain != expectedChain {
+			failures = append(failures, fmt.Sprintf("adapter mismatch for %s (expected=%s got=%s)", key, expectedChain, adapterChain))
 		}
 	}
 
 	if len(failures) > 0 {
-		return fmt.Errorf("mandatory chain runtime wiring parity check failed: %s", strings.Join(failures, "; "))
+		return fmt.Errorf("runtime wiring preflight failed: %s", strings.Join(failures, "; "))
 	}
 
 	return nil
+}
+
+func selectRuntimeTargets(all []runtimeTarget, runtimeCfg config.RuntimeConfig) ([]runtimeTarget, error) {
+	switch runtimeCfg.DeploymentMode {
+	case config.RuntimeDeploymentModeLikeGroup:
+		selected := append([]runtimeTarget(nil), all...)
+		if runtimeCfg.LikeGroup != "" {
+			filtered := make([]runtimeTarget, 0, len(selected))
+			for _, target := range selected {
+				if target.group == runtimeCfg.LikeGroup {
+					filtered = append(filtered, target)
+				}
+			}
+			selected = filtered
+		}
+		if len(runtimeCfg.ChainTargets) > 0 {
+			filtered, missing := filterRuntimeTargetsByKeys(selected, runtimeCfg.ChainTargets)
+			if len(missing) > 0 {
+				return nil, fmt.Errorf("requested runtime chain targets not found: %s", strings.Join(missing, ","))
+			}
+			selected = filtered
+		}
+		if len(selected) == 0 {
+			return nil, fmt.Errorf("no runtime targets selected for mode=%s", runtimeCfg.DeploymentMode)
+		}
+		return selected, nil
+
+	case config.RuntimeDeploymentModeIndependent:
+		filtered, missing := filterRuntimeTargetsByKeys(all, runtimeCfg.ChainTargets)
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("requested runtime chain targets not found: %s", strings.Join(missing, ","))
+		}
+		if len(filtered) == 0 {
+			return nil, fmt.Errorf("no runtime targets selected for mode=%s", runtimeCfg.DeploymentMode)
+		}
+		return filtered, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported runtime deployment mode: %s", runtimeCfg.DeploymentMode)
+	}
+}
+
+func filterRuntimeTargetsByKeys(targets []runtimeTarget, keys []string) ([]runtimeTarget, []string) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	requested := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		requested[strings.TrimSpace(strings.ToLower(key))] = struct{}{}
+	}
+
+	filtered := make([]runtimeTarget, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		key := runtimeTargetKey(target.chain, target.network)
+		if _, want := requested[key]; want {
+			filtered = append(filtered, target)
+			seen[key] = struct{}{}
+		}
+	}
+
+	missing := make([]string, 0)
+	for key := range requested {
+		if _, exists := seen[key]; !exists {
+			missing = append(missing, key)
+		}
+	}
+	return filtered, missing
+}
+
+func runtimeTargetKeys(targets []runtimeTarget) []string {
+	keys := make([]string, 0, len(targets))
+	for _, target := range targets {
+		keys = append(keys, runtimeTargetKey(target.chain, target.network))
+	}
+	return keys
 }
 
 func runtimeTargetKey(chain model.Chain, network model.Network) string {

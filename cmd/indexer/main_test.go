@@ -53,19 +53,21 @@ func TestBuildRuntimeTargets_IncludesSolanaAndBaseDeterministically(t *testing.T
 
 	assert.Equal(t, model.ChainSolana, targets[0].chain)
 	assert.Equal(t, model.NetworkDevnet, targets[0].network)
+	assert.Equal(t, config.RuntimeLikeGroupSolana, targets[0].group)
 	assert.Equal(t, []string{"sol-1", "sol-2"}, targets[0].watched)
 	assert.Equal(t, "https://solana.example", targets[0].rpcURL)
 	assert.Equal(t, "solana", targets[0].adapter.Chain())
 
 	assert.Equal(t, model.ChainBase, targets[1].chain)
 	assert.Equal(t, model.NetworkSepolia, targets[1].network)
+	assert.Equal(t, config.RuntimeLikeGroupEVM, targets[1].group)
 	assert.Equal(t, []string{"0xabc", "0xdef"}, targets[1].watched)
 	assert.Equal(t, "https://base.example", targets[1].rpcURL)
 	assert.Equal(t, "base", targets[1].adapter.Chain())
 	require.NoError(t, validateRuntimeWiring(targets))
 }
 
-func TestValidateRuntimeWiring_FailsWhenMandatoryTargetMissing(t *testing.T) {
+func TestValidateRuntimeWiring_AllowsSingleTarget(t *testing.T) {
 	targets := []runtimeTarget{
 		{
 			chain:   model.ChainSolana,
@@ -74,9 +76,7 @@ func TestValidateRuntimeWiring_FailsWhenMandatoryTargetMissing(t *testing.T) {
 		},
 	}
 
-	err := validateRuntimeWiring(targets)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing target base-sepolia")
+	require.NoError(t, validateRuntimeWiring(targets))
 }
 
 func TestValidateRuntimeWiring_FailsWhenAdapterChainMismatched(t *testing.T) {
@@ -98,7 +98,7 @@ func TestValidateRuntimeWiring_FailsWhenAdapterChainMismatched(t *testing.T) {
 	assert.Contains(t, err.Error(), "adapter mismatch for base-sepolia")
 }
 
-func TestValidateRuntimeWiring_FailsWhenMandatoryNetworkIsMisaligned(t *testing.T) {
+func TestValidateRuntimeWiring_AllowsNonMandatoryNetworkWhenAdapterMatches(t *testing.T) {
 	targets := []runtimeTarget{
 		{
 			chain:   model.ChainSolana,
@@ -112,9 +112,7 @@ func TestValidateRuntimeWiring_FailsWhenMandatoryNetworkIsMisaligned(t *testing.
 		},
 	}
 
-	err := validateRuntimeWiring(targets)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing target base-sepolia")
+	require.NoError(t, validateRuntimeWiring(targets))
 }
 
 func TestValidateRuntimeWiring_FailsWhenMandatoryTargetHasDuplicateEntries(t *testing.T) {
@@ -158,7 +156,70 @@ func TestValidateRuntimeWiring_FailsWhenMandatoryTargetAdapterIsNil(t *testing.T
 	err := validateRuntimeWiring(targets)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil adapter for target solana-devnet")
-	assert.Contains(t, err.Error(), "no valid adapter wired for solana-devnet")
+}
+
+func TestValidateRuntimeWiring_FailsWhenNoTargetsSelected(t *testing.T) {
+	err := validateRuntimeWiring(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no runtime targets selected")
+}
+
+func TestSelectRuntimeTargets_LikeGroupDefaultSelectsAll(t *testing.T) {
+	all := []runtimeTarget{
+		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
+		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+	}
+
+	selected, err := selectRuntimeTargets(all, config.RuntimeConfig{DeploymentMode: config.RuntimeDeploymentModeLikeGroup})
+	require.NoError(t, err)
+	require.Len(t, selected, 2)
+	assert.Equal(t, model.ChainSolana, selected[0].chain)
+	assert.Equal(t, model.ChainBase, selected[1].chain)
+}
+
+func TestSelectRuntimeTargets_LikeGroupFilter(t *testing.T) {
+	all := []runtimeTarget{
+		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
+		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+	}
+
+	selected, err := selectRuntimeTargets(all, config.RuntimeConfig{
+		DeploymentMode: config.RuntimeDeploymentModeLikeGroup,
+		LikeGroup:      config.RuntimeLikeGroupEVM,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.Equal(t, model.ChainBase, selected[0].chain)
+}
+
+func TestSelectRuntimeTargets_IndependentMode(t *testing.T) {
+	all := []runtimeTarget{
+		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
+		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+	}
+
+	selected, err := selectRuntimeTargets(all, config.RuntimeConfig{
+		DeploymentMode: config.RuntimeDeploymentModeIndependent,
+		ChainTargets:   []string{"base-sepolia"},
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.Equal(t, model.ChainBase, selected[0].chain)
+	assert.Equal(t, model.NetworkSepolia, selected[0].network)
+}
+
+func TestSelectRuntimeTargets_FailsWhenUnknownTargetRequested(t *testing.T) {
+	all := []runtimeTarget{
+		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
+		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+	}
+
+	_, err := selectRuntimeTargets(all, config.RuntimeConfig{
+		DeploymentMode: config.RuntimeDeploymentModeLikeGroup,
+		ChainTargets:   []string{"ethereum-mainnet"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requested runtime chain targets not found")
 }
 
 func TestSyncWatchedAddresses_UpsertsAndInitializesCursors(t *testing.T) {

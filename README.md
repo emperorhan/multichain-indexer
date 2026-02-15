@@ -358,9 +358,15 @@ make lint           # Run golangci-lint
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SOLANA_RPC_URL` | `https://api.devnet.solana.com` | Solana RPC endpoint |
+| `BASE_SEPOLIA_RPC_URL` | — | Base Sepolia RPC endpoint |
 | `DB_URL` | `postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable` | PostgreSQL |
 | `SIDECAR_ADDR` | `localhost:50051` | gRPC sidecar address |
 | `WATCHED_ADDRESSES` | — | Comma-separated Solana addresses |
+| `BASE_WATCHED_ADDRESSES` | — | Comma-separated Base addresses |
+| `RUNTIME_DEPLOYMENT_MODE` | `like-group` | Runtime target selection mode (`like-group` or `independent`) |
+| `RUNTIME_LIKE_GROUP` | — | Limit targets to one group in `like-group` mode (`solana-like`, `evm-like`, `btc-like`) |
+| `RUNTIME_CHAIN_TARGET` | — | Single target for independent deployment (e.g. `base-sepolia`) |
+| `RUNTIME_CHAIN_TARGETS` | — | CSV override target list (e.g. `solana-devnet,base-sepolia`) |
 | `FETCH_WORKERS` | `2` | Parallel RPC fetch workers |
 | `NORMALIZER_WORKERS` | `2` | Parallel gRPC decode workers |
 | `BATCH_SIZE` | `100` | Signatures per fetch batch |

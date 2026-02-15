@@ -1663,6 +1663,280 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_AvailabilityOrderConverges(t *
 	assertExpectedFeeSplit(recoveredFirst)
 }
 
+func TestProcessBatch_BaseSepoliaFeeDecomposition_AvailabilityFlapReplayPermutationsConverge(t *testing.T) {
+	const watchedAddress = "0x1111111111111111111111111111111111111111"
+	const signature = "0xBEEF2201"
+	const sequence = int64(2201)
+	const feePath = "log:42"
+
+	buildResult := func(txHash string, metadata map[string]string) *sidecarv1.TransactionResult {
+		return &sidecarv1.TransactionResult{
+			TxHash:      txHash,
+			BlockCursor: sequence,
+			BlockTime:   1700000900,
+			Status:      "SUCCESS",
+			FeeAmount:   "1000",
+			FeePayer:    watchedAddress,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "availability_probe",
+					ProgramId:             "0xabc",
+					Address:               watchedAddress,
+					ContractAddress:       "ETH",
+					Delta:                 "-1",
+					CounterpartyAddress:   "0x2222222222222222222222222222222222222222",
+					TokenSymbol:           "ETH",
+					TokenName:             "Ether",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata:              metadata,
+				},
+			},
+		}
+	}
+	buildFull := func(txHash string) *sidecarv1.TransactionResult {
+		return buildResult(txHash, map[string]string{
+			"event_path": feePath,
+		})
+	}
+	buildPartial := func(txHash string) *sidecarv1.TransactionResult {
+		return buildResult(txHash, map[string]string{
+			"event_path":       feePath,
+			"fee_execution_l2": "1000",
+		})
+	}
+	buildRecoveredNoPath := func(txHash string) *sidecarv1.TransactionResult {
+		return buildResult(txHash, map[string]string{
+			"fee_execution_l2": "600",
+			"fee_data_l1":      "400",
+		})
+	}
+	buildComplete := func(txHash string) *sidecarv1.TransactionResult {
+		return buildResult(txHash, map[string]string{
+			"event_path":       feePath,
+			"fee_execution_l2": "600",
+			"fee_data_l1":      "400",
+		})
+	}
+
+	newBatch := func() event.RawBatch {
+		return event.RawBatch{
+			Chain:                  model.ChainBase,
+			Network:                model.NetworkSepolia,
+			Address:                watchedAddress,
+			PreviousCursorValue:    strPtr("0xBEEF2200"),
+			PreviousCursorSequence: sequence - 1,
+			NewCursorValue:         strPtr(signature),
+			NewCursorSequence:      sequence,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"fee-availability-flap"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: signature, Sequence: sequence},
+			},
+		}
+	}
+
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	feePair := func(t *testing.T, batch event.NormalizedBatch) (event.NormalizedBalanceEvent, event.NormalizedBalanceEvent) {
+		t.Helper()
+		require.Len(t, batch.Transactions, 1)
+		tx := batch.Transactions[0]
+		execEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
+		dataEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+		require.Len(t, execEvents, 1)
+		require.Len(t, dataEvents, 1)
+		return execEvents[0], dataEvents[0]
+	}
+
+	assertConvergedFeePair := func(t *testing.T, batch event.NormalizedBatch, baselineExec, baselineData event.NormalizedBalanceEvent) {
+		t.Helper()
+		execEvent, dataEvent := feePair(t, batch)
+		assert.Equal(t, baselineExec.EventID, execEvent.EventID)
+		assert.Equal(t, baselineData.EventID, dataEvent.EventID)
+		assert.Equal(t, baselineExec.Delta, execEvent.Delta)
+		assert.Equal(t, baselineData.Delta, dataEvent.Delta)
+		assert.Equal(t, baselineExec.EventPath, execEvent.EventPath)
+		assert.Equal(t, baselineData.EventPath, dataEvent.EventPath)
+
+		execChainData := map[string]string{}
+		require.NoError(t, json.Unmarshal(execEvent.ChainData, &execChainData))
+		assert.Empty(t, execChainData["data_fee_l1_unavailable"])
+	}
+
+	runSingle := func(results []*sidecarv1.TransactionResult) event.NormalizedBatch {
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockChainDecoderClient(ctrl)
+		normalizedCh := make(chan event.NormalizedBatch, 1)
+		n := &Normalizer{
+			sidecarTimeout: 30 * time.Second,
+			normalizedCh:   normalizedCh,
+			logger:         slog.Default(),
+		}
+
+		mockClient.EXPECT().
+			DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: results,
+			}, nil).
+			Times(1)
+
+		batch := newBatch()
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+		return <-normalizedCh
+	}
+
+	baseline := runSingle([]*sidecarv1.TransactionResult{
+		buildComplete("0xbeef2201"),
+	})
+	baselineExec, baselineData := feePair(t, baseline)
+	assert.Equal(t, "-600", baselineExec.Delta)
+	assert.Equal(t, "-400", baselineData.Delta)
+	assert.Equal(t, feePath, baselineExec.EventPath)
+	assert.Equal(t, feePath, baselineData.EventPath)
+
+	permutations := []struct {
+		name    string
+		results []*sidecarv1.TransactionResult
+	}{
+		{
+			name: "full_then_recovered",
+			results: []*sidecarv1.TransactionResult{
+				buildFull("BEEF2201"),
+				buildRecoveredNoPath("0xbeef2201"),
+			},
+		},
+		{
+			name: "partial_then_recovered",
+			results: []*sidecarv1.TransactionResult{
+				buildPartial("0XBEEF2201"),
+				buildRecoveredNoPath("0xbeef2201"),
+			},
+		},
+		{
+			name: "recovered_then_full",
+			results: []*sidecarv1.TransactionResult{
+				buildRecoveredNoPath("0xbeef2201"),
+				buildFull("BEEF2201"),
+			},
+		},
+		{
+			name: "recovered_then_partial",
+			results: []*sidecarv1.TransactionResult{
+				buildRecoveredNoPath("0xbeef2201"),
+				buildPartial("BEEF2201"),
+			},
+		},
+		{
+			name: "full_partial_recovered",
+			results: []*sidecarv1.TransactionResult{
+				buildFull("BEEF2201"),
+				buildPartial("0xBEEF2201"),
+				buildRecoveredNoPath("beef2201"),
+			},
+		},
+	}
+
+	for _, tc := range permutations {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			normalized := runSingle(tc.results)
+			assertNoDuplicateCanonicalIDs(t, normalized)
+			assertConvergedFeePair(t, normalized, baselineExec, baselineData)
+		})
+	}
+
+	runReplay := func(first, second *sidecarv1.TransactionResult) (event.NormalizedBatch, event.NormalizedBatch) {
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockChainDecoderClient(ctrl)
+		normalizedCh := make(chan event.NormalizedBatch, 2)
+		n := &Normalizer{
+			sidecarTimeout: 30 * time.Second,
+			normalizedCh:   normalizedCh,
+			logger:         slog.Default(),
+		}
+
+		call := 0
+		mockClient.EXPECT().
+			DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+			Times(2).
+			DoAndReturn(func(context.Context, *sidecarv1.DecodeSolanaTransactionBatchRequest, ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+				call++
+				if call == 1 {
+					return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+						Results: []*sidecarv1.TransactionResult{first},
+					}, nil
+				}
+				return &sidecarv1.DecodeSolanaTransactionBatchResponse{
+					Results: []*sidecarv1.TransactionResult{second},
+				}, nil
+			})
+
+		firstBatch := newBatch()
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, firstBatch))
+		degraded := <-normalizedCh
+
+		replayBatch := newBatch()
+		replayBatch.PreviousCursorValue = degraded.NewCursorValue
+		replayBatch.PreviousCursorSequence = degraded.NewCursorSequence
+		replayBatch.NewCursorValue = degraded.NewCursorValue
+		replayBatch.NewCursorSequence = degraded.NewCursorSequence
+
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, replayBatch))
+		recovered := <-normalizedCh
+		return degraded, recovered
+	}
+
+	replayCases := []struct {
+		name  string
+		first *sidecarv1.TransactionResult
+	}{
+		{name: "full_then_recovered_replay", first: buildFull("BEEF2201")},
+		{name: "partial_then_recovered_replay", first: buildPartial("0xBEEF2201")},
+	}
+
+	for _, tc := range replayCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			degraded, recovered := runReplay(tc.first, buildRecoveredNoPath("0xbeef2201"))
+			assertNoDuplicateCanonicalIDs(t, degraded)
+			assertNoDuplicateCanonicalIDs(t, recovered)
+
+			require.Len(t, degraded.Transactions, 1)
+			degradedTx := degraded.Transactions[0]
+			degradedExec := fixtureBaseFeeEventsByCategory(degradedTx.BalanceEvents, model.EventCategoryFeeExecutionL2)
+			degradedData := fixtureBaseFeeEventsByCategory(degradedTx.BalanceEvents, model.EventCategoryFeeDataL1)
+			require.Len(t, degradedExec, 1)
+			require.Len(t, degradedData, 0)
+
+			degradedChainData := map[string]string{}
+			require.NoError(t, json.Unmarshal(degradedExec[0].ChainData, &degradedChainData))
+			assert.Equal(t, "true", degradedChainData["data_fee_l1_unavailable"])
+
+			assertConvergedFeePair(t, recovered, baselineExec, baselineData)
+			require.NotNil(t, degraded.NewCursorValue)
+			require.NotNil(t, recovered.NewCursorValue)
+			assert.Equal(t, *degraded.NewCursorValue, *recovered.NewCursorValue)
+			assert.GreaterOrEqual(t, recovered.NewCursorSequence, degraded.NewCursorSequence)
+		})
+	}
+}
+
 func TestProcessBatch_SolanaFailedTransaction_EmitsFeeWithCompleteMetadata(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockChainDecoderClient(ctrl)

@@ -721,7 +721,7 @@ func reconcileBaseFeeComponentMetadata(out map[string]string, rawEvents []*sidec
 	}
 
 	pathSource := selected
-	if bestBoth == nil && resolveBaseMetadataEventPath(pathSource.metadata) == "" {
+	if resolveBaseMetadataEventPath(pathSource.metadata) == "" {
 		bestPath := pickBestBaseFeeMetadataCandidate(candidates, func(candidate *baseFeeMetadataCandidate) bool {
 			return candidate.pathHint
 		})

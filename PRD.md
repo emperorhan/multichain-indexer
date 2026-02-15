@@ -1,8 +1,8 @@
 # PRD — Multi-Chain Asset-Volatility Indexer
 
-- Version: `v2.1`
+- Version: `v2.2`
 - Last updated: `2026-02-15`
-- Initial mandatory chains: `solana-devnet`, `base-sepolia`
+- Initial mandatory chains: `solana-devnet`, `base-sepolia`, `btc-testnet`
 - Target architecture families: `solana-like`, `evm-like`, `btc-like`
 
 ## 1. Product Goal
@@ -21,10 +21,11 @@ This product must:
 - Family-shared adapter/normalizer contracts for:
   - Solana-like chains (account + instruction-path model),
   - EVM-like chains (account + log/call-path model),
-  - BTC-like chains (UTXO model; architecture contract level in this phase).
+  - BTC-like chains (UTXO model; runtime activation in this phase).
 - Mandatory runtime targets for this phase:
   - Solana Devnet
   - Base Sepolia (OP Stack L2)
+  - BTC Testnet
 - Event classes that change account assets:
   - native token transfer delta
   - fungible token transfer delta (SPL, ERC-20)
@@ -40,7 +41,6 @@ This product must:
 - Mainnet rollout
 - NFT metadata enrichment
 - Full protocol-specific interpretation for every DEX/DeFi contract at launch
-- BTC-like production indexing enablement (architecture contract only in this phase)
 
 ## 3. Core Requirements
 
@@ -62,13 +62,14 @@ For every indexed transaction, all balance-affecting deltas in scope must be nor
   - L2 execution fee,
   - L1 data/rollup fee (when receipt fields exist),
   - total fee debit from payer balance.
-- BTC-like (future activation): include miner fee and explicit input/output delta conservation semantics.
+- BTC-like (BTC Testnet in this phase): include miner fee and explicit input/output delta conservation semantics.
 
 ### R4. Deterministic Replay
 Re-running the same chain cursor range must produce identical canonical event IDs and zero net duplication.
 
 ### R5. Operational Continuity
-Indexer must recover from transient RPC/decoder failures and continue processing without manual data repair.
+Indexer must preserve no-loss continuity by fail-fast process restart semantics.
+On processing failure, the runtime must terminate immediately (`panic`) and rely on restart replay from the last committed cursor/watermark boundary.
 
 ### R6. Deployment Topology Independence
 For identical chain input, canonical output equivalence must hold regardless of deployment shape:
@@ -78,6 +79,12 @@ For identical chain input, canonical output equivalence must hold regardless of 
 
 ### R7. Strict Chain Isolation
 State progression (cursor, watermark, commit outcome) must be isolated per `chain + network`, even when multiple chains share one process/pod.
+
+### R8. Fail-Fast Error Contract (No Silent Progress)
+- Any stage-level processing error that could affect correctness must trigger immediate process abort (`panic`).
+- In-process skip/continue behavior for failed batches is prohibited.
+- Cursor/watermark must not advance on failed path before process abort.
+- Recovery is achieved by deterministic replay after restart, not by best-effort continuation in the same process.
 
 ## 4. Normalizer Architecture (Most Critical)
 
@@ -157,7 +164,7 @@ Each plugin/adapter requires:
   - one event for L1 data fee (if available)
   - both debiting payer native balance deltas
 
-## 5.3 BTC-like (contract in this phase, activation later)
+## 5.3 BTC-like (active in this phase via BTC Testnet)
 - Cursor: block height + tx index
 - Final identity: txid + vin/vout path
 - Fee:
@@ -200,8 +207,8 @@ Each `ChainRuntime` executes:
 
 ## 7.4 Commit Scheduling Policy
 - Default policy: commit scheduling is chain-scoped per `ChainRuntime`.
-- Cross-chain shared commit scheduler is optional, disabled by default, and allowed only behind explicit feature gate for deterministic experiments.
-- Even when enabled, cross-chain scheduler must never share cursor/watermark state or create cross-chain progression dependency.
+- Cross-chain shared commit scheduler is not part of the production runtime contract.
+- Cursor/watermark progression must remain strictly chain-scoped with no cross-chain progression dependency.
 
 ## 7.5 Kubernetes Guidance
 - One reconciliation loop per chain regardless of pod grouping.
@@ -211,9 +218,10 @@ Each `ChainRuntime` executes:
 ## 8. Failure and Recovery
 
 ## 8.1 Transient RPC/Decoder Failure
-- retry with backoff,
-- keep job in queue,
-- do not advance committed cursor until normalized+ingested success.
+- do not silently continue in-process on failed batch,
+- do not advance committed cursor until normalized+ingested success,
+- trigger immediate process abort (`panic`) on failure path that cannot prove deterministic committed state,
+- rely on orchestrator restart + deterministic replay from last committed cursor.
 
 ## 8.2 Reorg / Canonicality Drift
 - detect block hash mismatch at same cursor,
@@ -227,16 +235,24 @@ Each `ChainRuntime` executes:
 ## 8.4 Topology Migration Safety
 Switching a chain between topology modes (dedicated <-> grouped) must not require data repair and must preserve cursor monotonicity.
 
+## 8.5 Fail-Fast Safety Guarantees
+- Failure injection at each stage boundary (coordinator/fetcher/normalizer/ingester) must show:
+  - immediate process abort (`panic`),
+  - no cursor/watermark advancement on failed chain path,
+  - deterministic replay convergence after restart with no duplicate/missing canonical events.
+
 ## 9. QA Strategy
 
 ## 9.1 Invariant Tests
 - No duplicate event IDs after replay.
 - Sum of per-tx deltas must match transaction effect semantics.
 - Fee deltas must be present for every successful transaction with fee burn/debit.
+- Stage failure injection triggers fail-fast abort before unsafe progression.
 
 ## 9.2 Golden Dataset Tests
 - fixed Solana sample tx set
 - fixed Base sample tx set including rollup fee-bearing transactions
+- fixed BTC sample tx set including coinbase + multi-input/output fee semantics
 - expected canonical normalized events snapshot
 
 ## 9.3 Cross-Run Determinism
@@ -252,7 +268,9 @@ The PRD is considered implemented when:
 - all scoped asset-volatility events are normalized into canonical signed deltas,
 - duplicate indexing is prevented by design and verified by QA,
 - Base L2 execution fee + L1 data fee are modeled as fee deltas,
+- BTC input/output/fee semantics are modeled as deterministic signed deltas on BTC Testnet,
 - replay/recovery tests pass,
+- fail-fast failure-injection tests prove panic-on-error with no unsafe cursor progression,
 - topology parity tests pass (chain-per-deploy vs family-per-deploy vs hybrid),
 - QA report confirms deterministic output, no duplicate rows, and no cross-chain cursor bleed.
 
@@ -263,10 +281,12 @@ The PRD is considered implemented when:
 - M2: Solana-like fee/delta completeness hardening
 - M3: EVM-like fee decomposition (execution + data fee) and normalization
 - M4: replay/reorg deterministic recovery
-- M5: topology parity QA gate + release readiness
+- M5: fail-fast panic safety contract hardening (no silent progression)
+- M6: BTC-like runtime activation (btc-testnet adapter + normalize + ingest + invariant gate)
+- M7: topology parity QA gate + release readiness
 
 ## 12. Ralph Loop Execution Contract (Local)
 - Planner agent updates specs/implementation plan from this PRD.
 - Developer agent implements milestone slices in small commits.
-- QA agent enforces invariant, golden, and topology-parity checks.
+- QA agent enforces invariant, fail-fast, golden, and topology-parity checks.
 - Loop runs continuously in local daemon mode until manually stopped.

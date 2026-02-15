@@ -14,6 +14,7 @@ type Config struct {
 	Sidecar  SidecarConfig
 	Solana   SolanaConfig
 	Base     BaseConfig
+	Runtime  RuntimeConfig
 	Pipeline PipelineConfig
 	Server   ServerConfig
 	Log      LogConfig
@@ -43,6 +44,23 @@ type SolanaConfig struct {
 type BaseConfig struct {
 	RPCURL  string
 	Network string
+}
+
+const (
+	RuntimeDeploymentModeLikeGroup   = "like-group"
+	RuntimeDeploymentModeIndependent = "independent"
+)
+
+const (
+	RuntimeLikeGroupSolana = "solana-like"
+	RuntimeLikeGroupEVM    = "evm-like"
+	RuntimeLikeGroupBTC    = "btc-like"
+)
+
+type RuntimeConfig struct {
+	DeploymentMode string
+	LikeGroup      string
+	ChainTargets   []string
 }
 
 type PipelineConfig struct {
@@ -87,6 +105,10 @@ func Load() (*Config, error) {
 			RPCURL:  getEnvAny([]string{"BASE_SEPOLIA_RPC_URL", "BASE_RPC_URL"}, ""),
 			Network: getEnv("BASE_NETWORK", "sepolia"),
 		},
+		Runtime: RuntimeConfig{
+			DeploymentMode: strings.ToLower(getEnv("RUNTIME_DEPLOYMENT_MODE", RuntimeDeploymentModeLikeGroup)),
+			LikeGroup:      strings.ToLower(getEnv("RUNTIME_LIKE_GROUP", "")),
+		},
 		Pipeline: PipelineConfig{
 			FetchWorkers:       getEnvInt("FETCH_WORKERS", 2),
 			NormalizerWorkers:  getEnvInt("NORMALIZER_WORKERS", 2),
@@ -106,6 +128,9 @@ func Load() (*Config, error) {
 		getEnvAny([]string{"SOLANA_WATCHED_ADDRESSES", "WATCHED_ADDRESSES"}, ""),
 	)
 	cfg.Pipeline.BaseWatchedAddresses = parseAddressCSV(getEnv("BASE_WATCHED_ADDRESSES", ""))
+	cfg.Runtime.ChainTargets = normalizeCSVValues(parseAddressCSV(
+		getEnvAny([]string{"RUNTIME_CHAIN_TARGETS", "RUNTIME_CHAIN_TARGET"}, ""),
+	))
 	cfg.Pipeline.WatchedAddresses = append([]string(nil), cfg.Pipeline.SolanaWatchedAddresses...)
 
 	if err := cfg.validate(); err != nil {
@@ -118,16 +143,114 @@ func (c *Config) validate() error {
 	if c.DB.URL == "" {
 		return fmt.Errorf("DB_URL is required")
 	}
-	if c.Solana.RPCURL == "" {
-		return fmt.Errorf("SOLANA_RPC_URL is required")
-	}
-	if c.Base.RPCURL == "" {
-		return fmt.Errorf("BASE_SEPOLIA_RPC_URL is required")
-	}
 	if c.Sidecar.Addr == "" {
 		return fmt.Errorf("SIDECAR_ADDR is required")
 	}
+	switch c.Runtime.DeploymentMode {
+	case RuntimeDeploymentModeLikeGroup, RuntimeDeploymentModeIndependent:
+	default:
+		return fmt.Errorf("RUNTIME_DEPLOYMENT_MODE must be one of %q, %q", RuntimeDeploymentModeLikeGroup, RuntimeDeploymentModeIndependent)
+	}
+
+	if c.Runtime.LikeGroup != "" {
+		switch c.Runtime.LikeGroup {
+		case RuntimeLikeGroupSolana, RuntimeLikeGroupEVM, RuntimeLikeGroupBTC:
+		default:
+			return fmt.Errorf("RUNTIME_LIKE_GROUP must be one of %q, %q, %q", RuntimeLikeGroupSolana, RuntimeLikeGroupEVM, RuntimeLikeGroupBTC)
+		}
+	}
+
+	if c.Runtime.DeploymentMode == RuntimeDeploymentModeIndependent {
+		if c.Runtime.LikeGroup != "" {
+			return fmt.Errorf("RUNTIME_LIKE_GROUP is not allowed when RUNTIME_DEPLOYMENT_MODE=%q", RuntimeDeploymentModeIndependent)
+		}
+		if len(c.Runtime.ChainTargets) == 0 {
+			return fmt.Errorf("RUNTIME_CHAIN_TARGET is required when RUNTIME_DEPLOYMENT_MODE=%q", RuntimeDeploymentModeIndependent)
+		}
+		if len(c.Runtime.ChainTargets) != 1 {
+			return fmt.Errorf("RUNTIME_DEPLOYMENT_MODE=%q supports exactly one chain target", RuntimeDeploymentModeIndependent)
+		}
+	}
+
+	requiredChains, err := requiredRuntimeChains(c.Runtime)
+	if err != nil {
+		return err
+	}
+	if requiredChains["solana"] && c.Solana.RPCURL == "" {
+		return fmt.Errorf("SOLANA_RPC_URL is required for selected runtime targets")
+	}
+	if requiredChains["base"] && c.Base.RPCURL == "" {
+		return fmt.Errorf("BASE_SEPOLIA_RPC_URL is required for selected runtime targets")
+	}
 	return nil
+}
+
+func requiredRuntimeChains(runtime RuntimeConfig) (map[string]bool, error) {
+	required := map[string]bool{
+		"solana": false,
+		"base":   false,
+	}
+
+	addChainTargets := func(targets []string) error {
+		for _, target := range targets {
+			chainName, err := chainNameFromTargetKey(target)
+			if err != nil {
+				return err
+			}
+			required[chainName] = true
+		}
+		return nil
+	}
+
+	switch runtime.DeploymentMode {
+	case RuntimeDeploymentModeIndependent:
+		if err := addChainTargets(runtime.ChainTargets); err != nil {
+			return nil, err
+		}
+	case RuntimeDeploymentModeLikeGroup:
+		if len(runtime.ChainTargets) > 0 {
+			if err := addChainTargets(runtime.ChainTargets); err != nil {
+				return nil, err
+			}
+			return required, nil
+		}
+
+		switch runtime.LikeGroup {
+		case "":
+			required["solana"] = true
+			required["base"] = true
+		case RuntimeLikeGroupSolana:
+			required["solana"] = true
+		case RuntimeLikeGroupEVM:
+			required["base"] = true
+		case RuntimeLikeGroupBTC:
+			return nil, fmt.Errorf("RUNTIME_LIKE_GROUP=%q is not wired yet in runtime targets", RuntimeLikeGroupBTC)
+		default:
+			return nil, fmt.Errorf("RUNTIME_LIKE_GROUP must be one of %q, %q, %q", RuntimeLikeGroupSolana, RuntimeLikeGroupEVM, RuntimeLikeGroupBTC)
+		}
+	default:
+		return nil, fmt.Errorf("RUNTIME_DEPLOYMENT_MODE must be one of %q, %q", RuntimeDeploymentModeLikeGroup, RuntimeDeploymentModeIndependent)
+	}
+
+	return required, nil
+}
+
+func chainNameFromTargetKey(target string) (string, error) {
+	normalized := strings.TrimSpace(strings.ToLower(target))
+	if normalized == "" {
+		return "", fmt.Errorf("runtime chain target must not be empty")
+	}
+	parts := strings.SplitN(normalized, "-", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+		return "", fmt.Errorf("runtime chain target %q must be in <chain>-<network> format", target)
+	}
+
+	switch parts[0] {
+	case "solana", "base":
+		return parts[0], nil
+	default:
+		return "", fmt.Errorf("runtime chain target %q has unsupported chain %q", target, parts[0])
+	}
 }
 
 func getEnv(key, fallback string) string {
@@ -159,6 +282,27 @@ func parseAddressCSV(addrs string) []string {
 		parsed = append(parsed, addr)
 	}
 	return parsed
+}
+
+func normalizeCSVValues(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		candidate := strings.ToLower(strings.TrimSpace(value))
+		if candidate == "" {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		normalized = append(normalized, candidate)
+	}
+	return normalized
 }
 
 func getEnvInt(key string, fallback int) int {

@@ -1,12 +1,12 @@
 # IMPLEMENTATION_PLAN.md
 
-- Source PRD: `PRD.md v2.0` (2026-02-13)
+- Source PRD: `PRD.md v2.2` (2026-02-15)
 - Execution mode: local Ralph loop (`.ralph/` markdown queue)
-- Runtime targets: `solana-devnet`, `base-sepolia`
+- Mandatory runtime targets: `solana-devnet`, `base-sepolia`, `btc-testnet`
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -71,6 +71,10 @@ Execution queue (dependency-ordered):
 60. `I-0220` (`M32-S2`) QA counterexample gate for decode-coverage regression flap determinism + invariant safety
 61. `I-0224` (`M33-S1`) fee-component availability flap canonical convergence determinism hardening
 62. `I-0225` (`M33-S2`) QA counterexample gate for fee-component availability flap determinism + invariant safety
+63. `I-0226` (`M34-S1`) panic-on-error fail-fast contract hardening (no unsafe progression)
+64. `I-0227` (`M34-S2`) QA failure-injection gate for fail-fast panic + cursor/watermark safety
+65. `I-0228` (`M35-S1`) BTC-like runtime activation (`btc-testnet`) + canonical UTXO/fee semantics wiring
+66. `I-0229` (`M35-S2`) QA golden/invariant/topology-parity gate for BTC-like activation
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -85,7 +89,12 @@ Global non-negotiables:
 4. Explicit fee event coverage:
 - Solana transaction fee.
 - Base L2 execution fee + L1 data/rollup fee (or deterministic unavailable marker path).
-5. Runtime wiring invariants stay enforced for mandatory chains (`solana-devnet`, `base-sepolia`).
+- BTC miner fee + deterministic vin/vout delta conservation.
+5. Fail-fast safety contract:
+- any correctness-impacting stage error triggers immediate process abort (`panic`).
+- failed-path cursor/watermark advancement is prohibited.
+- recovery path is restart + deterministic replay from last committed boundary.
+6. Runtime wiring invariants stay enforced for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`).
 
 ## Milestone Scorecard
 
@@ -247,7 +256,7 @@ Move Base Sepolia from normalization-only coverage into deterministic runtime or
 1. `I-0110`: runtime target wiring + Base fetch/decode/normalize/ingest end-to-end regression coverage.
 
 #### Exit Gate (Measurable)
-1. Runtime target builder includes both mandatory chains in deterministic order.
+1. Runtime target builder includes the mandatory chains for that tranche in deterministic order.
 2. Base runtime e2e replay path remains idempotent.
 3. Validation commands pass.
 
@@ -270,7 +279,7 @@ Harden post-wiring runtime reliability so mandatory chain adapters cannot silent
 3. QA report captures at least one negative/counterexample scenario and explicitly records pass/fail disposition.
 
 #### Test Contract
-1. Runtime unit/integration tests assert target-to-adapter parity for both mandatory chains.
+1. Runtime unit/integration tests assert target-to-adapter parity for the mandatory chains for that tranche.
 2. Replay smoke test executes two consecutive runs over identical dual-chain fixture input and asserts:
 - `0` duplicate canonical event IDs.
 - no cursor regression.
@@ -372,7 +381,7 @@ Guarantee transient failure recovery is deterministic and replay-safe so RPC/dec
 #### Definition Of Done
 1. Injected transient failures before commit do not advance persisted cursor or watermark state.
 2. Retrying the same range after transient failure preserves canonical tuple determinism and does not introduce duplicate canonical IDs.
-3. Recovery behavior is proven for both mandatory chains without regressing runtime adapter wiring guarantees.
+3. Recovery behavior is proven for the mandatory chains for that tranche without regressing runtime adapter wiring guarantees.
 4. QA report captures at least one transient-failure counterexample scenario with explicit pass/fail disposition.
 
 #### Test Contract
@@ -407,7 +416,7 @@ Eliminate nondeterministic retry behavior by enforcing explicit transient-vs-ter
 #### Definition Of Done
 1. Retryability is decided by explicit deterministic classification rather than broad "retry on any error" behavior in mandatory-chain runtime stages.
 2. Terminal counterexample failures fail on first attempt and do not advance cursor/watermark state.
-3. Transient fail-first/retry paths continue to recover deterministically on both mandatory chains with stable canonical tuples and no duplicate canonical IDs.
+3. Transient fail-first/retry paths continue to recover deterministically on the mandatory chains for that tranche with stable canonical tuples and no duplicate canonical IDs.
 4. Retry exhaustion produces explicit stage-scoped diagnostics suitable for QA follow-up issue fanout.
 
 #### Test Contract
@@ -443,7 +452,7 @@ Prevent single-signature decode failures from stalling downstream indexing by is
 1. A decode error tied to one signature does not block normalization/ingestion of later decodable signatures in the same deterministic input batch.
 2. Decode-failed signatures produce deterministic, stage-scoped diagnostics with reproducible signature/reason evidence for follow-up.
 3. Replay of mixed success+decode-failure fixture batches remains idempotent with stable canonical tuple ordering and no duplicate canonical IDs.
-4. Cursor/watermark progression remains monotonic for the processed range and runtime adapter wiring invariants remain green for both mandatory chains.
+4. Cursor/watermark progression remains monotonic for the processed range and runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject decode errors at controlled signature positions and assert suffix continuity for both `solana-devnet` and `base-sepolia`.
@@ -478,7 +487,7 @@ Eliminate provider-ordering and overlapping-page nondeterminism by canonicalizin
 1. Equivalent fetched transaction/signature sets with different provider return orders normalize into the same deterministic canonical tuple ordering.
 2. Deterministic overlap dedupe prevents duplicate canonical emission when adjacent fetch windows/pages return repeated transaction/signature records.
 3. Replay of overlap-heavy fixtures remains idempotent with no duplicate canonical IDs and no balance double-apply effects.
-4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject provider-order permutations for both `solana-devnet` and `base-sepolia` and assert stable ordered canonical tuples.
@@ -513,7 +522,7 @@ Eliminate canonical identity alias drift (case/prefix/format variance) across fe
 1. Equivalent logical transaction/signature identities represented with alias variants (case differences, optional `0x` prefix forms, provider-format variance) converge to one deterministic canonical identity per chain.
 2. Alias variants cannot bypass overlap/duplicate suppression boundaries or produce duplicate canonical IDs across replay-equivalent runs.
 3. Replay over alias-mixed fixtures remains idempotent with stable canonical tuple ordering and no balance double-apply side effects.
-4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject identity alias variants for both `solana-devnet` and `base-sepolia` and assert identical ordered canonical tuples across independent runs.
@@ -548,7 +557,7 @@ Prevent duplicate canonical emission during finality-state transitions by ensuri
 1. Replays containing the same logical transaction/signature at weaker and stronger finality states produce one canonical event identity per logical balance delta.
 2. Finality-state promotion is deterministic and does not produce duplicate canonical IDs or double-apply balances.
 3. Mixed-finality overlap/replay fixtures remain idempotent with stable canonical tuple ordering.
-4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject weaker->stronger finality observations for both `solana-devnet` and `base-sepolia` and assert stable canonical tuple sets with one canonical ID per logical event.
@@ -583,7 +592,7 @@ Preserve deterministic canonical identity and balance correctness when previousl
 1. Reorg/rollback paths that invalidate previously finality-promoted events deterministically converge to one canonical post-fork event set per logical balance delta.
 2. Orphaned pre-fork canonical events cannot persist as duplicate canonical IDs and cannot cause balance double-apply after rollback replay.
 3. Repeated rollback+replay cycles over equivalent input ranges remain idempotent with stable canonical tuple ordering.
-4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject weaker->stronger finality promotion followed by rollback/fork replacement for both `solana-devnet` and `base-sepolia` and assert stable canonical tuple outputs.
@@ -618,7 +627,7 @@ Eliminate canonical duplicate/missing-event risk at adjacent cursor boundaries s
 1. Adjacent ingestion windows that share a boundary transaction/signature converge to one canonical event set without duplicate canonical IDs.
 2. Restart/resume from a persisted boundary cursor cannot skip in-scope boundary events and cannot double-apply balances.
 3. Replay over equivalent ranges with different deterministic batch/window partitioning yields identical ordered canonical tuples.
-4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject boundary-overlap windows and restart-from-boundary scenarios for both `solana-devnet` and `base-sepolia` and assert stable canonical tuple outputs.
@@ -653,7 +662,7 @@ Eliminate duplicate and missing-event risk when the same logical transaction/sig
 1. Logical transactions/signatures observed from overlapping watched-address inputs converge to one canonical event set per logical balance delta.
 2. Replay-equivalent runs over the same range with different watched-address ordering/partitioning produce identical ordered canonical tuples.
 3. Fan-in replay remains idempotent with no balance double-apply side effects and no boundary event loss.
-4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject overlapping watched-address discovery patterns for both `solana-devnet` and `base-sepolia` and assert one canonical emission set per logical transaction/signature identity.
@@ -688,7 +697,7 @@ Eliminate missing-event risk when overlapping watched-address groups have diverg
 1. Overlapping watched-address groups with mixed lagging/advanced cursors converge to one canonical event set without skipping lagging-range logical events.
 2. Fan-in group membership churn across ticks does not create missing logical events or duplicate canonical IDs.
 3. Replay/resume from partial fan-in progress remains idempotent with stable canonical tuple ordering and no balance double-apply side effects.
-4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for both mandatory chains.
+4. Cursor/watermark progression remains monotonic and runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject divergent-cursor fan-in overlap scenarios for both `solana-devnet` and `base-sepolia` and assert parity with union-address baseline logical-event coverage.
@@ -723,7 +732,7 @@ Eliminate missing/duplicate-event risk from nondeterministic mandatory-chain tic
 1. Equivalent dual-chain logical input ranges produce identical canonical outputs regardless of chain job completion order.
 2. A transient stall/failure on one mandatory chain does not cause missing logical events or cursor regression on the other chain.
 3. Replay/resume of mixed interleaving outcomes remains idempotent with stable canonical tuple ordering and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject opposite Solana/Base completion-order permutations and assert `0` canonical tuple diffs for equivalent logical ranges.
@@ -758,7 +767,7 @@ Eliminate duplicate/missing-event risk when process crashes occur at partial dua
 1. Restart after any modeled crash cutpoint in mixed Solana/Base tick execution converges to one canonical event set for equivalent logical input.
 2. Partial pre-crash progress cannot cause missing logical events, duplicate canonical IDs, or cross-chain cursor bleed/regression on resume.
 3. Replay/resume under repeated crash/restart permutations remains idempotent with stable canonical tuple ordering and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject crash cutpoints around fetch/normalize/ingest/cursor-commit boundaries across opposite Solana/Base completion-order permutations and assert `0` canonical tuple diffs for equivalent ranges.
@@ -793,7 +802,7 @@ Eliminate duplicate/missing-event risk when persisted tick checkpoint state is p
 1. Startup/resume validates persisted checkpoint payload integrity and chain-scoped consistency before processing new ranges.
 2. Corrupted or chain-inconsistent checkpoint state deterministically recovers to one last-safe boundary (or fails fast with explicit diagnostics) without silent duplicate or missing-event side effects.
 3. Replay/resume after integrity-triggered reconciliation remains idempotent with stable canonical tuple ordering and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject checkpoint corruption modes (truncated payload, stale checkpoint cursor, cross-chain checkpoint mix-up) across Solana/Base tick resume paths and assert one canonical output set for equivalent logical input.
@@ -829,7 +838,7 @@ Eliminate duplicate/missing-event risk when sidecar decode availability or schem
 2. Sidecar-transient unavailability paths use deterministic bounded retries and do not advance cursor/watermark on failed attempts.
 3. Sidecar terminal decode failures are isolated or fail-fast by explicit deterministic rules with reproducible signature-level diagnostics and no silent event loss.
 4. Replay/resume after degradation permutations remains idempotent with stable canonical ordering, no duplicate canonical IDs, and no balance double-apply side effects.
-5. Runtime adapter wiring invariants remain green for both mandatory chains.
+5. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject sidecar-unavailable bursts before and during decode and assert bounded retry behavior plus no cursor advancement before success.
@@ -862,10 +871,10 @@ Eliminate duplicate/missing-event risk when ingest commit outcome is ambiguous (
 2. `M24-S2` (`I-0184`): execute QA counterexample gate for ambiguous-commit replay determinism and invariant evidence across mandatory chains.
 
 #### Definition Of Done
-1. Equivalent logical input under commit-ack ambiguity permutations (ack timeout, post-write disconnect, retry-after-unknown) converges to one deterministic canonical tuple output on both mandatory chains.
+1. Equivalent logical input under commit-ack ambiguity permutations (ack timeout, post-write disconnect, retry-after-unknown) converges to one deterministic canonical tuple output on the mandatory chains for that tranche.
 2. Unknown commit outcomes are reconciled by deterministic commit-state rules before retry/resume cursor advancement, with reproducible diagnostics for every ambiguity path.
 3. Replay/resume after ambiguous-commit permutations remains idempotent with `0` duplicate canonical IDs, `0` missing logical events, and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject commit-ack timeout/disconnect permutations across Solana/Base ingest paths and assert one canonical output set for equivalent logical ranges.
@@ -898,10 +907,10 @@ Eliminate duplicate/missing-event risk when equivalent logical ranges are proces
 2. `M25-S2` (`I-0189`): execute QA counterexample gate for batch-partition replay determinism and invariant evidence across mandatory chains.
 
 #### Definition Of Done
-1. Equivalent logical ranges processed under at least two deterministic partition variants converge to one canonical tuple output on both mandatory chains.
+1. Equivalent logical ranges processed under at least two deterministic partition variants converge to one canonical tuple output on the mandatory chains for that tranche.
 2. Partition boundary carryover (overlap seam, retry split/merge seam, resume seam) follows deterministic identity and dedupe rules with reproducible diagnostics.
 3. Replay/resume after partition-variant permutations remains idempotent with `0` duplicate canonical IDs, `0` missing logical events, and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject equivalent Solana/Base logical ranges under multiple partition sizes/orders and assert one canonical output set for equivalent ranges.
@@ -934,10 +943,10 @@ Eliminate duplicate/missing-event risk when chain heads advance during fetch pag
 2. `M26-S2` (`I-0192`): execute QA counterexample gate for moving-head fetch determinism and invariant evidence across mandatory chains.
 
 #### Definition Of Done
-1. Equivalent logical ranges processed under deterministic moving-head permutations (head advances while paging, late append during tick, resume from partial page) converge to one canonical tuple output on both mandatory chains.
+1. Equivalent logical ranges processed under deterministic moving-head permutations (head advances while paging, late append during tick, resume from partial page) converge to one canonical tuple output on the mandatory chains for that tranche.
 2. Per-chain cursor/watermark advancement is bounded to a deterministic pinned fetch cutoff, and late-arriving head data beyond cutoff is deferred to the next tick without loss or duplication.
 3. Replay/resume from moving-head boundaries remains idempotent with `0` duplicate canonical IDs, `0` missing logical events, and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject head-advance-during-pagination permutations for equivalent Solana/Base logical ranges and assert one canonical output set against fixed-head baseline expectations.
@@ -970,10 +979,10 @@ Eliminate duplicate/missing signed-delta risk when high-volatility transactions 
 2. `M27-S2` (`I-0195`): execute QA counterexample gate for volatility-burst normalizer determinism and invariant evidence across mandatory chains.
 
 #### Definition Of Done
-1. Equivalent high-volatility logical inputs (inner-op reorder, repeated transfer legs, mixed fee+transfer deltas) converge to one canonical tuple output on both mandatory chains.
+1. Equivalent high-volatility logical inputs (inner-op reorder, repeated transfer legs, mixed fee+transfer deltas) converge to one canonical tuple output on the mandatory chains for that tranche.
 2. Per-transaction actor/asset signed-delta conservation is preserved with deterministic explicit fee-event coexistence (Solana transaction fee and Base L2/L1 fee components where source fields exist), without duplicate canonical IDs.
 3. Replay/resume from volatility-burst boundaries remains idempotent with `0` duplicate canonical IDs, `0` missing logical events, and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject high-volatility Solana/Base fixtures with operation-order and decode-order permutations and assert one canonical output set for equivalent logical ranges.
@@ -1006,10 +1015,10 @@ Eliminate duplicate/missing-event risk when previously undecodable signatures la
 2. `M28-S2` (`I-0200`): execute QA counterexample gate for deferred sidecar-recovery backfill determinism and invariant evidence across mandatory chains.
 
 #### Definition Of Done
-1. Equivalent logical ranges under degradation->recovery permutations (temporary sidecar unavailable, terminal decode mismatch later recovered, mixed recovered+already-decoded signatures) converge to one canonical tuple output set on both mandatory chains.
+1. Equivalent logical ranges under degradation->recovery permutations (temporary sidecar unavailable, terminal decode mismatch later recovered, mixed recovered+already-decoded signatures) converge to one canonical tuple output set on the mandatory chains for that tranche.
 2. Recovered signatures follow deterministic canonical identity reconciliation against previously processed ranges, with `0` duplicate canonical IDs and deterministic explicit fee-event coexistence where source fields exist.
 3. Replay/resume from recovery boundaries remains idempotent with `0` missing logical events, chain-scoped cursor monotonicity, and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject sidecar-unavailable/schema-mismatch then recovery permutations for equivalent Solana/Base logical ranges and assert one canonical output set against fully-decodable baseline expectations.
@@ -1042,10 +1051,10 @@ Eliminate duplicate/missing-event risk when equivalent logical events are observ
 2. `M29-S2` (`I-0205`): execute QA counterexample gate for live/backfill overlap determinism and invariant evidence across mandatory chains.
 
 #### Definition Of Done
-1. Equivalent logical ranges processed under live-first, backfill-first, and interleaved overlap permutations converge to one canonical tuple output set on both mandatory chains.
+1. Equivalent logical ranges processed under live-first, backfill-first, and interleaved overlap permutations converge to one canonical tuple output set on the mandatory chains for that tranche.
 2. Overlap reconciliation applies deterministic source-merge precedence keyed by canonical identity boundaries, with `0` duplicate canonical IDs and deterministic explicit fee-event coexistence where source fields exist.
 3. Replay/resume from live/backfill overlap boundaries remains idempotent with `0` missing logical events, chain-scoped cursor monotonicity, and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject equivalent Solana/Base logical ranges through live-first, backfill-first, and interleaved overlap permutations and assert one canonical output set against single-source baseline expectations.
@@ -1078,10 +1087,10 @@ Eliminate duplicate/missing-event risk when decoder output shape or metadata fid
 2. `M30-S2` (`I-0210`): execute QA counterexample gate for decoder-version transition determinism and invariant evidence across mandatory chains.
 
 #### Definition Of Done
-1. Equivalent logical ranges processed with legacy decoder outputs, upgraded decoder outputs, and mixed-version interleaving converge to one canonical tuple output set on both mandatory chains.
+1. Equivalent logical ranges processed with legacy decoder outputs, upgraded decoder outputs, and mixed-version interleaving converge to one canonical tuple output set on the mandatory chains for that tranche.
 2. Decoder-version transition reconciliation preserves deterministic canonical identity boundaries with `0` duplicate canonical IDs while tolerating version-scoped metadata enrichment that does not change logical economic meaning.
 3. Replay/resume from decoder-version transition boundaries remains idempotent with `0` missing logical events, chain-scoped cursor monotonicity, and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject equivalent Solana/Base logical ranges encoded via legacy, upgraded, and mixed decoder-version outputs and assert one canonical output set against stable baseline expectations.
@@ -1114,10 +1123,10 @@ Eliminate duplicate/missing-event risk when decoder coverage evolves from partia
 2. `M31-S2` (`I-0215`): execute QA counterexample gate for incremental decode-coverage determinism and invariant evidence across mandatory chains.
 
 #### Definition Of Done
-1. Equivalent logical ranges processed with sparse decoder outputs, enriched decoder outputs, and mixed sparse/enriched interleaving converge to one canonical tuple output set on both mandatory chains.
+1. Equivalent logical ranges processed with sparse decoder outputs, enriched decoder outputs, and mixed sparse/enriched interleaving converge to one canonical tuple output set on the mandatory chains for that tranche.
 2. Incremental coverage reconciliation emits newly discoverable logical events exactly once while preserving canonical identity stability for already-materialized logical events.
 3. Replay/resume from incremental-coverage boundaries remains idempotent with `0` missing logical events, chain-scoped cursor monotonicity, and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject equivalent Solana/Base logical ranges under sparse, enriched, and mixed decode-coverage permutations and assert one canonical output set against enriched-baseline expectations.
@@ -1150,10 +1159,10 @@ Eliminate duplicate/missing-event risk when decode coverage regresses from enric
 2. `M32-S2` (`I-0220`): execute QA counterexample gate for decode-coverage regression flap determinism and invariant evidence across mandatory chains.
 
 #### Definition Of Done
-1. Equivalent logical ranges processed with enriched-first, sparse-regression, and re-enriched permutations converge to one canonical tuple output set on both mandatory chains.
+1. Equivalent logical ranges processed with enriched-first, sparse-regression, and re-enriched permutations converge to one canonical tuple output set on the mandatory chains for that tranche.
 2. Coverage regression handling preserves already-materialized logical events during sparse fallback and avoids duplicate re-emission when enrichment returns.
 3. Replay/resume from coverage-flap boundaries remains idempotent with `0` missing logical events, chain-scoped cursor monotonicity, and no balance double-apply side effects.
-4. Runtime adapter wiring invariants remain green for both mandatory chains.
+4. Runtime adapter wiring invariants remain green for the mandatory chains for that tranche.
 
 #### Test Contract
 1. Deterministic tests inject equivalent Solana/Base logical ranges under enriched-first, sparse-regression, and re-enriched permutations and assert one canonical output set against enriched-baseline expectations.
@@ -1179,18 +1188,18 @@ Eliminate duplicate/missing-event risk when fee-component availability for equiv
 
 #### Entry Gate
 - `M32` exit gate green.
-- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+- Active M33 scope targets remain `solana-devnet` and `base-sepolia` (BTC activation is gated by `M35`).
 
 #### Slices
 1. `M33-S1` (`I-0224`): implement deterministic fee-component availability reconciliation semantics so complete-fee, partial-fee, and recovered-fee permutations cannot induce duplicate canonical IDs, missing logical events, or fee split drift.
-2. `M33-S2` (`I-0225`): execute QA counterexample gate for fee-component availability flap determinism and invariant evidence across mandatory chains.
+2. `M33-S2` (`I-0225`): execute QA counterexample gate for fee-component availability flap determinism and invariant evidence across M33 scope targets.
 
 #### Definition Of Done
-1. Equivalent logical ranges processed under complete-fee, partial-fee (`fee_data_l1` unavailable), and recovered-fee permutations converge to one canonical tuple output set on both mandatory chains.
+1. Equivalent logical ranges processed under complete-fee, partial-fee (`fee_data_l1` unavailable), and recovered-fee permutations converge to one canonical tuple output set on M33 scope targets (`solana-devnet`, `base-sepolia`).
 2. Base fee split handling preserves deterministic coexistence of execution/data components and deterministic unavailable-marker semantics without duplicate fee-event re-emission.
 3. Solana fee-event coverage remains explicit and deterministic under mixed replay/resume permutations that also include Base fee-availability flaps.
 4. Replay/resume from fee-availability flap boundaries remains idempotent with `0` missing logical events, chain-scoped cursor monotonicity, and no balance double-apply side effects.
-5. Runtime adapter wiring invariants remain green for both mandatory chains.
+5. Runtime adapter wiring invariants remain green for M33 scope targets.
 
 #### Test Contract
 1. Deterministic tests inject equivalent Base logical ranges under full-fee, data-fee-missing, and data-fee-recovered permutations and assert one canonical output set against deterministic full-fee baseline expectations.
@@ -1199,7 +1208,7 @@ Eliminate duplicate/missing-event risk when fee-component availability for equiv
 4. QA executes required validation commands plus fee-availability-flap counterexample checks and records invariant-level evidence under `.ralph/reports/`.
 
 #### Exit Gate (Measurable)
-1. `0` duplicate canonical IDs across fee-component availability flap permutation fixtures on mandatory chains.
+1. `0` duplicate canonical IDs across fee-component availability flap permutation fixtures on M33 scope targets.
 2. `0` missing required fee logical events when comparing flap permutations against deterministic baseline expectations per fee-field availability.
 3. `0` cursor monotonicity regressions across fee-availability flap replay/resume fixtures.
 4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
@@ -1208,6 +1217,78 @@ Eliminate duplicate/missing-event risk when fee-component availability for equiv
 #### Risk Gate + Fallback
 - Gate: inconsistent provider fee-field availability can cause unstable fee-component identity that either suppresses legitimate recovered data-fee events or re-emits already-materialized fee events as duplicates.
 - Fallback: preserve deterministic conservative fee-floor reconciliation (`fee_execution_l2` always deterministic, `fee_data_l1` only when source fields are provably available, explicit unavailable-marker diagnostics otherwise) and replay from last-safe cursor until fee-availability contracts are extended.
+
+### M34. Fail-Fast Panic Contract Hardening Tranche C0028 (P0, Next)
+
+#### Objective
+Enforce strict fail-fast safety so correctness-impacting stage failures cannot continue in-process and cannot advance cursor/watermark before process abort.
+
+#### Entry Gate
+- `M33` exit gate green.
+- Runtime selection supports chain-scoped deployment modes (`like-group` and `independent`) without cross-chain commit dependency.
+
+#### Slices
+1. `M34-S1` (`I-0226`): harden stage-level failure handling so coordinator/fetcher/normalizer/ingester correctness-impacting errors panic immediately, with explicit chain-scoped diagnostics.
+2. `M34-S2` (`I-0227`): execute QA failure-injection counterexample gate proving panic-on-error and zero unsafe cursor/watermark progression.
+
+#### Definition Of Done
+1. Stage failure policy is explicit and deterministic: no skip/continue path for correctness-impacting failures.
+2. Failed batch path cannot commit cursor/watermark updates before abort.
+3. Restart replay from last committed boundary converges deterministically with `0` duplicate/missing canonical events.
+4. Chain-scoped commit scheduling contract is preserved; no shared cross-chain interleaver is present in production runtime wiring.
+
+#### Test Contract
+1. Failure-injection tests for each stage boundary assert immediate panic behavior.
+2. Cursor/watermark safety tests assert failed path never advances persisted progress.
+3. Restart replay tests assert canonical tuple equivalence and idempotent ingestion after injected failure.
+4. QA records evidence under `.ralph/reports/` with per-stage fail-fast verdicts.
+
+#### Exit Gate (Measurable)
+1. `0` failure-injection cases that continue processing after correctness-impacting stage error.
+2. `0` failed-path cursor/watermark advancement violations.
+3. `0` replay divergence after fail-fast restart scenarios.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: over-broad panic classification can reduce availability if non-critical errors are incorrectly escalated.
+- Fallback: keep deterministic error classification matrix under planner control, defaulting unknown correctness-impacting errors to panic.
+
+### M35. BTC-Like Runtime Activation Tranche C0029 (P0, Next)
+
+#### Objective
+Activate `btc-like` runtime support (`btc-testnet`) with deterministic UTXO canonicalization, explicit fee semantics, and topology-independent correctness.
+
+#### Entry Gate
+- `M34` exit gate green.
+- BTC-like adapter/normalizer contracts are planner-approved in `specs/*`.
+
+#### Slices
+1. `M35-S1` (`I-0228`): implement BTC-like runtime target wiring, fetch/decode/normalize/ingest path, and deterministic vin/vout ownership + miner-fee semantics.
+2. `M35-S2` (`I-0229`): execute QA golden/invariant/topology-parity gate for BTC-like activation across chain-per-deployment and family-per-deployment modes.
+
+#### Definition Of Done
+1. `btc-testnet` is a first-class runtime target with chain-scoped cursor/watermark progression and replay idempotency.
+2. BTC canonical event identity (`txid + vin/vout path`) is deterministic under replay/restart permutations.
+3. Miner-fee and input/output delta conservation semantics are represented as explicit canonical signed deltas.
+4. Topology migration parity holds: BTC canonical outputs remain equivalent between independent deployment and grouped deployment modes.
+5. Mandatory chain set (`solana-devnet`, `base-sepolia`, `btc-testnet`) is runtime-wireable under documented deployment configuration.
+
+#### Test Contract
+1. BTC fixture suite covers coinbase, multi-input/output, change output, and fee attribution edge cases.
+2. Cross-run determinism tests assert ordered tuple equality `(event_id, delta, category)` for BTC ranges.
+3. Topology parity tests assert canonical equivalence for independent vs grouped deployment modes.
+4. QA executes required validation commands plus BTC golden/invariant runners and stores report artifacts under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across BTC replay fixtures.
+2. `0` signed-delta conservation violations in BTC invariants.
+3. `0` topology parity diffs for BTC canonical tuple outputs.
+4. `0` runtime wiring parity regressions across all mandatory chains.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: RPC/script-decoder heterogeneity can destabilize deterministic vin/vout ownership classification.
+- Fallback: enforce deterministic conservative ownership rules with explicit unresolved-script diagnostics and fail fast on ambiguity that threatens canonical correctness.
 
 ## Decision Register (Major + Fallback)
 
@@ -1222,6 +1303,10 @@ Eliminate duplicate/missing-event risk when fee-component availability for equiv
 3. `DP-0101-C`: reorg handling mode during hardening.
 - Preferred: pending/finalized lifecycle with rollback/replay.
 - Fallback: finalized-only ingestion mode with configurable confirmation lag.
+
+4. `DP-0101-D`: commit scheduling scope.
+- Preferred: chain-scoped commit scheduler per `ChainRuntime`; no cross-chain shared interleaver in production runtime.
+- Fallback: if legacy shared scheduling code remains, keep it non-routable and block startup when enabled.
 
 ## Local Queue Mapping
 
@@ -1290,6 +1375,10 @@ Completed milestones/slices:
 Active downstream queue from this plan:
 1. `I-0224`
 2. `I-0225`
+3. `I-0226`
+4. `I-0227`
+5. `I-0228`
+6. `I-0229`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

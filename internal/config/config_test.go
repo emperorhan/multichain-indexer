@@ -34,6 +34,9 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 10, cfg.Pipeline.ChannelBufferSize)
 	assert.Equal(t, 8080, cfg.Server.HealthPort)
 	assert.Equal(t, "info", cfg.Log.Level)
+	assert.Equal(t, RuntimeDeploymentModeLikeGroup, cfg.Runtime.DeploymentMode)
+	assert.Empty(t, cfg.Runtime.LikeGroup)
+	assert.Empty(t, cfg.Runtime.ChainTargets)
 	assert.Empty(t, cfg.Pipeline.WatchedAddresses)
 	assert.Empty(t, cfg.Pipeline.SolanaWatchedAddresses)
 	assert.Empty(t, cfg.Pipeline.BaseWatchedAddresses)
@@ -51,6 +54,8 @@ func TestLoad_EnvOverride(t *testing.T) {
 	t.Setenv("BATCH_SIZE", "500")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("HEALTH_PORT", "9090")
+	t.Setenv("RUNTIME_DEPLOYMENT_MODE", RuntimeDeploymentModeIndependent)
+	t.Setenv("RUNTIME_CHAIN_TARGET", "base-sepolia")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -66,6 +71,8 @@ func TestLoad_EnvOverride(t *testing.T) {
 	assert.Equal(t, 500, cfg.Pipeline.BatchSize)
 	assert.Equal(t, "debug", cfg.Log.Level)
 	assert.Equal(t, 9090, cfg.Server.HealthPort)
+	assert.Equal(t, RuntimeDeploymentModeIndependent, cfg.Runtime.DeploymentMode)
+	assert.Equal(t, []string{"base-sepolia"}, cfg.Runtime.ChainTargets)
 }
 
 func TestLoad_WatchedAddresses_Parsing(t *testing.T) {
@@ -142,6 +149,7 @@ func TestValidate_MissingDBURL(t *testing.T) {
 		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
 		Base:    BaseConfig{RPCURL: "https://base.example"},
 		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{DeploymentMode: RuntimeDeploymentModeLikeGroup},
 	}
 	err := cfg.validate()
 	assert.Error(t, err)
@@ -154,6 +162,7 @@ func TestValidate_MissingSolanaRPCURL(t *testing.T) {
 		Solana:  SolanaConfig{RPCURL: ""},
 		Base:    BaseConfig{RPCURL: "https://base.example"},
 		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{DeploymentMode: RuntimeDeploymentModeLikeGroup},
 	}
 	err := cfg.validate()
 	assert.Error(t, err)
@@ -166,6 +175,7 @@ func TestValidate_MissingBaseRPCURL(t *testing.T) {
 		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
 		Base:    BaseConfig{RPCURL: ""},
 		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{DeploymentMode: RuntimeDeploymentModeLikeGroup},
 	}
 	err := cfg.validate()
 	assert.Error(t, err)
@@ -178,10 +188,117 @@ func TestValidate_MissingSidecarAddr(t *testing.T) {
 		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
 		Base:    BaseConfig{RPCURL: "https://base.example"},
 		Sidecar: SidecarConfig{Addr: ""},
+		Runtime: RuntimeConfig{DeploymentMode: RuntimeDeploymentModeLikeGroup},
 	}
 	err := cfg.validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "SIDECAR_ADDR")
+}
+
+func TestValidate_InvalidRuntimeDeploymentMode(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{DeploymentMode: "wrong-mode"},
+	}
+	err := cfg.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "RUNTIME_DEPLOYMENT_MODE")
+}
+
+func TestValidate_IndependentModeRequiresSingleChainTarget(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeIndependent,
+			ChainTargets:   []string{"solana-devnet", "base-sepolia"},
+		},
+	}
+	err := cfg.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "supports exactly one chain target")
+}
+
+func TestValidate_IndependentModeRejectsLikeGroup(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: "https://rpc.example.com"},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeIndependent,
+			LikeGroup:      RuntimeLikeGroupEVM,
+			ChainTargets:   []string{"base-sepolia"},
+		},
+	}
+	err := cfg.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "RUNTIME_LIKE_GROUP is not allowed")
+}
+
+func TestValidate_IndependentMode_BaseOnlyDoesNotRequireSolanaRPC(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: ""},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeIndependent,
+			ChainTargets:   []string{"base-sepolia"},
+		},
+	}
+	require.NoError(t, cfg.validate())
+}
+
+func TestValidate_IndependentMode_SolanaOnlyDoesNotRequireBaseRPC(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: "https://solana.example"},
+		Base:    BaseConfig{RPCURL: ""},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeIndependent,
+			ChainTargets:   []string{"solana-devnet"},
+		},
+	}
+	require.NoError(t, cfg.validate())
+}
+
+func TestValidate_IndependentMode_RejectsUnsupportedTargetChain(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: "https://solana.example"},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeIndependent,
+			ChainTargets:   []string{"ethereum-mainnet"},
+		},
+	}
+	err := cfg.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported chain")
+}
+
+func TestValidate_LikeGroupBTCRejectedUntilWired(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: "https://solana.example"},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeLikeGroup,
+			LikeGroup:      RuntimeLikeGroupBTC,
+		},
+	}
+	err := cfg.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not wired yet")
 }
 
 func TestGetEnvInt_InvalidValue(t *testing.T) {
