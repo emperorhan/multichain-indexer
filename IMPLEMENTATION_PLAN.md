@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -55,6 +55,8 @@ Execution queue (dependency-ordered):
 44. `I-0184` (`M24-S2`) QA counterexample gate for commit-ambiguity replay determinism + invariant safety
 45. `I-0188` (`M25-S1`) batch-partition variance determinism hardening
 46. `I-0189` (`M25-S2`) QA counterexample gate for batch-partition replay determinism + invariant safety
+47. `I-0191` (`M26-S1`) moving-head fetch cutoff determinism hardening
+48. `I-0192` (`M26-S2`) QA counterexample gate for moving-head fetch determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -868,7 +870,7 @@ Eliminate duplicate/missing-event risk when ingest commit outcome is ambiguous (
 - Gate: incorrect ambiguous-commit reconciliation can misclassify committed vs uncommitted writes, causing either duplicate replay or silent event loss.
 - Fallback: preserve deterministic fail-fast behavior for unresolved commit ambiguity, emit explicit commit-ambiguity diagnostics, and replay from last-safe cursor until reconciliation rules are fully proven.
 
-### M25. Batch-Partition Variance Determinism Reliability Tranche C0019 (P0, Next)
+### M25. Batch-Partition Variance Determinism Reliability Tranche C0019 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event risk when equivalent logical ranges are processed under different deterministic batch partitions (for example, page-size drift, retry-induced split/merge boundaries, or resume seam overlap), so mandatory-chain replay/resume converges to one canonical output and cursor progression.
@@ -903,6 +905,42 @@ Eliminate duplicate/missing-event risk when equivalent logical ranges are proces
 #### Risk Gate + Fallback
 - Gate: incorrect partition-boundary identity reconciliation can either suppress valid events (over-dedupe) or duplicate seam events (under-dedupe).
 - Fallback: preserve deterministic fail-fast on unresolved seam-identity ambiguity, emit explicit boundary diagnostics, and replay from last-safe cursor until partition-boundary contracts are fully proven.
+
+### M26. Moving-Head Fetch Cutoff Determinism Reliability Tranche C0020 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event risk when chain heads advance during fetch pagination, so each mandatory-chain tick processes a deterministic closed range and replay/resume converges to one canonical output and cursor progression.
+
+#### Entry Gate
+- `M25` exit gate green.
+- Mandatory chain runtime targets remain fixed to `solana-devnet` and `base-sepolia`.
+
+#### Slices
+1. `M26-S1` (`I-0191`): implement deterministic per-chain fetch-cutoff snapshot and carryover semantics so head-advance permutations cannot induce duplicate canonical IDs, missing logical events, or cursor regression.
+2. `M26-S2` (`I-0192`): execute QA counterexample gate for moving-head fetch determinism and invariant evidence across mandatory chains.
+
+#### Definition Of Done
+1. Equivalent logical ranges processed under deterministic moving-head permutations (head advances while paging, late append during tick, resume from partial page) converge to one canonical tuple output on both mandatory chains.
+2. Per-chain cursor/watermark advancement is bounded to a deterministic pinned fetch cutoff, and late-arriving head data beyond cutoff is deferred to the next tick without loss or duplication.
+3. Replay/resume from moving-head boundaries remains idempotent with `0` duplicate canonical IDs, `0` missing logical events, and no balance double-apply side effects.
+4. Runtime adapter wiring invariants remain green for both mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject head-advance-during-pagination permutations for equivalent Solana/Base logical ranges and assert one canonical output set against fixed-head baseline expectations.
+2. Deterministic tests inject late-append and page-boundary overlap permutations and assert `0` duplicate canonical IDs plus `0` missing logical events across independent runs.
+3. Deterministic replay/resume tests from pinned-cutoff boundaries assert chain-scoped cursor monotonicity and `0` balance drift.
+4. QA executes required validation commands plus moving-head counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs across moving-head replay fixtures on mandatory chains.
+2. `0` missing logical events when comparing moving-head permutation fixtures against deterministic fixed-head baselines.
+3. `0` cursor monotonicity regressions across pinned-cutoff replay/resume fixtures.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: strict fetch-cutoff pinning can increase backlog/lag under rapid head growth or provider latency skew.
+- Fallback: keep deterministic cutoff pinning with bounded lag-window guardrails, emit explicit cutoff-lag diagnostics, and fail fast on unresolved head-boundary ambiguity until fetch-cutoff contracts are extended.
 
 ## Decision Register (Major + Fallback)
 
@@ -965,10 +1003,12 @@ Completed milestones/slices:
 42. `I-0179`
 43. `I-0183`
 44. `I-0184`
+45. `I-0188`
+46. `I-0189`
 
 Active downstream queue from this plan:
-1. `I-0188`
-2. `I-0189`
+1. `I-0191`
+2. `I-0192`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

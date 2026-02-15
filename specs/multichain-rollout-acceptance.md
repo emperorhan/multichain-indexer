@@ -544,6 +544,30 @@ Pass Evidence:
 - Counterexample outcomes include explicit proof of batch-partition determinism and seam-boundary replay/resume invariant safety on mandatory chains.
 - Follow-up issue links are present for failures (if any).
 
+### I-0191 (M26-S1)
+Assertions:
+1. Equivalent logical ranges under moving-head permutations (head advances during pagination, late append during tick, resume from partial page) converge to one deterministic canonical output set on both mandatory chains.
+2. Per-chain fetch processing uses deterministic pinned cutoff boundaries so cursor/watermark only advances through closed ranges, with no duplicate canonical IDs or missing logical events.
+3. Replay/resume from moving-head boundaries remains idempotent with cursor monotonicity and no balance double-apply side effects.
+4. Existing invariants remain green: canonical ID uniqueness, replay idempotency, cursor monotonicity, runtime adapter wiring.
+
+Pass Evidence:
+- Deterministic tests inject head-advance-during-pagination permutations on `solana-devnet` and `base-sepolia` and show canonical tuple equivalence against fixed-head baseline runs.
+- Deterministic tests inject late-append/page-overlap permutations and show `0` duplicate canonical IDs and `0` missing logical events.
+- Replay/idempotency/cursor regression tests remain green with no runtime adapter wiring regressions.
+
+### I-0192 (M26-S2)
+Assertions:
+1. QA report is written under `.ralph/reports/` with explicit pass/fail recommendation for M26 invariants.
+2. QA executes at least one counterexample with moving-head pagination permutations and verifies deterministic canonical output convergence.
+3. QA executes at least one counterexample with pinned-cutoff replay/resume boundaries and verifies no duplicate canonical IDs, no missing logical events, and cursor monotonicity.
+4. Any failed invariant is mapped to a reproducible developer issue under `.ralph/issues/`.
+
+Pass Evidence:
+- QA report includes command evidence for `make test`, `make test-sidecar`, `make lint`.
+- Counterexample outcomes include explicit proof of moving-head cutoff determinism and replay/resume invariant safety on mandatory chains.
+- Follow-up issue links are present for failures (if any).
+
 ## Release Blockers
 Release recommendation must be `fail` if any condition holds:
 1. Duplicate canonical IDs detected after replay.
@@ -568,3 +592,4 @@ Release recommendation must be `fail` if any condition holds:
 20. Sidecar-degradation determinism cannot be proven (bounded retry semantics for transient sidecar outage, deterministic terminal decode-failure isolation/fail-fast behavior, and no duplicate/missing decodable canonical outputs across permutations on both mandatory chains).
 21. Ambiguous ingest-commit determinism cannot be proven (commit-ack timeout/disconnect reconciliation, retry-after-unknown replay equivalence, and no duplicate/missing logical canonical outputs with cursor monotonicity not evidenced for both mandatory chains).
 22. Batch-partition variance determinism cannot be proven (partition-size/seam-boundary permutation convergence, split/merge/retry seam reconciliation, and no duplicate/missing logical canonical outputs with cursor monotonicity not evidenced for both mandatory chains).
+23. Moving-head fetch cutoff determinism cannot be proven (head-advance-during-pagination convergence, pinned-cutoff closed-range coverage, and no duplicate/missing logical canonical outputs with cursor monotonicity not evidenced for both mandatory chains).

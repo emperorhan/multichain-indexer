@@ -47,9 +47,11 @@
 44. `I-0184` (`M24-S2`): QA counterexample gate for commit-ambiguity replay determinism + invariant safety.
 45. `I-0188` (`M25-S1`): batch-partition variance determinism hardening across mandatory-chain fetch/normalize/ingest seam boundaries.
 46. `I-0189` (`M25-S2`): QA counterexample gate for batch-partition replay determinism + invariant safety.
+47. `I-0191` (`M26-S1`): moving-head fetch cutoff determinism hardening across mandatory-chain fetch pagination and replay/resume boundaries.
+48. `I-0192` (`M26-S2`): QA counterexample gate for moving-head fetch determinism + invariant safety.
 
 Dependency graph:
-`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189`
+`I-0102 -> I-0103 -> (I-0104 || I-0105) -> I-0108 -> I-0109 -> I-0107 -> I-0110 -> I-0114 -> I-0115 -> I-0117 -> I-0118 -> I-0122 -> I-0123 -> I-0127 -> I-0128 -> I-0130 -> I-0131 -> I-0135 -> I-0136 -> I-0138 -> I-0139 -> I-0141 -> I-0142 -> I-0144 -> I-0145 -> I-0147 -> I-0148 -> I-0150 -> I-0151 -> I-0155 -> I-0156 -> I-0160 -> I-0161 -> I-0165 -> I-0166 -> I-0170 -> I-0171 -> I-0175 -> I-0176 -> I-0178 -> I-0179 -> I-0183 -> I-0184 -> I-0188 -> I-0189 -> I-0191 -> I-0192`
 
 ## Slice Size Rule
 Each slice must be independently releasable:
@@ -103,6 +105,8 @@ Each slice must be independently releasable:
 42. Before `I-0184`: `I-0183` emits deterministic evidence that ambiguous ingest-commit outcomes converge to one canonical output set with zero duplicate/missing logical events and no cursor regression.
 43. Before `I-0188`: `I-0184` QA report is `PASS` and no unresolved ambiguous-ingest-commit determinism blocker remains.
 44. Before `I-0189`: `I-0188` emits deterministic evidence that batch-partition variance permutations converge to one canonical output set with zero duplicate/missing logical events and no cursor regression.
+45. Before `I-0191`: `I-0189` QA report is `PASS` and no unresolved batch-partition variance determinism blocker remains.
+46. Before `I-0192`: `I-0191` emits deterministic evidence that moving-head fetch permutations converge to one canonical output set with zero duplicate/missing logical events and no cursor regression.
 
 ## Fallback Paths
 1. If canonical key migration is risky, keep temporary dual unique protections.
@@ -127,6 +131,7 @@ Each slice must be independently releasable:
 20. If sidecar-degradation handling creates ambiguity between transient outage and terminal decode incompatibility, preserve deterministic full-batch fail-fast guardrails, allow bounded per-signature isolation only for explicitly classified decode failures, and emit reproducible stage/signature diagnostics until sidecar contracts are extended.
 21. If ambiguous ingest-commit reconciliation cannot deterministically prove committed vs uncommitted state after ack-loss/timeouts, preserve deterministic fail-fast with explicit commit-ambiguity diagnostics and replay from last-safe cursor until reconciliation rules are extended.
 22. If partition-boundary reconciliation cannot deterministically prove seam identity equivalence across split/merge/resume permutations, preserve deterministic fail-fast with explicit seam-boundary diagnostics and replay from last-safe cursor until boundary contracts are extended.
+23. If moving-head fetch cutoff reconciliation cannot deterministically prove closed-range coverage while heads advance during paging, preserve deterministic fail-fast with explicit cutoff-boundary diagnostics and replay from last-safe cursor until fetch-cutoff contracts are extended.
 
 ## Completion Evidence
 1. Developer slice output:
