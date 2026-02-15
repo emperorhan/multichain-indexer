@@ -1103,6 +1103,153 @@ func TestAutoTuneController_PolicyManifestSnapshotCutoverRequiresLineageFence(t 
 	assert.Equal(t, 0, reapplyDecision.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_PolicyManifestRollbackLineageRequiresDeterministicFence(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               260,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+
+	segment1Controller := newAutoTuneController(100, segment1Cfg)
+	require.NotNil(t, segment1Controller)
+
+	batch, segment1Decision := segment1Controller.Resolve(highLag)
+	assert.Equal(t, 120, batch)
+	assert.Equal(t, "apply_increase", segment1Decision.Decision)
+	assert.Equal(t, "manifest-tail-v2a", segment1Decision.PolicyManifestDigest)
+	assert.Equal(t, int64(1), segment1Decision.PolicyEpoch)
+
+	segment2Seed := segment1Controller.currentBatch
+	segment2Controller := newAutoTuneControllerWithSeed(100, segment2Cfg, &segment2Seed)
+	require.NotNil(t, segment2Controller)
+	segment2Controller.reconcilePolicyTransition(segment1Controller.exportPolicyTransition())
+
+	batch, segment2Hold := segment2Controller.Resolve(highLag)
+	assert.Equal(t, segment2Seed, batch)
+	assert.Equal(t, "hold_policy_transition", segment2Hold.Decision)
+	assert.Equal(t, "manifest-tail-v2b", segment2Hold.PolicyManifestDigest)
+	assert.Equal(t, int64(2), segment2Hold.PolicyEpoch)
+	assert.Equal(t, 1, segment2Hold.PolicyActivationTicks)
+
+	batch, segment2Applied := segment2Controller.Resolve(highLag)
+	assert.Equal(t, 140, batch)
+	assert.Equal(t, "apply_increase", segment2Applied.Decision)
+	assert.Equal(t, "manifest-tail-v2b", segment2Applied.PolicyManifestDigest)
+	assert.Equal(t, int64(2), segment2Applied.PolicyEpoch)
+
+	segment3Seed := segment2Controller.currentBatch
+	segment3Controller := newAutoTuneControllerWithSeed(100, segment3Cfg, &segment3Seed)
+	require.NotNil(t, segment3Controller)
+	segment3Controller.reconcilePolicyTransition(segment2Controller.exportPolicyTransition())
+
+	batch, segment3Hold := segment3Controller.Resolve(highLag)
+	assert.Equal(t, segment3Seed, batch)
+	assert.Equal(t, "hold_policy_transition", segment3Hold.Decision)
+	assert.Equal(t, "manifest-tail-v2c", segment3Hold.PolicyManifestDigest)
+	assert.Equal(t, int64(3), segment3Hold.PolicyEpoch)
+	assert.Equal(t, 1, segment3Hold.PolicyActivationTicks)
+
+	batch, segment3Applied := segment3Controller.Resolve(highLag)
+	assert.Equal(t, 160, batch)
+	assert.Equal(t, "apply_increase", segment3Applied.Decision)
+	assert.Equal(t, "manifest-tail-v2c", segment3Applied.PolicyManifestDigest)
+	assert.Equal(t, int64(3), segment3Applied.PolicyEpoch)
+
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	staleRollbackCfg := segment1Cfg
+	staleRollbackCfg.PolicyManifestDigest = "manifest-tail-v2a|rollback-from-seq=3|rollback-to-seq=1|rollback-forward-seq=3"
+
+	rollbackSeed := segment3Controller.currentBatch
+	rollbackController := newAutoTuneControllerWithSeed(100, rollbackCfg, &rollbackSeed)
+	require.NotNil(t, rollbackController)
+	rollbackController.reconcilePolicyTransition(segment3Controller.exportPolicyTransition())
+
+	batch, rollbackHold := rollbackController.Resolve(highLag)
+	assert.Equal(t, rollbackSeed, batch)
+	assert.Equal(t, "hold_policy_transition", rollbackHold.Decision)
+	assert.Equal(t, rollbackCfg.PolicyManifestDigest, rollbackHold.PolicyManifestDigest)
+	assert.Equal(t, rollbackCfg.PolicyManifestRefreshEpoch, rollbackHold.PolicyEpoch)
+	assert.Equal(t, 1, rollbackHold.PolicyActivationTicks)
+
+	batch, rollbackApplied := rollbackController.Resolve(highLag)
+	assert.Equal(t, rollbackSeed+20, batch)
+	assert.Equal(t, "apply_increase", rollbackApplied.Decision)
+	assert.Equal(t, rollbackCfg.PolicyManifestDigest, rollbackApplied.PolicyManifestDigest)
+	assert.Equal(t, rollbackCfg.PolicyManifestRefreshEpoch, rollbackApplied.PolicyEpoch)
+	assert.Equal(t, 0, rollbackApplied.PolicyActivationTicks)
+
+	staleSeed := rollbackController.currentBatch
+	staleController := newAutoTuneControllerWithSeed(100, staleRollbackCfg, &staleSeed)
+	require.NotNil(t, staleController)
+	staleController.reconcilePolicyTransition(rollbackController.exportPolicyTransition())
+
+	batch, staleDecision := staleController.Resolve(highLag)
+	assert.Equal(t, staleSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleDecision.Decision, "stale rollback must not reopen transition hold")
+	assert.Equal(t, rollbackCfg.PolicyManifestDigest, staleDecision.PolicyManifestDigest, "stale rollback must pin last verified rollback-safe digest")
+	assert.Equal(t, rollbackCfg.PolicyManifestRefreshEpoch, staleDecision.PolicyEpoch, "stale rollback must preserve last verified rollback-safe epoch")
+	assert.Equal(t, 0, staleDecision.PolicyActivationTicks)
+
+	reForwardSeed := staleController.currentBatch
+	reForwardController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reForwardSeed)
+	require.NotNil(t, reForwardController)
+	reForwardController.reconcilePolicyTransition(staleController.exportPolicyTransition())
+
+	batch, reForwardHold := reForwardController.Resolve(highLag)
+	assert.Equal(t, reForwardSeed, batch)
+	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward apply must deterministically reopen one activation hold")
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardHold.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardHold.PolicyEpoch)
+	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
+
+	batch, reForwardApplied := reForwardController.Resolve(highLag)
+	assert.Equal(t, reForwardSeed+20, batch)
+	assert.Equal(t, "apply_increase", reForwardApplied.Decision)
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardApplied.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardApplied.PolicyEpoch)
+	assert.Equal(t, 0, reForwardApplied.PolicyActivationTicks)
+
+	reapplySeed := reForwardController.currentBatch
+	reapplyController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reapplySeed)
+	require.NotNil(t, reapplyController)
+	reapplyController.reconcilePolicyTransition(reForwardController.exportPolicyTransition())
+
+	batch, reapplyDecision := reapplyController.Resolve(highLag)
+	assert.Equal(t, reapplySeed+20, batch)
+	assert.Equal(t, "apply_increase", reapplyDecision.Decision, "rollback+re-forward re-apply must remain replay-stable without reopening hold")
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reapplyDecision.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reapplyDecision.PolicyEpoch)
+	assert.Equal(t, 0, reapplyDecision.PolicyActivationTicks)
+}
+
 func intPtr(v int) *int {
 	return &v
 }

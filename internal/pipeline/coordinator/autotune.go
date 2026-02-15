@@ -604,6 +604,24 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 		return
 	}
 
+	if incomingEpoch < previousEpoch {
+		if isDeterministicRollbackLineage(previousEpoch, incomingEpoch, incomingDigest) {
+			a.policyManifestDigest = incomingDigest
+			a.policyEpoch = incomingEpoch
+			a.policyActivationLeft = a.policyActivationHold
+			a.resetAdaptiveControlState()
+			return
+		}
+		// Reject stale/ambiguous rollback: pin previously verified rollback-safe lineage.
+		a.policyManifestDigest = previousDigest
+		a.policyEpoch = previousEpoch
+		if transition.ActivationHoldRemaining > a.policyActivationLeft {
+			a.policyActivationLeft = transition.ActivationHoldRemaining
+			a.resetAdaptiveControlState()
+		}
+		return
+	}
+
 	// Reject stale/ambiguous refresh: pin previously verified manifest lineage.
 	a.policyManifestDigest = previousDigest
 	a.policyEpoch = previousEpoch
@@ -820,6 +838,68 @@ func isDeterministicSnapshotCutover(previousEpoch, incomingEpoch int64, incoming
 		return false
 	}
 	return tailSeq > baseSeq
+}
+
+func isDeterministicRollbackLineage(previousEpoch, incomingEpoch int64, incomingDigest string) bool {
+	if incomingEpoch >= previousEpoch {
+		return false
+	}
+	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(incomingDigest)
+	if !ok {
+		return false
+	}
+	if rollbackFromSeq != previousEpoch {
+		return false
+	}
+	if rollbackToSeq != incomingEpoch {
+		return false
+	}
+	if rollbackFromSeq <= rollbackToSeq {
+		return false
+	}
+	if rollbackForwardSeq < rollbackFromSeq {
+		return false
+	}
+	return true
+}
+
+func parseRollbackLineage(digest string) (int64, int64, int64, bool) {
+	const fromKey = "rollback-from-seq="
+	const toKey = "rollback-to-seq="
+	const forwardKey = "rollback-forward-seq="
+
+	var (
+		fromValue    string
+		toValue      string
+		forwardValue string
+	)
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		switch {
+		case strings.HasPrefix(token, fromKey):
+			fromValue = strings.TrimSpace(strings.TrimPrefix(token, fromKey))
+		case strings.HasPrefix(token, toKey):
+			toValue = strings.TrimSpace(strings.TrimPrefix(token, toKey))
+		case strings.HasPrefix(token, forwardKey):
+			forwardValue = strings.TrimSpace(strings.TrimPrefix(token, forwardKey))
+		}
+	}
+	if fromValue == "" || toValue == "" || forwardValue == "" {
+		return 0, 0, 0, false
+	}
+	fromSeq, err := strconv.ParseInt(fromValue, 10, 64)
+	if err != nil || fromSeq < 0 {
+		return 0, 0, 0, false
+	}
+	toSeq, err := strconv.ParseInt(toValue, 10, 64)
+	if err != nil || toSeq < 0 {
+		return 0, 0, 0, false
+	}
+	forwardSeq, err := strconv.ParseInt(forwardValue, 10, 64)
+	if err != nil || forwardSeq < 0 {
+		return 0, 0, 0, false
+	}
+	return fromSeq, toSeq, forwardSeq, true
 }
 
 func parseSnapshotCutoverLineage(digest string) (int64, int64, bool) {
