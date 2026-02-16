@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -205,6 +205,8 @@ Execution queue (dependency-ordered):
    - Requires deterministic `mint` and `burn` fixture-backed evidence to replace missing coverage cells.
 188. `I-0497` (`M94-S3`) QA counterexample gate for M94-S3 mint/burn debt closure
    - Requires explicit `solana`/`base` mint/burn evidence artifacts and replay continuity checks before PRD closeout promotion.
+189. `I-0501` (`M95-S1`) PRD R9 chain-scoped control and throughput coupling gate
+190. `I-0502` (`M95-S2`) QA counterexample gate for chain-scoped auto-tune control isolation and cross-coupling verification
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -3567,7 +3569,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when post-reintegration
 - Gate: post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift sequencing can race with delayed reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal echoes and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch, resurrection_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch)` post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift ordering with explicit lineage diagnostics, pin last verified rollback-safe pre-late-resurrection-quarantine-reintegration-seal-drift boundary on ambiguity, quarantine unresolved reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift candidates, and fail fast on unresolved ownership conflicts.
 
-### M91. PRD-Priority Topology Parity + Strict Chain Isolation Gate Tranche C0081 (P0, Blocked by QA NO-GO)
+### M91. PRD-Priority Topology Parity + Strict Chain Isolation Gate Tranche C0081 (P0, Completed)
 
 #### Objective
 Close unresolved PRD requirements before optional refinements by enforcing topology-independent canonical output equivalence and strict chain isolation across `Topology A/B/C` permutations for mandatory chains.
@@ -3610,7 +3612,7 @@ PRD traceability:
 - Gate: topology-mode transitions can mask latent shared-state coupling in commit/cursor/watermark paths and produce non-deterministic parity drift.
 - Fallback: enforce deterministic topology-parity diffing keyed by `(chain, network, topology_mode, block_cursor, tx_hash, event_path, actor_address, asset_id, event_category)`, quarantine ambiguous topology-only divergences, and block tranche promotion until deterministic parity is restored.
 
-### M92. PRD-Priority Topology A/B/C Mandatory-Chain Closure Gate Tranche C0082 (P0, Planned)
+### M92. PRD-Priority Topology A/B/C Mandatory-Chain Closure Gate Tranche C0082 (P0, Completed)
 
 #### Objective
 Close unresolved PRD topology obligations by converting M91 partial evidence into a promotable deterministic gate: mandatory-chain `Topology A/B/C` parity + one-chain isolation/replay proof with explicit inventory completeness checks.
@@ -3656,7 +3658,7 @@ PRD traceability:
 - Gate: partial topology coverage can yield false confidence (green baseline suites without full mandatory-chain `A/B/C` matrix proof), causing premature promotion with latent coupling still present.
 - Fallback: enforce `DP-0102-M92` by using deterministic topology-parity key `(chain, network, topology_mode, block_cursor, tx_hash, event_path, actor_address, asset_id, event_category)` and fail the gate when any required topology cell (mandatory chain × mode) is absent from deterministic inventory.
 
-### M93. PRD-Priority Fail-Fast + Continuity Gate Tranche C0083 (P0, Planned)
+### M93. PRD-Priority Fail-Fast + Continuity Gate Tranche C0083 (P0, Completed)
 
 #### Objective
 Close unresolved PRD controls by hardening mandatory-chain continuity under fail-fast semantics before optional refinements.
@@ -3701,7 +3703,7 @@ PRD traceability:
 - Gate: under-specified error taxonomy can leave latent faulty paths that mutate cursors without failing tests.
 - Fallback: enforce `DP-0103-M93`; any failed-path cursor/watermark progression is a hard gate failure until coverage and replay proofs are re-established.
 
-### M94. PRD-Priority Event-Coverage + Duplicate-Free Closeout Gate Tranche C0084 (P0, Planned)
+### M94. PRD-Priority Event-Coverage + Duplicate-Free Closeout Gate Tranche C0084 (P0, Completed)
 
 #### Objective
 Close the remaining PRD-level asset-volatility coverage obligations by proving full in-scope signed delta class coverage and duplicate-free canonical output for mandatory chains, and clear mint/burn coverage debt so `R2` closeout is proven with required evidence (no `NA` placeholder acceptance).
@@ -3759,7 +3761,49 @@ PRD traceability:
 - Gate: class-level coverage can hide path omission if class partitioning is incomplete or unguarded.
 - Fallback: enforce `DP-0105-M94` by failing `M94` promotion until Solana/Base `mint`/`burn` debt-clearance artifacts are present and replay continuity evidence confirms zero drift.
 
+### M95. PRD-Priority Chain-Scoped Throughput Control Isolation Gate Tranche C0085 (P0, Active)
+
+#### Objective
+Close remaining PRD `R9` obligations by proving chain-scoped auto-tune/control signals do not couple mandatory chains, while preserving PRD identity/replay invariants and fail-fast safety under control perturbation.
+
+PRD traceability:
+- `R9`: chain-scoped adaptive throughput control.
+- `9.4`: parity/continuity validation principles.
+- `10`: deterministic replay and no cross-chain cursor bleed acceptance criteria.
+
+#### Entry Gate
+- `M94` exit gate green with PRD closeout evidence for event coverage and fail-fast continuity.
+- Existing control telemetry and control-surface contracts for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) are documented and reviewable.
+
+#### Slices
+1. `M95-S1` (`I-0501`): define PRD-traceable chain-scoped control contracts and control-metric inventory requirements in `IMPLEMENTATION_PLAN.md` and `specs/m95-prd-chain-scoped-autotune-control-gate.md`.
+2. `M95-S2` (`I-0502`): execute QA counterexample gate for control bleed and control-triggered progress bleed across mandatory chains.
+
+#### Definition Of Done
+1. Mandatory-chain control contracts make explicit that auto-tune/control decisions for one chain consume only chain-local telemetry and do not write/drive another chain’s cursor/watermark behavior.
+2. Control coupling counterexample matrix and evidence requirements are defined with deterministic reproducibility under peer-chain progress.
+3. PRD acceptance contract remains `make test`, `make test-sidecar`, `make lint`.
+4. Cross-chain control perturbation cases define measurable `GO`/`NO-GO` outcomes for `M95`.
+
+#### Test Contract
+1. Deterministic control-metric matrix asserting chain-local decision inputs for `solana`, `base`, and `btc`.
+2. One-chain control perturbation fixture families with peer-chain progression asserting `0` cross-chain control/cursor bleed and `0` failed-path cursor/watermark progression.
+3. Replay continuity assertions preserve `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`, and `signed_delta_conservation`.
+4. QA evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M95`.
+
+#### Exit Gate (Measurable)
+1. `0` cross-chain control bleed findings in deterministic control perturbation matrices for mandatory chains.
+2. `0` failed-path cursor/watermark progression findings in control perturbation matrices.
+3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
+4. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: PRD `R9` can become untestable if control coupling checks only cover nominal telemetry and omit adversarial perturbation.
+- Fallback: retain `M95` in `NO-GO` state until chain-local control perturbation and replay matrices are expanded and deterministic counterexample evidence proves zero bleed.
+
 ## Decision Register (Major + Fallback)
+
+1. `DP-0106-M95`: control decisions for one mandatory chain must not consume another chain’s control telemetry or mutate another chain’s cursor/watermark progression; any deterministic `M95` control bleed finding is a `NO-GO` until corrected.
 
 1. `DP-0105-M94`: `solana` and `base` mint/burn acceptance in `M94` is only satisfied when evidence artifacts report `evidence_present=true` for required class-path cells; temporary `NA` is only acceptable for chains that cannot represent those classes by chain family semantics.
 
@@ -4159,18 +4203,24 @@ Completed milestones/slices:
 171. `I-0452`
 172. `I-0456`
 173. `I-0457`
+174. `I-0473`
+175. `I-0474`
+176. `I-0481`
+177. `I-0482`
+178. `I-0486`
+179. `I-0487`
+180. `I-0491`
+181. `I-0492`
+182. `I-0496`
+183. `I-0497`
 
 Active downstream queue from this plan:
-1. `I-0491`
-2. `I-0492`
-3. `I-0496`
-4. `I-0497`
+1. `I-0501` (`M95-S1`) after `M94` exit gate
+2. `I-0502` (`M95-S2`) after `I-0501`
 
 Planned next tranche queue:
-1. `I-0491` (`M94-S1`) after `M93` exit gate
-2. `I-0492` (`M94-S2`) after `I-0491`
-3. `I-0496` (`M94-S3`) after `I-0492`
-4. `I-0497` (`M94-S3`) after `I-0496`
+1. `I-0501` (`M95-S1`) after `M94` exit gate
+2. `I-0502` (`M95-S2`) after `I-0501`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -4222,3 +4272,4 @@ Superseded issues:
 - `I-0464` and `I-0465` are superseded by `I-0466` and `I-0467` to replace generic cycle placeholders with executable post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal determinism slices.
 - `I-0471` and `I-0472` are superseded by `I-0473` and `I-0474` to enforce PRD-traceable topology parity + strict chain isolation scope (`R6`, `R7`, `9.4`, `10`) before optional post-M90 refinements.
 - `I-0477` and `I-0478` are superseded by `I-0481` and `I-0482` to replace generic C0082 placeholders with explicit M92 mandatory-chain `Topology A/B/C` closure scope and measurable promotion gates.
+- `I-0499` and `I-0500` are superseded by `I-0501` and `I-0502` to replace generic PRD-priority placeholders with PRD `R9` chain-scoped control coupling gates.

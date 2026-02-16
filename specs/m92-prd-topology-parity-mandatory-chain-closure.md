@@ -12,7 +12,8 @@
 - `10`: acceptance requires topology parity and no cross-chain cursor bleed.
 
 ## Problem Statement
-M91 introduced topology parity hardening, but PRD `R6/R7` obligations are still not promotion-closed until a dedicated `M92` gate proves a deterministic mandatory-chain Topology A/B/C closure with machine-checkable evidence. The PRD-priority path requires an explicit re-gate before any optional post-M90 reliability tranches.
+M91 introduced topology parity hardening and `M92` is the promotable machine-checkable evidence gate for PRD `R6/R7` mandatory-chain closure.
+This requirement is now documented as closed, and it now serves as the deterministic baseline for PRD-R9 control-scope follow-up.
 
 ## Reliability Contract
 1. Equivalent fixture ranges across topology modes `A`, `B`, and `C` converge to one deterministic canonical tuple output set for each mandatory chain.

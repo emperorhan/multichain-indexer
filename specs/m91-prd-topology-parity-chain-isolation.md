@@ -12,7 +12,8 @@
 - `10`: acceptance requires topology parity and no cross-chain cursor bleed.
 
 ## Problem Statement
-The current reliability sequence is deep on post-reintegration determinism, but the PRD-priority topology gate remains unresolved as an explicit deterministic contract. Without a dedicated topology parity + chain-isolation gate, deployment-shape changes can hide shared-state coupling and produce canonical tuple drift, cross-chain progression bleed, or non-deterministic replay differences.
+This requirement is now closed by M94 follow-through and is retained as the signed baseline for PRD `R6`/`R7` behavior before optional post-M94 refinements.
+Deployment-shape changes previously masked shared-state coupling risks; the closed baseline requires topology parity and chain-isolation behavior to remain deterministic under counterexample replay.
 
 ## Reliability Contract
 1. Equivalent fixture ranges across `Topology A/B/C` converge to one deterministic canonical tuple output set per mandatory chain.
