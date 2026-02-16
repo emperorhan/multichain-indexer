@@ -35,7 +35,8 @@ M91 introduced topology parity hardening, but PRD `R6/R7` obligations are still 
 2. `0` cross-chain control/cursor bleed violations in one-chain restart/replay topology counterexamples.
 3. `0` duplicate canonical IDs and `0` missing logical events across topology replay/resume permutations.
 4. `0` missing required matrix cells in topology inventory evidence (all mandatory chain/mode combinations present and enumerated).
-5. Validation passes: `make test`, `make test-sidecar`, `make lint`.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `reorg_recovery_deterministic`, `chain_adapter_runtime_wired`.
+6. Validation passes: `make test`, `make test-sidecar`, `make lint`.
 
 ## Test Matrix
 1. Topology parity matrix:
@@ -46,6 +47,10 @@ M91 introduced topology parity hardening, but PRD `R6/R7` obligations are still 
 - restart/resume from topology-specific committed boundaries with deterministic convergence assertions.
 4. Inventory matrix:
 - command/assertion that required topology modes (`A`, `B`, `C`) are present for each mandatory chain; missing coverage fails the gate.
+- Required matrix cells (mandatory chain × topology mode):
+- `solana-devnet × {A, B, C}`
+- `base-sepolia × {A, B, C}`
+- `btc-testnet × {A, B, C}`
 
 ## Decision Hook
-- `DP-0101-BE`: promotion is blocked unless deterministic inventory evidence proves full mandatory-chain `Topology A/B/C` matrix coverage and the QA counterexample report provides an explicit `GO` recommendation.
+- `DP-0102-M92`: topology parity comparison includes deterministic key `(chain, network, topology_mode, block_cursor, tx_hash, event_path, actor_address, asset_id, event_category)`; gate fails when required mandatory-chain topology cells are not present.

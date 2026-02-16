@@ -3635,12 +3635,12 @@ PRD traceability:
 2. `0` cross-chain control/cursor bleed violations in one-chain restart/replay counterexamples across topology modes.
 3. `0` duplicate canonical IDs and `0` missing logical events across topology replay/resume permutations.
 4. `0` missing required topology matrix cells in inventory guard output.
-5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `reorg_recovery_deterministic`, `chain_adapter_runtime_wired`.
 6. Validation commands pass.
 
 #### Risk Gate + Fallback
 - Gate: partial topology coverage can yield false confidence (green baseline suites without full mandatory-chain `A/B/C` matrix proof), causing premature promotion with latent coupling still present.
-- Fallback: block promotion unless deterministic inventory output confirms all mandatory-chain matrix cells and required isolation/replay tests; quarantine ambiguous evidence as correctness failure and fan out reproducible developer follow-up.
+- Fallback: enforce `DP-0102-M92` by using deterministic topology-parity key `(chain, network, topology_mode, block_cursor, tx_hash, event_path, actor_address, asset_id, event_category)` and fail the gate when any required topology cell (mandatory chain × mode) is absent from deterministic inventory.
 
 ## Decision Register (Major + Fallback)
 
