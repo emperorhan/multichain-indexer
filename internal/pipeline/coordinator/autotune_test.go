@@ -3551,6 +3551,10 @@ func TestAutoTuneController_RollbackCheckpointFencePostDriftReanchorRejectsStale
 	staleReanchorCfg.PolicyManifestDigest = drift2Cfg.PolicyManifestDigest + "|rollback-fence-drift-reanchor-epoch=1"
 	ambiguousReanchorCfg := steadySeal2Cfg
 	ambiguousReanchorCfg.PolicyManifestDigest = steadySeal2Cfg.PolicyManifestDigest + "|rollback-fence-drift-reanchor-epoch=3"
+	conflictingReanchorAliasForwardCfg := drift2Cfg
+	conflictingReanchorAliasForwardCfg.PolicyManifestDigest = drift2Cfg.PolicyManifestDigest + "|rollback-fence-post-drift-reanchor-epoch=3|rollback-fence-drift-reanchor-epoch=1"
+	conflictingReanchorAliasReverseCfg := drift2Cfg
+	conflictingReanchorAliasReverseCfg.PolicyManifestDigest = drift2Cfg.PolicyManifestDigest + "|rollback-fence-drift-reanchor-epoch=1|rollback-fence-post-drift-reanchor-epoch=3"
 	stalePreReanchorCfg := drift2Cfg
 
 	baseSeed := 230
@@ -3623,13 +3627,45 @@ func TestAutoTuneController_RollbackCheckpointFencePostDriftReanchorRejectsStale
 	assert.Equal(t, reanchor2Cfg.PolicyManifestRefreshEpoch, ambiguousReanchorDecision.PolicyEpoch)
 	assert.Equal(t, 0, ambiguousReanchorDecision.PolicyActivationTicks)
 
-	stalePreReanchorSeed := ambiguousReanchorController.currentBatch
+	conflictingForwardSeed := ambiguousReanchorController.currentBatch
+	conflictingForwardController := newAutoTuneControllerWithSeed(100, conflictingReanchorAliasForwardCfg, &conflictingForwardSeed)
+	require.NotNil(t, conflictingForwardController)
+	conflictingForwardController.reconcilePolicyTransition(ambiguousReanchorController.exportPolicyTransition())
+	batch, conflictingForwardDecision := conflictingForwardController.Resolve(highLag)
+	assert.Equal(t, conflictingForwardSeed+20, batch)
+	assert.Equal(t, "apply_increase", conflictingForwardDecision.Decision)
+	assert.Equal(
+		t,
+		reanchor2Cfg.PolicyManifestDigest,
+		conflictingForwardDecision.PolicyManifestDigest,
+		"conflicting reanchor alias values must remain quarantined regardless of token order",
+	)
+	assert.Equal(t, reanchor2Cfg.PolicyManifestRefreshEpoch, conflictingForwardDecision.PolicyEpoch)
+	assert.Equal(t, 0, conflictingForwardDecision.PolicyActivationTicks)
+
+	conflictingReverseSeed := conflictingForwardController.currentBatch
+	conflictingReverseController := newAutoTuneControllerWithSeed(100, conflictingReanchorAliasReverseCfg, &conflictingReverseSeed)
+	require.NotNil(t, conflictingReverseController)
+	conflictingReverseController.reconcilePolicyTransition(conflictingForwardController.exportPolicyTransition())
+	batch, conflictingReverseDecision := conflictingReverseController.Resolve(highLag)
+	assert.Equal(t, 360, batch)
+	assert.Equal(t, "apply_increase", conflictingReverseDecision.Decision)
+	assert.Equal(
+		t,
+		reanchor2Cfg.PolicyManifestDigest,
+		conflictingReverseDecision.PolicyManifestDigest,
+		"conflicting reanchor alias values must remain quarantined regardless of token order",
+	)
+	assert.Equal(t, reanchor2Cfg.PolicyManifestRefreshEpoch, conflictingReverseDecision.PolicyEpoch)
+	assert.Equal(t, 0, conflictingReverseDecision.PolicyActivationTicks)
+
+	stalePreReanchorSeed := conflictingReverseController.currentBatch
 	stalePreReanchorController := newAutoTuneControllerWithSeed(100, stalePreReanchorCfg, &stalePreReanchorSeed)
 	require.NotNil(t, stalePreReanchorController)
-	stalePreReanchorController.reconcilePolicyTransition(ambiguousReanchorController.exportPolicyTransition())
+	stalePreReanchorController.reconcilePolicyTransition(conflictingReverseController.exportPolicyTransition())
 	batch, stalePreReanchorDecision := stalePreReanchorController.Resolve(highLag)
-	assert.Equal(t, stalePreReanchorSeed+20, batch)
-	assert.Equal(t, "apply_increase", stalePreReanchorDecision.Decision)
+	assert.Equal(t, stalePreReanchorSeed, batch)
+	assert.Equal(t, "clamped_increase", stalePreReanchorDecision.Decision)
 	assert.Equal(
 		t,
 		reanchor2Cfg.PolicyManifestDigest,

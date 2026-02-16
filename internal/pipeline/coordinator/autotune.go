@@ -1573,6 +1573,11 @@ func parseRollbackFenceSealDriftEpoch(digest string) (int64, bool) {
 		postSteadySealDriftKey  = "rollback-fence-post-steady-seal-drift-epoch="
 	)
 
+	var (
+		sealDriftEpoch int64
+		seen           bool
+	)
+
 	for _, rawToken := range strings.Split(digest, "|") {
 		token := strings.TrimSpace(rawToken)
 		var value string
@@ -1589,14 +1594,24 @@ func parseRollbackFenceSealDriftEpoch(digest string) (int64, bool) {
 		if value == "" {
 			return 0, false
 		}
-		sealDriftEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || sealDriftEpoch < 0 {
+		parsedEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsedEpoch < 0 {
 			return 0, false
 		}
-		return sealDriftEpoch, true
+		if !seen {
+			sealDriftEpoch = parsedEpoch
+			seen = true
+			continue
+		}
+		if sealDriftEpoch != parsedEpoch {
+			return 0, false
+		}
 	}
 
-	return 0, false
+	if !seen {
+		return 0, false
+	}
+	return sealDriftEpoch, true
 }
 
 func parseRollbackFenceDriftReanchorEpoch(digest string) (int64, bool) {
@@ -1604,6 +1619,11 @@ func parseRollbackFenceDriftReanchorEpoch(digest string) (int64, bool) {
 		driftReanchorEpochKey      = "rollback-fence-drift-reanchor-epoch="
 		postDriftReanchorEpochKey  = "rollback-fence-post-drift-reanchor-epoch="
 		postSteadyDriftReanchorKey = "rollback-fence-post-steady-drift-reanchor-epoch="
+	)
+
+	var (
+		driftReanchorEpoch int64
+		seen               bool
 	)
 
 	for _, rawToken := range strings.Split(digest, "|") {
@@ -1622,14 +1642,24 @@ func parseRollbackFenceDriftReanchorEpoch(digest string) (int64, bool) {
 		if value == "" {
 			return 0, false
 		}
-		driftReanchorEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || driftReanchorEpoch < 0 {
+		parsedEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsedEpoch < 0 {
 			return 0, false
 		}
-		return driftReanchorEpoch, true
+		if !seen {
+			driftReanchorEpoch = parsedEpoch
+			seen = true
+			continue
+		}
+		if driftReanchorEpoch != parsedEpoch {
+			return 0, false
+		}
 	}
 
-	return 0, false
+	if !seen {
+		return 0, false
+	}
+	return driftReanchorEpoch, true
 }
 
 func isRollbackFenceTombstoneExpiryDigest(epoch int64, digest string) bool {
