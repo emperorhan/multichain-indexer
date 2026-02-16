@@ -10,6 +10,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	autotune "github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 )
 
@@ -24,7 +25,7 @@ type Coordinator struct {
 	jobCh           chan<- event.FetchJob
 	logger          *slog.Logger
 	headProvider    headSequenceProvider
-	autoTune        *autoTuneController
+	autoTune        *autotune.Controller
 }
 
 type headSequenceProvider interface {
@@ -82,12 +83,12 @@ func (c *Coordinator) ExportAutoTuneRestartState() *AutoTuneRestartState {
 	if c.autoTune == nil {
 		return nil
 	}
-	override := c.autoTune.exportOverrideTransition()
-	policy := c.autoTune.exportPolicyTransition()
+	override := c.autoTune.ExportOverrideTransition()
+	policy := c.autoTune.ExportPolicyTransition()
 	return &AutoTuneRestartState{
 		Chain:                     c.chain,
 		Network:                   c.network,
-		BatchSize:                 c.autoTune.currentBatch,
+		BatchSize:                 c.autoTune.CurrentBatch(),
 		OverrideManualActive:      override.WasManualOverride,
 		OverrideReleaseRemaining:  override.ReleaseHoldRemaining,
 		PolicyVersion:             policy.Version,
@@ -102,8 +103,8 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 	var seedBatch *int
 	seedReason := "none"
 	previousAutoTune := c.autoTune
-	overrideTransition := autoTuneOverrideTransition{}
-	policyTransition := autoTunePolicyTransition{}
+	overrideTransition := autotune.OverrideTransition{}
+	policyTransition := autotune.PolicyTransition{}
 
 	if warmState != nil {
 		switch {
@@ -132,9 +133,9 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 			seedBatch = &seed
 			transitionMode = "warm_start"
 			seedReason = "warm_state_adopted"
-			overrideTransition = autoTuneOverrideTransition{
+			overrideTransition = autotune.OverrideTransition{
 				WasManualOverride:    warmState.OverrideManualActive,
-				ReleaseHoldRemaining: maxInt(warmState.OverrideReleaseRemaining, 0),
+				ReleaseHoldRemaining: maxIntValue(warmState.OverrideReleaseRemaining, 0),
 			}
 			if strings.TrimSpace(warmState.PolicyVersion) != "" ||
 				strings.TrimSpace(warmState.PolicyManifestDigest) != "" ||
@@ -144,23 +145,23 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 				if policyEpoch < 0 {
 					policyEpoch = 0
 				}
-				policyTransition = autoTunePolicyTransition{
+				policyTransition = autotune.PolicyTransition{
 					HasState:                true,
 					Version:                 warmState.PolicyVersion,
 					ManifestDigest:          warmState.PolicyManifestDigest,
 					Epoch:                   policyEpoch,
-					ActivationHoldRemaining: maxInt(warmState.PolicyActivationRemaining, 0),
+					ActivationHoldRemaining: maxIntValue(warmState.PolicyActivationRemaining, 0),
 					FromWarmCheckpoint:      true,
 				}
 			}
 		}
 	} else if previousAutoTune != nil {
-		seed := previousAutoTune.currentBatch
+		seed := previousAutoTune.CurrentBatch()
 		seedBatch = &seed
 		transitionMode = "profile_transition"
 		seedReason = "profile_transition_seed"
-		overrideTransition = previousAutoTune.exportOverrideTransition()
-		policyTransition = previousAutoTune.exportPolicyTransition()
+		overrideTransition = previousAutoTune.ExportOverrideTransition()
+		policyTransition = previousAutoTune.ExportPolicyTransition()
 	}
 
 	useBoundedWarmStart := transitionMode == "warm_start" &&
@@ -175,40 +176,41 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 		}
 	}
 	if useBoundedWarmStart {
-		c.autoTune = newAutoTuneControllerWithRestartSeed(c.batchSize, cfg, seedBatch)
+		c.autoTune = autotune.NewWithRestartSeed(c.batchSize, cfg, seedBatch)
 	} else {
-		c.autoTune = newAutoTuneControllerWithSeed(c.batchSize, cfg, seedBatch)
+		c.autoTune = autotune.NewWithSeed(c.batchSize, cfg, seedBatch)
 	}
 	if c.autoTune != nil {
-		c.autoTune.reconcileOverrideTransition(overrideTransition)
-		c.autoTune.reconcilePolicyTransition(policyTransition)
+		c.autoTune.ReconcileOverrideTransition(overrideTransition)
+		c.autoTune.ReconcilePolicyTransition(policyTransition)
+		snapshot := c.autoTune.Snapshot()
 		c.logger.Info("coordinator auto-tune enabled",
 			"chain", c.chain,
 			"network", c.network,
-			"min_batch", c.autoTune.minBatchSize,
-			"max_batch", c.autoTune.maxBatchSize,
-			"step_up", c.autoTune.stepUp,
-			"step_down", c.autoTune.stepDown,
-			"lag_high", c.autoTune.lagHighWatermark,
-			"lag_low", c.autoTune.lagLowWatermark,
-			"queue_high_pct", c.autoTune.queueHighWatermarkPct,
-			"queue_low_pct", c.autoTune.queueLowWatermarkPct,
-			"hysteresis_ticks", c.autoTune.hysteresisTicks,
-			"cooldown_ticks", c.autoTune.cooldownTicks,
-			"telemetry_stale_ticks", c.autoTune.telemetryStaleTicks,
-			"telemetry_recovery_ticks", c.autoTune.telemetryRecoveryTicks,
-			"operator_override_batch", c.autoTune.operatorOverrideBatch,
-			"operator_release_hold_ticks", c.autoTune.operatorReleaseHold,
-			"operator_release_remaining", c.autoTune.overrideReleaseLeft,
-			"policy_version", c.autoTune.policyVersion,
-			"policy_manifest_digest", c.autoTune.policyManifestDigest,
-			"policy_epoch", c.autoTune.policyEpoch,
-			"policy_activation_hold_ticks", c.autoTune.policyActivationHold,
-			"policy_activation_remaining", c.autoTune.policyActivationLeft,
+			"min_batch", snapshot.MinBatchSize,
+			"max_batch", snapshot.MaxBatchSize,
+			"step_up", snapshot.StepUp,
+			"step_down", snapshot.StepDown,
+			"lag_high", snapshot.LagHighWatermark,
+			"lag_low", snapshot.LagLowWatermark,
+			"queue_high_pct", snapshot.QueueHighWatermarkPct,
+			"queue_low_pct", snapshot.QueueLowWatermarkPct,
+			"hysteresis_ticks", snapshot.HysteresisTicks,
+			"cooldown_ticks", snapshot.CooldownTicks,
+			"telemetry_stale_ticks", snapshot.TelemetryStaleTicks,
+			"telemetry_recovery_ticks", snapshot.TelemetryRecoveryTicks,
+			"operator_override_batch", snapshot.OperatorOverrideBatch,
+			"operator_release_hold_ticks", snapshot.OperatorReleaseHold,
+			"operator_release_remaining", snapshot.OverrideReleaseLeft,
+			"policy_version", snapshot.PolicyVersion,
+			"policy_manifest_digest", snapshot.PolicyManifestDigest,
+			"policy_epoch", snapshot.PolicyEpoch,
+			"policy_activation_hold_ticks", snapshot.PolicyActivationHold,
+			"policy_activation_remaining", snapshot.PolicyActivationLeft,
 			"profile_transition", transitionMode == "profile_transition",
 			"transition_mode", transitionMode,
 			"seed_reason", seedReason,
-			"seed_batch", c.autoTune.currentBatch,
+			"seed_batch", snapshot.CurrentBatch,
 		)
 	}
 	return c
@@ -310,7 +312,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 
 	batchSize := c.batchSize
 	if c.autoTune != nil && len(jobs) > 0 {
-		resolved, diagnostics := c.autoTune.Resolve(autoTuneInputs{
+		resolved, diagnostics := c.autoTune.Resolve(autotune.Inputs{
 			HasHeadSignal:      c.headProvider != nil,
 			HeadSequence:       fetchCutoffSeq,
 			HasMinCursorSignal: hasMinCursor,
@@ -695,4 +697,11 @@ func isBase58String(v string) bool {
 		}
 	}
 	return true
+}
+
+func maxIntValue(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }

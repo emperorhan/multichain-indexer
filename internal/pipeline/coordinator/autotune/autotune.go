@@ -1,4 +1,4 @@
-package coordinator
+package autotune
 
 import (
 	"strconv"
@@ -918,255 +918,6 @@ func parseRollbackFenceLateMarkerReleaseEpoch(digest string) (int64, bool) {
 	return 0, false
 }
 
-func parseRollbackFenceLateBridgeSequence(digest string) (int64, bool) {
-	const (
-		sequenceKeyHyphen = "rollback-fence-late-bridge-sequence="
-		sequenceKeyShort  = "rollback-fence-late-bridge-seq="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, sequenceKeyHyphen):
-			value = strings.TrimSpace(strings.TrimPrefix(token, sequenceKeyHyphen))
-		case strings.HasPrefix(token, sequenceKeyShort):
-			value = strings.TrimSpace(strings.TrimPrefix(token, sequenceKeyShort))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		sequence, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || sequence < 0 {
-			return 0, false
-		}
-		return sequence, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceLateBridgeReleaseWatermark(digest string) (int64, bool) {
-	const (
-		watermarkKeyHyphen  = "rollback-fence-late-bridge-release-watermark="
-		watermarkKeyGeneric = "rollback-fence-release-watermark="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, watermarkKeyHyphen):
-			value = strings.TrimSpace(strings.TrimPrefix(token, watermarkKeyHyphen))
-		case strings.HasPrefix(token, watermarkKeyGeneric):
-			value = strings.TrimSpace(strings.TrimPrefix(token, watermarkKeyGeneric))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		watermark, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || watermark < 0 {
-			return 0, false
-		}
-		return watermark, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceLateBridgeDrainWatermark(digest string) (int64, bool) {
-	const (
-		drainWatermarkKeyLateBridge = "rollback-fence-late-bridge-drain-watermark="
-		drainWatermarkKeyBacklog    = "rollback-fence-backlog-drain-watermark="
-		drainWatermarkKeyGeneric    = "rollback-fence-drain-watermark="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, drainWatermarkKeyLateBridge):
-			value = strings.TrimSpace(strings.TrimPrefix(token, drainWatermarkKeyLateBridge))
-		case strings.HasPrefix(token, drainWatermarkKeyBacklog):
-			value = strings.TrimSpace(strings.TrimPrefix(token, drainWatermarkKeyBacklog))
-		case strings.HasPrefix(token, drainWatermarkKeyGeneric):
-			value = strings.TrimSpace(strings.TrimPrefix(token, drainWatermarkKeyGeneric))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		watermark, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || watermark < 0 {
-			return 0, false
-		}
-		return watermark, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceLiveHeadWatermark(digest string) (int64, bool) {
-	const (
-		liveHeadKeyHyphen  = "rollback-fence-live-head="
-		liveHeadKeyCatchup = "rollback-fence-live-catchup-head="
-		liveHeadKeyGeneric = "rollback-fence-live-watermark="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, liveHeadKeyHyphen):
-			value = strings.TrimSpace(strings.TrimPrefix(token, liveHeadKeyHyphen))
-		case strings.HasPrefix(token, liveHeadKeyCatchup):
-			value = strings.TrimSpace(strings.TrimPrefix(token, liveHeadKeyCatchup))
-		case strings.HasPrefix(token, liveHeadKeyGeneric):
-			value = strings.TrimSpace(strings.TrimPrefix(token, liveHeadKeyGeneric))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		liveHead, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || liveHead < 0 {
-			return 0, false
-		}
-		return liveHead, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceSteadyStateWatermark(digest string) (int64, bool) {
-	const (
-		steadyStateKeyHyphen   = "rollback-fence-steady-state-watermark="
-		steadyStateKeyShort    = "rollback-fence-steady-watermark="
-		rebaselineWatermarkKey = "rollback-fence-rebaseline-watermark="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, steadyStateKeyHyphen):
-			value = strings.TrimSpace(strings.TrimPrefix(token, steadyStateKeyHyphen))
-		case strings.HasPrefix(token, steadyStateKeyShort):
-			value = strings.TrimSpace(strings.TrimPrefix(token, steadyStateKeyShort))
-		case strings.HasPrefix(token, rebaselineWatermarkKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, rebaselineWatermarkKey))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		steadyState, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || steadyState < 0 {
-			return 0, false
-		}
-		return steadyState, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceSteadyGeneration(digest string) (int64, bool) {
-	const (
-		steadyGenerationKey = "rollback-fence-steady-generation="
-		baselineGenKey      = "rollback-fence-baseline-generation="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, steadyGenerationKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, steadyGenerationKey))
-		case strings.HasPrefix(token, baselineGenKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, baselineGenKey))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		generation, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || generation < 0 {
-			return 0, false
-		}
-		return generation, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceGenerationRetentionFloor(digest string) (int64, bool) {
-	const (
-		retentionFloorKey      = "rollback-fence-generation-retention-floor="
-		retentionFloorShortKey = "rollback-fence-retention-floor="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, retentionFloorKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, retentionFloorKey))
-		case strings.HasPrefix(token, retentionFloorShortKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, retentionFloorShortKey))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		retentionFloor, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || retentionFloor < 0 {
-			return 0, false
-		}
-		return retentionFloor, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceFloorLiftEpoch(digest string) (int64, bool) {
-	const (
-		floorLiftEpochKey          = "rollback-fence-floor-lift-epoch="
-		retentionFloorLiftEpochKey = "rollback-fence-retention-floor-lift-epoch="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, floorLiftEpochKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, floorLiftEpochKey))
-		case strings.HasPrefix(token, retentionFloorLiftEpochKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, retentionFloorLiftEpochKey))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		floorLiftEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || floorLiftEpoch < 0 {
-			return 0, false
-		}
-		return floorLiftEpoch, true
-	}
-
-	return 0, false
-}
-
 type rollbackFenceOwnershipOrdering struct {
 	epoch                                                                                                                              int64
 	bridgeSequence                                                                                                                     int64
@@ -2021,135 +1772,6 @@ func compareRollbackFenceOwnershipOrdering(
 	default:
 		return 0
 	}
-}
-
-func parseRollbackFenceSettleWindowEpoch(digest string) (int64, bool) {
-	const (
-		settleWindowEpochKey     = "rollback-fence-settle-window-epoch="
-		floorLiftSettleWindowKey = "rollback-fence-floor-lift-settle-window-epoch="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, settleWindowEpochKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, settleWindowEpochKey))
-		case strings.HasPrefix(token, floorLiftSettleWindowKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, floorLiftSettleWindowKey))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		settleWindowEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || settleWindowEpoch < 0 {
-			return 0, false
-		}
-		return settleWindowEpoch, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceSpilloverEpoch(digest string) (int64, bool) {
-	const (
-		spilloverEpochKey  = "rollback-fence-spillover-epoch="
-		lateSpilloverKey   = "rollback-fence-late-spillover-epoch="
-		settleSpilloverKey = "rollback-fence-settle-window-spillover-epoch="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, spilloverEpochKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, spilloverEpochKey))
-		case strings.HasPrefix(token, lateSpilloverKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, lateSpilloverKey))
-		case strings.HasPrefix(token, settleSpilloverKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, settleSpilloverKey))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		spilloverEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || spilloverEpoch < 0 {
-			return 0, false
-		}
-		return spilloverEpoch, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceSpilloverRejoinEpoch(digest string) (int64, bool) {
-	const (
-		spilloverRejoinEpochKey = "rollback-fence-spillover-rejoin-epoch="
-		rejoinWindowEpochKey    = "rollback-fence-rejoin-window-epoch="
-		lateSpilloverRejoinKey  = "rollback-fence-late-spillover-rejoin-epoch="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, spilloverRejoinEpochKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, spilloverRejoinEpochKey))
-		case strings.HasPrefix(token, rejoinWindowEpochKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, rejoinWindowEpochKey))
-		case strings.HasPrefix(token, lateSpilloverRejoinKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, lateSpilloverRejoinKey))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		spilloverRejoinEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || spilloverRejoinEpoch < 0 {
-			return 0, false
-		}
-		return spilloverRejoinEpoch, true
-	}
-
-	return 0, false
-}
-
-func parseRollbackFenceRejoinSealEpoch(digest string) (int64, bool) {
-	const (
-		rejoinSealEpochKey = "rollback-fence-rejoin-seal-epoch="
-		steadySealEpochKey = "rollback-fence-steady-seal-epoch="
-		postRejoinSealKey  = "rollback-fence-post-rejoin-seal-epoch="
-	)
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		var value string
-		switch {
-		case strings.HasPrefix(token, rejoinSealEpochKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, rejoinSealEpochKey))
-		case strings.HasPrefix(token, steadySealEpochKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, steadySealEpochKey))
-		case strings.HasPrefix(token, postRejoinSealKey):
-			value = strings.TrimSpace(strings.TrimPrefix(token, postRejoinSealKey))
-		default:
-			continue
-		}
-		if value == "" {
-			return 0, false
-		}
-		rejoinSealEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || rejoinSealEpoch < 0 {
-			return 0, false
-		}
-		return rejoinSealEpoch, true
-	}
-
-	return 0, false
 }
 
 func parseRollbackFenceSealDriftEpoch(digest string) (int64, bool) {
@@ -3537,6 +3159,34 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	}
 	targetOwnership, ok := parseRollbackFenceOwnershipOrdering(epoch, targetNormalized)
 	if !ok {
+		return false
+	}
+	_, sourceHasReintegrationSealBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch(sourceNormalized)
+	_, targetHasReintegrationSealBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch(targetNormalized)
+	if !sourceHasReintegrationSealBoundaryEpoch && targetHasReintegrationSealBoundaryEpoch {
+		// Once late-resurrection-quarantine reintegration-seal ownership is
+		// verified for a lineage, explicit reintegration-seal progression must
+		// win deterministically over reintegration-only ownership.
+		return true
+	}
+	if sourceHasReintegrationSealBoundaryEpoch && !targetHasReintegrationSealBoundaryEpoch {
+		// Reject stage-regression from verified reintegration-seal ownership
+		// back to reintegration-only ownership for the same lineage.
+		return false
+	}
+	_, sourceHasReintegrationSealDriftBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch(sourceNormalized)
+	_, targetHasReintegrationSealDriftBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch(targetNormalized)
+	if !sourceHasReintegrationSealDriftBoundaryEpoch && targetHasReintegrationSealDriftBoundaryEpoch {
+		// Once late-resurrection-quarantine reintegration-seal-drift ownership
+		// is verified for a lineage, explicit reintegration-seal-drift
+		// progression must win deterministically over reintegration-seal-only
+		// ownership.
+		return true
+	}
+	if sourceHasReintegrationSealDriftBoundaryEpoch && !targetHasReintegrationSealDriftBoundaryEpoch {
+		// Reject stage-regression from verified reintegration-seal-drift
+		// ownership back to reintegration-seal-only ownership for the same
+		// lineage.
 		return false
 	}
 	_, sourceHasReintegrationSealDriftReanchorBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorEpoch(sourceNormalized)

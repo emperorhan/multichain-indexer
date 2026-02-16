@@ -1,4 +1,4 @@
-package coordinator
+package autotune
 
 import (
 	"testing"
@@ -6013,6 +6013,8 @@ func TestAutoTuneController_RollbackCheckpointFencePostReintegrationSealDriftRea
 	staleReintegrationSealDriftCfg := segment2Cfg
 	staleReintegrationSealDriftCfg.PolicyManifestDigest = reintegrationSeal2Digest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=23"
 	staleReintegrationSealEchoCfg := reintegrationSeal2Cfg
+	staleReintegrationSealHighEpochEchoCfg := segment2Cfg
+	staleReintegrationSealHighEpochEchoCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Digest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=25"
 	ambiguousReintegrationSealDriftCfg := segment2Cfg
 	ambiguousReintegrationSealDriftCfg.PolicyManifestDigest = reintegration2Digest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=25"
 	conflictingReintegrationSealDriftAliasForwardCfg := segment2Cfg
@@ -6086,10 +6088,26 @@ func TestAutoTuneController_RollbackCheckpointFencePostReintegrationSealDriftRea
 	assert.Equal(t, reintegrationSealDrift2Cfg.PolicyManifestRefreshEpoch, staleReintegrationSealEchoDecision.PolicyEpoch)
 	assert.Equal(t, 0, staleReintegrationSealEchoDecision.PolicyActivationTicks)
 
-	ambiguousReintegrationSealDriftSeed := staleReintegrationSealEchoController.currentBatch
+	staleReintegrationSealHighEpochEchoSeed := staleReintegrationSealEchoController.currentBatch
+	staleReintegrationSealHighEpochEchoController := newAutoTuneControllerWithSeed(100, staleReintegrationSealHighEpochEchoCfg, &staleReintegrationSealHighEpochEchoSeed)
+	require.NotNil(t, staleReintegrationSealHighEpochEchoController)
+	staleReintegrationSealHighEpochEchoController.reconcilePolicyTransition(staleReintegrationSealEchoController.exportPolicyTransition())
+	batch, staleReintegrationSealHighEpochEchoDecision := staleReintegrationSealHighEpochEchoController.Resolve(highLag)
+	assert.Equal(t, staleReintegrationSealHighEpochEchoSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleReintegrationSealHighEpochEchoDecision.Decision)
+	assert.Equal(
+		t,
+		reintegrationSealDrift2Cfg.PolicyManifestDigest,
+		staleReintegrationSealHighEpochEchoDecision.PolicyManifestDigest,
+		"high-epoch reintegration-seal echoes must remain pinned behind verified reintegration-seal-drift ownership",
+	)
+	assert.Equal(t, reintegrationSealDrift2Cfg.PolicyManifestRefreshEpoch, staleReintegrationSealHighEpochEchoDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleReintegrationSealHighEpochEchoDecision.PolicyActivationTicks)
+
+	ambiguousReintegrationSealDriftSeed := staleReintegrationSealHighEpochEchoController.currentBatch
 	ambiguousReintegrationSealDriftController := newAutoTuneControllerWithSeed(100, ambiguousReintegrationSealDriftCfg, &ambiguousReintegrationSealDriftSeed)
 	require.NotNil(t, ambiguousReintegrationSealDriftController)
-	ambiguousReintegrationSealDriftController.reconcilePolicyTransition(staleReintegrationSealEchoController.exportPolicyTransition())
+	ambiguousReintegrationSealDriftController.reconcilePolicyTransition(staleReintegrationSealHighEpochEchoController.exportPolicyTransition())
 	batch, ambiguousReintegrationSealDriftDecision := ambiguousReintegrationSealDriftController.Resolve(highLag)
 	assert.Equal(t, ambiguousReintegrationSealDriftSeed+20, batch)
 	assert.Equal(t, "apply_increase", ambiguousReintegrationSealDriftDecision.Decision)
