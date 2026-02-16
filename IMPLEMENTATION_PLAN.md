@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -191,6 +191,8 @@ Execution queue (dependency-ordered):
 180. `I-0474` (`M91-S2`) QA counterexample gate for PRD R6/R7 topology-parity + strict chain-isolation evidence
 181. `I-0481` (`M92-S1`) PRD R6/R7 closure hardening: enforce mandatory-chain `Topology A/B/C` parity matrix + replay/isolation inventory guard
 182. `I-0482` (`M92-S2`) QA re-gate for mandatory-chain `Topology A/B/C` parity/isolation closure with explicit M91/M92 promotion recommendation
+183. `I-0486` (`M93-S1`) implement deterministic fail-fast abort contract and zero failed-path cursor/watermark progression with committed-boundary replay continuity checks
+184. `I-0487` (`M93-S2`) execute QA counterexample gate for fail-fast continuity and restart perturbation evidence with recommendation
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -3642,6 +3644,51 @@ PRD traceability:
 - Gate: partial topology coverage can yield false confidence (green baseline suites without full mandatory-chain `A/B/C` matrix proof), causing premature promotion with latent coupling still present.
 - Fallback: enforce `DP-0102-M92` by using deterministic topology-parity key `(chain, network, topology_mode, block_cursor, tx_hash, event_path, actor_address, asset_id, event_category)` and fail the gate when any required topology cell (mandatory chain × mode) is absent from deterministic inventory.
 
+### M93. PRD-Priority Fail-Fast + Continuity Gate Tranche C0083 (P0, Planned)
+
+#### Objective
+Close unresolved PRD controls by hardening mandatory-chain continuity under fail-fast semantics before optional refinements.
+
+PRD traceability:
+- `R5`: operational continuity.
+- `R8`: fail-fast correctness contract (no silent progress).
+- `9.4`: parity/continuity validation principles.
+- `10`: deterministic replay and no cross-chain cursor bleed acceptance criteria.
+
+#### Entry Gate
+- `M92` exit gate green.
+- `DP-0103-M93` accepted.
+- Fail-fast safety contract from `M34` remains enforced for correctness-impacting failures.
+
+#### Slices
+1. `M93-S1` (`I-0486`): implement deterministic fail-fast correctness-impacting error handling (`panic`), enforce zero failed-path cursor/watermark movement, and add committed-boundary replay continuity checks.
+2. `M93-S2` (`I-0487`): execute QA counterexample re-gate for fail-fast/continuity across mandated chains and peer-progress scenarios.
+
+#### Definition Of Done
+1. Correctness-impacting failures in required classes terminate immediately with process abort and no failed-path cursor/watermark progression.
+2. Replay from committed boundaries reproduces deterministic canonical tuples and materialized balances across injected fail-fast perturbations.
+3. One-chain fail-fast perturbation with peer-chain progression produces zero cross-chain control and cursor/watermark bleed.
+4. Required fail-fast/continuity matrix cells are explicitly enumerated and missing cells fail the gate.
+5. Required validation commands pass.
+
+#### Test Contract
+1. Deterministic fault-class matrix for required chains and classes.
+2. Deterministic replay/resume tests from committed boundaries asserting tuple and balance continuity.
+3. Counterexample peer-progress tests for one-chain fail-fast perturbation under mandatory chains.
+4. QA evidence artifacts under `.ralph/reports/` with `GO`/`NO-GO` recommendation.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs in fail-fast/replay fixture families.
+2. `0` replay balance drift across required fail-fast restart/recover permutations.
+3. `0` failed-path cursor/watermark progression for required fault classes.
+4. `0` cross-chain control/cursor bleed under one-chain fail-fast counterexamples.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `reorg_recovery_deterministic`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: under-specified error taxonomy can leave latent faulty paths that mutate cursors without failing tests.
+- Fallback: enforce `DP-0103-M93`; any failed-path cursor/watermark progression is a hard gate failure until coverage and replay proofs are re-established.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -4042,12 +4089,12 @@ Completed milestones/slices:
 173. `I-0457`
 
 Active downstream queue from this plan:
-1. `I-0481`
-2. `I-0482`
+1. `I-0486`
+2. `I-0487`
 
 Planned next tranche queue:
-1. reserved after `M92` exit gate
-2. reserved after `M92` exit gate
+1. `I-0486` (`M93-S1`) after `M92` exit gate
+2. `I-0487` (`M93-S2`) after `I-0486`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
