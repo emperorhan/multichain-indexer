@@ -51,6 +51,21 @@ if [ ! -x "${PLAN_SCHEMA_VALIDATOR_CMD}" ]; then
   exit 2
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/lib"
+ISSUE_META_LIB="${LIB_DIR}/ralph_issue_meta.sh"
+LOG_RETENTION_LIB="${LIB_DIR}/ralph_log_retention.sh"
+VALIDATION_STATE_LIB="${LIB_DIR}/ralph_validation_state.sh"
+
+for lib_file in "${ISSUE_META_LIB}" "${LOG_RETENTION_LIB}" "${VALIDATION_STATE_LIB}"; do
+  if [ ! -f "${lib_file}" ]; then
+    echo "required library missing: ${lib_file}" >&2
+    exit 2
+  fi
+  # shellcheck source=/dev/null
+  . "${lib_file}"
+done
+
 RALPH_ROOT="${RALPH_ROOT:-.ralph}"
 QUEUE_DIR="${RALPH_ROOT}/issues"
 IN_PROGRESS_DIR="${RALPH_ROOT}/in-progress"
@@ -68,6 +83,8 @@ AUTOMANAGER_STATE_FILE="${RALPH_ROOT}/state.automanager_last_run"
 LEARNING_NOTES_FILE="${RALPH_ROOT}/state.learning.md"
 LEARNING_JSONL_FILE="${RALPH_ROOT}/state.learning.jsonl"
 CONTEXT_ARCHIVE_DIR="${RALPH_ROOT}/archive/context"
+LOG_RETENTION_STATE_FILE="${RALPH_ROOT}/state.log_retention_last_run"
+VALIDATION_TIER_STATE_FILE="${RALPH_ROOT}/state.validation_tier_counter"
 
 MAX_LOOPS="${MAX_LOOPS:-0}" # 0 means infinite
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-20}"
@@ -75,6 +92,9 @@ EXIT_ON_IDLE="${RALPH_EXIT_ON_IDLE:-false}"
 NOOP_LIMIT="${RALPH_NOOP_LIMIT:-3}"
 VALIDATE_CMD="${RALPH_VALIDATE_CMD:-make test && make test-sidecar && make lint}"
 VALIDATE_ROLES="${RALPH_VALIDATE_ROLES:-developer,qa}"
+VALIDATE_MODE="${RALPH_VALIDATE_MODE:-tiered}"
+VALIDATE_LIGHT_CMD="${RALPH_VALIDATE_LIGHT_CMD:-go test ./... -count=1}"
+VALIDATE_FULL_EVERY="${RALPH_VALIDATE_FULL_EVERY:-3}"
 RECOVER_IN_PROGRESS="${RALPH_RECOVER_IN_PROGRESS:-true}"
 LOCAL_TRUST_MODE="${RALPH_LOCAL_TRUST_MODE:-false}"
 REQUIRE_CHATGPT_AUTH="${RALPH_REQUIRE_CHATGPT_AUTH:-true}"
@@ -99,6 +119,11 @@ AUTO_PUBLISH_MIN_COMMITS="${RALPH_AUTO_PUBLISH_MIN_COMMITS:-3}"
 AUTO_PUBLISH_TARGET_BRANCH="${RALPH_AUTO_PUBLISH_TARGET_BRANCH:-main}"
 AUTO_PUBLISH_REMOTE="${RALPH_AUTO_PUBLISH_REMOTE:-origin}"
 BRANCH_STRATEGY="${RALPH_BRANCH_STRATEGY:-main}"
+LOG_RETENTION_ENABLED="${RALPH_LOG_RETENTION_ENABLED:-true}"
+LOG_RETENTION_MAX_BYTES="${RALPH_LOG_RETENTION_MAX_BYTES:-2147483648}"
+LOG_RETENTION_MAX_FILES="${RALPH_LOG_RETENTION_MAX_FILES:-1200}"
+LOG_RETENTION_MAX_AGE_DAYS="${RALPH_LOG_RETENTION_MAX_AGE_DAYS:-14}"
+LOG_RETENTION_COOLDOWN_SEC="${RALPH_LOG_RETENTION_COOLDOWN_SEC:-300}"
 RISK_SCORE_COMPLEX_THRESHOLD="${RALPH_RISK_SCORE_COMPLEX_THRESHOLD:-7}"
 LEARNING_CONTEXT_LINES="${RALPH_LEARNING_CONTEXT_LINES:-40}"
 LEARNING_CONTEXT_ITEMS="${RALPH_LEARNING_CONTEXT_ITEMS:-${LEARNING_CONTEXT_LINES}}"
@@ -164,6 +189,8 @@ mkdir -p "${QUEUE_DIR}" "${IN_PROGRESS_DIR}" "${DONE_DIR}" "${BLOCKED_DIR}" "${R
 [ -f "${TRANSIENT_STATE_FILE}" ] || printf '0\n' > "${TRANSIENT_STATE_FILE}"
 [ -f "${BLOCKED_RETRY_STATE_FILE}" ] || : > "${BLOCKED_RETRY_STATE_FILE}"
 [ -f "${AUTOMANAGER_STATE_FILE}" ] || printf '0\n' > "${AUTOMANAGER_STATE_FILE}"
+[ -f "${LOG_RETENTION_STATE_FILE}" ] || printf '0\n' > "${LOG_RETENTION_STATE_FILE}"
+[ -f "${VALIDATION_TIER_STATE_FILE}" ] || printf '0\n' > "${VALIDATION_TIER_STATE_FILE}"
 [ -f "${LEARNING_NOTES_FILE}" ] || cat >"${LEARNING_NOTES_FILE}" <<'EOF'
 # Ralph Learning Notes
 EOF
@@ -219,6 +246,141 @@ run_context_compact_if_enabled() {
 }
 
 run_context_compact_if_enabled
+
+to_nonneg_int() {
+  local value="$1"
+  local fallback="$2"
+  if [[ "${value}" =~ ^[0-9]+$ ]]; then
+    echo "${value}"
+    return 0
+  fi
+  echo "${fallback}"
+}
+
+is_protected_log_file() {
+  local file="$1"
+  case "$(basename "${file}")" in
+    runner.out|supervisor.out)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+get_log_retention_last_run() {
+  awk 'NR==1 { if ($1 ~ /^[0-9]+$/) print $1; else print 0; exit }' "${LOG_RETENTION_STATE_FILE}" 2>/dev/null || echo 0
+}
+
+set_log_retention_last_run() {
+  local epoch="$1"
+  printf '%s\n' "${epoch}" > "${LOG_RETENTION_STATE_FILE}"
+}
+
+log_dir_total_bytes() {
+  if [ ! -d "${LOGS_DIR}" ]; then
+    echo 0
+    return 0
+  fi
+  du -sb "${LOGS_DIR}" 2>/dev/null | awk '{print $1}' | awk 'NR==1 { if ($1 ~ /^[0-9]+$/) print $1; else print 0 }'
+}
+
+remove_log_file() {
+  local file="$1"
+  [ -f "${file}" ] || return 1
+  if is_protected_log_file "${file}"; then
+    return 1
+  fi
+  rm -f "${file}"
+}
+
+run_log_retention_if_due() {
+  local enabled now last elapsed cooldown max_age_days max_files max_bytes
+  local deleted_count reclaimed_bytes bytes_before bytes_after total_files overflow i
+  local oldest_file oldest_size
+
+  enabled="$(printf '%s' "${LOG_RETENTION_ENABLED}" | tr '[:upper:]' '[:lower:]')"
+  [ "${enabled}" = "true" ] || return 0
+  [ -d "${LOGS_DIR}" ] || return 0
+
+  cooldown="$(to_nonneg_int "${LOG_RETENTION_COOLDOWN_SEC}" 300)"
+  now="$(date -u +%s)"
+  last="$(get_log_retention_last_run)"
+  elapsed=$((now - last))
+  if [ "${elapsed}" -lt "${cooldown}" ]; then
+    return 0
+  fi
+
+  max_age_days="$(to_nonneg_int "${LOG_RETENTION_MAX_AGE_DAYS}" 14)"
+  max_files="$(to_nonneg_int "${LOG_RETENTION_MAX_FILES}" 1200)"
+  max_bytes="$(to_nonneg_int "${LOG_RETENTION_MAX_BYTES}" 2147483648)"
+
+  deleted_count=0
+  reclaimed_bytes=0
+  bytes_before="$(log_dir_total_bytes)"
+
+  if [ "${max_age_days}" -gt 0 ]; then
+    while IFS= read -r old_file; do
+      [ -f "${old_file}" ] || continue
+      if is_protected_log_file "${old_file}"; then
+        continue
+      fi
+      old_size="$(stat -c %s "${old_file}" 2>/dev/null || echo 0)"
+      if remove_log_file "${old_file}"; then
+        deleted_count=$((deleted_count + 1))
+        reclaimed_bytes=$((reclaimed_bytes + old_size))
+      fi
+    done < <(find "${LOGS_DIR}" -maxdepth 1 -type f -mtime +"${max_age_days}" 2>/dev/null | sort)
+  fi
+
+  if [ "${max_files}" -gt 0 ]; then
+    total_files="$(find "${LOGS_DIR}" -maxdepth 1 -type f ! -name 'runner.out' ! -name 'supervisor.out' 2>/dev/null | wc -l | awk '{print $1}')"
+    overflow=$((total_files - max_files))
+    if [ "${overflow}" -gt 0 ]; then
+      i=0
+      while IFS= read -r path_line; do
+        [ "${i}" -lt "${overflow}" ] || break
+        [ -f "${path_line}" ] || continue
+        old_size="$(stat -c %s "${path_line}" 2>/dev/null || echo 0)"
+        if remove_log_file "${path_line}"; then
+          deleted_count=$((deleted_count + 1))
+          reclaimed_bytes=$((reclaimed_bytes + old_size))
+          i=$((i + 1))
+        fi
+      done < <(find "${LOGS_DIR}" -maxdepth 1 -type f ! -name 'runner.out' ! -name 'supervisor.out' -printf '%T@|%p\n' 2>/dev/null | sort -t'|' -k1,1n | awk -F'|' '{print $2}')
+    fi
+  fi
+
+  if [ "${max_bytes}" -gt 0 ]; then
+    bytes_after="$(log_dir_total_bytes)"
+    while [ "${bytes_after}" -gt "${max_bytes}" ]; do
+      oldest_file="$(find "${LOGS_DIR}" -maxdepth 1 -type f ! -name 'runner.out' ! -name 'supervisor.out' -printf '%T@|%p\n' 2>/dev/null | sort -t'|' -k1,1n | head -n 1 | awk -F'|' '{print $2}')"
+      [ -n "${oldest_file}" ] || break
+      [ -f "${oldest_file}" ] || break
+      oldest_size="$(stat -c %s "${oldest_file}" 2>/dev/null || echo 0)"
+      if ! remove_log_file "${oldest_file}"; then
+        break
+      fi
+      deleted_count=$((deleted_count + 1))
+      reclaimed_bytes=$((reclaimed_bytes + oldest_size))
+      bytes_after="$(log_dir_total_bytes)"
+    done
+  fi
+
+  set_log_retention_last_run "${now}"
+  if [ "${deleted_count}" -gt 0 ]; then
+    bytes_after="$(log_dir_total_bytes)"
+    echo "[ralph-local] log retention pruned files=${deleted_count} reclaimed_bytes=${reclaimed_bytes} before_bytes=${bytes_before} after_bytes=${bytes_after}"
+  fi
+}
+
+get_validation_tier_counter() {
+  awk 'NR==1 { if ($1 ~ /^[0-9]+$/) print $1; else print 0; exit }' "${VALIDATION_TIER_STATE_FILE}" 2>/dev/null || echo 0
+}
+
+set_validation_tier_counter() {
+  local count="$1"
+  printf '%s\n' "${count}" > "${VALIDATION_TIER_STATE_FILE}"
+}
 
 get_transient_failures() {
   awk 'NR==1 { if ($1 ~ /^[0-9]+$/) print $1; else print 0; exit }' "${TRANSIENT_STATE_FILE}" 2>/dev/null || echo 0
@@ -1626,25 +1788,93 @@ run_validation_if_needed() {
   local role="$1"
   local issue_id="$2"
   local validation_log="${LOGS_DIR}/${issue_id}-validation.log"
-  local rc=0
+  local rc=0 mode full_every light_cmd run_full tier_counter
 
   if ! csv_contains "${VALIDATE_ROLES}" "${role}"; then
     echo "skipped:${validation_log}"
     return 0
   fi
 
-  set +e
-  bash -lc "${VALIDATE_CMD}" >"${validation_log}" 2>&1
-  rc=$?
-  set -e
-
-  if [ "${rc}" -eq 0 ]; then
-    echo "passed:${validation_log}"
-    return 0
+  mode="$(printf '%s' "${VALIDATE_MODE}" | tr '[:upper:]' '[:lower:]')"
+  [ -n "${mode}" ] || mode="strict"
+  full_every="$(to_nonneg_int "${VALIDATE_FULL_EVERY}" 3)"
+  if [ "${full_every}" -lt 1 ]; then
+    full_every=1
+  fi
+  light_cmd="${VALIDATE_LIGHT_CMD}"
+  if [ -z "$(printf '%s' "${light_cmd}" | tr -d '[:space:]')" ]; then
+    light_cmd="go test ./... -count=1"
   fi
 
-  echo "failed:${validation_log}"
-  return 1
+  {
+    echo "[validation] started_at=$(now_utc) role=${role} issue=${issue_id} mode=${mode}"
+  } >"${validation_log}"
+
+  if [ "${mode}" != "tiered" ]; then
+    {
+      echo "[validation] step=full cmd=${VALIDATE_CMD}"
+    } >>"${validation_log}"
+    set +e
+    bash -lc "${VALIDATE_CMD}" >>"${validation_log}" 2>&1
+    rc=$?
+    set -e
+    if [ "${rc}" -eq 0 ]; then
+      echo "passed:${validation_log}"
+      return 0
+    fi
+    echo "failed:${validation_log}"
+    return 1
+  fi
+
+  {
+    echo "[validation] step=light cmd=${light_cmd}"
+  } >>"${validation_log}"
+  set +e
+  bash -lc "${light_cmd}" >>"${validation_log}" 2>&1
+  rc=$?
+  set -e
+  if [ "${rc}" -ne 0 ]; then
+    echo "failed:${validation_log}"
+    return 1
+  fi
+
+  run_full="false"
+  if [ "${role}" = "qa" ]; then
+    run_full="true"
+  elif [ "${AUTO_PUBLISH_ENABLED}" = "true" ]; then
+    run_full="true"
+  else
+    tier_counter="$(get_validation_tier_counter)"
+    tier_counter="$(to_nonneg_int "${tier_counter}" 0)"
+    tier_counter=$((tier_counter + 1))
+    if [ "${tier_counter}" -ge "${full_every}" ]; then
+      run_full="true"
+      tier_counter=0
+    fi
+    set_validation_tier_counter "${tier_counter}"
+  fi
+
+  if [ "${run_full}" = "true" ]; then
+    {
+      echo "[validation] step=full cmd=${VALIDATE_CMD}"
+    } >>"${validation_log}"
+    set +e
+    bash -lc "${VALIDATE_CMD}" >>"${validation_log}" 2>&1
+    rc=$?
+    set -e
+    if [ "${rc}" -ne 0 ]; then
+      echo "failed:${validation_log}"
+      return 1
+    fi
+    set_validation_tier_counter 0
+  else
+    {
+      echo "[validation] step=full skipped cadence=${full_every}"
+    } >>"${validation_log}"
+  fi
+
+  echo "passed:${validation_log}"
+  return 0
 }
 
 validation_log_from_state() {
@@ -1819,8 +2049,10 @@ requeue_current_issue_on_exit() {
 trap requeue_current_issue_on_exit EXIT INT TERM
 
 ensure_branch_strategy
+run_log_retention_if_due || true
 
 while true; do
+  run_log_retention_if_due || true
   if ! local_enabled; then
     echo "[ralph-local] disabled. stopping."
     break

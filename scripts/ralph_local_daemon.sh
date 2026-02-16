@@ -11,6 +11,7 @@ PID_FILE="${RALPH_ROOT}/runner.pid"
 LOG_FILE="${RALPH_ROOT}/logs/runner.out"
 RUN_SCRIPT="${RALPH_RUN_SCRIPT:-scripts/ralph_local_run.sh}"
 SUPERVISOR_SCRIPT="${RALPH_SUPERVISOR_SCRIPT:-scripts/ralph_local_supervisor.sh}"
+SERVICE_NAME="${RALPH_LOCAL_SERVICE_NAME:-ralph-local.service}"
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-15}"
 TAIL_LINES="${TAIL_LINES:-120}"
 TRUST_MODE="${RALPH_LOCAL_TRUST_MODE:-false}"
@@ -56,6 +57,24 @@ is_running() {
 
 current_supervisor_pid() {
   pgrep -f "${SUPERVISOR_SCRIPT}" | head -n1 || true
+}
+
+supports_systemd_user() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  systemctl --user show-environment >/dev/null 2>&1 || return 1
+}
+
+systemd_unit_exists() {
+  supports_systemd_user || return 1
+  systemctl --user cat "${SERVICE_NAME}" >/dev/null 2>&1
+}
+
+use_systemd_control() {
+  systemd_unit_exists
+}
+
+is_running_systemd() {
+  systemctl --user is-active --quiet "${SERVICE_NAME}" >/dev/null 2>&1
 }
 
 effective_local_sandbox() {
@@ -107,6 +126,24 @@ start_daemon() {
   fi
   local_sandbox="$(effective_local_sandbox)"
   if ! codex_connectivity_preflight "${local_sandbox}"; then
+    return 1
+  fi
+
+  if use_systemd_control; then
+    cleanup_stray_local_processes
+    rm -f "${PID_FILE}"
+    if is_running_systemd; then
+      echo "ralph-local already running (service=${SERVICE_NAME})"
+      return 0
+    fi
+    if systemctl --user start "${SERVICE_NAME}" >/dev/null 2>&1; then
+      if is_running_systemd; then
+        echo "ralph-local started (service=${SERVICE_NAME})"
+        return 0
+      fi
+    fi
+    echo "ralph-local failed to start service=${SERVICE_NAME}. recent status:" >&2
+    systemctl --user status "${SERVICE_NAME}" --no-pager >&2 || true
     return 1
   fi
 
@@ -163,6 +200,19 @@ start_daemon() {
 stop_daemon() {
   scripts/ralph_local_control.sh off >/dev/null || true
 
+  if use_systemd_control; then
+    systemctl --user stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
+    requeue_in_progress
+    cleanup_stray_local_processes
+    rm -f "${PID_FILE}"
+    if is_running_systemd; then
+      echo "ralph-local stop requested but service is still active"
+      return 1
+    fi
+    echo "ralph-local stopped (service=${SERVICE_NAME})"
+    return 0
+  fi
+
   if ! is_running; then
     requeue_in_progress
     cleanup_stray_local_processes
@@ -184,9 +234,19 @@ stop_daemon() {
 }
 
 show_status() {
+  if use_systemd_control; then
+    scripts/ralph_local_runtime_status.sh
+    if is_running_systemd; then
+      echo "- control_mode: systemd (${SERVICE_NAME})"
+    else
+      echo "- control_mode: systemd (${SERVICE_NAME}, inactive)"
+    fi
+    return 0
+  fi
+
   scripts/ralph_local_status.sh
   if is_running; then
-    echo "- daemon: running (pid=$(cat "${PID_FILE}"))"
+    echo "- daemon: running (pid=$(cat "${PID_FILE}" 2>/dev/null || echo unknown))"
   else
     echo "- daemon: stopped"
   fi
@@ -194,6 +254,10 @@ show_status() {
 
 tail_logs() {
   ensure_layout
+  if use_systemd_control; then
+    journalctl --user -u "${SERVICE_NAME}" -n "${TAIL_LINES}" -f
+    return 0
+  fi
   tail -n "${TAIL_LINES}" -f "${LOG_FILE}"
 }
 
