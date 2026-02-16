@@ -4,7 +4,11 @@ Backpressure-controlled parallel pipelining indexer for multi-chain custody serv
 
 Go 채널 기반의 4단계 파이프라인과 Node.js gRPC 사이드카로 구성된 멀티체인 블록체인 인덱서입니다. 각 스테이지는 독립적으로 스케일링되며, 버퍼링된 채널을 통해 자연스러운 backpressure를 전파합니다.
 
-> **MVP Target**: Solana devnet (SOL + SPL Token)
+> **Current Runtime Targets**: `solana-devnet`, `base-sepolia`, `btc-testnet`
+>
+> 실행 범위는 환경변수로 선택합니다.
+> - `RUNTIME_DEPLOYMENT_MODE=like-group` + `RUNTIME_LIKE_GROUP=solana-like|evm-like|btc-like`
+> - `RUNTIME_DEPLOYMENT_MODE=independent` + `RUNTIME_CHAIN_TARGET=<chain-network>`
 
 ---
 
@@ -15,7 +19,9 @@ Go 채널 기반의 4단계 파이프라인과 Node.js gRPC 사이드카로 구�
 ```mermaid
 graph LR
     subgraph external_left [" "]
-        RPC["Solana RPC\n(JSON-RPC 2.0)"]
+        RPC1["Solana RPC\n(JSON-RPC 2.0)"]
+        RPC2["Base RPC\n(JSON-RPC 2.0)"]
+        RPC3["BTC RPC\n(JSON-RPC 2.0)"]
     end
 
     subgraph go_process ["Go Pipeline Process"]
@@ -30,13 +36,15 @@ graph LR
     end
 
     subgraph sidecar ["Node.js Sidecar · gRPC :50051"]
-        TX_DEC["Transaction Decoder\ninstruction ownership"]
+        TX_DEC["Transaction Decoder\n(chain dispatch)"]
         DISP["PluginDispatcher\npriority routing"]
-        SPL["generic_spl_token\nSPL Token / Token-2022"]
-        SYS["generic_system\nSystem Program"]
+        SPL["solana decoder\nplugins"]
+        EVM["base decoder\nEVM log parser"]
+        BTC["btc decoder\nUTXO parser"]
         TX_DEC --> DISP
         DISP --> SPL
-        DISP --> SYS
+        DISP --> EVM
+        DISP --> BTC
     end
 
     subgraph external_right [" "]
@@ -44,7 +52,9 @@ graph LR
         REDIS[("Redis 7\n(future)")]
     end
 
-    RPC -. "HTTPS" .-> FETCH
+    RPC1 -. "HTTPS" .-> FETCH
+    RPC2 -. "HTTPS" .-> FETCH
+    RPC3 -. "HTTPS" .-> FETCH
     NORM -. "gRPC" .-> TX_DEC
     INGEST -- "Atomic sql.Tx\nupsert + cursor" --> PG
     COORD -. "read config\n& cursors" .-> PG
@@ -58,7 +68,7 @@ sequenceDiagram
     participant F as Fetcher (N workers)
     participant N as Normalizer (N workers)
     participant I as Ingester (1 writer)
-    participant RPC as Solana RPC
+    participant RPC as Chain RPC (Solana/Base/BTC)
     participant SC as Sidecar (gRPC)
     participant DB as PostgreSQL
 
@@ -71,9 +81,9 @@ sequenceDiagram
         C->>F: FetchJob via jobCh
     end
 
-    F->>RPC: getSignaturesForAddress(cursor)
+    F->>RPC: fetch signatures/hashes(cursor)
     RPC-->>F: []SignatureInfo
-    F->>RPC: getTransaction(sig) x N (parallel)
+    F->>RPC: get transaction payload x N (parallel)
     RPC-->>F: []json.RawMessage
     F->>N: RawBatch via rawBatchCh
 
@@ -94,7 +104,7 @@ sequenceDiagram
 
 모든 스테이지는 **버퍼링된 Go 채널**로 연결되어, 별도의 동기화 로직 없이 자연스러운 backpressure가 전파됩니다. 다운스트림이 느려지면 업스트림 채널이 차면서 자동으로 속도를 조절합니다.
 
-현재 동작은 채널 기반의 **수동(passive) backpressure**이며, coordinator의 지표 기반 동적 auto-tune 제어(예: lag 기반 tick/batch 조절)는 기본 런타임에 아직 포함되지 않습니다. 관련 구현은 `IMPLEMENTATION_PLAN.md`의 다음 신뢰성 트랜치에서 진행합니다.
+현재 동작은 채널 기반의 **수동(passive) backpressure**가 기본이며, coordinator의 지표 기반 동적 auto-tune은 옵션(`COORDINATOR_AUTOTUNE_ENABLED=true`)으로 활성화할 수 있습니다.
 
 ```mermaid
 graph BT
@@ -315,9 +325,11 @@ service ChainDecoder {
 }
 ```
 
-- **Plugin-based detection**: `EventPlugin` 인터페이스 → `PluginDispatcher`가 priority 순으로 라우팅
-- **Instruction ownership**: outer program이 inner instructions를 소유하여 CPI 이중 기록 방지
-- **Builtin plugins**: SPL Token/Token-2022 (`generic_spl_token`), System Program (`generic_system`)
+- **Current contract state**: RPC 이름은 `DecodeSolanaTransactionBatch`지만, payload를 보고 Solana/Base/BTC 디코더로 분기합니다.
+- **Naming debt**: chain-neutral RPC로 마이그레이션 예정이며 정책은 `docs/sidecar-deployment-decision.md`를 따릅니다.
+- **Plugin-based detection**: Solana 경로는 `EventPlugin` 인터페이스 → `PluginDispatcher`가 priority 순으로 라우팅
+- **Instruction ownership**: Solana outer program이 inner instructions를 소유하여 CPI 이중 기록 방지
+- **Multi-chain decode modules**: `sidecar/src/decoder/solana/*`, `sidecar/src/decoder/base/*`, `sidecar/src/decoder/btc/*`
 - **Signed delta**: positive = inflow, negative = outflow (direction 판단 불필요)
 - **Watched address 필터링**: `Set<string>` O(1) lookup
 
@@ -335,8 +347,18 @@ make migrate
 # Generate protobuf code
 make proto
 
-# Set watched addresses and run
-export WATCHED_ADDRESSES=YourSolanaAddress1,YourSolanaAddress2
+# Example 1) EVM-like 런타임만 실행 (Base Sepolia)
+export RUNTIME_DEPLOYMENT_MODE=like-group
+export RUNTIME_LIKE_GROUP=evm-like
+export BASE_SEPOLIA_RPC_URL=https://your-base-rpc
+export BASE_WATCHED_ADDRESSES=0xYourAddress1,0xYourAddress2
+make run
+
+# Example 2) 단일 타깃 독립 실행 (BTC testnet)
+export RUNTIME_DEPLOYMENT_MODE=independent
+export RUNTIME_CHAIN_TARGET=btc-testnet
+export BTC_TESTNET_RPC_URL=https://your-btc-rpc
+export BTC_WATCHED_ADDRESSES=tb1youraddress1,tb1youraddress2
 make run
 ```
 
@@ -360,11 +382,14 @@ make lint           # Run golangci-lint
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SOLANA_RPC_URL` | `https://api.devnet.solana.com` | Solana RPC endpoint |
+| `SOLANA_WATCHED_ADDRESSES` | — | Comma-separated Solana addresses |
 | `BASE_SEPOLIA_RPC_URL` | — | Base Sepolia RPC endpoint |
+| `BASE_WATCHED_ADDRESSES` | — | Comma-separated Base addresses |
+| `BTC_TESTNET_RPC_URL` | — | BTC Testnet RPC endpoint |
+| `BTC_WATCHED_ADDRESSES` | — | Comma-separated BTC addresses |
 | `DB_URL` | `postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable` | PostgreSQL |
 | `SIDECAR_ADDR` | `localhost:50051` | gRPC sidecar address |
-| `WATCHED_ADDRESSES` | — | Comma-separated Solana addresses |
-| `BASE_WATCHED_ADDRESSES` | — | Comma-separated Base addresses |
+| `WATCHED_ADDRESSES` | — | Legacy alias of `SOLANA_WATCHED_ADDRESSES` |
 | `RUNTIME_DEPLOYMENT_MODE` | `like-group` | Runtime target selection mode (`like-group` or `independent`) |
 | `RUNTIME_LIKE_GROUP` | — | Limit targets to one group in `like-group` mode (`solana-like`, `evm-like`, `btc-like`) |
 | `RUNTIME_CHAIN_TARGET` | — | Single target for independent deployment (e.g. `base-sepolia`) |
@@ -407,7 +432,9 @@ multichain-indexer/
 │   │   └── event/            # Pipeline events (FetchJob, RawBatch, NormalizedBatch)
 │   ├── chain/
 │   │   ├── adapter.go        # ChainAdapter interface
-│   │   └── solana/           # Solana implementation + RPC client
+│   │   ├── solana/           # Solana adapter
+│   │   ├── base/             # Base(EVM-like) adapter
+│   │   └── btc/              # BTC adapter
 │   ├── pipeline/
 │   │   ├── pipeline.go       # Orchestrator (errgroup + channels)
 │   │   ├── coordinator/      # Stage 1: address scanning
@@ -418,7 +445,7 @@ multichain-indexer/
 │       └── postgres/         # Repository implementations + migrations
 ├── proto/sidecar/v1/         # Protobuf definitions
 ├── pkg/generated/            # Generated Go protobuf code
-├── sidecar/                  # Node.js gRPC decoder (plugin-based balance events)
+├── sidecar/                  # Node.js gRPC decoder (solana/base/btc)
 ├── deployments/              # Docker Compose
 ├── docs/                     # Architecture, testing, DB rationale
 └── Makefile
@@ -438,11 +465,31 @@ type ChainAdapter interface {
 ```
 
 1. `internal/chain/<name>/adapter.go` — `ChainAdapter` 구현
-2. `sidecar/src/decoder/<name>/` — Transaction decoder 추가
-3. `proto/sidecar/v1/decoder.proto` — gRPC RPC 메서드 추가
-4. `chain_data` JSONB 구조 정의
+2. `sidecar/src/decoder/<name>/` — 체인 디코더 추가 + `sidecar/src/decoder/index.ts` 분기 추가
+3. `internal/config/config.go` + `cmd/indexer/main.go` — runtime target/like-group wiring 추가
+4. protobuf 계약 확장:
+   - 현재는 기존 RPC(`DecodeSolanaTransactionBatch`)로 호환 유지
+   - 계약 확장은 ADR(`docs/sidecar-deployment-decision.md`)의 chain-neutral 규칙을 따름
+5. `chain_data` JSONB 구조 정의 + 테스트/런북 업데이트
 
 DDL 변경 없음. 기존 8개 테이블이 모든 체인을 수용합니다.
+
+## Management Structure
+
+사람이 운영/의사결정할 때의 관리 구조는 아래 축으로 나뉩니다.
+
+1. 런타임 관리(서비스 경계/실행 범위)
+   - `RUNTIME_DEPLOYMENT_MODE`, `RUNTIME_LIKE_GROUP`, `RUNTIME_CHAIN_TARGET(S)`로 실행 범위를 관리
+   - 코드 기준: `internal/config/config.go`, `cmd/indexer/main.go`
+2. 배포 관리(sidecar 단위 전략)
+   - 기본: 단일 sidecar 배포 단위
+   - 분리 트리거/SLO/운영룰: `docs/sidecar-deployment-decision.md`
+3. 자율 에이전트 운영(Ralph loop)
+   - 역할: planner / developer / qa / manager
+   - 거버넌스 및 필수 검증: `AGENTS.md`, `docs/autonomy-policy.md`
+4. 장애 대응/검증 관리
+   - 운영 체크/복구: `docs/runbook.md`
+   - 테스트 전략: `docs/testing.md`
 
 ## Ralph Loop (Local First)
 

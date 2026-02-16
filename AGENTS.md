@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Purpose
-This repository runs a multi-agent autonomous loop for a Solana on-chain indexer.
+This repository runs a multi-agent autonomous loop for a multi-chain on-chain indexer (Solana/Base/BTC runtime targets).
 
 ## Agent Roles
 - Planner (`role/planner`):

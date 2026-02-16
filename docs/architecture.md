@@ -2,6 +2,26 @@
 
 > 멀티체인 커스터디 인덱서 — Go 파이프라인 + Node.js Sidecar (gRPC 디코더)
 
+## 0. Current Snapshot (2026-02-16)
+
+이 문서는 장기 설계 설명과 함께 현재 구현 스냅샷을 함께 제공합니다.  
+현재 코드 기준 핵심 상태는 아래와 같습니다.
+
+1. 체인별 구현 격리
+   - Go adapter: `internal/chain/solana/*`, `internal/chain/base/*`, `internal/chain/btc/*`
+   - Sidecar decoder: `sidecar/src/decoder/solana/*`, `sidecar/src/decoder/base/*`, `sidecar/src/decoder/btc/*`
+2. 런타임 격리
+   - `RUNTIME_DEPLOYMENT_MODE=like-group|independent`
+   - `RUNTIME_LIKE_GROUP=solana-like|evm-like|btc-like`
+   - `RUNTIME_CHAIN_TARGET(S)=<chain-network>`
+3. 배포 경계
+   - indexer: 환경변수 기반 타깃 선택(동일 바이너리)
+   - sidecar: 기본 단일 배포 단위(분리 트리거는 ADR 참고)
+4. sidecar protobuf 계약 상태
+   - 현재 RPC 이름은 `DecodeSolanaTransactionBatch` (legacy naming)
+   - 실제 구현은 payload 기반으로 Solana/Base/BTC 디코더로 분기
+   - chain-neutral 단일 인터페이스 전환 정책: `docs/sidecar-deployment-decision.md`
+
 ---
 
 ## 1. 시스템 개요 및 설계 철학
@@ -32,7 +52,7 @@
 
 **Node.js sidecar vs 순수 Go 디코딩:**
 - 선택: Node.js sidecar (gRPC)
-- 이유: `@solana/web3.js` 등 체인별 npm SDK 생태계 활용
+- 이유: `@solana/web3.js` 및 EVM/UTXO payload 처리 등 체인별 npm 생태계 활용
 - 영향: 프로세스 간 통신 오버헤드, 추가 배포 단위
 
 **통합 테이블 + JSONB vs 체인별 스키마:**
@@ -58,10 +78,14 @@ C4Context
     System(indexer, "multichain-indexer", "멀티체인 트랜잭션 인덱서")
 
     System_Ext(solana_rpc, "Solana RPC", "JSON-RPC 2.0")
+    System_Ext(base_rpc, "Base RPC", "JSON-RPC 2.0")
+    System_Ext(btc_rpc, "BTC RPC", "JSON-RPC / REST")
     SystemDb(postgres, "PostgreSQL 16", "트랜잭션, 잔액, 커서")
     SystemDb(redis, "Redis 7", "향후 프로세스 분리용")
 
-    Rel(indexer, solana_rpc, "getSignaturesForAddress, getTransaction", "HTTPS")
+    Rel(indexer, solana_rpc, "fetch signatures + tx payload", "HTTPS")
+    Rel(indexer, base_rpc, "fetch block/log/tx payload", "HTTPS")
+    Rel(indexer, btc_rpc, "fetch block/tx payload", "HTTPS")
     Rel(indexer, postgres, "upsert, query", "TCP :5433")
     Rel(indexer, redis, "(향후)", "TCP :6380")
     Rel(consumer, postgres, "SELECT", "TCP :5433")
@@ -80,9 +104,9 @@ C4Container
     ContainerDb(postgres, "PostgreSQL 16", "통합 테이블 + JSONB")
     ContainerDb(redis, "Redis 7", "향후 스트림")
 
-    System_Ext(solana_rpc, "Solana RPC")
+    System_Ext(chain_rpc, "Chain RPC (Solana/Base/BTC)")
 
-    Rel(go_binary, solana_rpc, "JSON-RPC 2.0", "HTTPS")
+    Rel(go_binary, chain_rpc, "RPC calls by selected runtime targets", "HTTPS")
     Rel(go_binary, sidecar, "DecodeSolanaTransactionBatch", "gRPC :50051")
     Rel(go_binary, postgres, "sql.Tx upsert", "TCP :5433")
     Rel(sidecar, go_binary, "TransactionResult[]", "gRPC response")

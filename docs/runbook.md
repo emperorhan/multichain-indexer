@@ -3,6 +3,9 @@
 ## Scope
 - 대상: `multichain-indexer` Go 파이프라인 + `sidecar` 디코더
 - 목적: 장애 인지부터 복구, 사후 분석까지 일관된 대응
+- 런타임 모드:
+  - `like-group` (`solana-like`, `evm-like`, `btc-like`)
+  - `independent` (단일 `chain-network` 타깃)
 
 ## Severity Levels
 - `sev0`: 서비스 중단 또는 데이터 손상/유실
@@ -13,6 +16,7 @@
 ## First Response Checklist
 1. 장애 티켓 생성 (`type/bug`, `sev*`, `priority/*`)
 2. 영향 범위 확인:
+   - 런타임 모드/선택 타깃 (`RUNTIME_DEPLOYMENT_MODE`, `RUNTIME_LIKE_GROUP`, `RUNTIME_CHAIN_TARGET(S)`)
    - 체인/네트워크
    - 영향 주소 수
    - 누락 또는 중복 가능성
@@ -31,14 +35,15 @@
    - gRPC timeout
    - DB transaction 실패율
 4. 런타임 wiring preflight 실패 여부 확인:
-   - 필수 타겟: `solana-devnet`, `base-sepolia`
-   - 시작 시 `mandatory chain runtime wiring parity check failed` 에러가 발생하면 체인/네트워크 매핑과 adapter 연결 상태를 먼저 수정
+   - 선택된 타깃만 검증 대상으로 간주
    - 중복 target, nil adapter, adapter chain mismatch는 즉시 부팅 실패(의도된 fail-fast)
+   - `independent` 모드에서는 정확히 1개 타깃만 허용
 
 ### Sidecar
 1. gRPC health check 상태 확인
-2. 플러그인 parse 예외 로그 확인
-3. Sidecar test/build 재검증
+2. 현재 sidecar는 단일 배포 단위(체인별 디코더 코드는 내부 분리)임을 전제로 장애 전파 여부 확인
+3. payload 체인 분기 오류/디코더 예외 로그 확인
+4. Sidecar test/build 재검증
 
 ### Database
 1. 최근 `balance_events`, `transactions` 적재 추이 확인
@@ -54,8 +59,9 @@
 
 ### B. Sidecar Decode Failures
 1. 실패 트랜잭션 샘플 추출
-2. 플러그인 로직 회귀 여부 확인
-3. hotfix PR 생성 후 CI 통과 확인, 단계적 배포
+2. 체인별로 분리 진단 (`solana`, `base`, `btc`) 후 blast radius 확인
+3. 디코더 로직 회귀 여부 확인
+4. hotfix PR 생성 후 CI 통과 확인, 단계적 배포
 
 ### C. DB Write Failures
 1. DB 연결/락/트랜잭션 오류 구분
@@ -65,7 +71,8 @@
 ## Rollback Policy
 1. 배포 단위를 PR 단위로 롤백
 2. 스키마 변경 포함 시 down migration 영향 검토 후 실행
-3. 롤백 후 무결성 검증:
+3. sidecar/indexer 계약 변경이 포함된 경우 sidecar 우선 롤백 후 indexer 정합성 확인
+4. 롤백 후 무결성 검증:
    - 중복 이벤트 발생 여부
    - 커서 역행 여부
 
