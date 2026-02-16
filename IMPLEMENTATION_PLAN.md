@@ -3713,6 +3713,7 @@ PRD traceability:
 - `M93` exit gate green.
 - Canonical runtime-family outputs for `solana-devnet`, `base-sepolia`, and `btc-testnet` are wired and available for matrix execution.
 - `DP-0104-M94` accepted.
+- `I-0491` evidence inventory is required before QA handoff: `.ralph/reports/I-0491-m94-s1-event-class-matrix.md` and `.ralph/reports/I-0491-m94-s1-duplicate-suppression-matrix.md`.
 
 #### Slices
 1. `M94-S1` (`I-0491`): add PRD-traceable coverage evidence for mandatory event classes and duplicate suppression across families, then codify acceptance matrices in planner/spec artifacts.
@@ -3729,11 +3730,13 @@ PRD traceability:
 1. Event-class matrix (`transfer`/`mint`/`burn`/`fee`) for mandatory chains with duplicate-free canonical tuple assertions.
 2. Replay matrix for boundary restart/recover and canonical tuple/balance continuity.
 3. Counterexample matrix for one-chain perturbation with peer-chain progress to verify no control/cursor bleed.
-4. Evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M94`.
+4. Event-class matrix artifact (`.ralph/reports/I-0491-m94-s1-event-class-matrix.md`) with explicit chain/class/evidence-present rows, including all non-`NA` mandatory classes.
+5. Duplicate suppression artifact (`.ralph/reports/I-0491-m94-s1-duplicate-suppression-matrix.md`) with class-path keyed deterministic tuple counts.
+6. QA evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M94`.
 
 #### Exit Gate (Measurable)
 1. `0` duplicate canonical IDs in event-class coverage families.
-2. `0` missing in-scope event-class outputs for mandatory chains across representative fixture ranges.
+2. `0` missing non-`NA` required cells in `.ralph/reports/I-0491-m94-s1-event-class-matrix.md` for mandatory chains.
 3. `0` replay tuple and balance drift for required class-coverage fixtures.
 4. `0` cross-chain control/cursor bleed under one-chain perturbation counterexamples.
 5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
