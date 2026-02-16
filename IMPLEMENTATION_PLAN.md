@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -193,6 +193,8 @@ Execution queue (dependency-ordered):
 182. `I-0482` (`M92-S2`) QA re-gate for mandatory-chain `Topology A/B/C` parity/isolation closure with explicit M91/M92 promotion recommendation
 183. `I-0486` (`M93-S1`) implement deterministic fail-fast abort contract and zero failed-path cursor/watermark progression with committed-boundary replay continuity checks
 184. `I-0487` (`M93-S2`) execute QA counterexample gate for fail-fast continuity and restart perturbation evidence with recommendation
+185. `I-0491` (`M94-S1`) PRD event-coverage closeout gate for deterministic duplicate-free asset-volatility deltas
+186. `I-0492` (`M94-S2`) QA event-coverage and replay continuity counterexample gate for PRD closeout
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -3689,6 +3691,52 @@ PRD traceability:
 - Gate: under-specified error taxonomy can leave latent faulty paths that mutate cursors without failing tests.
 - Fallback: enforce `DP-0103-M93`; any failed-path cursor/watermark progression is a hard gate failure until coverage and replay proofs are re-established.
 
+### M94. PRD-Priority Event-Coverage + Duplicate-Free Closeout Gate Tranche C0084 (P0, Planned)
+
+#### Objective
+Close the remaining PRD-level asset-volatility coverage obligations by proving full in-scope signed delta class coverage and duplicate-free canonical output for mandatory chains.
+
+PRD traceability:
+- `R1`: no-duplicate indexing.
+- `R2`: full asset-volatility coverage.
+- `R3`: chain-specific fee completeness.
+- `9.4`: topology parity/continuity validation principles.
+- `10`: deterministic replay acceptance criteria.
+
+#### Entry Gate
+- `M93` exit gate green.
+- Canonical runtime-family outputs for `solana-devnet`, `base-sepolia`, and `btc-testnet` are wired and available for matrix execution.
+- `DP-0104-M94` accepted.
+
+#### Slices
+1. `M94-S1` (`I-0491`): add PRD-traceable coverage evidence for mandatory event classes and duplicate suppression across families, then codify acceptance matrices in planner/spec artifacts.
+2. `M94-S2` (`I-0492`): run counterexample gates for missing class outputs, duplicate canonical IDs, and replay continuity under mandatory-chain permutations.
+
+#### Definition Of Done
+1. Deterministic, signed event-class coverage is explicitly validated for `transfer`, `mint`, `burn`, and fee categories in `solana`, `base`, and `btc` families.
+2. Canonical tuple coverage is complete for equivalent fixture ranges, with explicit matrix evidence proving no dropped class rows.
+3. Coverage runs produce `0` duplicate canonical ids under rerun/replay conditions.
+4. Replay continuity assertions hold for coverage fixtures across deterministic checkpoint boundaries.
+5. Validation commands pass.
+
+#### Test Contract
+1. Event-class matrix (`transfer`/`mint`/`burn`/`fee`) for mandatory chains with duplicate-free canonical tuple assertions.
+2. Replay matrix for boundary restart/recover and canonical tuple/balance continuity.
+3. Counterexample matrix for one-chain perturbation with peer-chain progress to verify no control/cursor bleed.
+4. Evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M94`.
+
+#### Exit Gate (Measurable)
+1. `0` duplicate canonical IDs in event-class coverage families.
+2. `0` missing in-scope event-class outputs for mandatory chains across representative fixture ranges.
+3. `0` replay tuple and balance drift for required class-coverage fixtures.
+4. `0` cross-chain control/cursor bleed under one-chain perturbation counterexamples.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: class-level coverage can hide path omission if class partitioning is incomplete or unguarded.
+- Fallback: enforce `DP-0104-M94` by failing `M94` promotion until all mandatory chain-class evidence cells and replay continuity evidence are present.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -4089,12 +4137,12 @@ Completed milestones/slices:
 173. `I-0457`
 
 Active downstream queue from this plan:
-1. `I-0486`
-2. `I-0487`
+1. `I-0491`
+2. `I-0492`
 
 Planned next tranche queue:
-1. `I-0486` (`M93-S1`) after `M92` exit gate
-2. `I-0487` (`M93-S2`) after `I-0486`
+1. `I-0491` (`M94-S1`) after `M93` exit gate
+2. `I-0492` (`M94-S2`) after `I-0491`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
