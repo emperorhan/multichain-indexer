@@ -310,6 +310,84 @@ func TestTriChainInterleaving_OneChainDelayedClosurePressureStaysIsolated(t *tes
 	assertMonotonicWrites(t, afterLateArrival.watermarkWrites, "tri-chain one-chain-late watermark writes")
 }
 
+func TestTriChainInterleaving_FailFastNoProgressAndDeterministicReplayPerMandatoryChain(t *testing.T) {
+	ctx := context.Background()
+	maxSkew := 20 * time.Millisecond
+	permuteDelays := map[model.Chain]time.Duration{
+		model.ChainSolana: 3 * time.Millisecond,
+		model.ChainBase:   1 * time.Millisecond,
+		model.ChainBTC:    0,
+	}
+
+	mandatoryChains := []model.Chain{
+		model.ChainSolana,
+		model.ChainBase,
+		model.ChainBTC,
+	}
+
+	baselineState := newInterleaveState(nil)
+	baselineIngesters := newTriChainIngesters(t, baselineState, maxSkew)
+	require.Empty(t, runTriChainPermutation(ctx, baselineIngesters, permuteDelays))
+	baseline := snapshotTriChainState(baselineState)
+
+	for _, failingChain := range mandatoryChains {
+		tc := failingChain
+		t.Run(string(tc), func(t *testing.T) {
+			failChainKey := interleaveKey(tc, triChainNetwork(tc))
+			state := newInterleaveState(map[string]error{
+				failChainKey: errors.New("correctness-impacting terminal defect"),
+			})
+			ings := newTriChainIngesters(t, state, maxSkew)
+			failErrs := runTriChainPermutation(ctx, ings, permuteDelays)
+			require.Len(t, failErrs, 1)
+
+			first := snapshotTriChainState(state)
+			assert.Equal(t, 0, chainEventCount(first, tc), "failed chain must not emit materialized tuples on failure")
+			assert.Equal(t, len(baseline.eventIDs)-chainEventCount(baseline, tc), len(first.eventIDs), "only failed chain should be missing")
+
+			failCursorKey := fmt.Sprintf("%s|%s", failChainKey, triChainAddress(tc))
+			_, failCursorWritten := first.cursorSeq[failCursorKey]
+			assert.False(t, failCursorWritten, "failed-path must not advance failed chain cursor")
+			_, failWatermarkWritten := first.watermarks[failChainKey]
+			assert.False(t, failWatermarkWritten, "failed-path must not advance failed chain watermark")
+			assert.Empty(t, first.cursorWrites[failCursorKey], "failed chain cursor writes must be absent on failed-path")
+			assert.Empty(t, first.watermarkWrites[failChainKey], "failed chain watermark writes must be absent on failed-path")
+
+			for _, peerChain := range mandatoryChains {
+				if peerChain == tc {
+					continue
+				}
+				assert.Equal(
+					t,
+					chainEventCount(baseline, peerChain),
+					chainEventCount(first, peerChain),
+					"peer chain should remain progressive while one chain fails",
+				)
+
+				peerCursorKey := fmt.Sprintf("%s|%s", interleaveKey(peerChain, triChainNetwork(peerChain)), triChainAddress(peerChain))
+				peerWatermarkKey := interleaveKey(peerChain, triChainNetwork(peerChain))
+				assert.Equal(t, baseline.cursorSeq[peerCursorKey], first.cursorSeq[peerCursorKey], "peer cursor should not regress on unrelated failure")
+				assert.Equal(t, baseline.watermarks[peerWatermarkKey], first.watermarks[peerWatermarkKey], "peer watermark should not regress on unrelated failure")
+			}
+
+			replayIngesters := newTriChainIngesters(t, state, maxSkew)
+			replayErrs := runTriChainPermutation(ctx, replayIngesters, permuteDelays)
+			require.Empty(t, replayErrs)
+
+			recovered := snapshotTriChainState(state)
+			assert.Equal(t, baseline.eventIDs, recovered.eventIDs)
+			assert.Equal(t, baseline.tupleKeys, recovered.tupleKeys)
+			assert.Equal(t, baseline.eventIDCounts, recovered.eventIDCounts)
+			assert.Equal(t, baseline.cursorSeq, recovered.cursorSeq)
+			assert.Equal(t, baseline.watermarks, recovered.watermarks)
+			assert.Equal(t, baseline.btcTotalDelta, recovered.btcTotalDelta)
+			assertNoDuplicateEventIDs(t, recovered.eventIDCounts)
+			assertMonotonicWrites(t, recovered.cursorWrites, "tri-chain "+string(tc)+" replay cursor writes")
+			assertMonotonicWrites(t, recovered.watermarkWrites, "tri-chain "+string(tc)+" replay watermark writes")
+		})
+	}
+}
+
 func TestDeterministicMandatoryChainInterleaver_FailedAttemptDoesNotAdvanceCheckpoint(t *testing.T) {
 	ctx := context.Background()
 
@@ -756,6 +834,10 @@ func triChainNetwork(chainID model.Chain) model.Network {
 
 func chainCategoryKey(chainID model.Chain, category model.EventCategory) string {
 	return fmt.Sprintf("%s|%s", chainID, category)
+}
+
+func chainEventCount(snapshot triChainSnapshot, chainID model.Chain) int {
+	return len(chainEventIDSubset(snapshot.eventIDs, chainID))
 }
 
 func tupleDiffCount(left, right map[string]struct{}) int {
