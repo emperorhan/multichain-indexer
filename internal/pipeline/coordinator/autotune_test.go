@@ -3313,6 +3313,174 @@ func TestAutoTuneController_RollbackCheckpointFencePostRejoinWindowSteadySealRej
 	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFencePostSteadySealDriftReconciliationRejectsStaleMarkers(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+	rollbackCfg := segment2Cfg
+	rollbackCfg.PolicyManifestDigest = "manifest-tail-v2b|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3"
+	expiryCfg := rollbackCfg
+	expiryCfg.PolicyManifestDigest = rollbackCfg.PolicyManifestDigest + "|rollback-fence-tombstone-expiry-epoch=4"
+	quarantineCfg := expiryCfg
+	quarantineCfg.PolicyManifestDigest = expiryCfg.PolicyManifestDigest + "|rollback-fence-late-marker-hold-epoch=5"
+	releaseCfg := quarantineCfg
+	releaseCfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest + "|rollback-fence-late-marker-release-epoch=6"
+	liveCatchupHead130Cfg := quarantineCfg
+	liveCatchupHead130Cfg.PolicyManifestDigest = quarantineCfg.PolicyManifestDigest +
+		"|rollback-fence-late-marker-release-epoch=8|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90|rollback-fence-late-bridge-drain-watermark=120|rollback-fence-live-head=130"
+	steadyState145Cfg := liveCatchupHead130Cfg
+	steadyState145Cfg.PolicyManifestDigest = liveCatchupHead130Cfg.PolicyManifestDigest + "|rollback-fence-steady-state-watermark=145"
+	steadyGeneration2Cfg := steadyState145Cfg
+	steadyGeneration2Cfg.PolicyManifestDigest = steadyState145Cfg.PolicyManifestDigest + "|rollback-fence-steady-generation=2"
+	pruneFloor2Cfg := steadyGeneration2Cfg
+	pruneFloor2Cfg.PolicyManifestDigest = steadyGeneration2Cfg.PolicyManifestDigest + "|rollback-fence-generation-retention-floor=2"
+	floorLift2Cfg := pruneFloor2Cfg
+	floorLift2Cfg.PolicyManifestDigest = pruneFloor2Cfg.PolicyManifestDigest + "|rollback-fence-floor-lift-epoch=2"
+	settleWindow2Cfg := floorLift2Cfg
+	settleWindow2Cfg.PolicyManifestDigest = floorLift2Cfg.PolicyManifestDigest + "|rollback-fence-settle-window-epoch=2"
+	spillover2Cfg := settleWindow2Cfg
+	spillover2Cfg.PolicyManifestDigest = settleWindow2Cfg.PolicyManifestDigest + "|rollback-fence-spillover-epoch=2"
+	rejoin2Cfg := spillover2Cfg
+	rejoin2Cfg.PolicyManifestDigest = spillover2Cfg.PolicyManifestDigest + "|rollback-fence-spillover-rejoin-epoch=2"
+	steadySeal2Cfg := rejoin2Cfg
+	steadySeal2Cfg.PolicyManifestDigest = rejoin2Cfg.PolicyManifestDigest + "|rollback-fence-rejoin-seal-epoch=2"
+	drift1Cfg := steadySeal2Cfg
+	drift1Cfg.PolicyManifestDigest = steadySeal2Cfg.PolicyManifestDigest + "|rollback-fence-seal-drift-epoch=1"
+	drift2Cfg := steadySeal2Cfg
+	drift2Cfg.PolicyManifestDigest = steadySeal2Cfg.PolicyManifestDigest + "|rollback-fence-post-steady-seal-drift-epoch=2"
+	staleDriftCfg := steadySeal2Cfg
+	staleDriftCfg.PolicyManifestDigest = steadySeal2Cfg.PolicyManifestDigest + "|rollback-fence-seal-drift-epoch=1"
+	ambiguousDriftCfg := rejoin2Cfg
+	ambiguousDriftCfg.PolicyManifestDigest = rejoin2Cfg.PolicyManifestDigest + "|rollback-fence-seal-drift-epoch=3"
+	stalePreDriftCfg := steadySeal2Cfg
+
+	baseSeed := 230
+	baseController := newAutoTuneControllerWithSeed(100, steadySeal2Cfg, &baseSeed)
+	require.NotNil(t, baseController)
+	baseController.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:       true,
+		Version:        releaseCfg.PolicyVersion,
+		ManifestDigest: releaseCfg.PolicyManifestDigest,
+		Epoch:          releaseCfg.PolicyManifestRefreshEpoch,
+	})
+	batch, baseDecision := baseController.Resolve(highLag)
+	assert.Equal(t, baseSeed+20, batch)
+	assert.Equal(t, "apply_increase", baseDecision.Decision)
+	assert.Equal(t, steadySeal2Cfg.PolicyManifestDigest, baseDecision.PolicyManifestDigest)
+	assert.Equal(t, steadySeal2Cfg.PolicyManifestRefreshEpoch, baseDecision.PolicyEpoch)
+	assert.Equal(t, 0, baseDecision.PolicyActivationTicks)
+
+	drift1Seed := baseController.currentBatch
+	drift1Controller := newAutoTuneControllerWithSeed(100, drift1Cfg, &drift1Seed)
+	require.NotNil(t, drift1Controller)
+	drift1Controller.reconcilePolicyTransition(baseController.exportPolicyTransition())
+	batch, drift1Decision := drift1Controller.Resolve(highLag)
+	assert.Equal(t, drift1Seed+20, batch)
+	assert.Equal(t, "apply_increase", drift1Decision.Decision)
+	assert.Equal(t, drift1Cfg.PolicyManifestDigest, drift1Decision.PolicyManifestDigest)
+	assert.Equal(t, drift1Cfg.PolicyManifestRefreshEpoch, drift1Decision.PolicyEpoch)
+	assert.Equal(t, 0, drift1Decision.PolicyActivationTicks)
+
+	drift2Seed := drift1Controller.currentBatch
+	drift2Controller := newAutoTuneControllerWithSeed(100, drift2Cfg, &drift2Seed)
+	require.NotNil(t, drift2Controller)
+	drift2Controller.reconcilePolicyTransition(drift1Controller.exportPolicyTransition())
+	batch, drift2Decision := drift2Controller.Resolve(highLag)
+	assert.Equal(t, drift2Seed+20, batch)
+	assert.Equal(t, "apply_increase", drift2Decision.Decision)
+	assert.Equal(t, drift2Cfg.PolicyManifestDigest, drift2Decision.PolicyManifestDigest)
+	assert.Equal(t, drift2Cfg.PolicyManifestRefreshEpoch, drift2Decision.PolicyEpoch)
+	assert.Equal(t, 0, drift2Decision.PolicyActivationTicks)
+
+	staleDriftSeed := drift2Controller.currentBatch
+	staleDriftController := newAutoTuneControllerWithSeed(100, staleDriftCfg, &staleDriftSeed)
+	require.NotNil(t, staleDriftController)
+	staleDriftController.reconcilePolicyTransition(drift2Controller.exportPolicyTransition())
+	batch, staleDriftDecision := staleDriftController.Resolve(highLag)
+	assert.Equal(t, staleDriftSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleDriftDecision.Decision)
+	assert.Equal(
+		t,
+		drift2Cfg.PolicyManifestDigest,
+		staleDriftDecision.PolicyManifestDigest,
+		"lower drift epochs must remain pinned behind latest verified drift ownership",
+	)
+	assert.Equal(t, drift2Cfg.PolicyManifestRefreshEpoch, staleDriftDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleDriftDecision.PolicyActivationTicks)
+
+	ambiguousDriftSeed := staleDriftController.currentBatch
+	ambiguousDriftController := newAutoTuneControllerWithSeed(100, ambiguousDriftCfg, &ambiguousDriftSeed)
+	require.NotNil(t, ambiguousDriftController)
+	ambiguousDriftController.reconcilePolicyTransition(staleDriftController.exportPolicyTransition())
+	batch, ambiguousDriftDecision := ambiguousDriftController.Resolve(highLag)
+	assert.Equal(t, ambiguousDriftSeed+20, batch)
+	assert.Equal(t, "apply_increase", ambiguousDriftDecision.Decision)
+	assert.Equal(
+		t,
+		drift2Cfg.PolicyManifestDigest,
+		ambiguousDriftDecision.PolicyManifestDigest,
+		"drift markers must remain quarantined until steady-seal ownership is explicit",
+	)
+	assert.Equal(t, drift2Cfg.PolicyManifestRefreshEpoch, ambiguousDriftDecision.PolicyEpoch)
+	assert.Equal(t, 0, ambiguousDriftDecision.PolicyActivationTicks)
+
+	stalePreDriftSeed := ambiguousDriftController.currentBatch
+	stalePreDriftController := newAutoTuneControllerWithSeed(100, stalePreDriftCfg, &stalePreDriftSeed)
+	require.NotNil(t, stalePreDriftController)
+	stalePreDriftController.reconcilePolicyTransition(ambiguousDriftController.exportPolicyTransition())
+	batch, stalePreDriftDecision := stalePreDriftController.Resolve(highLag)
+	assert.Equal(t, stalePreDriftSeed+20, batch)
+	assert.Equal(t, "apply_increase", stalePreDriftDecision.Decision)
+	assert.Equal(
+		t,
+		drift2Cfg.PolicyManifestDigest,
+		stalePreDriftDecision.PolicyManifestDigest,
+		"post-drift stale pre-drift markers must not reclaim ownership",
+	)
+	assert.Equal(t, drift2Cfg.PolicyManifestRefreshEpoch, stalePreDriftDecision.PolicyEpoch)
+	assert.Equal(t, 0, stalePreDriftDecision.PolicyActivationTicks)
+
+	reForwardSeed := stalePreDriftController.currentBatch
+	reForwardController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reForwardSeed)
+	require.NotNil(t, reForwardController)
+	reForwardController.reconcilePolicyTransition(stalePreDriftController.exportPolicyTransition())
+	batch, reForwardHold := reForwardController.Resolve(highLag)
+	assert.Equal(t, reForwardSeed, batch)
+	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after drift reconciliation must deterministically apply one activation hold")
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardHold.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardHold.PolicyEpoch)
+	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,

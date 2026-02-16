@@ -10342,6 +10342,354 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostRejoinWin
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+type autoTunePostSteadySealDriftReconciliationFixtures struct {
+	segment1Cfg                                   AutoTuneConfig
+	rejoin2Cfg                                    AutoTuneConfig
+	steadySeal2Cfg                                AutoTuneConfig
+	drift1Cfg                                     AutoTuneConfig
+	drift2Cfg                                     AutoTuneConfig
+	segment3Cfg                                   AutoTuneConfig
+	steadySealBaselineSchedule                    map[int]AutoTuneConfig
+	driftReplaySchedule                           map[int]AutoTuneConfig
+	rollbackReforwardAfterSteadySealDriftSchedule map[int]AutoTuneConfig
+}
+
+func buildAutoTunePostSteadySealDriftReconciliationFixtures() autoTunePostSteadySealDriftReconciliationFixtures {
+	base := buildAutoTunePostRejoinWindowSteadySealFixtures()
+
+	drift1Cfg := base.steadySeal2Cfg
+	drift1Cfg.PolicyManifestDigest = base.steadySeal2Cfg.PolicyManifestDigest + "|rollback-fence-seal-drift-epoch=1"
+	drift2Cfg := base.steadySeal2Cfg
+	drift2Cfg.PolicyManifestDigest = base.steadySeal2Cfg.PolicyManifestDigest + "|rollback-fence-post-steady-seal-drift-epoch=2"
+	ambiguousDriftCfg := base.rejoin2Cfg
+	ambiguousDriftCfg.PolicyManifestDigest = base.rejoin2Cfg.PolicyManifestDigest + "|rollback-fence-seal-drift-epoch=3"
+	stalePreDriftCfg := base.steadySeal2Cfg
+
+	steadySealBaselineSchedule := cloneAutoTunePolicySchedule(base.steadySealReplaySchedule)
+
+	driftReplaySchedule := cloneAutoTunePolicySchedule(steadySealBaselineSchedule)
+	driftReplaySchedule[45] = drift1Cfg
+	driftReplaySchedule[46] = drift2Cfg
+	for i := 47; i <= 50; i++ {
+		driftReplaySchedule[i] = drift2Cfg
+	}
+
+	rollbackReforwardAfterSteadySealDriftSchedule := cloneAutoTunePolicySchedule(steadySealBaselineSchedule)
+	rollbackReforwardAfterSteadySealDriftSchedule[45] = drift1Cfg
+	rollbackReforwardAfterSteadySealDriftSchedule[46] = drift2Cfg
+	rollbackReforwardAfterSteadySealDriftSchedule[47] = drift1Cfg
+	rollbackReforwardAfterSteadySealDriftSchedule[48] = ambiguousDriftCfg
+	rollbackReforwardAfterSteadySealDriftSchedule[49] = stalePreDriftCfg
+	rollbackReforwardAfterSteadySealDriftSchedule[50] = base.segment3Cfg
+
+	return autoTunePostSteadySealDriftReconciliationFixtures{
+		segment1Cfg:                base.segment1Cfg,
+		rejoin2Cfg:                 base.rejoin2Cfg,
+		steadySeal2Cfg:             base.steadySeal2Cfg,
+		drift1Cfg:                  drift1Cfg,
+		drift2Cfg:                  drift2Cfg,
+		segment3Cfg:                base.segment3Cfg,
+		steadySealBaselineSchedule: steadySealBaselineSchedule,
+		driftReplaySchedule:        driftReplaySchedule,
+		rollbackReforwardAfterSteadySealDriftSchedule: rollbackReforwardAfterSteadySealDriftSchedule,
+	}
+}
+
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePostSteadySealDriftReconciliationPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp85",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcdefff85",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestsealdrift00000000000000",
+		},
+	}
+
+	fixture := buildAutoTunePostSteadySealDriftReconciliationFixtures()
+	const tickCount = 51
+	heads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		heads = append(heads, 260+int64(i))
+	}
+
+	permutations := []struct {
+		name                  string
+		policySchedule        map[int]AutoTuneConfig
+		staleFenceCaptureTick map[int]struct{}
+		crashpoints           []autoTuneCheckpointFenceCrashpoint
+		assertControlParity   bool
+	}{
+		{
+			name:                "steady-seal-drift-replay",
+			policySchedule:      fixture.driftReplaySchedule,
+			assertControlParity: false,
+		},
+		{
+			name:           "crash-during-steady-seal-drift-restart",
+			policySchedule: fixture.driftReplaySchedule,
+			staleFenceCaptureTick: map[int]struct{}{
+				45: {},
+			},
+			crashpoints: []autoTuneCheckpointFenceCrashpoint{
+				{Tick: 46, UseStaleFenceState: true},
+			},
+			assertControlParity: false,
+		},
+		{
+			name:                "rollback-reforward-after-steady-seal-drift",
+			policySchedule:      fixture.rollbackReforwardAfterSteadySealDriftSchedule,
+			assertControlParity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				fixture.segment1Cfg,
+				fixture.steadySealBaselineSchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						fixture.segment1Cfg,
+						permutation.policySchedule,
+						permutation.staleFenceCaptureTick,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "post-steady-seal drift-reconciliation permutations must converge to deterministic canonical tuples")
+					if permutation.assertControlParity {
+						assert.Equal(t, baselineBatches, candidateBatches, "post-steady-seal drift-reconciliation permutations must preserve deterministic control decisions")
+					}
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "post-steady-seal drift baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostSteadySealDriftReconciliationDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	fixture := buildAutoTunePostSteadySealDriftReconciliationFixtures()
+
+	const tickCount = 51
+	healthyBaseAddress := "0xfffffffffffffffffffffffffffffffffffebb85"
+	healthyBTCAddress := "tb1qmanifestsealdrifthealthy0000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp86"
+
+	healthyHeads := make([]int64, 0, tickCount)
+	laggingHeads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		healthyHeads = append(healthyHeads, 130+int64(i))
+		laggingHeads = append(laggingHeads, 260+int64(i))
+	}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+		fixture.steadySealBaselineSchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := fixture.segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{45: {}}
+	crashpoints := map[int]bool{46: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := fixture.rollbackReforwardAfterSteadySealDriftSchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 44 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-steady-seal baseline must converge to latest steady-seal ownership before drift progression")
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 45 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.drift1Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "drift replay must adopt first drift epoch deterministically")
+				assert.Equal(t, fixture.drift1Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 46 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.drift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "drift replay must advance to deterministic second drift epoch")
+				assert.Equal(t, fixture.drift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 47 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.drift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "lower drift epochs must remain pinned behind latest drift ownership")
+				assert.Equal(t, fixture.drift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 48 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.drift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "drift markers must remain quarantined until steady-seal ownership is explicit")
+				assert.Equal(t, fixture.drift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 49 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.drift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-drift stale pre-drift markers must not reclaim ownership")
+				assert.Equal(t, fixture.drift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 50 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rollback+re-forward after drift reconciliation must deterministically promote forward lineage")
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "steady-seal drift crashpoint requires captured pre-restart state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-steady-seal drift transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-steady-seal drift transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-steady-seal drift transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-steady-seal drift transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-steady-seal drift replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-steady-seal drift replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-steady-seal drift replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-steady-seal drift replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
