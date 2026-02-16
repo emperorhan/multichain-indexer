@@ -12,10 +12,7 @@ RUNTIME_STATUS_CMD="${ROOT_DIR}/scripts/ralph_local_runtime_status.sh"
 DAEMON_CMD="${ROOT_DIR}/scripts/ralph_local_daemon.sh"
 AUTOMANAGER_CMD="${ROOT_DIR}/scripts/ralph_local_manager_autofill.sh"
 AGENT_TRACKER_CMD="${ROOT_DIR}/scripts/ralph_local_agent_tracker.sh"
-
-if [ "$#" -gt 1 ]; then
-  echo "note: GitHub repo/max_issues arguments are ignored in local mode." >&2
-fi
+PROFILE_CMD="${ROOT_DIR}/scripts/ralph_local_profile.sh"
 
 usage() {
   cat <<'EOF'
@@ -27,6 +24,7 @@ Usage:
   ralphctl.sh scout
   ralphctl.sh agents
   ralphctl.sh tail
+  ralphctl.sh profile [list|status|set <절약|최적|퍼포먼스>]
 EOF
 }
 
@@ -53,6 +51,14 @@ case "${CMD}" in
     ;;
   tail)
     "${DAEMON_CMD}" tail
+    ;;
+  profile|mode)
+    shift || true
+    if [ "$#" -eq 0 ]; then
+      "${PROFILE_CMD}" status
+    else
+      "${PROFILE_CMD}" "$@"
+    fi
     ;;
   *)
     usage >&2

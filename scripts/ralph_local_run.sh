@@ -58,6 +58,18 @@ LOG_RETENTION_LIB="${LIB_DIR}/ralph_log_retention.sh"
 VALIDATION_STATE_LIB="${LIB_DIR}/ralph_validation_state.sh"
 QUEUE_LIB="${LIB_DIR}/ralph_queue.sh"
 
+load_profile_env() {
+  local profile_root profile_file
+  profile_root="${RALPH_ROOT:-.ralph}"
+  profile_file="${RALPH_PROFILE_FILE:-${profile_root}/profile.env}"
+  if [ -f "${profile_file}" ]; then
+    # shellcheck source=/dev/null
+    . "${profile_file}"
+  fi
+}
+
+load_profile_env
+
 for lib_file in "${ISSUE_META_LIB}" "${LOG_RETENTION_LIB}" "${VALIDATION_STATE_LIB}" "${QUEUE_LIB}"; do
   if [ ! -f "${lib_file}" ]; then
     echo "required library missing: ${lib_file}" >&2

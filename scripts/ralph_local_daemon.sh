@@ -8,6 +8,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+load_profile_env() {
+  local profile_root profile_file
+  profile_root="${RALPH_ROOT:-.ralph}"
+  profile_file="${RALPH_PROFILE_FILE:-${profile_root}/profile.env}"
+  if [ -f "${profile_file}" ]; then
+    # shellcheck source=/dev/null
+    . "${profile_file}"
+  fi
+}
+
+load_profile_env
+
 CMD="${1:-status}"
 RALPH_ROOT="${RALPH_ROOT:-.ralph}"
 PID_FILE="${RALPH_ROOT}/runner.pid"

@@ -16,11 +16,13 @@
 - 시작/중지/재시작: `lrstart`, `lrstop`, `lrrestart`
 - 상태: `lrstatus`, `lrcheck`
 - 로그: `lrtail`
+- 프로필 전환: `lrprofile status`, `lrmode 절약|최적|퍼포먼스`
 - 이슈 추가: `lrnew <role> "<title>"`
 
 alias 없이 실행할 때:
 - `scripts/ralph_local_daemon.sh start|stop|status|tail`
 - `scripts/ralph_local_runtime_status.sh`
+- `scripts/ralph_local_profile.sh list|status|set <절약|최적|퍼포먼스>`
 - `scripts/ralph_local_new_issue.sh <role> "<title>"`
 
 ## 점검 명령

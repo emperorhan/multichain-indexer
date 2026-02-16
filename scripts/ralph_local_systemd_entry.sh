@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+RALPH_ROOT="${RALPH_ROOT:-.ralph}"
+RALPH_PROFILE_FILE="${RALPH_PROFILE_FILE:-${RALPH_ROOT}/profile.env}"
+if [ -f "${RALPH_PROFILE_FILE}" ]; then
+  # shellcheck source=/dev/null
+  . "${RALPH_PROFILE_FILE}"
+fi
+
 detect_codex_bin_dir() {
   local codex_path
   codex_path="$(command -v codex 2>/dev/null || true)"
