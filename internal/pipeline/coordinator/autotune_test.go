@@ -3582,6 +3582,19 @@ func TestAutoTuneController_RollbackCheckpointFencePostDriftReanchorRejectsStale
 	conflictingCompactionExpiryAliasReverseCfg := reanchorCompaction2Cfg
 	conflictingCompactionExpiryAliasReverseCfg.PolicyManifestDigest = reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-compaction-expiry-epoch=1|rollback-fence-post-lineage-compaction-expiry-epoch=3"
 	stalePreCompactionExpiryCfg := reanchorCompaction2Cfg
+	lateResurrection1Cfg := compactionExpiry2Cfg
+	lateResurrection1Cfg.PolicyManifestDigest = compactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-quarantine-epoch=3"
+	lateResurrection2Cfg := compactionExpiry2Cfg
+	lateResurrection2Cfg.PolicyManifestDigest = compactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-post-marker-expiry-late-resurrection-quarantine-epoch=4"
+	staleLateResurrectionCfg := compactionExpiry2Cfg
+	staleLateResurrectionCfg.PolicyManifestDigest = compactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-quarantine-epoch=3"
+	ambiguousLateResurrectionCfg := reanchorCompaction2Cfg
+	ambiguousLateResurrectionCfg.PolicyManifestDigest = reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-quarantine-epoch=5"
+	conflictingLateResurrectionAliasForwardCfg := compactionExpiry2Cfg
+	conflictingLateResurrectionAliasForwardCfg.PolicyManifestDigest = compactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-post-marker-expiry-late-resurrection-quarantine-epoch=5|rollback-fence-resurrection-quarantine-epoch=3"
+	conflictingLateResurrectionAliasReverseCfg := compactionExpiry2Cfg
+	conflictingLateResurrectionAliasReverseCfg.PolicyManifestDigest = compactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-quarantine-epoch=3|rollback-fence-post-marker-expiry-late-resurrection-quarantine-epoch=5"
+	stalePreLateResurrectionCfg := compactionExpiry2Cfg
 
 	baseSeed := 230
 	baseController := newAutoTuneControllerWithSeed(100, drift2Cfg, &baseSeed)
@@ -3905,13 +3918,115 @@ func TestAutoTuneController_RollbackCheckpointFencePostDriftReanchorRejectsStale
 	assert.Equal(t, compactionExpiry2Cfg.PolicyManifestRefreshEpoch, stalePreCompactionExpiryDecision.PolicyEpoch)
 	assert.Equal(t, 0, stalePreCompactionExpiryDecision.PolicyActivationTicks)
 
-	reForwardSeed := stalePreCompactionExpiryController.currentBatch
+	lateResurrection1Seed := stalePreCompactionExpiryController.currentBatch
+	lateResurrection1Controller := newAutoTuneControllerWithSeed(100, lateResurrection1Cfg, &lateResurrection1Seed)
+	require.NotNil(t, lateResurrection1Controller)
+	lateResurrection1Controller.reconcilePolicyTransition(stalePreCompactionExpiryController.exportPolicyTransition())
+	batch, lateResurrection1Decision := lateResurrection1Controller.Resolve(highLag)
+	assert.Equal(t, lateResurrection1Seed, batch)
+	assert.Equal(t, "clamped_increase", lateResurrection1Decision.Decision)
+	assert.Equal(t, lateResurrection1Cfg.PolicyManifestDigest, lateResurrection1Decision.PolicyManifestDigest)
+	assert.Equal(t, lateResurrection1Cfg.PolicyManifestRefreshEpoch, lateResurrection1Decision.PolicyEpoch)
+	assert.Equal(t, 0, lateResurrection1Decision.PolicyActivationTicks)
+
+	lateResurrection2Seed := lateResurrection1Controller.currentBatch
+	lateResurrection2Controller := newAutoTuneControllerWithSeed(100, lateResurrection2Cfg, &lateResurrection2Seed)
+	require.NotNil(t, lateResurrection2Controller)
+	lateResurrection2Controller.reconcilePolicyTransition(lateResurrection1Controller.exportPolicyTransition())
+	batch, lateResurrection2Decision := lateResurrection2Controller.Resolve(highLag)
+	assert.Equal(t, lateResurrection2Seed, batch)
+	assert.Equal(t, "clamped_increase", lateResurrection2Decision.Decision)
+	assert.Equal(t, lateResurrection2Cfg.PolicyManifestDigest, lateResurrection2Decision.PolicyManifestDigest)
+	assert.Equal(t, lateResurrection2Cfg.PolicyManifestRefreshEpoch, lateResurrection2Decision.PolicyEpoch)
+	assert.Equal(t, 0, lateResurrection2Decision.PolicyActivationTicks)
+
+	staleLateResurrectionSeed := lateResurrection2Controller.currentBatch
+	staleLateResurrectionController := newAutoTuneControllerWithSeed(100, staleLateResurrectionCfg, &staleLateResurrectionSeed)
+	require.NotNil(t, staleLateResurrectionController)
+	staleLateResurrectionController.reconcilePolicyTransition(lateResurrection2Controller.exportPolicyTransition())
+	batch, staleLateResurrectionDecision := staleLateResurrectionController.Resolve(highLag)
+	assert.Equal(t, staleLateResurrectionSeed, batch)
+	assert.Equal(t, "clamped_increase", staleLateResurrectionDecision.Decision)
+	assert.Equal(
+		t,
+		lateResurrection2Cfg.PolicyManifestDigest,
+		staleLateResurrectionDecision.PolicyManifestDigest,
+		"lower late-resurrection epochs must remain pinned behind latest verified late-resurrection ownership",
+	)
+	assert.Equal(t, lateResurrection2Cfg.PolicyManifestRefreshEpoch, staleLateResurrectionDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleLateResurrectionDecision.PolicyActivationTicks)
+
+	ambiguousLateResurrectionSeed := staleLateResurrectionController.currentBatch
+	ambiguousLateResurrectionController := newAutoTuneControllerWithSeed(100, ambiguousLateResurrectionCfg, &ambiguousLateResurrectionSeed)
+	require.NotNil(t, ambiguousLateResurrectionController)
+	ambiguousLateResurrectionController.reconcilePolicyTransition(staleLateResurrectionController.exportPolicyTransition())
+	batch, ambiguousLateResurrectionDecision := ambiguousLateResurrectionController.Resolve(highLag)
+	assert.Equal(t, ambiguousLateResurrectionSeed, batch)
+	assert.Equal(t, "clamped_increase", ambiguousLateResurrectionDecision.Decision)
+	assert.Equal(
+		t,
+		lateResurrection2Cfg.PolicyManifestDigest,
+		ambiguousLateResurrectionDecision.PolicyManifestDigest,
+		"late-resurrection markers must remain quarantined until post-marker-expiry ownership is explicit",
+	)
+	assert.Equal(t, lateResurrection2Cfg.PolicyManifestRefreshEpoch, ambiguousLateResurrectionDecision.PolicyEpoch)
+	assert.Equal(t, 0, ambiguousLateResurrectionDecision.PolicyActivationTicks)
+
+	conflictingLateResurrectionForwardSeed := ambiguousLateResurrectionController.currentBatch
+	conflictingLateResurrectionForwardController := newAutoTuneControllerWithSeed(100, conflictingLateResurrectionAliasForwardCfg, &conflictingLateResurrectionForwardSeed)
+	require.NotNil(t, conflictingLateResurrectionForwardController)
+	conflictingLateResurrectionForwardController.reconcilePolicyTransition(ambiguousLateResurrectionController.exportPolicyTransition())
+	batch, conflictingLateResurrectionForwardDecision := conflictingLateResurrectionForwardController.Resolve(highLag)
+	assert.Equal(t, conflictingLateResurrectionForwardSeed, batch)
+	assert.Equal(t, "clamped_increase", conflictingLateResurrectionForwardDecision.Decision)
+	assert.Equal(
+		t,
+		lateResurrection2Cfg.PolicyManifestDigest,
+		conflictingLateResurrectionForwardDecision.PolicyManifestDigest,
+		"conflicting late-resurrection alias values must remain quarantined regardless of token order",
+	)
+	assert.Equal(t, lateResurrection2Cfg.PolicyManifestRefreshEpoch, conflictingLateResurrectionForwardDecision.PolicyEpoch)
+	assert.Equal(t, 0, conflictingLateResurrectionForwardDecision.PolicyActivationTicks)
+
+	conflictingLateResurrectionReverseSeed := conflictingLateResurrectionForwardController.currentBatch
+	conflictingLateResurrectionReverseController := newAutoTuneControllerWithSeed(100, conflictingLateResurrectionAliasReverseCfg, &conflictingLateResurrectionReverseSeed)
+	require.NotNil(t, conflictingLateResurrectionReverseController)
+	conflictingLateResurrectionReverseController.reconcilePolicyTransition(conflictingLateResurrectionForwardController.exportPolicyTransition())
+	batch, conflictingLateResurrectionReverseDecision := conflictingLateResurrectionReverseController.Resolve(highLag)
+	assert.Equal(t, conflictingLateResurrectionReverseSeed, batch)
+	assert.Equal(t, "clamped_increase", conflictingLateResurrectionReverseDecision.Decision)
+	assert.Equal(
+		t,
+		lateResurrection2Cfg.PolicyManifestDigest,
+		conflictingLateResurrectionReverseDecision.PolicyManifestDigest,
+		"conflicting late-resurrection alias values must remain quarantined regardless of token order",
+	)
+	assert.Equal(t, lateResurrection2Cfg.PolicyManifestRefreshEpoch, conflictingLateResurrectionReverseDecision.PolicyEpoch)
+	assert.Equal(t, 0, conflictingLateResurrectionReverseDecision.PolicyActivationTicks)
+
+	stalePreLateResurrectionSeed := conflictingLateResurrectionReverseController.currentBatch
+	stalePreLateResurrectionController := newAutoTuneControllerWithSeed(100, stalePreLateResurrectionCfg, &stalePreLateResurrectionSeed)
+	require.NotNil(t, stalePreLateResurrectionController)
+	stalePreLateResurrectionController.reconcilePolicyTransition(conflictingLateResurrectionReverseController.exportPolicyTransition())
+	batch, stalePreLateResurrectionDecision := stalePreLateResurrectionController.Resolve(highLag)
+	assert.Equal(t, stalePreLateResurrectionSeed, batch)
+	assert.Equal(t, "clamped_increase", stalePreLateResurrectionDecision.Decision)
+	assert.Equal(
+		t,
+		lateResurrection2Cfg.PolicyManifestDigest,
+		stalePreLateResurrectionDecision.PolicyManifestDigest,
+		"post-marker-expiry late-resurrection stale pre-resurrection markers must not reclaim ownership",
+	)
+	assert.Equal(t, lateResurrection2Cfg.PolicyManifestRefreshEpoch, stalePreLateResurrectionDecision.PolicyEpoch)
+	assert.Equal(t, 0, stalePreLateResurrectionDecision.PolicyActivationTicks)
+
+	reForwardSeed := stalePreLateResurrectionController.currentBatch
 	reForwardController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reForwardSeed)
 	require.NotNil(t, reForwardController)
-	reForwardController.reconcilePolicyTransition(stalePreCompactionExpiryController.exportPolicyTransition())
+	reForwardController.reconcilePolicyTransition(stalePreLateResurrectionController.exportPolicyTransition())
 	batch, reForwardHold := reForwardController.Resolve(highLag)
 	assert.Equal(t, reForwardSeed, batch)
-	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after lineage-compaction marker-expiry must deterministically apply one activation hold")
+	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after post-marker-expiry late-resurrection quarantine must deterministically apply one activation hold")
 	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardHold.PolicyManifestDigest)
 	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardHold.PolicyEpoch)
 	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)

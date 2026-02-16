@@ -11737,6 +11737,351 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLineageCo
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+type autoTunePostMarkerExpiryLateResurrectionQuarantineFixtures struct {
+	segment1Cfg                                              AutoTuneConfig
+	compactionExpiry2Cfg                                     AutoTuneConfig
+	lateResurrection1Cfg                                     AutoTuneConfig
+	lateResurrection2Cfg                                     AutoTuneConfig
+	segment3Cfg                                              AutoTuneConfig
+	markerExpiryBaselineSchedule                             map[int]AutoTuneConfig
+	lateResurrectionQuarantineReplaySchedule                 map[int]AutoTuneConfig
+	rollbackReforwardAfterLateResurrectionQuarantineSchedule map[int]AutoTuneConfig
+}
+
+func buildAutoTunePostMarkerExpiryLateResurrectionQuarantineFixtures() autoTunePostMarkerExpiryLateResurrectionQuarantineFixtures {
+	base := buildAutoTunePostLineageCompactionMarkerExpiryFixtures()
+
+	lateResurrection1Cfg := base.compactionExpiry2Cfg
+	lateResurrection1Cfg.PolicyManifestDigest = base.compactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-quarantine-epoch=3"
+	lateResurrection2Cfg := base.compactionExpiry2Cfg
+	lateResurrection2Cfg.PolicyManifestDigest = base.compactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-post-marker-expiry-late-resurrection-quarantine-epoch=4"
+	ambiguousLateResurrectionCfg := base.reanchorCompaction2Cfg
+	ambiguousLateResurrectionCfg.PolicyManifestDigest = base.reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-quarantine-epoch=5"
+	stalePreLateResurrectionCfg := base.compactionExpiry2Cfg
+
+	markerExpiryBaselineSchedule := cloneAutoTunePolicySchedule(base.markerExpiryReplaySchedule)
+	for i := 67; i <= 72; i++ {
+		markerExpiryBaselineSchedule[i] = base.compactionExpiry2Cfg
+	}
+
+	lateResurrectionQuarantineReplaySchedule := cloneAutoTunePolicySchedule(markerExpiryBaselineSchedule)
+	lateResurrectionQuarantineReplaySchedule[67] = lateResurrection1Cfg
+	lateResurrectionQuarantineReplaySchedule[68] = lateResurrection2Cfg
+	for i := 69; i <= 72; i++ {
+		lateResurrectionQuarantineReplaySchedule[i] = lateResurrection2Cfg
+	}
+
+	rollbackReforwardAfterLateResurrectionQuarantineSchedule := cloneAutoTunePolicySchedule(markerExpiryBaselineSchedule)
+	rollbackReforwardAfterLateResurrectionQuarantineSchedule[67] = lateResurrection1Cfg
+	rollbackReforwardAfterLateResurrectionQuarantineSchedule[68] = lateResurrection2Cfg
+	rollbackReforwardAfterLateResurrectionQuarantineSchedule[69] = lateResurrection1Cfg
+	rollbackReforwardAfterLateResurrectionQuarantineSchedule[70] = ambiguousLateResurrectionCfg
+	rollbackReforwardAfterLateResurrectionQuarantineSchedule[71] = stalePreLateResurrectionCfg
+	rollbackReforwardAfterLateResurrectionQuarantineSchedule[72] = base.segment3Cfg
+
+	return autoTunePostMarkerExpiryLateResurrectionQuarantineFixtures{
+		segment1Cfg:                              base.segment1Cfg,
+		compactionExpiry2Cfg:                     base.compactionExpiry2Cfg,
+		lateResurrection1Cfg:                     lateResurrection1Cfg,
+		lateResurrection2Cfg:                     lateResurrection2Cfg,
+		segment3Cfg:                              base.segment3Cfg,
+		markerExpiryBaselineSchedule:             markerExpiryBaselineSchedule,
+		lateResurrectionQuarantineReplaySchedule: lateResurrectionQuarantineReplaySchedule,
+		rollbackReforwardAfterLateResurrectionQuarantineSchedule: rollbackReforwardAfterLateResurrectionQuarantineSchedule,
+	}
+}
+
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePostMarkerExpiryLateResurrectionQuarantinePermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKres93",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcdefff93",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestresurrect000000000000000",
+		},
+	}
+
+	fixture := buildAutoTunePostMarkerExpiryLateResurrectionQuarantineFixtures()
+	const tickCount = 73
+	heads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		heads = append(heads, 260+int64(i))
+	}
+
+	permutations := []struct {
+		name                string
+		policySchedule      map[int]AutoTuneConfig
+		staleFenceCapture   map[int]struct{}
+		crashpoints         []autoTuneCheckpointFenceCrashpoint
+		assertControlParity bool
+	}{
+		{
+			name:                "late-resurrection-quarantine-replay",
+			policySchedule:      fixture.lateResurrectionQuarantineReplaySchedule,
+			assertControlParity: true,
+		},
+		{
+			name:                "crash-during-late-resurrection-quarantine-restart",
+			policySchedule:      fixture.lateResurrectionQuarantineReplaySchedule,
+			staleFenceCapture:   map[int]struct{}{67: {}},
+			crashpoints:         []autoTuneCheckpointFenceCrashpoint{{Tick: 68, UseStaleFenceState: true}},
+			assertControlParity: false,
+		},
+		{
+			name:                "rollback-reforward-after-late-resurrection-quarantine",
+			policySchedule:      fixture.rollbackReforwardAfterLateResurrectionQuarantineSchedule,
+			assertControlParity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				fixture.segment1Cfg,
+				fixture.markerExpiryBaselineSchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						fixture.segment1Cfg,
+						permutation.policySchedule,
+						permutation.staleFenceCapture,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "post-marker-expiry late-resurrection quarantine permutations must converge to deterministic canonical tuples")
+					if permutation.assertControlParity {
+						assert.Equal(t, baselineBatches, candidateBatches, "post-marker-expiry late-resurrection quarantine replay permutations must preserve deterministic control decisions")
+					}
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "post-marker-expiry late-resurrection quarantine baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostMarkerExpiryLateResurrectionQuarantineDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	fixture := buildAutoTunePostMarkerExpiryLateResurrectionQuarantineFixtures()
+
+	const tickCount = 73
+	healthyBaseAddress := "0xfffffffffffffffffffffffffffffffffffebb93"
+	healthyBTCAddress := "tb1qmanifestresurrecthealthy00000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKres94"
+
+	healthyHeads := make([]int64, 0, tickCount)
+	laggingHeads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		healthyHeads = append(healthyHeads, 130+int64(i))
+		laggingHeads = append(laggingHeads, 260+int64(i))
+	}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+		fixture.markerExpiryBaselineSchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := fixture.segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{67: {}}
+	crashpoints := map[int]bool{68: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := fixture.rollbackReforwardAfterLateResurrectionQuarantineSchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 66 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-marker-expiry baseline must converge before late-resurrection quarantine progression")
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 67 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.lateResurrection1Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "late-resurrection quarantine replay must adopt first quarantine ownership deterministically")
+				assert.Equal(t, fixture.lateResurrection1Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 68 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.lateResurrection2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "late-resurrection quarantine replay must advance to deterministic second quarantine ownership")
+				assert.Equal(t, fixture.lateResurrection2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 69 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.lateResurrection2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "lower late-resurrection quarantine epochs must remain pinned behind latest quarantine ownership")
+				assert.Equal(t, fixture.lateResurrection2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 70 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.lateResurrection2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "late-resurrection markers must remain quarantined until marker-expiry ownership is explicit")
+				assert.Equal(t, fixture.lateResurrection2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 71 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.lateResurrection2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-marker-expiry late-resurrection stale pre-resurrection markers must not reclaim ownership")
+				assert.Equal(t, fixture.lateResurrection2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 72 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rollback+re-forward after late-resurrection quarantine must deterministically promote forward lineage")
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "late-resurrection quarantine crashpoint requires captured pre-restart state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-marker-expiry late-resurrection quarantine transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-marker-expiry late-resurrection quarantine transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-marker-expiry late-resurrection quarantine transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-marker-expiry late-resurrection quarantine transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-marker-expiry late-resurrection quarantine replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-marker-expiry late-resurrection quarantine replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-marker-expiry late-resurrection quarantine replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-marker-expiry late-resurrection quarantine replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,

@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -151,6 +151,10 @@ Execution queue (dependency-ordered):
 140. `I-0390` (`M71-S2`) QA counterexample gate for post-reanchor lineage-compaction determinism + invariant safety
 141. `I-0394` (`M72-S1`) auto-tune policy-manifest rollback checkpoint-fence post-lineage-compaction marker-expiry determinism hardening
 142. `I-0395` (`M72-S2`) QA counterexample gate for post-lineage-compaction marker-expiry determinism + invariant safety
+143. `I-0399` (`M73-S1`) auto-tune policy-manifest rollback checkpoint-fence post-marker-expiry late-resurrection quarantine determinism hardening
+144. `I-0400` (`M73-S2`) QA counterexample gate for post-marker-expiry late-resurrection quarantine determinism + invariant safety
+145. `I-0404` (`M74-S1`) auto-tune policy-manifest rollback checkpoint-fence post-late-resurrection quarantine reintegration determinism hardening
+146. `I-0405` (`M74-S2`) QA counterexample gate for post-late-resurrection quarantine reintegration determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -2772,7 +2776,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when post-reanchor line
 - Gate: lineage-compaction marker application can race with late reanchor lineage markers and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch)` lineage-compaction ordering with explicit reanchor-compaction lineage diagnostics, pin last verified rollback-safe pre-compaction boundary on ambiguity, quarantine unresolved compaction markers, and fail fast on unresolved ownership conflicts.
 
-### M72. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Lineage-Compaction Marker-Expiry Determinism Tranche C0066 (P0, Next)
+### M72. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Lineage-Compaction Marker-Expiry Determinism Tranche C0066 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when compacted lineage markers expire, so marker-expiry baseline, marker-expiry replay, crash-during-marker-expiry restart, and rollback+re-forward across marker-expiry permutations converge to one deterministic canonical output set per chain.
@@ -2810,6 +2814,84 @@ Eliminate duplicate/missing-event and cursor-safety risk when compacted lineage 
 #### Risk Gate + Fallback
 - Gate: marker-expiry application can race with delayed compaction markers and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch)` marker-expiry ordering with explicit compaction-expiry lineage diagnostics, pin last verified rollback-safe pre-expiry boundary on ambiguity, quarantine unresolved expiry markers, and fail fast on unresolved ownership conflicts.
+
+### M73. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Marker-Expiry Late-Resurrection Quarantine Determinism Tranche C0067 (P0, Completed)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when expired lineage markers reappear from delayed side inputs, so late-resurrection quarantine baseline, late-resurrection quarantine replay, crash-during-late-resurrection quarantine restart, and rollback+re-forward across late-resurrection quarantine permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M72` exit gate green with QA evidence for post-lineage-compaction marker-expiry deterministic convergence and no-bleed safety.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M73-S1` (`I-0399`): harden deterministic post-marker-expiry late-resurrection quarantine sequencing so delayed resurrected markers and duplicate expiry echoes cannot reopen stale ownership, re-emit canonical IDs, suppress valid logical events, or regress cursor monotonicity.
+2. `M73-S2` (`I-0400`): execute QA counterexample gate for post-marker-expiry late-resurrection quarantine determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under late-resurrection quarantine baseline, late-resurrection quarantine replay, crash-during-late-resurrection quarantine restart, and rollback+re-forward across late-resurrection quarantine permutations converge to one canonical tuple output set per chain.
+2. Post-marker-expiry late-resurrection quarantine transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under post-marker-expiry late-resurrection quarantine replay/resume permutations.
+4. Replay/resume from post-marker-expiry late-resurrection quarantine boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject late-resurrection quarantine baseline, late-resurrection quarantine replay, crash-during-late-resurrection quarantine restart, and rollback+re-forward across late-resurrection quarantine permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain post-marker-expiry late-resurrection quarantine transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from post-marker-expiry late-resurrection quarantine boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus post-marker-expiry late-resurrection quarantine counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic late-resurrection quarantine baseline, late-resurrection quarantine replay, crash-during-late-resurrection quarantine restart, and rollback+re-forward across late-resurrection quarantine fixtures.
+2. `0` cross-chain control-coupling violations under one-chain post-marker-expiry late-resurrection quarantine counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under post-marker-expiry late-resurrection quarantine replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in post-marker-expiry late-resurrection quarantine fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: resurrected marker intake can race with committed expiry boundaries and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
+- Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch)` late-resurrection quarantine ordering with explicit resurrection quarantine lineage diagnostics, pin last verified rollback-safe pre-resurrection boundary on ambiguity, quarantine unresolved resurrected markers, and fail fast on unresolved ownership conflicts.
+
+### M74. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Late-Resurrection Quarantine Reintegration Determinism Tranche C0068 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when quarantined resurrected lineage markers are reintegrated, so reintegration-hold baseline, deterministic reintegration release, crash-during-reintegration restart, and rollback+re-forward across reintegration permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M73` exit gate green with QA evidence for post-marker-expiry late-resurrection quarantine deterministic convergence and no-bleed safety.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M74-S1` (`I-0404`): harden deterministic post-late-resurrection quarantine reintegration sequencing so release-ready resurrected markers and stale quarantine echoes cannot reopen stale ownership, re-emit canonical IDs, suppress valid logical events, or regress cursor monotonicity.
+2. `M74-S2` (`I-0405`): execute QA counterexample gate for post-late-resurrection quarantine reintegration determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under reintegration-hold baseline, deterministic reintegration release, crash-during-reintegration restart, and rollback+re-forward across reintegration permutations converge to one canonical tuple output set per chain.
+2. Post-late-resurrection quarantine reintegration transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under post-late-resurrection quarantine reintegration replay/resume permutations.
+4. Replay/resume from post-late-resurrection quarantine reintegration boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject reintegration-hold baseline, deterministic reintegration release, crash-during-reintegration restart, and rollback+re-forward across reintegration permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain post-late-resurrection quarantine reintegration transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from post-late-resurrection quarantine reintegration boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus post-late-resurrection quarantine reintegration counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic reintegration-hold baseline, deterministic reintegration release, crash-during-reintegration restart, and rollback+re-forward across reintegration fixtures.
+2. `0` cross-chain control-coupling violations under one-chain post-late-resurrection quarantine reintegration counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under post-late-resurrection quarantine reintegration replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in post-late-resurrection quarantine reintegration fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: reintegration release can race with delayed quarantine updates and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
+- Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch)` reintegration ordering with explicit reintegration lineage diagnostics, pin last verified rollback-safe pre-reintegration boundary on ambiguity, quarantine unresolved reintegration candidates, and fail fast on unresolved ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -2961,6 +3043,14 @@ Eliminate duplicate/missing-event and cursor-safety risk when compacted lineage 
 - Preferred: deterministic chain-local compaction-expiry state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch)` ownership fences, replay-stable expiry lineage markers, and stale pre-expiry marker ownership rejection.
 - Fallback: pin last verified rollback-safe pre-expiry boundary during expiry ambiguity, quarantine unresolved compaction-expiry markers, and resume marker expiry only after replay-safe lineage confirmation is proven.
 
+38. `DP-0101-AL`: auto-tune policy-manifest rollback checkpoint-fence post-marker-expiry late-resurrection quarantine policy.
+- Preferred: deterministic chain-local post-expiry resurrection quarantine state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch)` ownership fences, replay-stable resurrection lineage markers, and stale resurrected marker ownership rejection.
+- Fallback: pin last verified rollback-safe pre-resurrection boundary during resurrection ambiguity, quarantine unresolved resurrected markers, and resume post-marker-expiry progression only after replay-safe lineage confirmation is proven.
+
+39. `DP-0101-AM`: auto-tune policy-manifest rollback checkpoint-fence post-late-resurrection quarantine reintegration policy.
+- Preferred: deterministic chain-local resurrection reintegration state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch)` ownership fences, replay-stable reintegration lineage markers, and stale reintegration-candidate ownership rejection.
+- Fallback: pin last verified rollback-safe pre-reintegration boundary during reintegration ambiguity, quarantine unresolved reintegration candidates, and resume reintegration progression only after replay-safe lineage confirmation is proven.
+
 ## Local Queue Mapping
 
 Completed milestones/slices:
@@ -3105,13 +3195,17 @@ Completed milestones/slices:
 139. `I-0385`
 140. `I-0389`
 141. `I-0390`
+142. `I-0394`
+143. `I-0395`
+144. `I-0399`
+145. `I-0400`
 
 Active downstream queue from this plan:
-1. `I-0394`
-2. `I-0395`
+1. `I-0404`
+2. `I-0405`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M72-S2`
+1. `TBD by next planner slice after M74-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -3151,3 +3245,5 @@ Superseded issues:
 - `I-0382` and `I-0383` are superseded by `I-0384` and `I-0385` to replace generic cycle placeholders with executable post-drift-reconciliation reanchor determinism slices.
 - `I-0387` and `I-0388` are superseded by `I-0389` and `I-0390` to replace generic cycle placeholders with executable post-reanchor lineage-compaction determinism slices.
 - `I-0392` and `I-0393` are superseded by `I-0394` and `I-0395` to replace generic cycle placeholders with executable post-lineage-compaction marker-expiry determinism slices.
+- `I-0397` and `I-0398` are superseded by `I-0399` and `I-0400` to replace generic cycle placeholders with executable post-marker-expiry late-resurrection quarantine determinism slices.
+- `I-0402` and `I-0403` are superseded by `I-0404` and `I-0405` to replace generic cycle placeholders with executable post-late-resurrection quarantine reintegration determinism slices.
