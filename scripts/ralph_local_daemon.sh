@@ -5,12 +5,20 @@ set -euo pipefail
 # Usage:
 #   scripts/ralph_local_daemon.sh start|stop|status|tail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
 CMD="${1:-status}"
 RALPH_ROOT="${RALPH_ROOT:-.ralph}"
 PID_FILE="${RALPH_ROOT}/runner.pid"
 LOG_FILE="${RALPH_ROOT}/logs/runner.out"
-RUN_SCRIPT="${RALPH_RUN_SCRIPT:-scripts/ralph_local_run.sh}"
-SUPERVISOR_SCRIPT="${RALPH_SUPERVISOR_SCRIPT:-scripts/ralph_local_supervisor.sh}"
+RUN_SCRIPT="${RALPH_RUN_SCRIPT:-${ROOT_DIR}/scripts/ralph_local_run.sh}"
+SUPERVISOR_SCRIPT="${RALPH_SUPERVISOR_SCRIPT:-${ROOT_DIR}/scripts/ralph_local_supervisor.sh}"
+INIT_SCRIPT="${ROOT_DIR}/scripts/ralph_local_init.sh"
+CONTROL_SCRIPT="${ROOT_DIR}/scripts/ralph_local_control.sh"
+AUTH_STATUS_SCRIPT="${ROOT_DIR}/scripts/codex_auth_status.sh"
+RUNTIME_STATUS_SCRIPT="${ROOT_DIR}/scripts/ralph_local_runtime_status.sh"
+LOCAL_STATUS_SCRIPT="${ROOT_DIR}/scripts/ralph_local_status.sh"
 SERVICE_NAME="${RALPH_LOCAL_SERVICE_NAME:-ralph-local.service}"
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-15}"
 TAIL_LINES="${TAIL_LINES:-120}"
@@ -23,7 +31,7 @@ CONNECTIVITY_PREFLIGHT="${RALPH_CONNECTIVITY_PREFLIGHT:-true}"
 CONNECTIVITY_TIMEOUT_SEC="${RALPH_CONNECTIVITY_TIMEOUT_SEC:-25}"
 
 ensure_layout() {
-  scripts/ralph_local_init.sh >/dev/null
+  "${INIT_SCRIPT}" >/dev/null
   mkdir -p "${RALPH_ROOT}/logs"
 }
 
@@ -118,10 +126,10 @@ start_daemon() {
   local local_sandbox omx_mode daemon_pid
 
   ensure_layout
-  scripts/ralph_local_control.sh on >/dev/null
-  if [ "${REQUIRE_CHATGPT_AUTH}" = "true" ] && ! scripts/codex_auth_status.sh --require-chatgpt >/dev/null; then
+  "${CONTROL_SCRIPT}" on >/dev/null
+  if [ "${REQUIRE_CHATGPT_AUTH}" = "true" ] && ! "${AUTH_STATUS_SCRIPT}" --require-chatgpt >/dev/null; then
     echo "ralph-local start blocked: ChatGPT login mode check failed."
-    echo "Run: scripts/codex_auth_status.sh"
+    echo "Run: ${AUTH_STATUS_SCRIPT}"
     return 1
   fi
   local_sandbox="$(effective_local_sandbox)"
@@ -199,7 +207,7 @@ start_daemon() {
 }
 
 stop_daemon() {
-  scripts/ralph_local_control.sh off >/dev/null || true
+  "${CONTROL_SCRIPT}" off >/dev/null || true
 
   if use_systemd_control; then
     if systemctl --user cat "${SERVICE_NAME}" >/dev/null 2>&1; then
@@ -239,7 +247,7 @@ stop_daemon() {
 show_status() {
   if use_systemd_control; then
     if systemctl --user cat "${SERVICE_NAME}" >/dev/null 2>&1; then
-      scripts/ralph_local_runtime_status.sh
+      "${RUNTIME_STATUS_SCRIPT}"
       if is_running_systemd; then
         echo "- control_mode: systemd (${SERVICE_NAME})"
       else
@@ -249,7 +257,7 @@ show_status() {
     fi
   fi
 
-  scripts/ralph_local_status.sh
+  "${LOCAL_STATUS_SCRIPT}"
   if is_running; then
     echo "- daemon: running (pid=$(cat "${PID_FILE}" 2>/dev/null || echo unknown))"
   else
