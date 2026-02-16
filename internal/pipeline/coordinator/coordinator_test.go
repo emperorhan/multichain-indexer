@@ -9991,6 +9991,357 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLateSpill
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+type autoTunePostRejoinWindowSteadySealFixtures struct {
+	segment1Cfg                              AutoTuneConfig
+	rejoin2Cfg                               AutoTuneConfig
+	steadySeal1Cfg                           AutoTuneConfig
+	steadySeal2Cfg                           AutoTuneConfig
+	segment3Cfg                              AutoTuneConfig
+	rejoinBaselineSchedule                   map[int]AutoTuneConfig
+	steadySealReplaySchedule                 map[int]AutoTuneConfig
+	rollbackReforwardAfterSteadySealSchedule map[int]AutoTuneConfig
+}
+
+func buildAutoTunePostRejoinWindowSteadySealFixtures() autoTunePostRejoinWindowSteadySealFixtures {
+	base := buildAutoTunePostLateSpilloverRejoinWindowFixtures()
+
+	steadySeal1Cfg := base.rejoin2Cfg
+	steadySeal1Cfg.PolicyManifestDigest = base.rejoin2Cfg.PolicyManifestDigest + "|rollback-fence-rejoin-seal-epoch=1"
+	steadySeal2Cfg := base.rejoin2Cfg
+	steadySeal2Cfg.PolicyManifestDigest = base.rejoin2Cfg.PolicyManifestDigest + "|rollback-fence-rejoin-seal-epoch=2"
+	ambiguousSteadySealCfg := base.spillover2Cfg
+	ambiguousSteadySealCfg.PolicyManifestDigest = base.spillover2Cfg.PolicyManifestDigest + "|rollback-fence-rejoin-seal-epoch=3"
+	stalePreSteadySealCfg := base.rejoin2Cfg
+
+	rejoinBaselineSchedule := cloneAutoTunePolicySchedule(base.rejoinReplaySchedule)
+	for i := 43; i <= 50; i++ {
+		rejoinBaselineSchedule[i] = base.rejoin2Cfg
+	}
+
+	steadySealReplaySchedule := cloneAutoTunePolicySchedule(rejoinBaselineSchedule)
+	steadySealReplaySchedule[43] = steadySeal1Cfg
+	steadySealReplaySchedule[44] = steadySeal2Cfg
+	for i := 45; i <= 50; i++ {
+		steadySealReplaySchedule[i] = steadySeal2Cfg
+	}
+
+	rollbackReforwardAfterSteadySealSchedule := cloneAutoTunePolicySchedule(rejoinBaselineSchedule)
+	rollbackReforwardAfterSteadySealSchedule[43] = steadySeal1Cfg
+	rollbackReforwardAfterSteadySealSchedule[44] = steadySeal2Cfg
+	rollbackReforwardAfterSteadySealSchedule[45] = steadySeal1Cfg
+	rollbackReforwardAfterSteadySealSchedule[46] = ambiguousSteadySealCfg
+	rollbackReforwardAfterSteadySealSchedule[47] = stalePreSteadySealCfg
+	rollbackReforwardAfterSteadySealSchedule[48] = base.segment3Cfg
+	rollbackReforwardAfterSteadySealSchedule[49] = base.segment3Cfg
+	rollbackReforwardAfterSteadySealSchedule[50] = base.segment3Cfg
+
+	return autoTunePostRejoinWindowSteadySealFixtures{
+		segment1Cfg:                              base.segment1Cfg,
+		rejoin2Cfg:                               base.rejoin2Cfg,
+		steadySeal1Cfg:                           steadySeal1Cfg,
+		steadySeal2Cfg:                           steadySeal2Cfg,
+		segment3Cfg:                              base.segment3Cfg,
+		rejoinBaselineSchedule:                   rejoinBaselineSchedule,
+		steadySealReplaySchedule:                 steadySealReplaySchedule,
+		rollbackReforwardAfterSteadySealSchedule: rollbackReforwardAfterSteadySealSchedule,
+	}
+}
+
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePostRejoinWindowSteadySealPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp75",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcdefff75",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifeststeadyseal000000000000000",
+		},
+	}
+
+	fixture := buildAutoTunePostRejoinWindowSteadySealFixtures()
+	const tickCount = 51
+	heads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		heads = append(heads, 260+int64(i))
+	}
+
+	permutations := []struct {
+		name                  string
+		policySchedule        map[int]AutoTuneConfig
+		staleFenceCaptureTick map[int]struct{}
+		crashpoints           []autoTuneCheckpointFenceCrashpoint
+		assertControlParity   bool
+	}{
+		{
+			name:                "steady-seal-replay",
+			policySchedule:      fixture.steadySealReplaySchedule,
+			assertControlParity: false,
+		},
+		{
+			name:           "crash-during-steady-seal-restart",
+			policySchedule: fixture.steadySealReplaySchedule,
+			staleFenceCaptureTick: map[int]struct{}{
+				43: {},
+			},
+			crashpoints: []autoTuneCheckpointFenceCrashpoint{
+				{Tick: 44, UseStaleFenceState: true},
+			},
+			assertControlParity: false,
+		},
+		{
+			name:                "rollback-reforward-after-steady-seal",
+			policySchedule:      fixture.rollbackReforwardAfterSteadySealSchedule,
+			assertControlParity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				fixture.segment1Cfg,
+				fixture.rejoinBaselineSchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						fixture.segment1Cfg,
+						permutation.policySchedule,
+						permutation.staleFenceCaptureTick,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "post-rejoin-window steady-seal permutations must converge to deterministic canonical tuples")
+					if permutation.assertControlParity {
+						assert.Equal(t, baselineBatches, candidateBatches, "post-rejoin-window steady-seal permutations must preserve deterministic control decisions")
+					}
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "post-rejoin-window steady-seal baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostRejoinWindowSteadySealDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	fixture := buildAutoTunePostRejoinWindowSteadySealFixtures()
+
+	const tickCount = 51
+	healthyBaseAddress := "0xfffffffffffffffffffffffffffffffffffebb75"
+	healthyBTCAddress := "tb1qmanifeststeadysealhealthy00000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKexp76"
+
+	healthyHeads := make([]int64, 0, tickCount)
+	laggingHeads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		healthyHeads = append(healthyHeads, 130+int64(i))
+		laggingHeads = append(laggingHeads, 260+int64(i))
+	}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+		fixture.rejoinBaselineSchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := fixture.segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{43: {}}
+	crashpoints := map[int]bool{44: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := fixture.rollbackReforwardAfterSteadySealSchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 42 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-rejoin baseline must converge to latest rejoin ownership before steady-seal progression")
+				assert.Equal(t, fixture.rejoin2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 43 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.steadySeal1Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "steady-seal replay must adopt first steady-seal epoch deterministically")
+				assert.Equal(t, fixture.steadySeal1Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 44 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "steady-seal replay must advance to deterministic second seal ownership")
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 45 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "lower steady-seal epochs must remain pinned behind latest seal ownership")
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 46 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "steady-seal markers must remain quarantined until rejoin ownership is explicit")
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 47 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-steady-seal stale pre-seal markers must not reclaim ownership")
+				assert.Equal(t, fixture.steadySeal2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 48 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rollback+re-forward after steady-seal must deterministically promote forward lineage")
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "steady-seal crashpoint requires captured pre-restart state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-rejoin-window steady-seal transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-rejoin-window steady-seal transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-rejoin-window steady-seal transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-rejoin-window steady-seal transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-rejoin-window steady-seal replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-rejoin-window steady-seal replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-rejoin-window steady-seal replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-rejoin-window steady-seal replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,

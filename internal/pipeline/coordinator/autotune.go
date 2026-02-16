@@ -1167,6 +1167,7 @@ type rollbackFenceOwnershipOrdering struct {
 	settleWindowEpoch    int64
 	spilloverEpoch       int64
 	spilloverRejoinEpoch int64
+	rejoinSealEpoch      int64
 }
 
 func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
@@ -1192,6 +1193,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	settleWindowEpoch, hasSettleWindowEpoch := parseRollbackFenceSettleWindowEpoch(normalized)
 	spilloverEpoch, hasSpilloverEpoch := parseRollbackFenceSpilloverEpoch(normalized)
 	spilloverRejoinEpoch, hasSpilloverRejoinEpoch := parseRollbackFenceSpilloverRejoinEpoch(normalized)
+	rejoinSealEpoch, hasRejoinSealEpoch := parseRollbackFenceRejoinSealEpoch(normalized)
 	if hasBridgeSequence != hasExplicitWatermark {
 		// Quarantine ambiguous late-bridge markers until both sequence and
 		// release watermark are present for deterministic ordering.
@@ -1248,6 +1250,11 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		// ownership is present.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if hasRejoinSealEpoch && !hasSpilloverRejoinEpoch {
+		// Quarantine steady-seal markers until explicit spillover-rejoin
+		// ownership is present.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	if !hasBridgeSequence {
 		bridgeSequence = 0
 		releaseWatermark = releaseEpoch
@@ -1291,6 +1298,9 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if !hasSpilloverRejoinEpoch {
 		spilloverRejoinEpoch = 0
 	}
+	if !hasRejoinSealEpoch {
+		rejoinSealEpoch = 0
+	}
 	if generationFloor > steadyGeneration {
 		// Quarantine unresolved retired-generation markers whose ownership
 		// points below the active retention floor.
@@ -1308,6 +1318,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		settleWindowEpoch:    settleWindowEpoch,
 		spilloverEpoch:       spilloverEpoch,
 		spilloverRejoinEpoch: spilloverRejoinEpoch,
+		rejoinSealEpoch:      rejoinSealEpoch,
 	}, true
 }
 
@@ -1379,6 +1390,12 @@ func compareRollbackFenceOwnershipOrdering(
 	case left.spilloverRejoinEpoch < right.spilloverRejoinEpoch:
 		return -1
 	case left.spilloverRejoinEpoch > right.spilloverRejoinEpoch:
+		return 1
+	}
+	switch {
+	case left.rejoinSealEpoch < right.rejoinSealEpoch:
+		return -1
+	case left.rejoinSealEpoch > right.rejoinSealEpoch:
 		return 1
 	default:
 		return 0
@@ -1476,6 +1493,39 @@ func parseRollbackFenceSpilloverRejoinEpoch(digest string) (int64, bool) {
 			return 0, false
 		}
 		return spilloverRejoinEpoch, true
+	}
+
+	return 0, false
+}
+
+func parseRollbackFenceRejoinSealEpoch(digest string) (int64, bool) {
+	const (
+		rejoinSealEpochKey = "rollback-fence-rejoin-seal-epoch="
+		steadySealEpochKey = "rollback-fence-steady-seal-epoch="
+		postRejoinSealKey  = "rollback-fence-post-rejoin-seal-epoch="
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, rejoinSealEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, rejoinSealEpochKey))
+		case strings.HasPrefix(token, steadySealEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, steadySealEpochKey))
+		case strings.HasPrefix(token, postRejoinSealKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, postRejoinSealKey))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		rejoinSealEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || rejoinSealEpoch < 0 {
+			return 0, false
+		}
+		return rejoinSealEpoch, true
 	}
 
 	return 0, false
@@ -1822,7 +1872,7 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	// (epoch, bridge_sequence, drain_watermark, live_head,
 	// steady_state_watermark, steady_generation, generation_retention_floor,
 	// floor_lift_epoch, settle_window_epoch, spillover_epoch,
-	// spillover_rejoin_epoch) ordering.
+	// spillover_rejoin_epoch, rejoin_seal_epoch) ordering.
 	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }
 
