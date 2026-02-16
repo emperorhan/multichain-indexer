@@ -29,6 +29,14 @@ alias 없이 실행할 때:
 - 계약검증: `lrcontract .ralph/issues/<issue>.md`
 - 플랜검증: `lrplancheck .ralph/plans/plan-output-<id>.json`
 
+## 운영 튜닝 (선택)
+- 검증 2단계 모드(기본): `RALPH_VALIDATE_MODE=tiered`
+- 경량 검증 명령: `RALPH_VALIDATE_LIGHT_CMD='go test ./... -count=1'`
+- 전체 검증 주기(이슈 N건마다): `RALPH_VALIDATE_FULL_EVERY=3`
+- 로그 보존 상한(기본 2GiB): `RALPH_LOG_RETENTION_MAX_BYTES=2147483648`
+- 로그 보존 파일수(기본 1200): `RALPH_LOG_RETENTION_MAX_FILES=1200`
+- 로그 보존 일수(기본 14일): `RALPH_LOG_RETENTION_MAX_AGE_DAYS=14`
+
 ## 운영 순서 권장
 1. `lrcheck`로 큐 상태 확인
 2. 필요 시 `lrnew`로 이슈 추가
