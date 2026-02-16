@@ -14,6 +14,7 @@
 - `scripts/ralph_local_preflight.sh`: 실행 전 환경 점검
 - `scripts/ralph_local_doctor.sh`: 장애 진단 리포트
 - `scripts/ralph_local_agent_tracker.sh`: 에이전트별 처리 추적
+- `scripts/ralph_context_compact.sh`: 긴 `context.md`/`state.learning.md`를 압축하고 원문을 `.ralph/archive/`에 보관
 
 ## C. 정책/검증 게이트
 - `scripts/ralph_issue_contract.sh`: 이슈 계약 검증

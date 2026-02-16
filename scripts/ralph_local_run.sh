@@ -67,6 +67,7 @@ BLOCKED_RETRY_STATE_FILE="${RALPH_ROOT}/state.blocked_retries"
 AUTOMANAGER_STATE_FILE="${RALPH_ROOT}/state.automanager_last_run"
 LEARNING_NOTES_FILE="${RALPH_ROOT}/state.learning.md"
 LEARNING_JSONL_FILE="${RALPH_ROOT}/state.learning.jsonl"
+CONTEXT_ARCHIVE_DIR="${RALPH_ROOT}/archive/context"
 
 MAX_LOOPS="${MAX_LOOPS:-0}" # 0 means infinite
 IDLE_SLEEP_SEC="${RALPH_IDLE_SLEEP_SEC:-20}"
@@ -100,9 +101,19 @@ AUTO_PUBLISH_REMOTE="${RALPH_AUTO_PUBLISH_REMOTE:-origin}"
 BRANCH_STRATEGY="${RALPH_BRANCH_STRATEGY:-main}"
 RISK_SCORE_COMPLEX_THRESHOLD="${RALPH_RISK_SCORE_COMPLEX_THRESHOLD:-7}"
 LEARNING_CONTEXT_LINES="${RALPH_LEARNING_CONTEXT_LINES:-40}"
+LEARNING_CONTEXT_ITEMS="${RALPH_LEARNING_CONTEXT_ITEMS:-${LEARNING_CONTEXT_LINES}}"
+LEARNING_NOTE_MAX_CHARS="${RALPH_LEARNING_NOTE_MAX_CHARS:-220}"
+LEARNING_EXCERPT_MAX_CHARS="${RALPH_LEARNING_EXCERPT_MAX_CHARS:-260}"
+PROMPT_CONTEXT_MAX_LINES="${RALPH_PROMPT_CONTEXT_MAX_LINES:-220}"
+PROMPT_CONTEXT_HEAD_LINES="${RALPH_PROMPT_CONTEXT_HEAD_LINES:-100}"
+PROMPT_CONTEXT_TAIL_LINES="${RALPH_PROMPT_CONTEXT_TAIL_LINES:-100}"
+PROMPT_CONTEXT_ARCHIVE_ENABLED="${RALPH_PROMPT_CONTEXT_ARCHIVE_ENABLED:-true}"
+PROMPT_CONTEXT_ARCHIVE_MIN_LINES="${RALPH_PROMPT_CONTEXT_ARCHIVE_MIN_LINES:-260}"
 DEFAULT_MAX_DIFF_SCOPE="${RALPH_DEFAULT_MAX_DIFF_SCOPE:-25}"
 STRICT_CONTRACT_GATE="${RALPH_STRICT_CONTRACT_GATE:-true}"
 PLANNER_OUTPUT_FILE_TEMPLATE="${RALPH_PLANNER_OUTPUT_FILE_TEMPLATE:-${RALPH_ROOT}/plans/plan-output-%s.json}"
+AUTO_COMPACT_CONTEXT_ENABLED="${RALPH_AUTO_COMPACT_CONTEXT_ENABLED:-true}"
+CONTEXT_COMPACT_CMD="${RALPH_CONTEXT_COMPACT_CMD:-scripts/ralph_context_compact.sh}"
 
 CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-workspace-write}"
 CODEX_APPROVAL="${AGENT_CODEX_APPROVAL:-never}"
@@ -129,7 +140,7 @@ if [ "${LOCAL_TRUST_MODE}" = "true" ]; then
   CODEX_APPROVAL="never"
 fi
 
-mkdir -p "${QUEUE_DIR}" "${IN_PROGRESS_DIR}" "${DONE_DIR}" "${BLOCKED_DIR}" "${REPORTS_DIR}" "${LOGS_DIR}"
+mkdir -p "${QUEUE_DIR}" "${IN_PROGRESS_DIR}" "${DONE_DIR}" "${BLOCKED_DIR}" "${REPORTS_DIR}" "${LOGS_DIR}" "${CONTEXT_ARCHIVE_DIR}"
 [ -f "${STATE_FILE}" ] || printf 'RALPH_LOCAL_ENABLED=true\n' > "${STATE_FILE}"
 [ -f "${TRANSIENT_STATE_FILE}" ] || printf '0\n' > "${TRANSIENT_STATE_FILE}"
 [ -f "${BLOCKED_RETRY_STATE_FILE}" ] || : > "${BLOCKED_RETRY_STATE_FILE}"
@@ -176,6 +187,19 @@ enforce_chatgpt_auth_mode() {
 
 strip_api_auth_env
 enforce_chatgpt_auth_mode
+
+run_context_compact_if_enabled() {
+  [ "${AUTO_COMPACT_CONTEXT_ENABLED}" = "true" ] || return 0
+  if [ ! -x "${CONTEXT_COMPACT_CMD}" ]; then
+    echo "[ralph-local] context compact script missing/unexecutable: ${CONTEXT_COMPACT_CMD}"
+    return 0
+  fi
+  if ! "${CONTEXT_COMPACT_CMD}" >/dev/null 2>&1; then
+    echo "[ralph-local] context compact step failed; continuing without compaction"
+  fi
+}
+
+run_context_compact_if_enabled
 
 get_transient_failures() {
   awk 'NR==1 { if ($1 ~ /^[0-9]+$/) print $1; else print 0; exit }' "${TRANSIENT_STATE_FILE}" 2>/dev/null || echo 0
@@ -405,6 +429,82 @@ csv_contains() {
 
 trim_ws() {
   awk '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0); print}'
+}
+
+clip_text() {
+  local text="$1"
+  local max_chars="$2"
+  if ! [[ "${max_chars}" =~ ^[0-9]+$ ]] || [ "${max_chars}" -le 0 ]; then
+    printf '%s' "${text}"
+    return 0
+  fi
+  awk -v max_chars="${max_chars}" '
+    {
+      line=$0
+      gsub(/[[:space:]]+/, " ", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (length(line) > max_chars) {
+        printf "%s...", substr(line, 1, max_chars)
+      } else {
+        printf "%s", line
+      }
+    }
+  ' <<<"${text}"
+}
+
+context_block_for_prompt() {
+  local issue_id="$1"
+  local line_count byte_count omitted archive_file ts head_lines tail_lines
+
+  [ -f "${CONTEXT_FILE}" ] || {
+    echo "(no context file)"
+    return 0
+  }
+
+  line_count="$(wc -l < "${CONTEXT_FILE}" | awk '{print $1}')"
+  byte_count="$(wc -c < "${CONTEXT_FILE}" | awk '{print $1}')"
+  head_lines="${PROMPT_CONTEXT_HEAD_LINES}"
+  tail_lines="${PROMPT_CONTEXT_TAIL_LINES}"
+
+  if ! [[ "${head_lines}" =~ ^[0-9]+$ ]]; then
+    head_lines=100
+  fi
+  if ! [[ "${tail_lines}" =~ ^[0-9]+$ ]]; then
+    tail_lines=100
+  fi
+
+  if [[ "${PROMPT_CONTEXT_ARCHIVE_ENABLED}" = "true" ]] \
+    && [[ "${PROMPT_CONTEXT_ARCHIVE_MIN_LINES}" =~ ^[0-9]+$ ]] \
+    && [ "${line_count}" -ge "${PROMPT_CONTEXT_ARCHIVE_MIN_LINES}" ]; then
+    ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    archive_file="${CONTEXT_ARCHIVE_DIR}/${issue_id}-context-${ts}.md"
+    cp "${CONTEXT_FILE}" "${archive_file}" 2>/dev/null || true
+    echo "(full context archived: ${archive_file})"
+  fi
+
+  if ! [[ "${PROMPT_CONTEXT_MAX_LINES}" =~ ^[0-9]+$ ]] || [ "${line_count}" -le "${PROMPT_CONTEXT_MAX_LINES}" ]; then
+    cat "${CONTEXT_FILE}"
+    return 0
+  fi
+
+  omitted=$((line_count - head_lines - tail_lines))
+  if [ "${omitted}" -lt 0 ]; then
+    omitted=0
+  fi
+
+  echo "(context compressed for prompt: ${line_count} lines, ${byte_count} bytes)"
+  echo
+  echo "### Context (head ${head_lines})"
+  sed -n "1,${head_lines}p" "${CONTEXT_FILE}"
+  if [ "${omitted}" -gt 0 ]; then
+    echo
+    echo "... (${omitted} lines omitted) ..."
+  fi
+  if [ "${tail_lines}" -gt 0 ]; then
+    echo
+    echo "### Context (tail ${tail_lines})"
+    tail -n "${tail_lines}" "${CONTEXT_FILE}"
+  fi
 }
 
 default_issue_value() {
@@ -700,7 +800,37 @@ learning_context_block() {
     echo "(no prior learning notes)"
     return 0
   fi
-  tail -n "${LEARNING_CONTEXT_LINES}" "${LEARNING_NOTES_FILE}" 2>/dev/null || true
+  awk -v max_items="${LEARNING_CONTEXT_ITEMS}" -v max_chars="${LEARNING_NOTE_MAX_CHARS}" '
+    function clip(s, c) {
+      gsub(/[[:space:]]+/, " ", s)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      if (c > 0 && length(s) > c) {
+        return substr(s, 1, c) "..."
+      }
+      return s
+    }
+    /^- / {
+      line=$0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      entries[++n]=clip(line, max_chars)
+    }
+    END {
+      if (n == 0) {
+        print "(no prior learning notes)"
+        exit
+      }
+      if (max_items <= 0) {
+        max_items=12
+      }
+      start=n-max_items+1
+      if (start < 1) {
+        start=1
+      }
+      for (i=start; i<=n; i++) {
+        print "- " entries[i]
+      }
+    }
+  ' "${LEARNING_NOTES_FILE}" 2>/dev/null || true
 }
 
 classify_failure_type() {
@@ -743,10 +873,19 @@ record_failure_learning() {
   local failure_type="$3"
   local note="$4"
   local log_file="$5"
-  local excerpt=""
+  local excerpt="" note_key last_entry=""
+
+  note_key="issue=${issue_id} role=${role} type=${failure_type} note=${note}"
+  if [ -f "${LEARNING_NOTES_FILE}" ]; then
+    last_entry="$(awk '/^- /{last=$0} END{print last}' "${LEARNING_NOTES_FILE}" 2>/dev/null || true)"
+    if [ -n "${last_entry}" ] && printf '%s' "${last_entry}" | grep -Fq "${note_key}"; then
+      return 0
+    fi
+  fi
 
   if [ -n "${log_file}" ] && [ -f "${log_file}" ]; then
     excerpt="$(tail -n 6 "${log_file}" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
+    excerpt="$(clip_text "${excerpt}" "${LEARNING_EXCERPT_MAX_CHARS}")"
   fi
 
   cat >>"${LEARNING_NOTES_FILE}" <<EOF
@@ -1200,7 +1339,7 @@ Model routing:
 - risk_score: ${CURRENT_RISK_SCORE}
 
 Shared context file (${CONTEXT_FILE}):
-$(cat "${CONTEXT_FILE}" 2>/dev/null || echo "(no context file)")
+$(context_block_for_prompt "${issue_id}")
 
 Learning memory (recent failures + lessons):
 $(learning_context_block)
