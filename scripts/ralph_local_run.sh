@@ -109,6 +109,15 @@ PROMPT_CONTEXT_HEAD_LINES="${RALPH_PROMPT_CONTEXT_HEAD_LINES:-100}"
 PROMPT_CONTEXT_TAIL_LINES="${RALPH_PROMPT_CONTEXT_TAIL_LINES:-100}"
 PROMPT_CONTEXT_ARCHIVE_ENABLED="${RALPH_PROMPT_CONTEXT_ARCHIVE_ENABLED:-true}"
 PROMPT_CONTEXT_ARCHIVE_MIN_LINES="${RALPH_PROMPT_CONTEXT_ARCHIVE_MIN_LINES:-260}"
+PROMPT_CONTEXT_ADAPTIVE_ENABLED="${RALPH_PROMPT_CONTEXT_ADAPTIVE_ENABLED:-true}"
+PROMPT_CONTEXT_ADAPTIVE_RISK_SCORE_THRESHOLD="${RALPH_PROMPT_CONTEXT_ADAPTIVE_RISK_SCORE_THRESHOLD:-${RISK_SCORE_COMPLEX_THRESHOLD}}"
+PROMPT_CONTEXT_ADAPTIVE_HIGH_RISK_CLASSES="${RALPH_PROMPT_CONTEXT_ADAPTIVE_HIGH_RISK_CLASSES:-high,critical}"
+PROMPT_CONTEXT_PLANNER_MAX_LINES="${RALPH_PROMPT_CONTEXT_PLANNER_MAX_LINES:-280}"
+PROMPT_CONTEXT_PLANNER_HEAD_LINES="${RALPH_PROMPT_CONTEXT_PLANNER_HEAD_LINES:-140}"
+PROMPT_CONTEXT_PLANNER_TAIL_LINES="${RALPH_PROMPT_CONTEXT_PLANNER_TAIL_LINES:-140}"
+PROMPT_CONTEXT_HIGH_RISK_MAX_LINES="${RALPH_PROMPT_CONTEXT_HIGH_RISK_MAX_LINES:-220}"
+PROMPT_CONTEXT_HIGH_RISK_HEAD_LINES="${RALPH_PROMPT_CONTEXT_HIGH_RISK_HEAD_LINES:-110}"
+PROMPT_CONTEXT_HIGH_RISK_TAIL_LINES="${RALPH_PROMPT_CONTEXT_HIGH_RISK_TAIL_LINES:-110}"
 DEFAULT_MAX_DIFF_SCOPE="${RALPH_DEFAULT_MAX_DIFF_SCOPE:-25}"
 STRICT_CONTRACT_GATE="${RALPH_STRICT_CONTRACT_GATE:-true}"
 PLANNER_OUTPUT_FILE_TEMPLATE="${RALPH_PLANNER_OUTPUT_FILE_TEMPLATE:-${RALPH_ROOT}/plans/plan-output-%s.json}"
@@ -454,7 +463,9 @@ clip_text() {
 
 context_block_for_prompt() {
   local issue_id="$1"
-  local line_count byte_count omitted archive_file ts head_lines tail_lines
+  local issue_file="$2"
+  local role="$3"
+  local line_count byte_count omitted archive_file ts head_lines tail_lines max_lines policy_reason
 
   [ -f "${CONTEXT_FILE}" ] || {
     echo "(no context file)"
@@ -463,15 +474,8 @@ context_block_for_prompt() {
 
   line_count="$(wc -l < "${CONTEXT_FILE}" | awk '{print $1}')"
   byte_count="$(wc -c < "${CONTEXT_FILE}" | awk '{print $1}')"
-  head_lines="${PROMPT_CONTEXT_HEAD_LINES}"
-  tail_lines="${PROMPT_CONTEXT_TAIL_LINES}"
-
-  if ! [[ "${head_lines}" =~ ^[0-9]+$ ]]; then
-    head_lines=100
-  fi
-  if ! [[ "${tail_lines}" =~ ^[0-9]+$ ]]; then
-    tail_lines=100
-  fi
+  IFS='|' read -r max_lines head_lines tail_lines policy_reason < <(derive_prompt_context_limits "${issue_file}" "${role}")
+  echo "(context policy: ${policy_reason}; budget=${max_lines}; head=${head_lines}; tail=${tail_lines})"
 
   if [[ "${PROMPT_CONTEXT_ARCHIVE_ENABLED}" = "true" ]] \
     && [[ "${PROMPT_CONTEXT_ARCHIVE_MIN_LINES}" =~ ^[0-9]+$ ]] \
@@ -482,7 +486,8 @@ context_block_for_prompt() {
     echo "(full context archived: ${archive_file})"
   fi
 
-  if ! [[ "${PROMPT_CONTEXT_MAX_LINES}" =~ ^[0-9]+$ ]] || [ "${line_count}" -le "${PROMPT_CONTEXT_MAX_LINES}" ]; then
+  if [ "${line_count}" -le "${max_lines}" ]; then
+    echo
     cat "${CONTEXT_FILE}"
     return 0
   fi
@@ -505,6 +510,86 @@ context_block_for_prompt() {
     echo "### Context (tail ${tail_lines})"
     tail -n "${tail_lines}" "${CONTEXT_FILE}"
   fi
+}
+
+normalize_nonneg_int() {
+  local value="$1"
+  local fallback="$2"
+  if [[ "${value}" =~ ^[0-9]+$ ]]; then
+    echo "${value}"
+    return 0
+  fi
+  echo "${fallback}"
+}
+
+normalize_context_budget_tuple() {
+  local max_lines="$1"
+  local head_lines="$2"
+  local tail_lines="$3"
+
+  max_lines="$(normalize_nonneg_int "${max_lines}" 220)"
+  head_lines="$(normalize_nonneg_int "${head_lines}" 100)"
+  tail_lines="$(normalize_nonneg_int "${tail_lines}" 100)"
+
+  if [ "${max_lines}" -lt 80 ]; then
+    max_lines=80
+  fi
+  if [ $((head_lines + tail_lines)) -gt "${max_lines}" ]; then
+    head_lines=$((max_lines / 2))
+    tail_lines=$((max_lines - head_lines))
+  fi
+
+  echo "${max_lines}|${head_lines}|${tail_lines}"
+}
+
+derive_prompt_context_limits() {
+  local issue_file="$1"
+  local role="$2"
+  local max_lines head_lines tail_lines policy_reason risk_class threshold high_risk_classes
+
+  IFS='|' read -r max_lines head_lines tail_lines < <(
+    normalize_context_budget_tuple \
+      "${PROMPT_CONTEXT_MAX_LINES}" \
+      "${PROMPT_CONTEXT_HEAD_LINES}" \
+      "${PROMPT_CONTEXT_TAIL_LINES}"
+  )
+  policy_reason="base"
+
+  [ "${PROMPT_CONTEXT_ADAPTIVE_ENABLED}" = "true" ] || {
+    echo "${max_lines}|${head_lines}|${tail_lines}|${policy_reason}"
+    return 0
+  }
+
+  risk_class="$(meta_value "${issue_file}" "risk_class")"
+  [ -n "${risk_class}" ] || risk_class="$(default_issue_value "risk_class" "${role}")"
+  risk_class="$(printf '%s' "${risk_class}" | tr '[:upper:]' '[:lower:]')"
+  high_risk_classes="$(printf '%s' "${PROMPT_CONTEXT_ADAPTIVE_HIGH_RISK_CLASSES}" | tr '[:upper:]' '[:lower:]')"
+  threshold="$(normalize_nonneg_int "${PROMPT_CONTEXT_ADAPTIVE_RISK_SCORE_THRESHOLD}" "${RISK_SCORE_COMPLEX_THRESHOLD}")"
+
+  case "${role}" in
+    planner)
+      IFS='|' read -r max_lines head_lines tail_lines < <(
+        normalize_context_budget_tuple \
+          "${PROMPT_CONTEXT_PLANNER_MAX_LINES}" \
+          "${PROMPT_CONTEXT_PLANNER_HEAD_LINES}" \
+          "${PROMPT_CONTEXT_PLANNER_TAIL_LINES}"
+      )
+      policy_reason="planner-adaptive"
+      ;;
+    developer)
+      if [ "${CURRENT_RISK_SCORE:-0}" -ge "${threshold}" ] || csv_contains "${high_risk_classes}" "${risk_class}"; then
+        IFS='|' read -r max_lines head_lines tail_lines < <(
+          normalize_context_budget_tuple \
+            "${PROMPT_CONTEXT_HIGH_RISK_MAX_LINES}" \
+            "${PROMPT_CONTEXT_HIGH_RISK_HEAD_LINES}" \
+            "${PROMPT_CONTEXT_HIGH_RISK_TAIL_LINES}"
+        )
+        policy_reason="developer-high-risk-adaptive(score=${CURRENT_RISK_SCORE:-0},risk_class=${risk_class})"
+      fi
+      ;;
+  esac
+
+  echo "${max_lines}|${head_lines}|${tail_lines}|${policy_reason}"
 }
 
 default_issue_value() {
@@ -1339,7 +1424,7 @@ Model routing:
 - risk_score: ${CURRENT_RISK_SCORE}
 
 Shared context file (${CONTEXT_FILE}):
-$(context_block_for_prompt "${issue_id}")
+$(context_block_for_prompt "${issue_id}" "${issue_file}" "${role}")
 
 Learning memory (recent failures + lessons):
 $(learning_context_block)
