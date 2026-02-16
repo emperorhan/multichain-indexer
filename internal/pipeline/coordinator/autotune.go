@@ -1156,20 +1156,21 @@ func parseRollbackFenceFloorLiftEpoch(digest string) (int64, bool) {
 }
 
 type rollbackFenceOwnershipOrdering struct {
-	epoch                int64
-	bridgeSequence       int64
-	drainWatermark       int64
-	liveHead             int64
-	steadyStateWatermark int64
-	steadyGeneration     int64
-	generationFloor      int64
-	floorLiftEpoch       int64
-	settleWindowEpoch    int64
-	spilloverEpoch       int64
-	spilloverRejoinEpoch int64
-	rejoinSealEpoch      int64
-	sealDriftEpoch       int64
-	driftReanchorEpoch   int64
+	epoch                   int64
+	bridgeSequence          int64
+	drainWatermark          int64
+	liveHead                int64
+	steadyStateWatermark    int64
+	steadyGeneration        int64
+	generationFloor         int64
+	floorLiftEpoch          int64
+	settleWindowEpoch       int64
+	spilloverEpoch          int64
+	spilloverRejoinEpoch    int64
+	rejoinSealEpoch         int64
+	sealDriftEpoch          int64
+	driftReanchorEpoch      int64
+	reanchorCompactionEpoch int64
 }
 
 func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
@@ -1198,6 +1199,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	rejoinSealEpoch, hasRejoinSealEpoch := parseRollbackFenceRejoinSealEpoch(normalized)
 	sealDriftEpoch, hasSealDriftEpoch := parseRollbackFenceSealDriftEpoch(normalized)
 	driftReanchorEpoch, hasDriftReanchorEpoch := parseRollbackFenceDriftReanchorEpoch(normalized)
+	reanchorCompactionEpoch, hasReanchorCompactionEpoch := parseRollbackFenceReanchorCompactionEpoch(normalized)
 	if hasBridgeSequence != hasExplicitWatermark {
 		// Quarantine ambiguous late-bridge markers until both sequence and
 		// release watermark are present for deterministic ordering.
@@ -1269,6 +1271,11 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		// ownership is present.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if hasReanchorCompactionEpoch && !hasDriftReanchorEpoch {
+		// Quarantine post-reanchor lineage-compaction markers until explicit
+		// post-drift reanchor ownership is present.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	if !hasBridgeSequence {
 		bridgeSequence = 0
 		releaseWatermark = releaseEpoch
@@ -1321,26 +1328,30 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if !hasDriftReanchorEpoch {
 		driftReanchorEpoch = 0
 	}
+	if !hasReanchorCompactionEpoch {
+		reanchorCompactionEpoch = 0
+	}
 	if generationFloor > steadyGeneration {
 		// Quarantine unresolved retired-generation markers whose ownership
 		// points below the active retention floor.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
 	return rollbackFenceOwnershipOrdering{
-		epoch:                epoch,
-		bridgeSequence:       bridgeSequence,
-		drainWatermark:       drainWatermark,
-		liveHead:             liveHead,
-		steadyStateWatermark: steadyStateWatermark,
-		steadyGeneration:     steadyGeneration,
-		generationFloor:      generationFloor,
-		floorLiftEpoch:       floorLiftEpoch,
-		settleWindowEpoch:    settleWindowEpoch,
-		spilloverEpoch:       spilloverEpoch,
-		spilloverRejoinEpoch: spilloverRejoinEpoch,
-		rejoinSealEpoch:      rejoinSealEpoch,
-		sealDriftEpoch:       sealDriftEpoch,
-		driftReanchorEpoch:   driftReanchorEpoch,
+		epoch:                   epoch,
+		bridgeSequence:          bridgeSequence,
+		drainWatermark:          drainWatermark,
+		liveHead:                liveHead,
+		steadyStateWatermark:    steadyStateWatermark,
+		steadyGeneration:        steadyGeneration,
+		generationFloor:         generationFloor,
+		floorLiftEpoch:          floorLiftEpoch,
+		settleWindowEpoch:       settleWindowEpoch,
+		spilloverEpoch:          spilloverEpoch,
+		spilloverRejoinEpoch:    spilloverRejoinEpoch,
+		rejoinSealEpoch:         rejoinSealEpoch,
+		sealDriftEpoch:          sealDriftEpoch,
+		driftReanchorEpoch:      driftReanchorEpoch,
+		reanchorCompactionEpoch: reanchorCompactionEpoch,
 	}, true
 }
 
@@ -1431,6 +1442,12 @@ func compareRollbackFenceOwnershipOrdering(
 	case left.driftReanchorEpoch < right.driftReanchorEpoch:
 		return -1
 	case left.driftReanchorEpoch > right.driftReanchorEpoch:
+		return 1
+	}
+	switch {
+	case left.reanchorCompactionEpoch < right.reanchorCompactionEpoch:
+		return -1
+	case left.reanchorCompactionEpoch > right.reanchorCompactionEpoch:
 		return 1
 	default:
 		return 0
@@ -1660,6 +1677,54 @@ func parseRollbackFenceDriftReanchorEpoch(digest string) (int64, bool) {
 		return 0, false
 	}
 	return driftReanchorEpoch, true
+}
+
+func parseRollbackFenceReanchorCompactionEpoch(digest string) (int64, bool) {
+	const (
+		reanchorCompactionEpochKey     = "rollback-fence-reanchor-compaction-epoch="
+		postReanchorCompactionEpochKey = "rollback-fence-post-reanchor-compaction-epoch="
+		postDriftReanchorCompactionKey = "rollback-fence-post-drift-reanchor-compaction-epoch="
+	)
+
+	var (
+		reanchorCompactionEpoch int64
+		seen                    bool
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, reanchorCompactionEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, reanchorCompactionEpochKey))
+		case strings.HasPrefix(token, postReanchorCompactionEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, postReanchorCompactionEpochKey))
+		case strings.HasPrefix(token, postDriftReanchorCompactionKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, postDriftReanchorCompactionKey))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		parsedEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsedEpoch < 0 {
+			return 0, false
+		}
+		if !seen {
+			reanchorCompactionEpoch = parsedEpoch
+			seen = true
+			continue
+		}
+		if reanchorCompactionEpoch != parsedEpoch {
+			return 0, false
+		}
+	}
+
+	if !seen {
+		return 0, false
+	}
+	return reanchorCompactionEpoch, true
 }
 
 func isRollbackFenceTombstoneExpiryDigest(epoch int64, digest string) bool {
@@ -2004,7 +2069,7 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	// steady_state_watermark, steady_generation, generation_retention_floor,
 	// floor_lift_epoch, settle_window_epoch, spillover_epoch,
 	// spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch,
-	// drift_reanchor_epoch) ordering.
+	// drift_reanchor_epoch, reanchor_compaction_epoch) ordering.
 	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }
 
