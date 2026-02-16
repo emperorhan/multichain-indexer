@@ -837,6 +837,7 @@ ensure_issue_contract_defaults() {
 - replace-with-non-goals
 EOF
   fi
+  normalize_acceptance_criteria_checkboxes "${file}"
 }
 
 has_section() {
@@ -846,6 +847,46 @@ has_section() {
     $0 == "## " section { found=1; exit }
     END { exit(found ? 0 : 1) }
   ' "${file}"
+}
+
+normalize_acceptance_criteria_checkboxes() {
+  local file="$1"
+  local tmp_file
+  local rc=0
+  tmp_file="$(mktemp)"
+  awk '
+    BEGIN { in_section=0; changed=0 }
+    /^##[[:space:]]+Acceptance Criteria[[:space:]]*$/ {
+      in_section=1
+      print
+      next
+    }
+    in_section && /^##[[:space:]]+/ {
+      in_section=0
+    }
+    in_section && /^[[:space:]]*-[[:space:]]+\[[ xX]\][[:space:]]+/ {
+      print
+      next
+    }
+    in_section && /^[[:space:]]*-[[:space:]]+/ {
+      sub(/^[[:space:]]*-[[:space:]]+/, "- [ ] ")
+      changed=1
+      print
+      next
+    }
+    { print }
+    END { if (changed) exit 3 }
+  ' "${file}" > "${tmp_file}" || rc=$?
+
+  if [ "${rc}" -eq 3 ]; then
+    mv "${tmp_file}" "${file}"
+    return 0
+  fi
+  if [ "${rc}" -ne 0 ]; then
+    rm -f "${tmp_file}"
+    return 1
+  fi
+  rm -f "${tmp_file}"
 }
 
 validate_issue_contract_gate() {

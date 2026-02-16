@@ -15,18 +15,28 @@ PRD `R9` requires control-plane safety such that throughput-control behavior for
 After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-scoped control contract and counterexample matrix that proves no control bleed across mandatory chains.
 
 ## Control Coupling Contract
-- Cross-chain control coupling is a **control/cursor bleed**: any control output decision for chain `X` that consumes telemetry from a chain `Y != X` or writes to chain `Y` cursor/watermark controls.
+- Cross-chain control coupling is defined as **control/cursor bleed** if any control cycle for chain `X` satisfies one or more:
+  - `cross_chain_reads=true` when telemetry inputs include any chain `Y != X`.
+  - `cross_chain_writes=true` when emitted control payload writes knobs for chain `Y != X`.
+  - `peer_cursor_delta != 0` for any `Y != X`.
+  - `peer_watermark_delta != 0` for any `Y != X`.
+- Acceptance rule:
+  - `cross_chain_reads` and `cross_chain_writes` must be strictly false for all decision cycles.
+  - For all chains, all peer deltas must be zero for all `M95` slices.
 - Hard constraints:
   - Auto-tune for one chain consumes only chain-local telemetry inputs and local override/policy inputs.
   - Auto-tune emits only local knob updates (`batch`, `tick_interval`, `concurrency`) for that same chain runtime.
-  - A control perturbation in one chain must not change any peer-chain watermark or cursor path in a deterministic assertion.
-- Cross-chain control coupling is only tolerated if the value is `NO-OP` and never changes routing, commit order, cursor, or watermark of peers.
+  - A one-chain control perturbation must not change any peer-chain watermark or cursor path, even if that peer’s throughput profile differs.
 
 ## Reliability Contract
 1. Auto-tune/control outputs for one chain are driven by chain-local metrics only.
 2. One-chain control perturbation while peers progress produces `0` cross-chain control bleed and `0` cross-chain cursor/watermark bleed in deterministic counterexamples.
 3. Fail-fast correctness remains unchanged under control perturbation (no failed-path cursor/watermark advancement).
 4. Chain-scoped control behavior is represented with deterministic evidence artifacts under `.ralph/reports/`.
+5. A counterexample outcome is `NO-GO` if any decision row has:
+   - `cross_chain_reads=true` or `cross_chain_writes=true`
+   - `peer_cursor_delta != 0` or `peer_watermark_delta != 0`
+   - missing required row schema.
 
 ## Invariants
 - `canonical_event_id_unique`
@@ -40,6 +50,30 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
 2. `0` failed-path cursor/watermark advancement findings caused by control perturbation in the same evidence family.
 3. `0` regressions on `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
 4. Validation passes: `make test`, `make test-sidecar`, `make lint`.
+
+## Counterexample Contract (Machine-Checkable)
+- Matrix family: `I-0501-m95-s1-control-perturbation-continuity-matrix.md`.
+- Deterministic perturbation vectors:
+  - `single_chain_lag_spike`
+  - `single_chain_queue_depth_jolt`
+  - `single_chain_telemetry_glitch`
+  - `single_chain_override_conflict`
+- Each row must expose:
+  - `test_id`
+  - `mutated_chain`
+  - `control_input_perturbation`
+  - `peer_chain`
+  - `cross_chain_reads`
+  - `cross_chain_writes`
+  - `peer_cursor_delta`
+  - `peer_watermark_delta`
+  - `outcome` (`GO` / `NO-GO`)
+  - `evidence_present` (`true` / `false`)
+- GO rule:
+  - all perturbation rows for a test have `cross_chain_reads=false`, `cross_chain_writes=false`, `peer_cursor_delta=0`, `peer_watermark_delta=0`, `outcome=GO`, and `evidence_present=true`.
+- NO-GO triggers if:
+  - any row has `outcome=NO-GO`, or
+  - any required row key is missing or malformed.
 
 ## Deterministic Control Metric Inventory
 - For every `solana-devnet`, `base-sepolia`, and `btc-testnet`, producers of auto-tune signals must expose:
@@ -82,10 +116,15 @@ Required artifact schema: one row per control cycle, keyed by `(chain, network, 
 
 ## GO/NO-GO Acceptance Logic
 - `GO` requires:
-  - all control matrix rows have `cross_chain_reads=false` and `cross_chain_writes=false`
-  - all perturbation rows have peer cursor delta = 0 and peer watermark delta = 0
-  - all continuity rows pass invariants in matrix
-- `NO-GO` if any of the above checks fail or if any evidence artifact is missing.
+  - all required evidence artifacts exist
+  - all control matrix rows have:
+    - `cross_chain_reads=false`
+    - `cross_chain_writes=false`
+    - `peer_cursor_delta=0`
+    - `peer_watermark_delta=0`
+    - `outcome=GO`
+  - all continuity rows pass invariants in matrix and contain deterministic fixtures.
+- `NO-GO` if any of the above checks fail.
 
 ## Decision Hook
 - `DP-0106-M95`: control telemetry and control outputs are chain-local for mandatory chains; any measurable cross-chain control coupling is a hard gate failure until remediated.

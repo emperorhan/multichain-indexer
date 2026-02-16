@@ -3782,13 +3782,14 @@ PRD traceability:
 
 #### Definition Of Done
 1. Mandatory-chain control contracts make explicit that auto-tune/control decisions for one chain consume only chain-local telemetry and do not write/drive another chain’s cursor/watermark behavior.
-2. Control coupling counterexample matrix and evidence requirements are defined with deterministic reproducibility under peer-chain progress.
+2. Control coupling counterexample matrix and evidence requirements are defined with deterministic reproducibility under peer-chain progress and explicit machine-checkable row contracts for `cross_chain_reads`, `cross_chain_writes`, and peer cursor/watermark deltas.
 3. PRD acceptance contract remains `make test`, `make test-sidecar`, `make lint`.
-4. Cross-chain control perturbation cases define measurable `GO`/`NO-GO` outcomes for `M95`.
+4. Cross-chain control perturbation cases define measurable `GO`/`NO-GO` outcomes for `M95` via the schema in the chain-scoped control spec.
 5. Required evidentiary artifacts are defined with deterministic row schema and stored under `.ralph/reports/`.
 
 #### Test Contract
-1. Deterministic control-metric matrix asserting chain-local decision inputs for `solana`, `base`, and `btc`.
+1. Deterministic control-metric matrix asserting chain-local decision inputs for `solana`, `base`, and `btc`, with row keys and checks:  
+   `chain`, `network`, `cycle_seq`, `decision_epoch_ms`, `decision_inputs_hash`, `decision_outputs`, `cross_chain_reads`, `cross_chain_writes`, `peer_cursor_delta`, `peer_watermark_delta`.
 2. One-chain control perturbation fixture families with peer-chain progression asserting `0` cross-chain control/cursor bleed and `0` failed-path cursor/watermark progression.
 3. Replay continuity assertions preserve `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`, and `signed_delta_conservation`.
 4. QA evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M95`.
@@ -3801,11 +3802,12 @@ PRD traceability:
 1. `0` cross-chain control bleed findings in deterministic control perturbation matrices for mandatory chains.
 2. `0` failed-path cursor/watermark progression findings in control perturbation matrices.
 3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
-4. Artifact schema checks pass for `I-0501` matrices (required row keys and `NO-GO` conditions absent): 
+4. Artifact schema checks pass for `I-0501` matrices (required row keys and `NO-GO` conditions absent):
    - `cross_chain_reads=false`
    - `cross_chain_writes=false`
-   - peer cursor delta = `0`
-   - peer watermark delta = `0`
+   - `peer_cursor_delta=0`
+   - `peer_watermark_delta=0`
+   - perturbation row outcome must include `outcome=GO`.
 5. Validation commands pass.
 
 #### Risk Gate + Fallback
