@@ -3761,7 +3761,7 @@ PRD traceability:
 - Gate: class-level coverage can hide path omission if class partitioning is incomplete or unguarded.
 - Fallback: enforce `DP-0105-M94` by failing `M94` promotion until Solana/Base `mint`/`burn` debt-clearance artifacts are present and replay continuity evidence confirms zero drift.
 
-### M95. PRD-Priority Chain-Scoped Throughput Control Isolation Gate Tranche C0085 (P0, Active)
+### M95. PRD-Priority Chain-Scoped Throughput Control Isolation Gate Tranche C0086 (P0, Active)
 
 #### Objective
 Close remaining PRD `R9` obligations by proving chain-scoped auto-tune/control signals do not couple mandatory chains, while preserving PRD identity/replay invariants and fail-fast safety under control perturbation.
@@ -3774,6 +3774,7 @@ PRD traceability:
 #### Entry Gate
 - `M94` exit gate green with PRD closeout evidence for event coverage and fail-fast continuity.
 - Existing control telemetry and control-surface contracts for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) are documented and reviewable.
+- `I-0501` must publish a deterministic control-metric inventory and evidence contract in `specs/m95-prd-chain-scoped-autotune-control-gate.md` before `M95-S2`.
 
 #### Slices
 1. `M95-S1` (`I-0501`): define PRD-traceable chain-scoped control contracts and control-metric inventory requirements in `IMPLEMENTATION_PLAN.md` and `specs/m95-prd-chain-scoped-autotune-control-gate.md`.
@@ -3784,18 +3785,28 @@ PRD traceability:
 2. Control coupling counterexample matrix and evidence requirements are defined with deterministic reproducibility under peer-chain progress.
 3. PRD acceptance contract remains `make test`, `make test-sidecar`, `make lint`.
 4. Cross-chain control perturbation cases define measurable `GO`/`NO-GO` outcomes for `M95`.
+5. Required evidentiary artifacts are defined with deterministic row schema and stored under `.ralph/reports/`.
 
 #### Test Contract
 1. Deterministic control-metric matrix asserting chain-local decision inputs for `solana`, `base`, and `btc`.
 2. One-chain control perturbation fixture families with peer-chain progression asserting `0` cross-chain control/cursor bleed and `0` failed-path cursor/watermark progression.
 3. Replay continuity assertions preserve `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`, and `signed_delta_conservation`.
 4. QA evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M95`.
+5. `I-0501` evidence artifacts:
+   - `.ralph/reports/I-0501-m95-s1-control-scope-metric-matrix.md`
+   - `.ralph/reports/I-0501-m95-s1-cross-coupling-matrix.md`
+   - `.ralph/reports/I-0501-m95-s1-control-perturbation-continuity-matrix.md`
 
 #### Exit Gate (Measurable)
 1. `0` cross-chain control bleed findings in deterministic control perturbation matrices for mandatory chains.
 2. `0` failed-path cursor/watermark progression findings in control perturbation matrices.
 3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
-4. Validation commands pass.
+4. Artifact schema checks pass for `I-0501` matrices (required row keys and `NO-GO` conditions absent): 
+   - `cross_chain_reads=false`
+   - `cross_chain_writes=false`
+   - peer cursor delta = `0`
+   - peer watermark delta = `0`
+5. Validation commands pass.
 
 #### Risk Gate + Fallback
 - Gate: PRD `R9` can become untestable if control coupling checks only cover nominal telemetry and omit adversarial perturbation.
