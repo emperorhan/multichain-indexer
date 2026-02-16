@@ -16,92 +16,41 @@ BLOCKED_DIR="${RALPH_ROOT}/blocked"
 LOGS_DIR="${RALPH_ROOT}/logs"
 AUTOMANAGER_STATE_FILE="${RALPH_ROOT}/state.automanager_last_run"
 
-get_meta_value() {
-  local key="$1"
-  local file="$2"
-  awk -F': ' -v key="${key}" '$1 == key { print $2; exit }' "${file}" 2>/dev/null || true
-}
+roles=("planner" "developer" "qa")
 
-get_issue_status() {
+read_issue_meta() {
   local file="$1"
-  local status
-  status="$(get_meta_value "status" "${file}")"
-  [ -n "${status}" ] || status="ready"
-  echo "${status}"
+  awk -F': ' '
+    BEGIN { id=""; role=""; status=""; title="" }
+    $1=="id" && id=="" { id=$2; next }
+    $1=="role" && role=="" { role=$2; next }
+    $1=="status" && status=="" { status=$2; next }
+    $1=="title" && title=="" { title=$2; next }
+    END {
+      if (role == "") role = "developer"
+      if (status == "") status = "ready"
+      print id "\t" role "\t" status "\t" title
+    }
+  ' "${file}" 2>/dev/null
 }
 
-format_issue_brief() {
-  local file="$1"
-  local id role status title
-  id="$(get_meta_value "id" "${file}")"
-  role="$(get_meta_value "role" "${file}")"
-  status="$(get_issue_status "${file}")"
-  title="$(get_meta_value "title" "${file}")"
-  echo "${id:-unknown} | ${role:-unknown} | ${status} | ${title:-untitled}"
-}
-
-find_current_in_progress_for_role() {
+is_tracked_role() {
   local role="$1"
-  local file file_role
-  while IFS= read -r file; do
-    [ -f "${file}" ] || continue
-    file_role="$(get_meta_value "role" "${file}")"
-    [ -n "${file_role}" ] || file_role="developer"
-    if [ "${file_role}" = "${role}" ]; then
-      echo "${file}"
+  local candidate
+  for candidate in "${roles[@]}"; do
+    if [ "${candidate}" = "${role}" ]; then
       return 0
     fi
-  done < <(find "${IN_PROGRESS_DIR}" -maxdepth 1 -type f -name 'I-*.md' 2>/dev/null | sort)
+  done
   return 1
 }
 
-find_next_ready_for_role() {
-  local role="$1"
-  local file file_role status
-  while IFS= read -r file; do
-    [ -f "${file}" ] || continue
-    status="$(get_issue_status "${file}")"
-    [ "${status}" = "ready" ] || continue
-    file_role="$(get_meta_value "role" "${file}")"
-    [ -n "${file_role}" ] || file_role="developer"
-    if [ "${file_role}" = "${role}" ]; then
-      echo "${file}"
-      return 0
-    fi
-  done < <(find "${ISSUES_DIR}" -maxdepth 1 -type f -name 'I-*.md' 2>/dev/null | sort)
-  return 1
-}
-
-count_ready_for_role() {
-  local role="$1"
-  local file file_role status count
-  count=0
-  while IFS= read -r file; do
-    [ -f "${file}" ] || continue
-    status="$(get_issue_status "${file}")"
-    [ "${status}" = "ready" ] || continue
-    file_role="$(get_meta_value "role" "${file}")"
-    [ -n "${file_role}" ] || file_role="developer"
-    if [ "${file_role}" = "${role}" ]; then
-      count=$((count + 1))
-    fi
-  done < <(find "${ISSUES_DIR}" -maxdepth 1 -type f -name 'I-*.md' 2>/dev/null | sort)
-  echo "${count}"
-}
-
-count_in_progress_for_role() {
-  local role="$1"
-  local file file_role count
-  count=0
-  while IFS= read -r file; do
-    [ -f "${file}" ] || continue
-    file_role="$(get_meta_value "role" "${file}")"
-    [ -n "${file_role}" ] || file_role="developer"
-    if [ "${file_role}" = "${role}" ]; then
-      count=$((count + 1))
-    fi
-  done < <(find "${IN_PROGRESS_DIR}" -maxdepth 1 -type f -name 'I-*.md' 2>/dev/null | sort)
-  echo "${count}"
+issue_brief() {
+  local id="$1"
+  local role="$2"
+  local status="$3"
+  local title="$4"
+  echo "${id:-unknown} | ${role:-unknown} | ${status:-unknown} | ${title:-untitled}"
 }
 
 get_done_completed_at() {
@@ -113,75 +62,6 @@ get_done_completed_at() {
     return 0
   fi
   stat -c '%y' "${file}" 2>/dev/null | awk '{print $1" "$2" "$3}' || true
-}
-
-find_last_done_for_role() {
-  local role="$1"
-  local file file_role
-  while IFS= read -r file; do
-    [ -f "${file}" ] || continue
-    file_role="$(get_meta_value "role" "${file}")"
-    [ -n "${file_role}" ] || file_role="developer"
-    if [ "${file_role}" = "${role}" ]; then
-      echo "${file}"
-      return 0
-    fi
-  done < <(find "${DONE_DIR}" -maxdepth 1 -type f -name 'I-*.md' -printf '%T@|%p\n' 2>/dev/null | sort -t'|' -k1,1nr | awk -F'|' '{print $2}')
-  return 1
-}
-
-last_processing_log_for_role() {
-  local role="$1"
-  if ! command -v journalctl >/dev/null 2>&1; then
-    return 1
-  fi
-  journalctl --user -u "${SERVICE_NAME}" -n 300 --no-pager 2>/dev/null \
-    | grep -F '[ralph-local] processing' \
-    | grep -F "role=${role}" \
-    | tail -n 1 || true
-}
-
-print_role_section() {
-  local role="$1"
-  local ready_count in_progress_count
-  local current_file next_file last_done_file
-  local last_processing completed_at
-
-  ready_count="$(count_ready_for_role "${role}")"
-  in_progress_count="$(count_in_progress_for_role "${role}")"
-
-  echo
-  echo "### ${role}"
-  echo "- in_progress_count: ${in_progress_count}"
-  echo "- ready_queue_count: ${ready_count}"
-
-  current_file="$(find_current_in_progress_for_role "${role}" || true)"
-  if [ -n "${current_file}" ]; then
-    echo "- current_task: $(format_issue_brief "${current_file}")"
-  else
-    echo "- current_task: none"
-  fi
-
-  next_file="$(find_next_ready_for_role "${role}" || true)"
-  if [ -n "${next_file}" ]; then
-    echo "- next_ready_task: $(format_issue_brief "${next_file}")"
-  else
-    echo "- next_ready_task: none"
-  fi
-
-  last_done_file="$(find_last_done_for_role "${role}" || true)"
-  if [ -n "${last_done_file}" ]; then
-    completed_at="$(get_done_completed_at "${last_done_file}")"
-    echo "- last_completed_task: $(format_issue_brief "${last_done_file}")"
-    echo "- last_completed_at: ${completed_at:-unknown}"
-  else
-    echo "- last_completed_task: none"
-  fi
-
-  last_processing="$(last_processing_log_for_role "${role}" || true)"
-  if [ -n "${last_processing}" ]; then
-    echo "- last_processing_log: ${last_processing}"
-  fi
 }
 
 format_epoch_utc() {
@@ -202,8 +82,120 @@ automanager_last_log_file() {
 }
 
 count_open_cycle_issues() {
-  grep -R -E -l "automanager_key:[[:space:]]*auto-quality-cycle-" \
-    "${ISSUES_DIR}" "${IN_PROGRESS_DIR}" "${BLOCKED_DIR}" 2>/dev/null | wc -l | awk '{print $1}'
+  if command -v rg >/dev/null 2>&1; then
+    {
+      rg -l "automanager_key:[[:space:]]*auto-quality-cycle-" \
+        "${ISSUES_DIR}" "${IN_PROGRESS_DIR}" "${BLOCKED_DIR}" 2>/dev/null || true
+    } | wc -l | awk '{print $1}'
+    return 0
+  fi
+  {
+    grep -R -E -l "automanager_key:[[:space:]]*auto-quality-cycle-" \
+      "${ISSUES_DIR}" "${IN_PROGRESS_DIR}" "${BLOCKED_DIR}" 2>/dev/null || true
+  } | wc -l | awk '{print $1}'
+}
+
+declare -A ready_count in_progress_count current_brief next_brief last_done_brief last_done_path
+for role in "${roles[@]}"; do
+  ready_count["${role}"]=0
+  in_progress_count["${role}"]=0
+  current_brief["${role}"]=""
+  next_brief["${role}"]=""
+  last_done_brief["${role}"]=""
+  last_done_path["${role}"]=""
+done
+
+mapfile -t in_progress_files < <(find "${IN_PROGRESS_DIR}" -maxdepth 1 -type f -name 'I-*.md' 2>/dev/null | sort)
+for file in "${in_progress_files[@]}"; do
+  [ -f "${file}" ] || continue
+  IFS=$'\t' read -r id role status title < <(read_issue_meta "${file}")
+  if ! is_tracked_role "${role}"; then
+    continue
+  fi
+  in_progress_count["${role}"]=$((in_progress_count["${role}"] + 1))
+  if [ -z "${current_brief[${role}]}" ]; then
+    current_brief["${role}"]="$(issue_brief "${id}" "${role}" "in-progress" "${title}")"
+  fi
+done
+
+mapfile -t queue_files < <(find "${ISSUES_DIR}" -maxdepth 1 -type f -name 'I-*.md' 2>/dev/null | sort)
+for file in "${queue_files[@]}"; do
+  [ -f "${file}" ] || continue
+  IFS=$'\t' read -r id role status title < <(read_issue_meta "${file}")
+  if ! is_tracked_role "${role}"; then
+    continue
+  fi
+  if [ "${status}" != "ready" ]; then
+    continue
+  fi
+  ready_count["${role}"]=$((ready_count["${role}"] + 1))
+  if [ -z "${next_brief[${role}]}" ]; then
+    next_brief["${role}"]="$(issue_brief "${id}" "${role}" "${status}" "${title}")"
+  fi
+done
+
+while IFS='|' read -r _mtime file; do
+  [ -f "${file}" ] || continue
+  IFS=$'\t' read -r id role status title < <(read_issue_meta "${file}")
+  if ! is_tracked_role "${role}"; then
+    continue
+  fi
+  if [ -n "${last_done_path[${role}]}" ]; then
+    continue
+  fi
+  last_done_path["${role}"]="${file}"
+  last_done_brief["${role}"]="$(issue_brief "${id}" "${role}" "${status}" "${title}")"
+done < <(find "${DONE_DIR}" -maxdepth 1 -type f -name 'I-*.md' -printf '%T@|%p\n' 2>/dev/null | sort -t'|' -k1,1nr)
+
+processing_logs=""
+if command -v journalctl >/dev/null 2>&1; then
+  processing_logs="$(journalctl --user -u "${SERVICE_NAME}" -n 300 --no-pager 2>/dev/null | grep -F '[ralph-local] processing' || true)"
+fi
+
+last_processing_log_for_role() {
+  local role="$1"
+  if [ -z "${processing_logs}" ]; then
+    return 0
+  fi
+  awk -v role="${role}" '
+    index($0, "role=" role) { last=$0 }
+    END { if (last != "") print last }
+  ' <<<"${processing_logs}"
+}
+
+print_role_section() {
+  local role="$1"
+  local last_processing completed_at
+
+  echo
+  echo "### ${role}"
+  echo "- in_progress_count: ${in_progress_count[${role}]:-0}"
+  echo "- ready_queue_count: ${ready_count[${role}]:-0}"
+
+  if [ -n "${current_brief[${role}]}" ]; then
+    echo "- current_task: ${current_brief[${role}]}"
+  else
+    echo "- current_task: none"
+  fi
+
+  if [ -n "${next_brief[${role}]}" ]; then
+    echo "- next_ready_task: ${next_brief[${role}]}"
+  else
+    echo "- next_ready_task: none"
+  fi
+
+  if [ -n "${last_done_path[${role}]}" ]; then
+    completed_at="$(get_done_completed_at "${last_done_path[${role}]}")"
+    echo "- last_completed_task: ${last_done_brief[${role}]}"
+    echo "- last_completed_at: ${completed_at:-unknown}"
+  else
+    echo "- last_completed_task: none"
+  fi
+
+  last_processing="$(last_processing_log_for_role "${role}" || true)"
+  if [ -n "${last_processing}" ]; then
+    echo "- last_processing_log: ${last_processing}"
+  fi
 }
 
 service_active="unknown"

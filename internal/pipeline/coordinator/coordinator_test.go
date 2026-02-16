@@ -1277,6 +1277,157 @@ func TestTick_AutoTuneOneChainRestartUnderLagPressureNoCrossChainBleed(t *testin
 	assertCursorMonotonicByAddress(t, laggingRestartSnapshots)
 }
 
+func TestTick_TopologyABCOneChainRestartReplayIsolationAcrossMandatoryChains_NoCrossChainControlOrCursorBleed(t *testing.T) {
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          200,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+
+	topologyModes := []struct {
+		name       string
+		crashTicks []int
+	}{
+		{name: "A", crashTicks: nil},
+		{name: "B", crashTicks: []int{3}},
+		{name: "C", crashTicks: []int{2, 4}},
+	}
+
+	const tickCount = 6
+	healthyBaseAddress := "0x1111111111111111111111111111111111111111"
+	healthyBTCAddress := "tb1qtopologymatrixpeer0000000000000000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKtopology"
+
+	healthyHeads := []int64{130, 131, 132, 133, 134, 135}
+	laggingHeads := []int64{2000, 2001, 2002, 2003, 2004, 2005}
+
+	baseBaselineHarness := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaselineHarness, tickCount)
+
+	btcBaselineHarness := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		autoTuneCfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaselineHarness, tickCount)
+
+	for _, topology := range topologyModes {
+		topology := topology
+		t.Run("topology_"+topology.name, func(t *testing.T) {
+			laggingBaselineSnapshots, laggingBaselineBatches := runAutoTuneTraceWithPolicyScheduleAndCrashpoints(
+				t,
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				100,
+				laggingHeads,
+				autoTuneCfg,
+				nil,
+				topology.crashTicks,
+			)
+
+			baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+				model.ChainBase,
+				model.NetworkSepolia,
+				healthyBaseAddress,
+				120,
+				healthyHeads,
+				autoTuneCfg,
+			)
+			btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+				model.ChainBTC,
+				model.NetworkTestnet,
+				healthyBTCAddress,
+				120,
+				healthyHeads,
+				autoTuneCfg,
+			)
+			laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				100,
+				laggingHeads,
+				autoTuneCfg,
+			)
+
+			crashByTick := make(map[int]struct{}, len(topology.crashTicks))
+			for _, tick := range topology.crashTicks {
+				crashByTick[tick] = struct{}{}
+			}
+
+			baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+			baseBatches := make([]int, 0, tickCount)
+			btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+			btcBatches := make([]int, 0, tickCount)
+			laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+			laggingBatches := make([]int, 0, tickCount)
+
+			for i := 0; i < tickCount; i++ {
+				if _, restart := crashByTick[i]; restart {
+					restartState := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+					require.NotNil(t, restartState)
+					resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+					require.NotNil(t, resumeCursor)
+					laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+						model.ChainSolana,
+						model.NetworkDevnet,
+						laggingSolanaAddress,
+						resumeCursor.CursorSequence,
+						laggingHeads[i:],
+						autoTuneCfg,
+						restartState,
+					)
+				}
+
+				laggingJob := laggingInterleaved.tickAndAdvance(t)
+				laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+				laggingBatches = append(laggingBatches, laggingJob.BatchSize)
+
+				baseJob := baseInterleaved.tickAndAdvance(t)
+				baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+				baseBatches = append(baseBatches, baseJob.BatchSize)
+
+				btcJob := btcInterleaved.tickAndAdvance(t)
+				btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+				btcBatches = append(btcBatches, btcJob.BatchSize)
+			}
+
+			assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "topology %s lagging-chain restart/replay must not bleed cursor progression into base", topology.name)
+			assert.Equal(t, baseBaselineBatches, baseBatches, "topology %s lagging-chain restart/replay must not bleed control decisions into base", topology.name)
+			assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "topology %s lagging-chain restart/replay must not bleed cursor progression into btc", topology.name)
+			assert.Equal(t, btcBaselineBatches, btcBatches, "topology %s lagging-chain restart/replay must not bleed control decisions into btc", topology.name)
+			assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "topology %s lagging-chain restart/replay must preserve lagging-chain canonical tuples", topology.name)
+			assert.Equal(t, laggingBaselineBatches, laggingBatches, "topology %s lagging-chain restart/replay must preserve lagging-chain control decisions", topology.name)
+
+			assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "topology "+topology.name+" base baseline vs interleaved")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "topology "+topology.name+" btc baseline vs interleaved")
+			assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "topology "+topology.name+" lagging baseline vs interleaved")
+
+			assertCursorMonotonicByAddress(t, baseSnapshots)
+			assertCursorMonotonicByAddress(t, btcSnapshots)
+			assertCursorMonotonicByAddress(t, laggingSnapshots)
+		})
+	}
+}
+
 func TestTick_AutoTuneWarmStartRejectsCrossChainState(t *testing.T) {
 	autoTuneCfg := AutoTuneConfig{
 		Enabled:               true,

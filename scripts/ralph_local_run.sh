@@ -56,8 +56,9 @@ LIB_DIR="${SCRIPT_DIR}/lib"
 ISSUE_META_LIB="${LIB_DIR}/ralph_issue_meta.sh"
 LOG_RETENTION_LIB="${LIB_DIR}/ralph_log_retention.sh"
 VALIDATION_STATE_LIB="${LIB_DIR}/ralph_validation_state.sh"
+QUEUE_LIB="${LIB_DIR}/ralph_queue.sh"
 
-for lib_file in "${ISSUE_META_LIB}" "${LOG_RETENTION_LIB}" "${VALIDATION_STATE_LIB}"; do
+for lib_file in "${ISSUE_META_LIB}" "${LOG_RETENTION_LIB}" "${VALIDATION_STATE_LIB}" "${QUEUE_LIB}"; do
   if [ ! -f "${lib_file}" ]; then
     echo "required library missing: ${lib_file}" >&2
     exit 2
@@ -124,6 +125,8 @@ LOG_RETENTION_MAX_BYTES="${RALPH_LOG_RETENTION_MAX_BYTES:-2147483648}"
 LOG_RETENTION_MAX_FILES="${RALPH_LOG_RETENTION_MAX_FILES:-1200}"
 LOG_RETENTION_MAX_AGE_DAYS="${RALPH_LOG_RETENTION_MAX_AGE_DAYS:-14}"
 LOG_RETENTION_COOLDOWN_SEC="${RALPH_LOG_RETENTION_COOLDOWN_SEC:-300}"
+LOG_RETENTION_PROTECTED_MAX_BYTES="${RALPH_LOG_RETENTION_PROTECTED_MAX_BYTES:-134217728}"
+LOG_RETENTION_PROTECTED_TAIL_BYTES="${RALPH_LOG_RETENTION_PROTECTED_TAIL_BYTES:-33554432}"
 RISK_SCORE_COMPLEX_THRESHOLD="${RALPH_RISK_SCORE_COMPLEX_THRESHOLD:-7}"
 LEARNING_CONTEXT_LINES="${RALPH_LEARNING_CONTEXT_LINES:-40}"
 LEARNING_CONTEXT_ITEMS="${RALPH_LEARNING_CONTEXT_ITEMS:-${LEARNING_CONTEXT_LINES}}"
@@ -1182,185 +1185,6 @@ generate_evidence_pack() {
   EVIDENCE_FILE_PATH="${evidence_file}"
 }
 
-dependency_satisfied() {
-  local dep="$1"
-  [ -z "${dep}" ] && return 0
-  [ -f "${DONE_DIR}/${dep}.md" ]
-}
-
-all_dependencies_satisfied() {
-  local deps_csv="$1"
-  local dep
-  [ -z "${deps_csv}" ] && return 0
-  while IFS= read -r dep; do
-    dep="$(awk '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0); print}' <<<"${dep}")"
-    [ -n "${dep}" ] || continue
-    if ! dependency_satisfied "${dep}"; then
-      return 1
-    fi
-  done < <(printf '%s\n' "${deps_csv}" | tr ',' '\n')
-  return 0
-}
-
-set_issue_status() {
-  local file="$1"
-  local status="$2"
-  local tmp_file
-
-  [ -f "${file}" ] || return 0
-  tmp_file="${file}.tmp"
-  awk -v status="${status}" '
-    BEGIN { in_header=1; replaced=0; inserted=0 }
-    in_header && /^---[[:space:]]*$/ {
-      if (!replaced) {
-        print "status: " status
-        inserted=1
-      }
-      in_header=0
-      print
-      next
-    }
-    in_header && /^status:[[:space:]]*/ {
-      print "status: " status
-      replaced=1
-      next
-    }
-    { print }
-    END {
-      if (in_header && !replaced && !inserted) {
-        print "status: " status
-      }
-    }
-  ' "${file}" > "${tmp_file}"
-  mv "${tmp_file}" "${file}"
-}
-
-file_mtime_epoch() {
-  local file="$1"
-  if stat -c %Y "${file}" >/dev/null 2>&1; then
-    stat -c %Y "${file}"
-    return 0
-  fi
-  date -r "${file}" +%s
-}
-
-get_blocked_retry_count() {
-  local issue_id="$1"
-  local count
-  count="$(awk -v issue_id="${issue_id}" '
-    $1 == issue_id {
-      if ($2 ~ /^[0-9]+$/) {
-        print $2
-      } else {
-        print 0
-      }
-      found=1
-      exit
-    }
-    END {
-      if (!found) {
-        print 0
-      }
-    }
-  ' "${BLOCKED_RETRY_STATE_FILE}" 2>/dev/null || echo 0)"
-  if ! [[ "${count}" =~ ^[0-9]+$ ]]; then
-    count=0
-  fi
-  echo "${count}"
-}
-
-set_blocked_retry_count() {
-  local issue_id="$1"
-  local count="$2"
-  local tmp_file
-  tmp_file="${BLOCKED_RETRY_STATE_FILE}.tmp"
-  awk -v issue_id="${issue_id}" -v count="${count}" '
-    BEGIN { updated=0 }
-    $1 == issue_id {
-      print issue_id " " count
-      updated=1
-      next
-    }
-    NF > 0 { print }
-    END {
-      if (!updated) {
-        print issue_id " " count
-      }
-    }
-  ' "${BLOCKED_RETRY_STATE_FILE}" > "${tmp_file}"
-  mv "${tmp_file}" "${BLOCKED_RETRY_STATE_FILE}"
-}
-
-clear_blocked_retry_count() {
-  local issue_id="$1"
-  local tmp_file
-  tmp_file="${BLOCKED_RETRY_STATE_FILE}.tmp"
-  awk -v issue_id="${issue_id}" '
-    $1 == issue_id { next }
-    NF > 0 { print }
-  ' "${BLOCKED_RETRY_STATE_FILE}" > "${tmp_file}"
-  mv "${tmp_file}" "${BLOCKED_RETRY_STATE_FILE}"
-}
-
-pick_retryable_blocked_issue() {
-  local file issue_id deps attempts now cooldown age blocked_at
-  [ "${BLOCKED_REQUEUE_ENABLED}" = "true" ] || return 1
-  now="$(date -u +%s)"
-  cooldown="${BLOCKED_REQUEUE_COOLDOWN_SEC}"
-
-  while IFS= read -r file; do
-    [ -f "${file}" ] || continue
-    issue_id="$(meta_value "${file}" "id")"
-    [ -n "${issue_id}" ] || issue_id="$(basename "${file}" .md)"
-    deps="$(meta_value "${file}" "depends_on")"
-    if ! all_dependencies_satisfied "${deps}"; then
-      continue
-    fi
-
-    attempts="$(get_blocked_retry_count "${issue_id}")"
-    if [ "${attempts}" -ge "${BLOCKED_REQUEUE_MAX_ATTEMPTS}" ]; then
-      continue
-    fi
-
-    blocked_at="$(file_mtime_epoch "${file}")"
-    if ! [[ "${blocked_at}" =~ ^[0-9]+$ ]]; then
-      blocked_at="${now}"
-    fi
-    age=$((now - blocked_at))
-    if [ "${age}" -lt "${cooldown}" ]; then
-      continue
-    fi
-
-    printf '%s|%s|%s\n' "${file}" "${issue_id}" "${attempts}"
-    return 0
-  done < <(find "${BLOCKED_DIR}" -maxdepth 1 -type f -name '*.md' | sort)
-
-  return 1
-}
-
-requeue_retryable_blocked_issue() {
-  local candidate file issue_id attempts next_attempt queue_path
-  candidate="$(pick_retryable_blocked_issue || true)"
-  [ -n "${candidate}" ] || return 1
-
-  file="$(printf '%s' "${candidate}" | awk -F'|' '{print $1}')"
-  issue_id="$(printf '%s' "${candidate}" | awk -F'|' '{print $2}')"
-  attempts="$(printf '%s' "${candidate}" | awk -F'|' '{print $3}')"
-  [ -f "${file}" ] || return 1
-
-  set_issue_status "${file}" "ready"
-  queue_path="${QUEUE_DIR}/${issue_id}.md"
-  if [ -f "${queue_path}" ]; then
-    queue_path="${QUEUE_DIR}/retry-${issue_id}-$(date -u +%Y%m%dT%H%M%SZ).md"
-  fi
-  mv "${file}" "${queue_path}"
-
-  next_attempt=$((attempts + 1))
-  set_blocked_retry_count "${issue_id}" "${next_attempt}"
-  echo "[ralph-local] requeued blocked issue ${issue_id} (attempt ${next_attempt}/${BLOCKED_REQUEUE_MAX_ATTEMPTS})"
-  return 0
-}
-
 get_automanager_last_run() {
   awk 'NR==1 { if ($1 ~ /^[0-9]+$/) print $1; else print 0; exit }' "${AUTOMANAGER_STATE_FILE}" 2>/dev/null || echo 0
 }
@@ -1402,23 +1226,6 @@ run_automanager_if_due() {
     return 0
   fi
   echo "[ralph-local] automanager ran with no new ready issue log=${log_file}"
-  return 1
-}
-
-pick_next_issue() {
-  local file status deps
-  while IFS= read -r file; do
-    [ -f "${file}" ] || continue
-    status="$(meta_value "${file}" "status")"
-    [ -n "${status}" ] || status="ready"
-    [ "${status}" = "ready" ] || continue
-    deps="$(meta_value "${file}" "depends_on")"
-    if ! all_dependencies_satisfied "${deps}"; then
-      continue
-    fi
-    echo "${file}"
-    return 0
-  done < <(find "${QUEUE_DIR}" -maxdepth 1 -type f -name 'I-*.md' | sort)
   return 1
 }
 

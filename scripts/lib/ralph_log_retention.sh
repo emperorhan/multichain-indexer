@@ -50,8 +50,9 @@ remove_log_file() {
 
 run_log_retention_if_due() {
   local enabled now last elapsed cooldown max_age_days max_files max_bytes
+  local protected_max_bytes protected_tail_bytes
   local deleted_count reclaimed_bytes bytes_before bytes_after total_files overflow i
-  local oldest_file oldest_size old_file old_size
+  local oldest_file oldest_size old_file old_size tmp_file new_size
 
   enabled="$(printf '%s' "${LOG_RETENTION_ENABLED}" | tr '[:upper:]' '[:lower:]')"
   [ "${enabled}" = "true" ] || return 0
@@ -68,10 +69,33 @@ run_log_retention_if_due() {
   max_age_days="$(to_nonneg_int "${LOG_RETENTION_MAX_AGE_DAYS}" 14)"
   max_files="$(to_nonneg_int "${LOG_RETENTION_MAX_FILES}" 1200)"
   max_bytes="$(to_nonneg_int "${LOG_RETENTION_MAX_BYTES}" 2147483648)"
+  protected_max_bytes="$(to_nonneg_int "${LOG_RETENTION_PROTECTED_MAX_BYTES}" 134217728)"
+  protected_tail_bytes="$(to_nonneg_int "${LOG_RETENTION_PROTECTED_TAIL_BYTES}" 33554432)"
+  if [ "${protected_tail_bytes}" -gt "${protected_max_bytes}" ]; then
+    protected_tail_bytes="${protected_max_bytes}"
+  fi
 
   deleted_count=0
   reclaimed_bytes=0
   bytes_before="$(log_dir_total_bytes)"
+
+  # Keep supervisor/runner logs bounded without deleting them.
+  for old_file in "${LOGS_DIR}/runner.out" "${LOGS_DIR}/supervisor.out"; do
+    [ -f "${old_file}" ] || continue
+    old_size="$(stat -c %s "${old_file}" 2>/dev/null || echo 0)"
+    if [ "${protected_max_bytes}" -gt 0 ] && [ "${old_size}" -gt "${protected_max_bytes}" ]; then
+      tmp_file="${old_file}.trim.$$"
+      if tail -c "${protected_tail_bytes}" "${old_file}" > "${tmp_file}" 2>/dev/null; then
+        new_size="$(stat -c %s "${tmp_file}" 2>/dev/null || echo 0)"
+        mv "${tmp_file}" "${old_file}"
+        if [ "${new_size}" -lt "${old_size}" ]; then
+          reclaimed_bytes=$((reclaimed_bytes + old_size - new_size))
+        fi
+      else
+        rm -f "${tmp_file}" >/dev/null 2>&1 || true
+      fi
+    fi
+  done
 
   if [ "${max_age_days}" -gt 0 ]; then
     while IFS= read -r old_file; do

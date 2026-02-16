@@ -6401,6 +6401,484 @@ func TestProcessBatch_BTCTopologyParityLikeGroupVsIndependent_CanonicalTupleEqui
 	assert.Equal(t, likeGroup.finalHead, independent.finalHead)
 }
 
+func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAndCursorInvariants(t *testing.T) {
+	type topologyFixture struct {
+		signature          string
+		topologyCSignature string
+		sequence           int64
+		result             *sidecarv1.TransactionResult
+	}
+	type testCase struct {
+		name          string
+		chain         model.Chain
+		network       model.Network
+		address       string
+		initialCursor string
+		fixtures      []topologyFixture
+		expectedHead  string
+	}
+	type topologyRun struct {
+		tupleSet   map[string]struct{}
+		eventIDSet map[string]struct{}
+		finalHead  string
+	}
+
+	signatureForMode := func(mode string, fixture topologyFixture) string {
+		if mode == "C" {
+			return fixture.topologyCSignature
+		}
+		return fixture.signature
+	}
+	eventIDSet := func(batch event.NormalizedBatch) map[string]struct{} {
+		out := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				out[be.EventID] = struct{}{}
+			}
+		}
+		return out
+	}
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id in batch: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+	canonicalTupleKey := func(batch event.NormalizedBatch, tx event.NormalizedTransaction, be event.NormalizedBalanceEvent) string {
+		return strings.Join([]string{
+			string(batch.Chain),
+			string(batch.Network),
+			tx.TxHash,
+			be.EventPath,
+			be.ActorAddress,
+			be.AssetID,
+			string(be.EventCategory),
+			be.Delta,
+		}, "|")
+	}
+	topologyPartitions := map[string][][]int{
+		"A": {{0, 1}},
+		"B": {{0}, {1}},
+		"C": {{0}, {1}},
+	}
+
+	testCases := []testCase{
+		{
+			name:          "solana-devnet",
+			chain:         model.ChainSolana,
+			network:       model.NetworkDevnet,
+			address:       "sol-topology-owner",
+			initialCursor: "sol-topology-7100",
+			expectedHead:  "sol-topology-7102",
+			fixtures: []topologyFixture{
+				{
+					signature:          "sol-topology-7101",
+					topologyCSignature: "  sol-topology-7101  ",
+					sequence:           7101,
+					result: &sidecarv1.TransactionResult{
+						TxHash:      "sol-topology-7101",
+						BlockCursor: 7101,
+						FeeAmount:   "5000",
+						FeePayer:    "sol-topology-owner",
+						Status:      "SUCCESS",
+						BalanceEvents: []*sidecarv1.BalanceEventInfo{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         string(model.EventCategoryTransfer),
+								EventAction:           "transfer",
+								ProgramId:             "11111111111111111111111111111111",
+								Address:               "sol-topology-owner",
+								ContractAddress:       "So11111111111111111111111111111111111111112",
+								Delta:                 "-7",
+								TokenSymbol:           "SOL",
+								TokenName:             "Solana",
+								TokenDecimals:         9,
+								TokenType:             string(model.TokenTypeNative),
+								Metadata: map[string]string{
+									"event_path":     "outer:0|inner:-1",
+									"finality_state": "confirmed",
+								},
+							},
+						},
+					},
+				},
+				{
+					signature:          "sol-topology-7102",
+					topologyCSignature: "sol-topology-7102   ",
+					sequence:           7102,
+					result: &sidecarv1.TransactionResult{
+						TxHash:      "sol-topology-7102",
+						BlockCursor: 7102,
+						FeeAmount:   "4000",
+						FeePayer:    "sol-topology-owner",
+						Status:      "SUCCESS",
+						BalanceEvents: []*sidecarv1.BalanceEventInfo{
+							{
+								OuterInstructionIndex: 1,
+								InnerInstructionIndex: -1,
+								EventCategory:         string(model.EventCategoryTransfer),
+								EventAction:           "transfer",
+								ProgramId:             "11111111111111111111111111111111",
+								Address:               "sol-topology-owner",
+								ContractAddress:       "So11111111111111111111111111111111111111112",
+								Delta:                 "3",
+								TokenSymbol:           "SOL",
+								TokenName:             "Solana",
+								TokenDecimals:         9,
+								TokenType:             string(model.TokenTypeNative),
+								Metadata: map[string]string{
+									"event_path":     "outer:1|inner:-1",
+									"finality_state": "confirmed",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:          "base-sepolia",
+			chain:         model.ChainBase,
+			network:       model.NetworkSepolia,
+			address:       "0xabcdef00000000000000000000000000007700",
+			initialCursor: "0xABCD7700",
+			expectedHead:  "0xabcd7702",
+			fixtures: []topologyFixture{
+				{
+					signature:          "0xABCD7701",
+					topologyCSignature: "ABCD7701",
+					sequence:           7701,
+					result: &sidecarv1.TransactionResult{
+						TxHash:      "ABCD7701",
+						BlockCursor: 7701,
+						FeeAmount:   "100",
+						FeePayer:    "0xabcdef00000000000000000000000000007700",
+						Status:      "SUCCESS",
+						BalanceEvents: []*sidecarv1.BalanceEventInfo{
+							{
+								OuterInstructionIndex: 10,
+								InnerInstructionIndex: 0,
+								EventCategory:         string(model.EventCategoryTransfer),
+								EventAction:           "transfer",
+								ProgramId:             "0xabcdef00000000000000000000000000007701",
+								Address:               "0xabcdef00000000000000000000000000007700",
+								ContractAddress:       "0xabcdef00000000000000000000000000007701",
+								Delta:                 "-6",
+								CounterpartyAddress:   "0xabcdef00000000000000000000000000007711",
+								TokenDecimals:         18,
+								TokenType:             string(model.TokenTypeFungible),
+								Metadata: map[string]string{
+									"event_path":       "log:10",
+									"fee_execution_l2": "70",
+									"fee_data_l1":      "30",
+								},
+							},
+						},
+					},
+				},
+				{
+					signature:          "abcd7702",
+					topologyCSignature: "0XABCD7702",
+					sequence:           7702,
+					result: &sidecarv1.TransactionResult{
+						TxHash:      "0xabcd7702",
+						BlockCursor: 7702,
+						FeeAmount:   "100",
+						FeePayer:    "0xabcdef00000000000000000000000000007700",
+						Status:      "SUCCESS",
+						BalanceEvents: []*sidecarv1.BalanceEventInfo{
+							{
+								OuterInstructionIndex: 11,
+								InnerInstructionIndex: 0,
+								EventCategory:         string(model.EventCategoryTransfer),
+								EventAction:           "transfer",
+								ProgramId:             "0xabcdef00000000000000000000000000007701",
+								Address:               "0xabcdef00000000000000000000000000007700",
+								ContractAddress:       "0xabcdef00000000000000000000000000007701",
+								Delta:                 "2",
+								CounterpartyAddress:   "0xabcdef00000000000000000000000000007722",
+								TokenDecimals:         18,
+								TokenType:             string(model.TokenTypeFungible),
+								Metadata: map[string]string{
+									"event_path":       "log:11",
+									"fee_execution_l2": "70",
+									"fee_data_l1":      "30",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:          "btc-testnet",
+			chain:         model.ChainBTC,
+			network:       model.NetworkTestnet,
+			address:       "tb1-topology-owner",
+			initialCursor: "0xBCDD8800",
+			expectedHead:  "bcdd8802",
+			fixtures: []topologyFixture{
+				{
+					signature:          "0xBCDD8801",
+					topologyCSignature: "BCDD8801",
+					sequence:           8801,
+					result: &sidecarv1.TransactionResult{
+						TxHash:      "BCDD8801",
+						BlockCursor: 8801,
+						FeeAmount:   "100",
+						FeePayer:    "tb1-topology-owner",
+						Status:      "SUCCESS",
+						BalanceEvents: []*sidecarv1.BalanceEventInfo{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         string(model.EventCategoryTransfer),
+								EventAction:           "vin_spend",
+								ProgramId:             "btc",
+								Address:               "tb1-topology-owner",
+								ContractAddress:       "BTC",
+								Delta:                 "-900",
+								TokenSymbol:           "BTC",
+								TokenName:             "Bitcoin",
+								TokenDecimals:         8,
+								TokenType:             string(model.TokenTypeNative),
+								Metadata: map[string]string{
+									"event_path":     "vin:0",
+									"finality_state": "confirmed",
+								},
+							},
+							{
+								OuterInstructionIndex: 1,
+								InnerInstructionIndex: -1,
+								EventCategory:         string(model.EventCategoryTransfer),
+								EventAction:           "vout_receive",
+								ProgramId:             "btc",
+								Address:               "tb1-topology-owner",
+								ContractAddress:       "BTC",
+								Delta:                 "800",
+								TokenSymbol:           "BTC",
+								TokenName:             "Bitcoin",
+								TokenDecimals:         8,
+								TokenType:             string(model.TokenTypeNative),
+								Metadata: map[string]string{
+									"event_path":     "vout:1",
+									"finality_state": "confirmed",
+								},
+							},
+						},
+					},
+				},
+				{
+					signature:          "bcdd8802",
+					topologyCSignature: "0XBCDD8802",
+					sequence:           8802,
+					result: &sidecarv1.TransactionResult{
+						TxHash:      "0xbcdd8802",
+						BlockCursor: 8802,
+						FeeAmount:   "100",
+						FeePayer:    "tb1-topology-owner",
+						Status:      "SUCCESS",
+						BalanceEvents: []*sidecarv1.BalanceEventInfo{
+							{
+								OuterInstructionIndex: 0,
+								InnerInstructionIndex: -1,
+								EventCategory:         string(model.EventCategoryTransfer),
+								EventAction:           "vin_spend",
+								ProgramId:             "btc",
+								Address:               "tb1-topology-owner",
+								ContractAddress:       "BTC",
+								Delta:                 "-700",
+								TokenSymbol:           "BTC",
+								TokenName:             "Bitcoin",
+								TokenDecimals:         8,
+								TokenType:             string(model.TokenTypeNative),
+								Metadata: map[string]string{
+									"event_path":     "vin:0",
+									"finality_state": "confirmed",
+								},
+							},
+							{
+								OuterInstructionIndex: 1,
+								InnerInstructionIndex: -1,
+								EventCategory:         string(model.EventCategoryTransfer),
+								EventAction:           "vout_receive",
+								ProgramId:             "btc",
+								Address:               "tb1-topology-owner",
+								ContractAddress:       "BTC",
+								Delta:                 "600",
+								TokenSymbol:           "BTC",
+								TokenName:             "Bitcoin",
+								TokenDecimals:         8,
+								TokenType:             string(model.TokenTypeNative),
+								Metadata: map[string]string{
+									"event_path":     "vout:1",
+									"finality_state": "confirmed",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	runTopology := func(t *testing.T, tc testCase, mode string) topologyRun {
+		t.Helper()
+
+		partitions := topologyPartitions[mode]
+		require.NotEmpty(t, partitions)
+
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockChainDecoderClient(ctrl)
+		normalizedCh := make(chan event.NormalizedBatch, len(partitions)+1)
+		n := &Normalizer{
+			sidecarTimeout: 30 * time.Second,
+			normalizedCh:   normalizedCh,
+			logger:         slog.Default(),
+		}
+
+		callPartitions := append(make([][]int, 0, len(partitions)+1), partitions...)
+		callPartitions = append(callPartitions, partitions[len(partitions)-1]) // replay of final topology boundary
+		call := 0
+		mockClient.EXPECT().
+			DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+			Times(len(callPartitions)).
+			DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+				expectedPartition := callPartitions[call]
+				require.Len(t, req.GetTransactions(), len(expectedPartition))
+
+				results := make([]*sidecarv1.TransactionResult, 0, len(expectedPartition))
+				for idx, fixtureIdx := range expectedPartition {
+					expectedSignature := signatureForMode(mode, tc.fixtures[fixtureIdx])
+					assert.Equal(
+						t,
+						canonicalSignatureIdentity(tc.chain, expectedSignature),
+						canonicalSignatureIdentity(tc.chain, req.GetTransactions()[idx].GetSignature()),
+					)
+					results = append(results, tc.fixtures[fixtureIdx].result)
+				}
+				call++
+				return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: results}, nil
+			})
+
+		tupleSet := make(map[string]struct{}, 16)
+		eventIDs := make(map[string]struct{}, 16)
+		prevCursor := strPtr(tc.initialCursor)
+		prevSequence := tc.fixtures[0].sequence - 1
+		finalHead := ""
+
+		var lastPartition event.NormalizedBatch
+		for _, partition := range partitions {
+			rawTxs := make([]json.RawMessage, 0, len(partition))
+			signatures := make([]event.SignatureInfo, 0, len(partition))
+			for _, fixtureIdx := range partition {
+				signature := signatureForMode(mode, tc.fixtures[fixtureIdx])
+				rawTxs = append(rawTxs, json.RawMessage(`{"tx":"mandatory-topology-proof"}`))
+				signatures = append(signatures, event.SignatureInfo{
+					Hash:     signature,
+					Sequence: tc.fixtures[fixtureIdx].sequence,
+				})
+			}
+
+			lastFixture := tc.fixtures[partition[len(partition)-1]]
+			nextCursor := signatureForMode(mode, lastFixture)
+			batch := event.RawBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorValue:    prevCursor,
+				PreviousCursorSequence: prevSequence,
+				NewCursorValue:         &nextCursor,
+				NewCursorSequence:      lastFixture.sequence,
+				RawTransactions:        rawTxs,
+				Signatures:             signatures,
+			}
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			normalized := <-normalizedCh
+			assertNoDuplicateCanonicalIDs(t, normalized)
+			assert.GreaterOrEqual(t, normalized.NewCursorSequence, normalized.PreviousCursorSequence)
+
+			for _, tx := range normalized.Transactions {
+				for _, be := range tx.BalanceEvents {
+					_, exists := eventIDs[be.EventID]
+					require.False(t, exists, "duplicate canonical event id in topology %s: %s", mode, be.EventID)
+					eventIDs[be.EventID] = struct{}{}
+					tupleSet[canonicalTupleKey(normalized, tx, be)] = struct{}{}
+				}
+			}
+
+			lastPartition = normalized
+			require.NotNil(t, normalized.NewCursorValue)
+			finalHead = *normalized.NewCursorValue
+			prevCursor = normalized.NewCursorValue
+			prevSequence = normalized.NewCursorSequence
+		}
+
+		replayPartition := partitions[len(partitions)-1]
+		replayRaw := make([]json.RawMessage, 0, len(replayPartition))
+		replaySigs := make([]event.SignatureInfo, 0, len(replayPartition))
+		for _, fixtureIdx := range replayPartition {
+			signature := signatureForMode(mode, tc.fixtures[fixtureIdx])
+			replayRaw = append(replayRaw, json.RawMessage(`{"tx":"mandatory-topology-proof-replay"}`))
+			replaySigs = append(replaySigs, event.SignatureInfo{
+				Hash:     signature,
+				Sequence: tc.fixtures[fixtureIdx].sequence,
+			})
+		}
+
+		replayBatch := event.RawBatch{
+			Chain:                  tc.chain,
+			Network:                tc.network,
+			Address:                tc.address,
+			PreviousCursorValue:    prevCursor,
+			PreviousCursorSequence: prevSequence,
+			NewCursorValue:         prevCursor,
+			NewCursorSequence:      prevSequence,
+			RawTransactions:        replayRaw,
+			Signatures:             replaySigs,
+		}
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, replayBatch))
+		replayRun := <-normalizedCh
+		assertNoDuplicateCanonicalIDs(t, replayRun)
+		assert.Equal(t, orderedCanonicalTuples(lastPartition), orderedCanonicalTuples(replayRun), "replay/resume must be idempotent at topology boundary")
+		assert.Equal(t, eventIDSet(lastPartition), eventIDSet(replayRun), "replay/resume canonical event ids drifted at topology boundary")
+		assert.GreaterOrEqual(t, replayRun.NewCursorSequence, replayRun.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, replayRun.NewCursorSequence, lastPartition.NewCursorSequence)
+
+		return topologyRun{
+			tupleSet:   tupleSet,
+			eventIDSet: eventIDs,
+			finalHead:  finalHead,
+		}
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			topologyA := runTopology(t, tc, "A")
+			topologyB := runTopology(t, tc, "B")
+			topologyC := runTopology(t, tc, "C")
+
+			assert.Equal(t, topologyA.tupleSet, topologyB.tupleSet, "topology A/B must converge to one canonical tuple set")
+			assert.Equal(t, topologyA.tupleSet, topologyC.tupleSet, "topology A/C must converge to one canonical tuple set")
+			assert.Equal(t, topologyA.eventIDSet, topologyB.eventIDSet, "topology A/B canonical event id set must match")
+			assert.Equal(t, topologyA.eventIDSet, topologyC.eventIDSet, "topology A/C canonical event id set must match")
+
+			assert.Equal(t, tc.expectedHead, topologyA.finalHead)
+			assert.Equal(t, tc.expectedHead, topologyB.finalHead)
+			assert.Equal(t, tc.expectedHead, topologyC.finalHead)
+		})
+	}
+}
+
 func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithoutSyntheticFeeEvent(t *testing.T) {
 	n := &Normalizer{}
 	batch := event.RawBatch{

@@ -36,6 +36,8 @@ alias 없이 실행할 때:
 - 로그 보존 상한(기본 2GiB): `RALPH_LOG_RETENTION_MAX_BYTES=2147483648`
 - 로그 보존 파일수(기본 1200): `RALPH_LOG_RETENTION_MAX_FILES=1200`
 - 로그 보존 일수(기본 14일): `RALPH_LOG_RETENTION_MAX_AGE_DAYS=14`
+- `runner.out/supervisor.out` 개별 상한(기본 128MiB): `RALPH_LOG_RETENTION_PROTECTED_MAX_BYTES=134217728`
+- `runner.out/supervisor.out` 트림 후 유지 tail(기본 32MiB): `RALPH_LOG_RETENTION_PROTECTED_TAIL_BYTES=33554432`
 
 ## 운영 순서 권장
 1. `lrcheck`로 큐 상태 확인
