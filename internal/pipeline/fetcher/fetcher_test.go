@@ -370,6 +370,12 @@ func TestProcessJob_TerminalSignatureFetchError_NoRetryAcrossMandatoryChains(t *
 			network: model.NetworkSepolia,
 			address: "0x1111111111111111111111111111111111111111",
 		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1fetcher-terminal",
+		},
 	}
 
 	for _, tc := range testCases {

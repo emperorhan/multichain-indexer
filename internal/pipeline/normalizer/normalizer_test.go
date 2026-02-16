@@ -3652,6 +3652,14 @@ func TestProcessBatchWithRetry_TerminalDecodeFailure_NoRetryAcrossMandatoryChain
 			signature: "0xbase-terminal-1",
 			sequence:  202,
 		},
+		{
+			name:      "btc-testnet",
+			chain:     model.ChainBTC,
+			network:   model.NetworkTestnet,
+			address:   "tb1-normalizer-terminal",
+			signature: "0xbtc-terminal-1",
+			sequence:  303,
+		},
 	}
 
 	for _, tc := range testCases {

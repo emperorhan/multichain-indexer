@@ -3246,6 +3246,17 @@ func TestIngester_ProcessBatchWithRetry_TerminalFailure_NoRetryAcrossMandatoryCh
 			feePayer:  "0x1111111111111111111111111111111111111111",
 			feeAmount: "0",
 		},
+		{
+			name:      "btc-testnet",
+			chain:     model.ChainBTC,
+			network:   model.NetworkTestnet,
+			address:   "tb1-ingester-terminal",
+			txHash:    "0xBTC-terminal-1",
+			txCursor:  303,
+			txStatus:  model.TxStatusSuccess,
+			feePayer:  "tb1-ingester-terminal",
+			feeAmount: "0",
+		},
 	}
 
 	for _, tc := range testCases {
