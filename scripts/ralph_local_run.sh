@@ -118,6 +118,16 @@ PROMPT_CONTEXT_PLANNER_TAIL_LINES="${RALPH_PROMPT_CONTEXT_PLANNER_TAIL_LINES:-14
 PROMPT_CONTEXT_HIGH_RISK_MAX_LINES="${RALPH_PROMPT_CONTEXT_HIGH_RISK_MAX_LINES:-220}"
 PROMPT_CONTEXT_HIGH_RISK_HEAD_LINES="${RALPH_PROMPT_CONTEXT_HIGH_RISK_HEAD_LINES:-110}"
 PROMPT_CONTEXT_HIGH_RISK_TAIL_LINES="${RALPH_PROMPT_CONTEXT_HIGH_RISK_TAIL_LINES:-110}"
+PROMPT_CONTEXT_PLANNING_FIRST_MAX_LINES="${RALPH_PROMPT_CONTEXT_PLANNING_FIRST_MAX_LINES:-140}"
+PROMPT_CONTEXT_PLANNING_FIRST_HEAD_LINES="${RALPH_PROMPT_CONTEXT_PLANNING_FIRST_HEAD_LINES:-70}"
+PROMPT_CONTEXT_PLANNING_FIRST_TAIL_LINES="${RALPH_PROMPT_CONTEXT_PLANNING_FIRST_TAIL_LINES:-70}"
+PROMPT_PLANNING_FIRST_ENABLED="${RALPH_PROMPT_PLANNING_FIRST_ENABLED:-true}"
+PROMPT_PLANNING_MILESTONES_MAX="${RALPH_PROMPT_PLANNING_MILESTONES_MAX:-2}"
+PROMPT_PLANNING_ACCEPTANCE_MAX="${RALPH_PROMPT_PLANNING_ACCEPTANCE_MAX:-4}"
+PROMPT_PLANNING_DECISIONS_MAX="${RALPH_PROMPT_PLANNING_DECISIONS_MAX:-3}"
+PROMPT_PLANNING_OBJECTIVE_MAX_CHARS="${RALPH_PROMPT_PLANNING_OBJECTIVE_MAX_CHARS:-420}"
+PROMPT_PLANNING_OUTCOME_MAX_CHARS="${RALPH_PROMPT_PLANNING_OUTCOME_MAX_CHARS:-260}"
+PROMPT_PLANNING_DECISION_MAX_CHARS="${RALPH_PROMPT_PLANNING_DECISION_MAX_CHARS:-220}"
 DEFAULT_MAX_DIFF_SCOPE="${RALPH_DEFAULT_MAX_DIFF_SCOPE:-25}"
 STRICT_CONTRACT_GATE="${RALPH_STRICT_CONTRACT_GATE:-true}"
 PLANNER_OUTPUT_FILE_TEMPLATE="${RALPH_PLANNER_OUTPUT_FILE_TEMPLATE:-${RALPH_ROOT}/plans/plan-output-%s.json}"
@@ -420,6 +430,31 @@ meta_value() {
   ' "${file}"
 }
 
+issue_reference_value() {
+  local file="$1"
+  local key="$2"
+  local value
+
+  value="$(meta_value "${file}" "${key}")"
+  if [ -n "${value}" ]; then
+    printf '%s\n' "${value}"
+    return 0
+  fi
+
+  awk -v key="${key}" '
+    {
+      line=$0
+      gsub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      if (line ~ ("^" key ":[[:space:]]*")) {
+        sub("^" key ":[[:space:]]*", "", line)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        print line
+        exit
+      }
+    }
+  ' "${file}"
+}
+
 now_utc() {
   date -u +'%Y-%m-%dT%H:%M:%SZ'
 }
@@ -512,6 +547,106 @@ context_block_for_prompt() {
   fi
 }
 
+planner_output_path_for_issue_file() {
+  local issue_file="$1"
+  local planner_output planner_issue
+
+  planner_output="$(issue_reference_value "${issue_file}" "planner_output")"
+  if [ -z "${planner_output}" ]; then
+    planner_issue="$(issue_reference_value "${issue_file}" "planner_issue")"
+    if [ -n "${planner_issue}" ]; then
+      planner_output="$(planner_output_file_for_issue "${planner_issue}")"
+    fi
+  fi
+  printf '%s\n' "${planner_output}"
+}
+
+planning_contract_available() {
+  local issue_file="$1"
+  local planner_output
+  planner_output="$(planner_output_path_for_issue_file "${issue_file}")"
+  [ -n "${planner_output}" ] && [ -f "${planner_output}" ]
+}
+
+planning_context_block() {
+  local issue_file="$1"
+  local issue_id="$2"
+  local role="$3"
+  local planner_output
+
+  if [ "${role}" = "planner" ] || [ "${PROMPT_PLANNING_FIRST_ENABLED}" != "true" ]; then
+    echo "(planning-first bundle disabled for role=${role})"
+    return 0
+  fi
+
+  planner_output="$(planner_output_path_for_issue_file "${issue_file}")"
+  if [ -z "${planner_output}" ]; then
+    echo "(no planner_output reference found in issue metadata/notes)"
+    return 0
+  fi
+  if [ ! -f "${planner_output}" ]; then
+    echo "(planner_output file missing: ${planner_output})"
+    return 0
+  fi
+
+  echo "- planner_output: ${planner_output}"
+  if command -v jq >/dev/null 2>&1; then
+    jq -r \
+      --arg issue_id "${issue_id}" \
+      --argjson milestones_max "${PROMPT_PLANNING_MILESTONES_MAX}" \
+      --argjson acceptance_max "${PROMPT_PLANNING_ACCEPTANCE_MAX}" \
+      --argjson decisions_max "${PROMPT_PLANNING_DECISIONS_MAX}" \
+      --argjson objective_max "${PROMPT_PLANNING_OBJECTIVE_MAX_CHARS}" \
+      --argjson outcome_max "${PROMPT_PLANNING_OUTCOME_MAX_CHARS}" \
+      --argjson decision_max "${PROMPT_PLANNING_DECISION_MAX_CHARS}" '
+      def clip($n):
+        gsub("[[:space:]]+"; " ")
+        | gsub("^\\s+|\\s+$"; "")
+        | if length > $n then .[0:$n] + "..." else . end;
+      def relevant:
+        [.roadmap.milestones[]?
+          | select(
+              ((.outcome // "") | contains($issue_id))
+              or ((.title // "") | contains($issue_id))
+              or (((.acceptance // []) | join(" ")) | contains($issue_id))
+            )];
+      def selected_milestones:
+        (relevant) as $r
+        | if ($r | length) > 0
+          then $r[:$milestones_max]
+          else (.roadmap.milestones // [])[:$milestones_max]
+          end;
+
+      "Objective:",
+      ((.roadmap.objective // "n/a") | clip($objective_max)),
+      "",
+      "Contract defaults:",
+      "- risk_class: \(.contract_defaults.risk_class // "n/a")",
+      "- max_diff_scope: \(.contract_defaults.max_diff_scope // "n/a")",
+      "- acceptance_tests: \((.contract_defaults.acceptance_tests // "n/a") | clip(180))",
+      "- invariants: \((.contract_defaults.invariants // "n/a") | clip(240))",
+      "",
+      "Milestones (selected):",
+      (selected_milestones[]? |
+        "- [\(.id // "n/a")] \((.title // "n/a") | clip(180))\n"
+        + "  outcome: \((.outcome // "n/a") | clip($outcome_max))\n"
+        + "  acceptance: \(((.acceptance // [])[:$acceptance_max] | join(" | ")) | clip(320))\n"
+        + "  risks: \(((.risks // [])[:2] | join(" | ")) | clip(260))"
+      ),
+      "",
+      "Decisions (top):",
+      ((.decisions // [])[:$decisions_max][]? | "- " + (. | clip($decision_max)))
+    ' "${planner_output}" 2>/dev/null || {
+      echo "(planner_output parse failed; falling back to raw excerpt)"
+      sed -n '1,160p' "${planner_output}"
+    }
+    return 0
+  fi
+
+  echo "(jq unavailable; using raw planner_output excerpt)"
+  sed -n '1,160p' "${planner_output}"
+}
+
 normalize_nonneg_int() {
   local value="$1"
   local fallback="$2"
@@ -546,6 +681,7 @@ derive_prompt_context_limits() {
   local issue_file="$1"
   local role="$2"
   local max_lines head_lines tail_lines policy_reason risk_class threshold high_risk_classes
+  local planning_max planning_head planning_tail
 
   IFS='|' read -r max_lines head_lines tail_lines < <(
     normalize_context_budget_tuple \
@@ -588,6 +724,25 @@ derive_prompt_context_limits() {
       fi
       ;;
   esac
+
+  if [ "${PROMPT_PLANNING_FIRST_ENABLED}" = "true" ] \
+    && [ "${role}" != "planner" ] \
+    && planning_contract_available "${issue_file}"; then
+    IFS='|' read -r planning_max planning_head planning_tail < <(
+      normalize_context_budget_tuple \
+        "${PROMPT_CONTEXT_PLANNING_FIRST_MAX_LINES}" \
+        "${PROMPT_CONTEXT_PLANNING_FIRST_HEAD_LINES}" \
+        "${PROMPT_CONTEXT_PLANNING_FIRST_TAIL_LINES}"
+    )
+    if [ "${planning_max}" -lt "${max_lines}" ]; then
+      max_lines="${planning_max}"
+      head_lines="${planning_head}"
+      tail_lines="${planning_tail}"
+      policy_reason="${policy_reason}+planning-first"
+    else
+      policy_reason="${policy_reason}+planning-ref"
+    fi
+  fi
 
   echo "${max_lines}|${head_lines}|${tail_lines}|${policy_reason}"
 }
@@ -1423,6 +1578,9 @@ Model routing:
 - model_reason: ${CURRENT_MODEL_REASON}
 - risk_score: ${CURRENT_RISK_SCORE}
 
+Planning contract context (planner-first):
+$(planning_context_block "${issue_file}" "${issue_id}" "${role}")
+
 Shared context file (${CONTEXT_FILE}):
 $(context_block_for_prompt "${issue_id}" "${issue_file}" "${role}")
 
@@ -1504,9 +1662,11 @@ run_codex_self_heal() {
   local model="$3"
   local validation_log="$4"
   local attempt="$5"
-  local prompt log_file rc validation_excerpt failure_type
+  local prompt log_file rc validation_excerpt failure_type issue_id
 
   log_file="${LOGS_DIR}/$(basename "${issue_file}" .md)-self-heal-${attempt}-$(date -u +%Y%m%dT%H%M%SZ).log"
+  issue_id="$(meta_value "${issue_file}" "id")"
+  [ -n "${issue_id}" ] || issue_id="unknown"
   validation_excerpt="(validation log unavailable)"
   if [ -n "${validation_log}" ] && [ -f "${validation_log}" ]; then
     validation_excerpt="$(tail -n "${SELF_HEAL_LOG_TAIL_LINES}" "${validation_log}" 2>/dev/null || true)"
@@ -1531,6 +1691,9 @@ $(role_guide "${role}")
 
 Failure classification:
 - ${failure_type}
+
+Planning contract context (planner-first):
+$(planning_context_block "${issue_file}" "${issue_id}" "${role}")
 
 Learning memory (recent failures + lessons):
 $(learning_context_block)
