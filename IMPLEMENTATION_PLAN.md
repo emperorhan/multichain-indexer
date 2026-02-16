@@ -194,7 +194,13 @@ Execution queue (dependency-ordered):
 183. `I-0486` (`M93-S1`) implement deterministic fail-fast abort contract and zero failed-path cursor/watermark progression with committed-boundary replay continuity checks
 184. `I-0487` (`M93-S2`) execute QA counterexample gate for fail-fast continuity and restart perturbation evidence with recommendation
 185. `I-0491` (`M94-S1`) PRD event-coverage closeout gate for deterministic duplicate-free asset-volatility deltas
+   - Required matrix inventory:
+     - `solana-devnet` -> `transfer`, `mint?`, `burn?`, `FEE`
+     - `base-sepolia` -> `transfer`, `mint?`, `burn?`, `fee_execution_l2`, `fee_data_l1`
+     - `btc-testnet` -> `transfer` path set (`vin`, `vout`) with miner-fee conservation assertions
+   - Gate passes when each required cell above is covered by deterministic canonical outputs and no class-level duplicate/finality regressions.
 186. `I-0492` (`M94-S2`) QA event-coverage and replay continuity counterexample gate for PRD closeout
+   - Requires evidence that mandatory matrix cells are complete and that replay/restart permutations remain idempotent, duplicate-free, and cursor-ordered.
 
 ## Global Verification Contract
 Every implementation slice must pass:

@@ -13,13 +13,24 @@
 - `10`: deterministic replay and no cross-chain cursor bleed acceptance.
 
 ## Problem Statement
-After PRD `M93` continuity hardening, the current loop still needs an explicit closeout gate proving every in-scope asset-volatility class (`transfer`, `mint`, `burn`, fee classes) is represented as deterministic signed deltas and that duplicate class outputs are impossible for mandatory chains.
+After `M93` continuity hardening, coverage evidence for required event classes is still implicit and not explicitly partitioned by mandatory chain. This tranche adds a closeout gate that proves each required chain/family emits deterministic canonical deltas for supported asset-volatility classes without duplicates and without class omissions.
 
-## Reliability Contract
-1. For equivalent chain fixtures, each required event class yields deterministic canonical signatures and appears exactly once when ownership is unambiguous.
-2. `solana-devnet`, `base-sepolia`, and `btc-testnet` cover full transfer/mint/burn/fee path classes without class omission.
-3. Replay and restart from committed boundaries preserve canonical event sets and materialized balances for the required coverage classes.
-4. Counterexample evidence includes missing-class and duplicate-class detections before promotion.
+## Coverage Contract
+1. For each mandatory chain and class combination below, required cells must be present in evidence artifacts with deterministic `canonical event` outputs:
+   - `solana-devnet`:
+     - `transfer` (`TRANSFER`)
+     - `fee` (`FEE`)
+     - `mint`/`burn` (`MINT`/`BURN`) when fixture families produce these categories (`NA` if no mandatory fixture emits them).
+   - `base-sepolia`:
+     - `transfer` (`TRANSFER`)
+     - `fee_execution_l2` (`fee_execution_l2`)
+     - `fee_data_l1` (`fee_data_l1`)
+     - `mint`/`burn` (`MINT`/`BURN`) when fixture families produce these categories (`NA` if no mandatory fixture emits them).
+   - `btc-testnet`:
+     - transfer-path coverage (`vin`/`vout`, `TRANSFER`)
+     - miner-fee conservation assertions (no synthetic fee event; deterministic delta set remains signer-consistent).
+2. `solana-devnet`, `base-sepolia`, and `btc-testnet` must remain duplicate-free under equivalent replay, ordering swaps, and restart permutations.
+3. Mandatory-chain coverage evidence must be chain-isolated: no missing class outputs are treated as coverage acceptance for a chain/family in the required matrix.
 
 ## Invariants
 - `canonical_event_id_unique`
@@ -31,21 +42,22 @@ After PRD `M93` continuity hardening, the current loop still needs an explicit c
 - `chain_adapter_runtime_wired`
 
 ## Measurable Exit Gates
-1. `0` duplicate canonical IDs in required coverage fixture families (`transfer`, `mint`, `burn`, fee classes).
-2. `0` missing required class rows for mandatory chains in deterministic matrices.
-3. `0` replay tuple/balance drift in restart-recover permutations for coverage fixtures.
-4. `0` cross-chain control/cursor bleed in one-chain perturbation counterexamples.
+1. `0` missing required cells in the mandatory chain/class matrix.
+2. `0` duplicate canonical IDs across required coverage families.
+3. `0` replay tuple/balance drift for coverage fixtures across restart/replay permutations.
+4. `0` cross-chain control/cursor bleed in one-chain perturbation or replay counterexamples.
 5. Validation commands pass: `make test`, `make test-sidecar`, `make lint`.
 
 ## Test Matrix
-1. Event-class matrix:
-- by chain family (`solana`, `base`, `btc`) and class (`transfer`, `mint`, `burn`, `fee`), asserting deterministic class presence and canonical id uniqueness.
+1. Class matrix:
+   - by chain family (`solana`, `base`, `btc`) and required classes (`transfer`, `mint`, `burn`, fee classes), with explicit `NA` for unsupported mandatory-class families.
+   - all non-`NA` matrix cells must be observed in evidence and must not be empty.
 2. Duplicate suppression matrix:
-- replay rerun and alternate fixture ordering to assert no duplicates per event class.
+   - replay and replay-order permutations that converge to one canonical output set per chain.
 3. Replay continuity matrix:
-- committed-boundary restart/recover fixtures with tuple and balance convergence checks.
-4. Peer-progress matrix:
-- one-chain perturbation under peer-chain progress; assert no cursor/watermark bleed.
+   - committed-boundary resume and chain-failover perturbation; balances and canonical tuples remain stable.
+4. Chain-isolation inventory matrix:
+   - mandatory-chain/class evidence coverage required for `solana-devnet`, `base-sepolia`, `btc-testnet`.
 
-## Exit Recommendation
-This tranche gates promotion to `M95` and any optional reliability refinements. A promotion to `M94` requires deterministic evidence artifacts under `.ralph/reports/` and explicit matrix-completeness evidence.
+## Decision Hook
+- `DP-0104-M94`: required event-class matrix coverage is measured as `(chain, network, class, evidence_present, class_path)`; any missing non-`NA` cell fails the closeout gate.
