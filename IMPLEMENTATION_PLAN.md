@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -143,6 +143,8 @@ Execution queue (dependency-ordered):
 132. `I-0370` (`M67-S2`) QA counterexample gate for post-late-spillover rejoin-window determinism + invariant safety
 133. `I-0374` (`M68-S1`) auto-tune policy-manifest rollback checkpoint-fence post-rejoin-window steady-seal determinism hardening
 134. `I-0375` (`M68-S2`) QA counterexample gate for post-rejoin-window steady-seal determinism + invariant safety
+135. `I-0379` (`M69-S1`) auto-tune policy-manifest rollback checkpoint-fence post-steady-seal drift-reconciliation determinism hardening
+136. `I-0380` (`M69-S2`) QA counterexample gate for post-steady-seal drift-reconciliation determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -2608,7 +2610,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when spillover ownershi
 - Gate: spillover-drain completion can race with concurrent live markers and create non-deterministic rejoin-window ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch)` rejoin ordering with explicit spillover rejoin lineage diagnostics, pin last verified rollback-safe pre-rejoin boundary on ambiguity, quarantine unresolved rejoin markers, and fail fast on unresolved ownership conflicts.
 
-### M68. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Rejoin-Window Steady-Seal Determinism Tranche C0062 (P0, Next)
+### M68. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Rejoin-Window Steady-Seal Determinism Tranche C0062 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when rejoin-window ownership seals back into steady-state authority, so steady-seal baseline, steady-seal replay, crash-during-steady-seal restart, and rollback+re-forward across steady-seal permutations converge to one deterministic canonical output set per chain.
@@ -2646,6 +2648,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when rejoin-window owne
 #### Risk Gate + Fallback
 - Gate: rejoin-window completion can race with steady-flow seal markers and create non-deterministic steady-seal ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch)` steady-seal ordering with explicit rejoin-seal lineage diagnostics, pin last verified rollback-safe pre-seal boundary on ambiguity, quarantine unresolved seal markers, and fail fast on unresolved ownership conflicts.
+
+### M69. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Steady-Seal Drift-Reconciliation Determinism Tranche C0063 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when sealed ownership must reconcile delayed control markers, so drift-reconciliation baseline, drift-reconciliation replay, crash-during-drift restart, and rollback+re-forward across drift-reconciliation permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M68` exit gate green with QA evidence for steady-seal deterministic convergence and no-bleed safety.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M69-S1` (`I-0379`): harden deterministic post-steady-seal drift reconciliation so delayed seal-drift markers and concurrent steady-flow markers cannot reopen stale ownership, re-emit canonical IDs, suppress valid logical events, or regress cursor monotonicity.
+2. `M69-S2` (`I-0380`): execute QA counterexample gate for post-steady-seal drift-reconciliation determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under drift-reconciliation baseline, drift-reconciliation replay, crash-during-drift restart, and rollback+re-forward across drift-reconciliation permutations converge to one canonical tuple output set per chain.
+2. Post-steady-seal drift-reconciliation transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under post-steady-seal drift-reconciliation replay/resume permutations.
+4. Replay/resume from post-steady-seal drift-reconciliation boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject drift-reconciliation baseline, drift-reconciliation replay, crash-during-drift restart, and rollback+re-forward across drift-reconciliation permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain post-steady-seal drift-reconciliation transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from post-steady-seal drift-reconciliation boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus post-steady-seal drift-reconciliation counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic drift-reconciliation baseline, drift-reconciliation replay, crash-during-drift restart, and rollback+re-forward across drift-reconciliation fixtures.
+2. `0` cross-chain control-coupling violations under one-chain post-steady-seal drift-reconciliation counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under post-steady-seal drift-reconciliation replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in post-steady-seal drift-reconciliation fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: delayed seal-drift markers can race with steady-flow markers and create non-deterministic drift-reconciliation ownership arbitration across restart-time rollback/re-forward boundaries.
+- Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch)` drift-reconciliation ordering with explicit seal-drift lineage diagnostics, pin last verified rollback-safe pre-drift boundary on ambiguity, quarantine unresolved drift markers, and fail fast on unresolved ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -2780,6 +2821,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when rejoin-window owne
 33. `DP-0101-AG`: auto-tune policy-manifest rollback checkpoint-fence post-rejoin-window steady-seal policy.
 - Preferred: deterministic chain-local rejoin-to-steady-seal state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch)` ownership fences, replay-stable steady-seal lineage markers, and stale post-rejoin seal marker ownership rejection.
 - Fallback: pin last verified rollback-safe pre-seal boundary during steady-seal ambiguity, quarantine unresolved seal markers, and resume steady-seal progression only after replay-safe lineage confirmation is proven.
+
+34. `DP-0101-AH`: auto-tune policy-manifest rollback checkpoint-fence post-steady-seal drift-reconciliation policy.
+- Preferred: deterministic chain-local steady-seal drift-reconciliation state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch)` ownership fences, replay-stable drift lineage markers, and stale drift-marker ownership rejection.
+- Fallback: pin last verified rollback-safe pre-drift boundary during drift ambiguity, quarantine unresolved drift markers, and resume drift-reconciliation progression only after replay-safe lineage confirmation is proven.
 
 ## Local Queue Mapping
 
@@ -2917,13 +2962,15 @@ Completed milestones/slices:
 131. `I-0367`
 132. `I-0369`
 133. `I-0370`
+134. `I-0374`
+135. `I-0375`
 
 Active downstream queue from this plan:
-1. `I-0374`
-2. `I-0375`
+1. `I-0379`
+2. `I-0380`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M68-S2`
+1. `TBD by next planner slice after M69-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -2959,3 +3006,4 @@ Superseded issues:
 - `I-0355` and `I-0356` are superseded by `I-0357` and `I-0358` to replace generic cycle placeholders with an executable post-generation-prune retention-floor-lift reliability tranche.
 - `I-0360` and `I-0361` are superseded by `I-0362` and `I-0363` to replace generic cycle placeholders with an executable post-retention-floor-lift settle-window reliability tranche.
 - `I-0372` and `I-0373` are superseded by `I-0374` and `I-0375` to replace generic cycle placeholders with executable post-rejoin-window steady-seal determinism slices.
+- `I-0377` and `I-0378` are superseded by `I-0379` and `I-0380` to replace generic cycle placeholders with executable post-steady-seal drift-reconciliation determinism slices.
