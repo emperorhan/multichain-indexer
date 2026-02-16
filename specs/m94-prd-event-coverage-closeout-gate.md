@@ -13,7 +13,7 @@
 - `10`: deterministic replay and no cross-chain cursor bleed acceptance.
 
 ## Problem Statement
-After `M93` continuity hardening, coverage evidence for required event classes was reduced to temporary `NA` entries for `mint` and `burn` classes in `solana-devnet` and `base-sepolia`. This tranche removes that debt with explicit deterministic mint/burn evidence to ensure `R2` cannot pass by omission.
+After `M93` continuity hardening, `solana-devnet` and `base-sepolia` had temporary `NA` entries for required `mint` and `burn` classes. This tranche replaces that debt with deterministic mint/burn evidence so `R2` cannot pass by omission.
 
 ## Coverage Contract
 1. For each mandatory chain and class combination below, required cells must be present in evidence artifacts with deterministic `canonical event` outputs:

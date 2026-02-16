@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/big"
 	"os"
@@ -2186,6 +2187,207 @@ func TestProcessBatch_BaseFailedTransaction_IncompleteFeeMetadata_NoSyntheticFee
 			assert.Equal(t, model.TxStatusFailed, tx.Status)
 			assert.Len(t, fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2), 0)
 			assert.Len(t, fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1), 0)
+		})
+	}
+}
+
+func TestProcessBatch_M94S3_MintBurnClassCoverage_AndReplayStability(t *testing.T) {
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	countCategory := func(batch event.NormalizedBatch, category model.EventCategory) int {
+		count := 0
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				if be.EventCategory == category {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	type testCase struct {
+		name      string
+		chain     model.Chain
+		network   model.Network
+		address   string
+		signature string
+		sequence  int64
+		result    func(string, int64) *sidecarv1.TransactionResult
+	}
+
+	testCases := []testCase{
+		{
+			name:      "solana-devnet",
+			chain:     model.ChainSolana,
+			network:   model.NetworkDevnet,
+			address:   "sol-mint-burn-owner",
+			signature: "sol-mint-burn-9001",
+			sequence:  9001,
+			result: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					BlockTime:   1700000901,
+					Status:      "SUCCESS",
+					FeeAmount:   "0",
+					FeePayer:    "sol-mint-burn-owner",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryMint),
+							EventAction:           "mint",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-mint-burn-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "1000000000",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata:              map[string]string{"event_path": "log:100"},
+						},
+						{
+							OuterInstructionIndex: 1,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryBurn),
+							EventAction:           "burn",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               "sol-mint-burn-owner",
+							ContractAddress:       "So11111111111111111111111111111111111111112",
+							Delta:                 "-250000000",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata:              map[string]string{"event_path": "log:101"},
+						},
+					},
+				}
+			},
+		},
+		{
+			name:      "base-sepolia",
+			chain:     model.ChainBase,
+			network:   model.NetworkSepolia,
+			address:   "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+			signature: "base-mint-burn-9002",
+			sequence:  9102,
+			result: func(signature string, sequence int64) *sidecarv1.TransactionResult {
+				return &sidecarv1.TransactionResult{
+					TxHash:      signature,
+					BlockCursor: sequence,
+					BlockTime:   1700000902,
+					Status:      "SUCCESS",
+					FeeAmount:   "0",
+					FeePayer:    "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryMint),
+							EventAction:           "mint",
+							ProgramId:             "0xAAAABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+							Address:               "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+							ContractAddress:       "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+							Delta:                 "500000000000000000",
+							TokenSymbol:           "TEST",
+							TokenName:             "TestToken",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata:              map[string]string{"event_path": "log:100"},
+						},
+						{
+							OuterInstructionIndex: 1,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryBurn),
+							EventAction:           "burn",
+							ProgramId:             "0xAAAABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+							Address:               "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+							ContractAddress:       "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+							Delta:                 "-100000000000000000",
+							TokenSymbol:           "TEST",
+							TokenName:             "TestToken",
+							TokenDecimals:         18,
+							TokenType:             string(model.TokenTypeFungible),
+							Metadata:              map[string]string{"event_path": "log:101"},
+						},
+					},
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+			normalizedCh := make(chan event.NormalizedBatch, 2)
+			n := &Normalizer{
+				sidecarTimeout: 30_000_000_000, // 30s
+				normalizedCh:   normalizedCh,
+				logger:         slog.Default(),
+			}
+
+			firstResponse := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: []*sidecarv1.TransactionResult{tc.result(tc.signature, tc.sequence)},
+			}
+			mockClient.EXPECT().
+				DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+				Times(2).
+				Return(firstResponse, nil)
+
+			batch := event.RawBatch{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				Address:                tc.address,
+				PreviousCursorValue:    strPtr(fmt.Sprintf("%s-prev", tc.signature)),
+				PreviousCursorSequence: tc.sequence - 1,
+				NewCursorValue:         strPtr(tc.signature),
+				NewCursorSequence:      tc.sequence,
+				RawTransactions: []json.RawMessage{
+					json.RawMessage(`{"tx":"` + tc.name + `-mint-burn"}`),
+				},
+				Signatures: []event.SignatureInfo{
+					{Hash: tc.signature, Sequence: tc.sequence},
+				},
+			}
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+			first := <-normalizedCh
+			assert.Equal(t, tc.chain, first.Chain)
+			assert.Equal(t, tc.network, first.Network)
+			require.Len(t, first.Transactions, 1)
+
+			assert.Equal(t, 1, countCategory(first, model.EventCategoryMint))
+			assert.Equal(t, 1, countCategory(first, model.EventCategoryBurn))
+
+			replayBatch := batch
+			replayBatch.PreviousCursorValue = first.NewCursorValue
+			replayBatch.PreviousCursorSequence = first.NewCursorSequence
+			replayBatch.NewCursorValue = first.NewCursorValue
+			replayBatch.NewCursorSequence = first.NewCursorSequence
+
+			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, replayBatch))
+			second := <-normalizedCh
+
+			assert.Equal(t, orderedCanonicalTuples(first), orderedCanonicalTuples(second))
+			assertNoDuplicateCanonicalIDs(t, first)
+			assertNoDuplicateCanonicalIDs(t, second)
 		})
 	}
 }
