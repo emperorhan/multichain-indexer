@@ -535,6 +535,78 @@ func (a *autoTuneController) reconcileOverrideTransition(transition autoTuneOver
 	}
 }
 
+type sameEpochPolicyLineageRule struct {
+	match         func(epoch int64, previousDigest string, incomingDigest string) bool
+	adoptIncoming bool
+}
+
+var sameEpochPolicyLineageRules = [...]sameEpochPolicyLineageRule{
+	{
+		match:         isDeterministicRollbackFenceEpochCompactionTransition,
+		adoptIncoming: true,
+	},
+	{
+		match:         isDeterministicRollbackFenceTombstoneExpiryTransition,
+		adoptIncoming: true,
+	},
+	{
+		match:         isDeterministicRollbackFencePostExpiryLateMarkerQuarantineTransition,
+		adoptIncoming: true,
+	},
+	{
+		match:         isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition,
+		adoptIncoming: true,
+	},
+	{
+		match:         isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition,
+		adoptIncoming: true,
+	},
+	{
+		match: func(epoch int64, previousDigest string, incomingDigest string) bool {
+			return isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(epoch, incomingDigest, previousDigest)
+		},
+		adoptIncoming: false,
+	},
+	{
+		match: func(epoch int64, previousDigest string, incomingDigest string) bool {
+			return isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(epoch, incomingDigest, previousDigest)
+		},
+		adoptIncoming: false,
+	},
+	{
+		match: func(epoch int64, previousDigest string, incomingDigest string) bool {
+			return isDeterministicRollbackFencePostExpiryLateMarkerQuarantineTransition(epoch, incomingDigest, previousDigest)
+		},
+		adoptIncoming: false,
+	},
+	{
+		match: func(epoch int64, previousDigest string, incomingDigest string) bool {
+			return isDeterministicRollbackFenceTombstoneExpiryTransition(epoch, incomingDigest, previousDigest)
+		},
+		adoptIncoming: false,
+	},
+	{
+		match: func(epoch int64, previousDigest string, incomingDigest string) bool {
+			return isDeterministicRollbackFenceEpochCompactionTransition(epoch, incomingDigest, previousDigest)
+		},
+		adoptIncoming: false,
+	},
+}
+
+func resolveSameEpochPolicyLineage(
+	epoch int64,
+	previousDigest string,
+	incomingDigest string,
+) (adoptIncoming bool, handled bool) {
+	for _, rule := range sameEpochPolicyLineageRules {
+		if !rule.match(epoch, previousDigest, incomingDigest) {
+			continue
+		}
+		return rule.adoptIncoming, true
+	}
+	return false, false
+}
+
 func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicyTransition) {
 	if !transition.HasState {
 		return
@@ -642,74 +714,14 @@ func (a *autoTuneController) reconcilePolicyTransition(transition autoTunePolicy
 	}
 
 	if incomingEpoch == previousEpoch {
-		if isDeterministicRollbackFenceEpochCompactionTransition(previousEpoch, previousDigest, incomingDigest) {
-			// Same-epoch rollback fence compaction is metadata ownership only and
-			// must not reopen policy holds from pre-compaction checkpoints.
-			a.policyManifestDigest = incomingDigest
-			a.policyEpoch = incomingEpoch
-			return
-		}
-		if isDeterministicRollbackFenceTombstoneExpiryTransition(previousEpoch, previousDigest, incomingDigest) {
-			// Same-epoch tombstone expiry is metadata ownership only and must
-			// converge deterministically from retained tombstone to expired state.
-			a.policyManifestDigest = incomingDigest
-			a.policyEpoch = incomingEpoch
-			return
-		}
-		if isDeterministicRollbackFencePostExpiryLateMarkerQuarantineTransition(previousEpoch, previousDigest, incomingDigest) {
-			// Same-epoch post-expiry late-marker quarantine is metadata ownership
-			// only and must converge deterministically at marker-hold boundaries.
-			a.policyManifestDigest = incomingDigest
-			a.policyEpoch = incomingEpoch
-			return
-		}
-		if isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(previousEpoch, previousDigest, incomingDigest) {
-			// Same-epoch post-expiry late-marker release is metadata ownership only
-			// and must converge deterministically at quarantine-release boundaries.
-			a.policyManifestDigest = incomingDigest
-			a.policyEpoch = incomingEpoch
-			return
-		}
-		if isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(previousEpoch, previousDigest, incomingDigest) {
-			// Same-epoch post-quarantine release-window progression is metadata
-			// ownership only and must converge deterministically at release
-			// watermark boundaries.
-			a.policyManifestDigest = incomingDigest
-			a.policyEpoch = incomingEpoch
-			return
-		}
-		if isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(previousEpoch, incomingDigest, previousDigest) {
-			// Reject stale/duplicate post-quarantine release-window ownership once
-			// a newer release watermark is verified for this lineage.
-			a.policyManifestDigest = previousDigest
-			a.policyEpoch = previousEpoch
-			return
-		}
-		if isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(previousEpoch, incomingDigest, previousDigest) {
-			// Reject stale post-release quarantine ownership reactivation once
-			// quarantine-release ownership is verified for this lineage.
-			a.policyManifestDigest = previousDigest
-			a.policyEpoch = previousEpoch
-			return
-		}
-		if isDeterministicRollbackFencePostExpiryLateMarkerQuarantineTransition(previousEpoch, incomingDigest, previousDigest) {
-			// Reject stale post-quarantine expiry ownership reactivation once
-			// late-marker quarantine ownership is verified for this lineage.
-			a.policyManifestDigest = previousDigest
-			a.policyEpoch = previousEpoch
-			return
-		}
-		if isDeterministicRollbackFenceTombstoneExpiryTransition(previousEpoch, incomingDigest, previousDigest) {
-			// Reject stale post-expiry ownership reactivation once expiry ownership
-			// is verified for this rollback fence lineage.
-			a.policyManifestDigest = previousDigest
-			a.policyEpoch = previousEpoch
-			return
-		}
-		if isDeterministicRollbackFenceEpochCompactionTransition(previousEpoch, incomingDigest, previousDigest) {
-			// Reject stale pre-compaction rollback state once compacted ownership is verified.
-			a.policyManifestDigest = previousDigest
-			a.policyEpoch = previousEpoch
+		if adoptIncoming, handled := resolveSameEpochPolicyLineage(previousEpoch, previousDigest, incomingDigest); handled {
+			if adoptIncoming {
+				a.policyManifestDigest = incomingDigest
+				a.policyEpoch = incomingEpoch
+			} else {
+				a.policyManifestDigest = previousDigest
+				a.policyEpoch = previousEpoch
+			}
 			return
 		}
 	}
@@ -1190,6 +1202,120 @@ type rollbackFenceOwnershipOrdering struct {
 	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch int64
 }
 
+type rollbackFenceOwnershipPrefixFields struct {
+	releaseEpoch            int64
+	hasReleaseEpoch         bool
+	bridgeSequence          int64
+	hasBridgeSequence       bool
+	releaseWatermark        int64
+	hasReleaseWatermark     bool
+	drainWatermark          int64
+	hasDrainWatermark       bool
+	liveHead                int64
+	hasLiveHead             bool
+	steadyStateWatermark    int64
+	hasSteadyStateWatermark bool
+	steadyGeneration        int64
+	hasSteadyGeneration     bool
+	generationFloor         int64
+	hasGenerationFloor      bool
+	floorLiftEpoch          int64
+	hasFloorLiftEpoch       bool
+	settleWindowEpoch       int64
+	hasSettleWindowEpoch    bool
+	spilloverEpoch          int64
+	hasSpilloverEpoch       bool
+	spilloverRejoinEpoch    int64
+	hasSpilloverRejoinEpoch bool
+	rejoinSealEpoch         int64
+	hasRejoinSealEpoch      bool
+}
+
+func setOwnershipPrefixField(value string, target *int64, seen *bool) bool {
+	if *seen {
+		return true
+	}
+	if value == "" {
+		return false
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return false
+	}
+	*target = parsed
+	*seen = true
+	return true
+}
+
+func parseRollbackFenceOwnershipPrefixFields(digest string) (rollbackFenceOwnershipPrefixFields, bool) {
+	var fields rollbackFenceOwnershipPrefixFields
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		key, value, hasValue := strings.Cut(token, "=")
+		if !hasValue {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch key {
+		case "rollback-fence-late-marker-release-epoch":
+			if !setOwnershipPrefixField(value, &fields.releaseEpoch, &fields.hasReleaseEpoch) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-late-bridge-sequence", "rollback-fence-late-bridge-seq":
+			if !setOwnershipPrefixField(value, &fields.bridgeSequence, &fields.hasBridgeSequence) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-late-bridge-release-watermark", "rollback-fence-release-watermark":
+			if !setOwnershipPrefixField(value, &fields.releaseWatermark, &fields.hasReleaseWatermark) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-late-bridge-drain-watermark", "rollback-fence-backlog-drain-watermark", "rollback-fence-drain-watermark":
+			if !setOwnershipPrefixField(value, &fields.drainWatermark, &fields.hasDrainWatermark) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-live-head", "rollback-fence-live-catchup-head", "rollback-fence-live-watermark":
+			if !setOwnershipPrefixField(value, &fields.liveHead, &fields.hasLiveHead) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-steady-state-watermark", "rollback-fence-steady-watermark", "rollback-fence-rebaseline-watermark":
+			if !setOwnershipPrefixField(value, &fields.steadyStateWatermark, &fields.hasSteadyStateWatermark) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-steady-generation", "rollback-fence-baseline-generation":
+			if !setOwnershipPrefixField(value, &fields.steadyGeneration, &fields.hasSteadyGeneration) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-generation-retention-floor", "rollback-fence-retention-floor":
+			if !setOwnershipPrefixField(value, &fields.generationFloor, &fields.hasGenerationFloor) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-floor-lift-epoch", "rollback-fence-retention-floor-lift-epoch":
+			if !setOwnershipPrefixField(value, &fields.floorLiftEpoch, &fields.hasFloorLiftEpoch) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-settle-window-epoch", "rollback-fence-floor-lift-settle-window-epoch":
+			if !setOwnershipPrefixField(value, &fields.settleWindowEpoch, &fields.hasSettleWindowEpoch) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-spillover-epoch", "rollback-fence-late-spillover-epoch", "rollback-fence-settle-window-spillover-epoch":
+			if !setOwnershipPrefixField(value, &fields.spilloverEpoch, &fields.hasSpilloverEpoch) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-spillover-rejoin-epoch", "rollback-fence-rejoin-window-epoch", "rollback-fence-late-spillover-rejoin-epoch":
+			if !setOwnershipPrefixField(value, &fields.spilloverRejoinEpoch, &fields.hasSpilloverRejoinEpoch) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		case "rollback-fence-rejoin-seal-epoch", "rollback-fence-steady-seal-epoch", "rollback-fence-post-rejoin-seal-epoch":
+			if !setOwnershipPrefixField(value, &fields.rejoinSealEpoch, &fields.hasRejoinSealEpoch) {
+				return rollbackFenceOwnershipPrefixFields{}, false
+			}
+		}
+	}
+
+	return fields, true
+}
+
 func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
 	if epoch < 0 {
 		return rollbackFenceOwnershipOrdering{}, false
@@ -1198,22 +1324,35 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if !isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch, normalized) {
 		return rollbackFenceOwnershipOrdering{}, false
 	}
-	releaseEpoch, ok := parseRollbackFenceLateMarkerReleaseEpoch(normalized)
-	if !ok {
+	prefixFields, ok := parseRollbackFenceOwnershipPrefixFields(normalized)
+	if !ok || !prefixFields.hasReleaseEpoch {
 		return rollbackFenceOwnershipOrdering{}, false
 	}
-	bridgeSequence, hasBridgeSequence := parseRollbackFenceLateBridgeSequence(normalized)
-	releaseWatermark, hasExplicitWatermark := parseRollbackFenceLateBridgeReleaseWatermark(normalized)
-	drainWatermark, hasDrainWatermark := parseRollbackFenceLateBridgeDrainWatermark(normalized)
-	liveHead, hasLiveHead := parseRollbackFenceLiveHeadWatermark(normalized)
-	steadyStateWatermark, hasSteadyStateWatermark := parseRollbackFenceSteadyStateWatermark(normalized)
-	steadyGeneration, hasSteadyGeneration := parseRollbackFenceSteadyGeneration(normalized)
-	generationFloor, hasGenerationFloor := parseRollbackFenceGenerationRetentionFloor(normalized)
-	floorLiftEpoch, hasFloorLiftEpoch := parseRollbackFenceFloorLiftEpoch(normalized)
-	settleWindowEpoch, hasSettleWindowEpoch := parseRollbackFenceSettleWindowEpoch(normalized)
-	spilloverEpoch, hasSpilloverEpoch := parseRollbackFenceSpilloverEpoch(normalized)
-	spilloverRejoinEpoch, hasSpilloverRejoinEpoch := parseRollbackFenceSpilloverRejoinEpoch(normalized)
-	rejoinSealEpoch, hasRejoinSealEpoch := parseRollbackFenceRejoinSealEpoch(normalized)
+	releaseEpoch := prefixFields.releaseEpoch
+	bridgeSequence := prefixFields.bridgeSequence
+	hasBridgeSequence := prefixFields.hasBridgeSequence
+	releaseWatermark := prefixFields.releaseWatermark
+	hasExplicitWatermark := prefixFields.hasReleaseWatermark
+	drainWatermark := prefixFields.drainWatermark
+	hasDrainWatermark := prefixFields.hasDrainWatermark
+	liveHead := prefixFields.liveHead
+	hasLiveHead := prefixFields.hasLiveHead
+	steadyStateWatermark := prefixFields.steadyStateWatermark
+	hasSteadyStateWatermark := prefixFields.hasSteadyStateWatermark
+	steadyGeneration := prefixFields.steadyGeneration
+	hasSteadyGeneration := prefixFields.hasSteadyGeneration
+	generationFloor := prefixFields.generationFloor
+	hasGenerationFloor := prefixFields.hasGenerationFloor
+	floorLiftEpoch := prefixFields.floorLiftEpoch
+	hasFloorLiftEpoch := prefixFields.hasFloorLiftEpoch
+	settleWindowEpoch := prefixFields.settleWindowEpoch
+	hasSettleWindowEpoch := prefixFields.hasSettleWindowEpoch
+	spilloverEpoch := prefixFields.spilloverEpoch
+	hasSpilloverEpoch := prefixFields.hasSpilloverEpoch
+	spilloverRejoinEpoch := prefixFields.spilloverRejoinEpoch
+	hasSpilloverRejoinEpoch := prefixFields.hasSpilloverRejoinEpoch
+	rejoinSealEpoch := prefixFields.rejoinSealEpoch
+	hasRejoinSealEpoch := prefixFields.hasRejoinSealEpoch
 	sealDriftEpoch, hasSealDriftEpoch := parseRollbackFenceSealDriftEpoch(normalized)
 	driftReanchorEpoch, hasDriftReanchorEpoch := parseRollbackFenceDriftReanchorEpoch(normalized)
 	reanchorCompactionEpoch, hasReanchorCompactionEpoch := parseRollbackFenceReanchorCompactionEpoch(normalized)

@@ -7082,6 +7082,91 @@ func TestAutoTuneController_RollbackCheckpointFenceEpochCompactionWarmRestoreCol
 	assert.Equal(t, 0, decision.PolicyActivationTicks)
 }
 
+func BenchmarkAutoTuneControllerResolve(b *testing.B) {
+	controller := newAutoTuneController(100, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          260,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       2,
+		CooldownTicks:         1,
+	})
+	require.NotNil(b, controller)
+
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+	lowLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       130,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  120,
+		QueueDepth:         8,
+		QueueCapacity:      10,
+	}
+	inputs := [2]autoTuneInputs{highLag, lowLag}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = controller.Resolve(inputs[i&1])
+	}
+}
+
+func BenchmarkParseRollbackFenceOwnershipOrdering(b *testing.B) {
+	const epoch int64 = 2
+	digest := "manifest-tail-v2b" +
+		"|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3" +
+		"|rollback-fence-tombstone-expiry-epoch=4" +
+		"|rollback-fence-late-marker-hold-epoch=5" +
+		"|rollback-fence-late-marker-release-epoch=8" +
+		"|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90" +
+		"|rollback-fence-late-bridge-drain-watermark=120|rollback-fence-live-head=130" +
+		"|rollback-fence-steady-state-watermark=145|rollback-fence-steady-generation=2" +
+		"|rollback-fence-generation-retention-floor=2|rollback-fence-floor-lift-epoch=2" +
+		"|rollback-fence-settle-window-epoch=2|rollback-fence-spillover-epoch=2" +
+		"|rollback-fence-spillover-rejoin-epoch=2|rollback-fence-rejoin-seal-epoch=2" +
+		"|rollback-fence-post-steady-seal-drift-epoch=2|rollback-fence-post-drift-reanchor-epoch=2" +
+		"|rollback-fence-post-reanchor-compaction-epoch=2" +
+		"|rollback-fence-post-lineage-compaction-expiry-epoch=2" +
+		"|rollback-fence-post-marker-expiry-late-resurrection-quarantine-epoch=4" +
+		"|rollback-fence-post-late-resurrection-quarantine-reintegration-epoch=6" +
+		"|rollback-fence-post-late-resurrection-reintegration-seal-epoch=8" +
+		"|rollback-fence-post-reintegration-seal-drift-epoch=10" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-epoch=12" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-epoch=14" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-epoch=16" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-epoch=18" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-epoch=20" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=22" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=24" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-epoch=26" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-epoch=28" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-epoch=30" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-epoch=32" +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-epoch=34"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ordering, ok := parseRollbackFenceOwnershipOrdering(epoch, digest)
+		if !ok {
+			b.Fatal("expected rollback fence ownership ordering parse to succeed")
+		}
+		_ = ordering
+	}
+}
+
 func intPtr(v int) *int {
 	return &v
 }

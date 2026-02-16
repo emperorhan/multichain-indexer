@@ -1442,6 +1442,7 @@ role_guide() {
       cat <<'EOF'
 Role: Planner
 - Update implementation/spec docs for executable scope.
+- Prioritize unresolved requirements in \`PRD.md\` before optional refinement work.
 - If work should be split, create additional local issues under `.ralph/issues/` using the existing markdown format.
 - Keep milestones explicit and measurable.
 EOF

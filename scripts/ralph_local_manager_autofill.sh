@@ -199,7 +199,7 @@ create_continuous_quality_cycle() {
   developer_key="auto-quality-cycle-${cycle_id}-build"
   qa_key="auto-quality-cycle-${cycle_id}-qa"
 
-  planner_path="$("${NEW_ISSUE_SCRIPT}" planner "CQ ${cycle_id} planner: next reliability tranche" "" p0 high high 15 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired")"
+  planner_path="$("${NEW_ISSUE_SCRIPT}" planner "CQ ${cycle_id} planner: PRD-priority tranche" "" p0 high high 15 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired")"
   planner_issue_id="$(basename "${planner_path}" .md)"
   cat > "${planner_path}" <<EOF
 id: ${planner_issue_id}
@@ -207,7 +207,7 @@ role: planner
 status: ready
 priority: p0
 depends_on:
-title: CQ ${cycle_id} planner: next reliability tranche
+title: CQ ${cycle_id} planner: PRD-priority tranche
 complexity: high
 risk_class: high
 max_diff_scope: 15
@@ -219,10 +219,11 @@ non_goals: no-runtime-code-changes
 evidence_required: true
 ---
 ## Objective
-- Produce the next executable reliability plan so the local loop keeps shipping with measurable quality gains.
+- Produce the next executable plan that prioritizes unresolved requirements in \`PRD.md\` before optional reliability refinements.
 
 ## In Scope
-- Update \`IMPLEMENTATION_PLAN.md\` with the next focused milestone/slice.
+- Select the next unresolved PRD requirement(s) and map them to one focused implementation slice.
+- Update \`IMPLEMENTATION_PLAN.md\` and/or \`specs/*\` with PRD-traceable milestone/slice updates.
 - Create at least one downstream developer issue and one downstream qa issue in \`.ralph/issues/\`.
 - Emit planner contract JSON at \`.ralph/plans/plan-output-${planner_issue_id}.json\`.
 
@@ -230,7 +231,7 @@ evidence_required: true
 - Direct production runtime implementation in this planner issue.
 
 ## Acceptance Criteria
-- [ ] Updated milestone and acceptance gates are committed in plan/spec docs.
+- [ ] Updated milestone and acceptance gates are committed in plan/spec docs with explicit PRD requirement traceability.
 - [ ] At least one developer issue and one qa issue are created with explicit invariants and diff bounds.
 - [ ] Planner contract JSON exists and passes schema validation.
 - [ ] Validation remains green: \`make test\`, \`make test-sidecar\`, \`make lint\`.
@@ -238,13 +239,14 @@ evidence_required: true
 ## Notes
 - automanager_key: ${planner_key}
 - cycle_id: ${cycle_id}
-- Trigger reason: queue became idle and requires continuous plan->build->test progression.
+- prd_source: PRD.md
+- Trigger reason: queue became idle; PRD-priority plan->build->test progression is required.
 
 ## Non Goals
 - no-runtime-code-changes
 EOF
 
-  developer_path="$("${NEW_ISSUE_SCRIPT}" developer "CQ ${cycle_id} implementation: reliability increment" "${planner_issue_id}" p0 high high 25 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
+  developer_path="$("${NEW_ISSUE_SCRIPT}" developer "CQ ${cycle_id} implementation: PRD-priority increment" "${planner_issue_id}" p0 high high 25 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
   developer_issue_id="$(basename "${developer_path}" .md)"
   cat > "${developer_path}" <<EOF
 id: ${developer_issue_id}
@@ -252,7 +254,7 @@ role: developer
 status: ready
 priority: p0
 depends_on: ${planner_issue_id}
-title: CQ ${cycle_id} implementation: reliability increment
+title: CQ ${cycle_id} implementation: PRD-priority increment
 complexity: high
 risk_class: high
 max_diff_scope: 25
@@ -264,10 +266,10 @@ non_goals: infra-deployment-orchestration
 evidence_required: true
 ---
 ## Objective
-- Implement one production-safe reliability increment from the latest planner contract.
+- Implement one production-safe increment that closes planner-selected PRD requirement gap(s).
 
 ## In Scope
-- Execute one concrete slice that improves indexing correctness, replay determinism, or coverage depth.
+- Execute one concrete planner-selected slice that explicitly traces to unresolved PRD requirement(s).
 - Add/extend deterministic tests proving the increment.
 - Update docs/specs only when needed to keep behavior auditable.
 
@@ -275,7 +277,7 @@ evidence_required: true
 - Broad refactors unrelated to the selected reliability slice.
 
 ## Acceptance Criteria
-- [ ] The selected reliability increment is implemented with bounded diff scope.
+- [ ] The selected PRD-priority increment is implemented with bounded diff scope.
 - [ ] New/updated tests fail before and pass after the change.
 - [ ] No invariant regression across mandatory-chain canonical indexing paths (Solana/Base/BTC).
 - [ ] Validation passes: \`make test\`, \`make test-sidecar\`, \`make lint\`.
@@ -283,13 +285,14 @@ evidence_required: true
 ## Notes
 - automanager_key: ${developer_key}
 - cycle_id: ${cycle_id}
-- Trigger reason: enforce continuous planner->developer execution chain.
+- prd_source: PRD.md
+- Trigger reason: enforce continuous planner->developer execution chain with PRD-first ordering.
 
 ## Non Goals
 - infra-deployment-orchestration
 EOF
 
-  qa_path="$("${NEW_ISSUE_SCRIPT}" qa "CQ ${cycle_id} QA: reliability gate and counterexample checks" "${developer_issue_id}" p0 medium medium 20 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
+  qa_path="$("${NEW_ISSUE_SCRIPT}" qa "CQ ${cycle_id} QA: PRD-priority gate and counterexample checks" "${developer_issue_id}" p0 medium medium 20 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
   qa_issue_id="$(basename "${qa_path}" .md)"
   cat > "${qa_path}" <<EOF
 id: ${qa_issue_id}
@@ -297,7 +300,7 @@ role: qa
 status: ready
 priority: p0
 depends_on: ${developer_issue_id}
-title: CQ ${cycle_id} QA: reliability gate and counterexample checks
+title: CQ ${cycle_id} QA: PRD-priority gate and counterexample checks
 complexity: medium
 risk_class: medium
 max_diff_scope: 20
@@ -309,7 +312,7 @@ non_goals: bypass-failures-without-repro
 evidence_required: true
 ---
 ## Objective
-- Validate the cycle increment with invariant-focused QA and explicit pass/fail evidence.
+- Validate the PRD-priority increment with invariant-focused QA and explicit pass/fail evidence.
 
 ## In Scope
 - Run full validation and invariant/counterexample checks for changed indexing paths.
@@ -328,7 +331,8 @@ evidence_required: true
 ## Notes
 - automanager_key: ${qa_key}
 - cycle_id: ${cycle_id}
-- Trigger reason: enforce continuous developer->qa closure.
+- prd_source: PRD.md
+- Trigger reason: enforce continuous developer->qa closure for PRD-priority slices.
 
 ## Non Goals
 - bypass-failures-without-repro
