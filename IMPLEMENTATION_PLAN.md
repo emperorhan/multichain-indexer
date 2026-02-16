@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -171,6 +171,8 @@ Execution queue (dependency-ordered):
 160. `I-0432` (`M81-S2`) QA counterexample gate for post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration determinism + invariant safety
 161. `I-0436` (`M82-S1`) auto-tune policy-manifest rollback checkpoint-fence post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal determinism hardening
 162. `I-0437` (`M82-S2`) QA counterexample gate for post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal determinism + invariant safety
+163. `I-0442` (`M83-S1`) auto-tune policy-manifest rollback checkpoint-fence post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift determinism hardening
+164. `I-0443` (`M83-S2`) QA counterexample gate for post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift determinism + invariant safety
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -3182,7 +3184,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when post-seal drift-re
 - Gate: post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration sequencing can race with delayed quarantine echoes and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch, resurrection_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch)` post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration ordering with explicit reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration lineage diagnostics, pin last verified rollback-safe pre-reintegration boundary on ambiguity, quarantine unresolved reintegration candidates, and fail fast on unresolved ownership conflicts.
 
-### M82. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Reintegration-Seal Drift-Reanchor Lineage-Compaction Marker-Expiry Late-Resurrection Quarantine Reintegration Seal Determinism Tranche C0076 (P0, Next)
+### M82. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Reintegration-Seal Drift-Reanchor Lineage-Compaction Marker-Expiry Late-Resurrection Quarantine Reintegration Seal Determinism Tranche C0076 (P0, Completed)
 
 #### Objective
 Eliminate duplicate/missing-event and cursor-safety risk when post-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration enters reintegration-seal convergence, so reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal-hold baseline, deterministic reintegration-seal apply, crash-during-reintegration-seal restart, and rollback+re-forward across reintegration-seal permutations converge to one deterministic canonical output set per chain.
@@ -3220,6 +3222,45 @@ Eliminate duplicate/missing-event and cursor-safety risk when post-seal drift-re
 #### Risk Gate + Fallback
 - Gate: post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal sequencing can race with delayed reintegration echoes and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch, resurrection_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch)` post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal ordering with explicit reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal lineage diagnostics, pin last verified rollback-safe pre-reintegration-seal boundary on ambiguity, quarantine unresolved reintegration-seal candidates, and fail fast on unresolved ownership conflicts.
+
+### M83. Auto-Tune Policy-Manifest Rollback Checkpoint-Fence Post-Reintegration-Seal Drift-Reanchor Lineage-Compaction Marker-Expiry Late-Resurrection Quarantine Reintegration Seal Drift Determinism Tranche C0077 (P0, Next)
+
+#### Objective
+Eliminate duplicate/missing-event and cursor-safety risk when post-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal enters reintegration-seal-drift convergence, so reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal-drift-hold baseline, deterministic reintegration-seal-drift apply, crash-during-reintegration-seal-drift restart, and rollback+re-forward across reintegration-seal-drift permutations converge to one deterministic canonical output set per chain.
+
+#### Entry Gate
+- `M82` exit gate green with QA evidence for post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal deterministic convergence and no-bleed safety.
+- Fail-fast panic contract from `M34` remains enforced for correctness-impacting failures.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in chain-scoped deployment modes.
+
+#### Slices
+1. `M83-S1` (`I-0442`): harden deterministic post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift sequencing so delayed reintegration-seal echoes and stale reintegration-seal-drift candidates cannot reopen stale ownership, re-emit canonical IDs, suppress valid logical events, or regress cursor monotonicity.
+2. `M83-S2` (`I-0443`): execute QA counterexample gate for post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift determinism and invariant evidence, including reproducible failure fanout when invariants fail.
+
+#### Definition Of Done
+1. Equivalent tri-chain logical ranges processed under reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal-drift-hold baseline, deterministic reintegration-seal-drift apply, crash-during-reintegration-seal-drift restart, and rollback+re-forward across reintegration-seal-drift permutations converge to one canonical tuple output set per chain.
+2. Post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift transitions on one chain cannot induce cross-chain control coupling, cross-chain cursor bleed, or fail-fast regressions on other mandatory chains.
+3. Solana/Base fee-event semantics and BTC signed-delta conservation remain deterministic under post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift replay/resume permutations.
+4. Replay/resume from post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift boundaries remains idempotent with chain-scoped cursor monotonicity and no failed-path cursor/watermark progression.
+5. Runtime wiring invariants remain green across all mandatory chains.
+
+#### Test Contract
+1. Deterministic tests inject reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal-drift-hold baseline, deterministic reintegration-seal-drift apply, crash-during-reintegration-seal-drift restart, and rollback+re-forward across reintegration-seal-drift permutations for equivalent tri-chain logical ranges and assert canonical tuple convergence to one deterministic baseline output set.
+2. Deterministic tests inject one-chain post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift transitions while the other two chains progress and assert `0` cross-chain control-coupling violations plus `0` duplicate/missing logical events.
+3. Deterministic replay/resume tests from post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, `0` balance drift, and chain-scoped cursor/watermark safety.
+4. QA executes required validation commands plus post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift counterexample checks and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs across deterministic reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal-drift-hold baseline, deterministic reintegration-seal-drift apply, crash-during-reintegration-seal-drift restart, and rollback+re-forward across reintegration-seal-drift fixtures.
+2. `0` cross-chain control-coupling violations under one-chain post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events under post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift replay permutations.
+4. `0` cursor monotonicity or failed-path watermark-safety violations in post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift fixtures.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift sequencing can race with delayed reintegration-seal echoes and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
+- Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch, resurrection_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch)` post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift ordering with explicit reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift lineage diagnostics, pin last verified rollback-safe pre-reintegration-seal-drift boundary on ambiguity, quarantine unresolved reintegration-seal-drift candidates, and fail fast on unresolved ownership conflicts.
 
 ## Decision Register (Major + Fallback)
 
@@ -3411,6 +3452,10 @@ Eliminate duplicate/missing-event and cursor-safety risk when post-seal drift-re
 - Preferred: deterministic chain-local reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch, resurrection_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch)` ownership fences, replay-stable reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal lineage markers, and stale reintegration-seal-candidate ownership rejection.
 - Fallback: pin last verified rollback-safe pre-reintegration-seal boundary during reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal ambiguity, quarantine unresolved reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal candidates, and resume post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal progression only after replay-safe lineage confirmation is proven.
 
+48. `DP-0101-AV`: auto-tune policy-manifest rollback checkpoint-fence post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift policy.
+- Preferred: deterministic chain-local reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift state machine with explicit `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch, resurrection_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch)` ownership fences, replay-stable reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift lineage markers, and stale reintegration-seal-drift-candidate ownership rejection.
+- Fallback: pin last verified rollback-safe pre-reintegration-seal-drift boundary during reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift ambiguity, quarantine unresolved reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift candidates, and resume post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift progression only after replay-safe lineage confirmation is proven.
+
 ## Local Queue Mapping
 
 Completed milestones/slices:
@@ -3575,13 +3620,15 @@ Completed milestones/slices:
 159. `I-0429`
 160. `I-0431`
 161. `I-0432`
+162. `I-0436`
+163. `I-0437`
 
 Active downstream queue from this plan:
-1. `I-0436`
-2. `I-0437`
+1. `I-0442`
+2. `I-0443`
 
 Planned next tranche queue:
-1. `TBD by next planner slice after M82-S2`
+1. `TBD by next planner slice after M83-S2`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -3627,3 +3674,4 @@ Superseded issues:
 - `I-0412` and `I-0413` are superseded by `I-0414` and `I-0415` to replace generic cycle placeholders with executable post-reintegration-seal drift-reconciliation determinism slices.
 - `I-0417` and `I-0418` are superseded by `I-0419` and `I-0420` to replace generic cycle placeholders with executable post-reintegration-seal drift-reanchor determinism slices.
 - `I-0434` and `I-0435` are superseded by `I-0436` and `I-0437` to replace generic cycle placeholders with executable post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal determinism slices.
+- `I-0440` and `I-0441` are superseded by `I-0442` and `I-0443` to replace generic cycle placeholders with executable post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift determinism slices.

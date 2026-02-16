@@ -476,6 +476,7 @@ GitHub 기반 루프(원격 runner, workflow 토글, auto-merge)는 기본 흐�
 - [Ralph Loop Usage Guide](docs/ralph-loop-user-guide.md) — 시작/점검/중지 커맨드 요약
 - [Ralph Loop Troubleshooter](docs/ralph-loop-troubleshooter.md) — 실제 장애 원인/복구 체크리스트
 - [Architecture](docs/architecture.md) — 상세 아키텍처 명세서
+- [Sidecar Deployment Decision](docs/sidecar-deployment-decision.md) — sidecar 분리 트리거/SLO/운영 룰 ADR
 - [Testing](docs/testing.md) — 테스트 방법론 및 시나리오
 - [DB Migration Rationale](docs/db-migration-rationale.md) — AS-IS (JPA JOINED) → TO-BE (JSONB) 비교
 - [Roadmap](docs/roadmap.md) — 고도화 마일스톤과 우선순위
