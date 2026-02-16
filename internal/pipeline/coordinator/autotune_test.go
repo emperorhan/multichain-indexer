@@ -5701,6 +5701,232 @@ func TestAutoTuneController_RollbackCheckpointFencePostReintegrationSealDriftRea
 	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
 }
 
+func TestAutoTuneController_RollbackCheckpointFencePostReintegrationSealDriftReanchorLineageCompactionMarkerExpiryLateResurrectionQuarantineReintegrationSealRejectsStaleMarkers(t *testing.T) {
+	highLag := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         0,
+		QueueCapacity:      10,
+	}
+
+	segment1Cfg := AutoTuneConfig{
+		Enabled:                    true,
+		MinBatchSize:               60,
+		MaxBatchSize:               360,
+		StepUp:                     20,
+		StepDown:                   10,
+		LagHighWatermark:           80,
+		LagLowWatermark:            20,
+		QueueHighWatermarkPct:      90,
+		QueueLowWatermarkPct:       10,
+		HysteresisTicks:            1,
+		CooldownTicks:              1,
+		PolicyVersion:              "policy-v2",
+		PolicyManifestDigest:       "manifest-tail-v2a",
+		PolicyManifestRefreshEpoch: 1,
+		PolicyActivationHoldTicks:  1,
+	}
+	segment2Cfg := segment1Cfg
+	segment2Cfg.PolicyManifestDigest = "manifest-tail-v2b"
+	segment2Cfg.PolicyManifestRefreshEpoch = 2
+	segment3Cfg := segment1Cfg
+	segment3Cfg.PolicyManifestDigest = "manifest-tail-v2c"
+	segment3Cfg.PolicyManifestRefreshEpoch = 3
+
+	lateResurrection2Digest := "manifest-tail-v2b" +
+		"|rollback-from-seq=3|rollback-to-seq=2|rollback-forward-seq=3" +
+		"|rollback-fence-tombstone-expiry-epoch=4" +
+		"|rollback-fence-late-marker-hold-epoch=5" +
+		"|rollback-fence-late-marker-release-epoch=8" +
+		"|rollback-fence-late-bridge-seq=3|rollback-fence-late-bridge-release-watermark=90" +
+		"|rollback-fence-late-bridge-drain-watermark=120|rollback-fence-live-head=130" +
+		"|rollback-fence-steady-state-watermark=145|rollback-fence-steady-generation=2" +
+		"|rollback-fence-generation-retention-floor=2|rollback-fence-floor-lift-epoch=2" +
+		"|rollback-fence-settle-window-epoch=2|rollback-fence-spillover-epoch=2" +
+		"|rollback-fence-spillover-rejoin-epoch=2|rollback-fence-rejoin-seal-epoch=2" +
+		"|rollback-fence-post-steady-seal-drift-epoch=2|rollback-fence-post-drift-reanchor-epoch=2" +
+		"|rollback-fence-post-reanchor-compaction-epoch=2" +
+		"|rollback-fence-post-lineage-compaction-expiry-epoch=2" +
+		"|rollback-fence-post-marker-expiry-late-resurrection-quarantine-epoch=4"
+	reintegration2Digest := lateResurrection2Digest + "|rollback-fence-post-late-resurrection-quarantine-reintegration-epoch=6"
+	reintegrationSeal2Digest := reintegration2Digest + "|rollback-fence-post-late-resurrection-reintegration-seal-epoch=8"
+	reintegrationSealDrift2Digest := reintegrationSeal2Digest + "|rollback-fence-post-reintegration-seal-drift-epoch=10"
+	reintegrationSealDriftReanchor2Digest := reintegrationSealDrift2Digest + "|rollback-fence-post-reintegration-seal-drift-reanchor-epoch=12"
+	reintegrationSealDriftReanchorCompaction2Digest := reintegrationSealDriftReanchor2Digest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-epoch=14"
+	reintegrationSealDriftReanchorCompactionExpiry2Digest := reintegrationSealDriftReanchorCompaction2Digest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-epoch=16"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantine2Digest := reintegrationSealDriftReanchorCompactionExpiry2Digest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-epoch=18"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Digest := reintegrationSealDriftReanchorCompactionExpiryQuarantine2Digest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-epoch=20"
+
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg := segment2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Digest
+	reintegrationSealAfterReintegration1Cfg := segment2Cfg
+	reintegrationSealAfterReintegration1Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Digest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=21"
+	reintegrationSealAfterReintegration2Cfg := segment2Cfg
+	reintegrationSealAfterReintegration2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Digest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=22"
+	staleReintegrationSealAfterReintegrationCfg := segment2Cfg
+	staleReintegrationSealAfterReintegrationCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Digest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=21"
+	ambiguousReintegrationSealAfterReintegrationCfg := segment2Cfg
+	ambiguousReintegrationSealAfterReintegrationCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantine2Digest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=23"
+	conflictingReintegrationSealAfterReintegrationAliasForwardCfg := segment2Cfg
+	conflictingReintegrationSealAfterReintegrationAliasForwardCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Digest +
+		"|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=22|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=21"
+	conflictingReintegrationSealAfterReintegrationAliasReverseCfg := segment2Cfg
+	conflictingReintegrationSealAfterReintegrationAliasReverseCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Digest +
+		"|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=21|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=22"
+	stalePreReintegrationSealAfterReintegrationCfg := segment2Cfg
+	stalePreReintegrationSealAfterReintegrationCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Digest
+
+	baseSeed := 140
+	baseController := newAutoTuneControllerWithSeed(100, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg, &baseSeed)
+	require.NotNil(t, baseController)
+	batch, baseDecision := baseController.Resolve(highLag)
+	assert.Equal(t, baseSeed+20, batch)
+	assert.Equal(t, "apply_increase", baseDecision.Decision)
+	assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest, baseDecision.PolicyManifestDigest)
+	assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestRefreshEpoch, baseDecision.PolicyEpoch)
+	assert.Equal(t, 0, baseDecision.PolicyActivationTicks)
+
+	reintegrationSeal1Seed := baseController.currentBatch
+	reintegrationSeal1Controller := newAutoTuneControllerWithSeed(100, reintegrationSealAfterReintegration1Cfg, &reintegrationSeal1Seed)
+	require.NotNil(t, reintegrationSeal1Controller)
+	reintegrationSeal1Controller.reconcilePolicyTransition(baseController.exportPolicyTransition())
+	batch, reintegrationSeal1Decision := reintegrationSeal1Controller.Resolve(highLag)
+	assert.Equal(t, reintegrationSeal1Seed+20, batch)
+	assert.Equal(t, "apply_increase", reintegrationSeal1Decision.Decision)
+	assert.Equal(t, reintegrationSealAfterReintegration1Cfg.PolicyManifestDigest, reintegrationSeal1Decision.PolicyManifestDigest)
+	assert.Equal(t, reintegrationSealAfterReintegration1Cfg.PolicyManifestRefreshEpoch, reintegrationSeal1Decision.PolicyEpoch)
+	assert.Equal(t, 0, reintegrationSeal1Decision.PolicyActivationTicks)
+
+	reintegrationSeal2Seed := reintegrationSeal1Controller.currentBatch
+	reintegrationSeal2Controller := newAutoTuneControllerWithSeed(100, reintegrationSealAfterReintegration2Cfg, &reintegrationSeal2Seed)
+	require.NotNil(t, reintegrationSeal2Controller)
+	reintegrationSeal2Controller.reconcilePolicyTransition(reintegrationSeal1Controller.exportPolicyTransition())
+	batch, reintegrationSeal2Decision := reintegrationSeal2Controller.Resolve(highLag)
+	assert.Equal(t, reintegrationSeal2Seed+20, batch)
+	assert.Equal(t, "apply_increase", reintegrationSeal2Decision.Decision)
+	assert.Equal(t, reintegrationSealAfterReintegration2Cfg.PolicyManifestDigest, reintegrationSeal2Decision.PolicyManifestDigest)
+	assert.Equal(t, reintegrationSealAfterReintegration2Cfg.PolicyManifestRefreshEpoch, reintegrationSeal2Decision.PolicyEpoch)
+	assert.Equal(t, 0, reintegrationSeal2Decision.PolicyActivationTicks)
+
+	staleReintegrationSealSeed := reintegrationSeal2Controller.currentBatch
+	staleReintegrationSealController := newAutoTuneControllerWithSeed(100, staleReintegrationSealAfterReintegrationCfg, &staleReintegrationSealSeed)
+	require.NotNil(t, staleReintegrationSealController)
+	staleReintegrationSealController.reconcilePolicyTransition(reintegrationSeal2Controller.exportPolicyTransition())
+	batch, staleReintegrationSealDecision := staleReintegrationSealController.Resolve(highLag)
+	assert.Equal(t, staleReintegrationSealSeed+20, batch)
+	assert.Equal(t, "apply_increase", staleReintegrationSealDecision.Decision)
+	assert.Equal(
+		t,
+		reintegrationSealAfterReintegration2Cfg.PolicyManifestDigest,
+		staleReintegrationSealDecision.PolicyManifestDigest,
+		"lower reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal epochs must remain pinned behind latest verified reintegration-seal ownership",
+	)
+	assert.Equal(t, reintegrationSealAfterReintegration2Cfg.PolicyManifestRefreshEpoch, staleReintegrationSealDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleReintegrationSealDecision.PolicyActivationTicks)
+
+	ambiguousReintegrationSealSeed := staleReintegrationSealController.currentBatch
+	ambiguousReintegrationSealController := newAutoTuneControllerWithSeed(100, ambiguousReintegrationSealAfterReintegrationCfg, &ambiguousReintegrationSealSeed)
+	require.NotNil(t, ambiguousReintegrationSealController)
+	ambiguousReintegrationSealController.reconcilePolicyTransition(staleReintegrationSealController.exportPolicyTransition())
+	batch, ambiguousReintegrationSealDecision := ambiguousReintegrationSealController.Resolve(highLag)
+	assert.Equal(t, ambiguousReintegrationSealSeed+20, batch)
+	assert.Equal(t, "apply_increase", ambiguousReintegrationSealDecision.Decision)
+	assert.Equal(
+		t,
+		reintegrationSealAfterReintegration2Cfg.PolicyManifestDigest,
+		ambiguousReintegrationSealDecision.PolicyManifestDigest,
+		"reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal candidates must remain quarantined until reintegration ownership is explicit",
+	)
+	assert.Equal(t, reintegrationSealAfterReintegration2Cfg.PolicyManifestRefreshEpoch, ambiguousReintegrationSealDecision.PolicyEpoch)
+	assert.Equal(t, 0, ambiguousReintegrationSealDecision.PolicyActivationTicks)
+
+	conflictingForwardSeed := ambiguousReintegrationSealController.currentBatch
+	conflictingForwardController := newAutoTuneControllerWithSeed(100, conflictingReintegrationSealAfterReintegrationAliasForwardCfg, &conflictingForwardSeed)
+	require.NotNil(t, conflictingForwardController)
+	conflictingForwardController.reconcilePolicyTransition(ambiguousReintegrationSealController.exportPolicyTransition())
+	batch, conflictingForwardDecision := conflictingForwardController.Resolve(highLag)
+	assert.Equal(t, conflictingForwardSeed+20, batch)
+	assert.Equal(t, "apply_increase", conflictingForwardDecision.Decision)
+	assert.Equal(
+		t,
+		reintegrationSealAfterReintegration2Cfg.PolicyManifestDigest,
+		conflictingForwardDecision.PolicyManifestDigest,
+		"conflicting reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal alias values must remain quarantined regardless of token order",
+	)
+	assert.Equal(t, reintegrationSealAfterReintegration2Cfg.PolicyManifestRefreshEpoch, conflictingForwardDecision.PolicyEpoch)
+	assert.Equal(t, 0, conflictingForwardDecision.PolicyActivationTicks)
+
+	conflictingReverseSeed := conflictingForwardController.currentBatch
+	conflictingReverseController := newAutoTuneControllerWithSeed(100, conflictingReintegrationSealAfterReintegrationAliasReverseCfg, &conflictingReverseSeed)
+	require.NotNil(t, conflictingReverseController)
+	conflictingReverseController.reconcilePolicyTransition(conflictingForwardController.exportPolicyTransition())
+	batch, conflictingReverseDecision := conflictingReverseController.Resolve(highLag)
+	assert.Equal(t, conflictingReverseSeed+20, batch)
+	assert.Equal(t, "apply_increase", conflictingReverseDecision.Decision)
+	assert.Equal(
+		t,
+		reintegrationSealAfterReintegration2Cfg.PolicyManifestDigest,
+		conflictingReverseDecision.PolicyManifestDigest,
+		"conflicting reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal alias values must remain quarantined regardless of token order",
+	)
+	assert.Equal(t, reintegrationSealAfterReintegration2Cfg.PolicyManifestRefreshEpoch, conflictingReverseDecision.PolicyEpoch)
+	assert.Equal(t, 0, conflictingReverseDecision.PolicyActivationTicks)
+
+	stalePreReintegrationSealSeed := conflictingReverseController.currentBatch
+	stalePreReintegrationSealController := newAutoTuneControllerWithSeed(100, stalePreReintegrationSealAfterReintegrationCfg, &stalePreReintegrationSealSeed)
+	require.NotNil(t, stalePreReintegrationSealController)
+	stalePreReintegrationSealController.reconcilePolicyTransition(conflictingReverseController.exportPolicyTransition())
+	batch, stalePreReintegrationSealDecision := stalePreReintegrationSealController.Resolve(highLag)
+	assert.Equal(t, stalePreReintegrationSealSeed+20, batch)
+	assert.Equal(t, "apply_increase", stalePreReintegrationSealDecision.Decision)
+	assert.Equal(
+		t,
+		reintegrationSealAfterReintegration2Cfg.PolicyManifestDigest,
+		stalePreReintegrationSealDecision.PolicyManifestDigest,
+		"post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration stale markers must not reclaim ownership after reintegration-seal",
+	)
+	assert.Equal(t, reintegrationSealAfterReintegration2Cfg.PolicyManifestRefreshEpoch, stalePreReintegrationSealDecision.PolicyEpoch)
+	assert.Equal(t, 0, stalePreReintegrationSealDecision.PolicyActivationTicks)
+
+	crashRestartSeed := stalePreReintegrationSealController.currentBatch
+	crashRestartController := newAutoTuneControllerWithSeed(100, reintegrationSealAfterReintegration2Cfg, &crashRestartSeed)
+	require.NotNil(t, crashRestartController)
+	crashRestartController.reconcilePolicyTransition(autoTunePolicyTransition{
+		HasState:                true,
+		Version:                 reintegrationSealAfterReintegration2Cfg.PolicyVersion,
+		ManifestDigest:          reintegrationSealAfterReintegration2Cfg.PolicyManifestDigest,
+		Epoch:                   reintegrationSealAfterReintegration2Cfg.PolicyManifestRefreshEpoch,
+		ActivationHoldRemaining: 2,
+		FromWarmCheckpoint:      true,
+	})
+	batch, crashRestartHold := crashRestartController.Resolve(highLag)
+	assert.Equal(t, crashRestartSeed, batch)
+	assert.Equal(t, "hold_policy_transition", crashRestartHold.Decision)
+	assert.Equal(
+		t,
+		1,
+		crashRestartHold.PolicyActivationTicks,
+		"crash-restart at reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal boundary must collapse ambiguous hold windows to one deterministic hold tick",
+	)
+	batch, crashRestartApplied := crashRestartController.Resolve(highLag)
+	assert.Equal(t, crashRestartSeed+20, batch)
+	assert.Equal(t, "apply_increase", crashRestartApplied.Decision)
+	assert.Equal(t, 0, crashRestartApplied.PolicyActivationTicks)
+
+	reForwardSeed := stalePreReintegrationSealController.currentBatch
+	reForwardController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reForwardSeed)
+	require.NotNil(t, reForwardController)
+	reForwardController.reconcilePolicyTransition(stalePreReintegrationSealController.exportPolicyTransition())
+	batch, reForwardHold := reForwardController.Resolve(highLag)
+	assert.Equal(t, reForwardSeed, batch)
+	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal must deterministically apply one activation hold")
+	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardHold.PolicyManifestDigest)
+	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardHold.PolicyEpoch)
+	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)
+}
+
 func TestAutoTuneController_RollbackCheckpointFenceWarmRestoreCollapsesAmbiguousHoldWindow(t *testing.T) {
 	highLag := autoTuneInputs{
 		HasHeadSignal:      true,
