@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -187,6 +187,8 @@ Execution queue (dependency-ordered):
 176. `I-0467` (`M89-S2`) QA counterexample gate for post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal determinism + invariant safety
 177. `I-0468` (`M90-S1`) auto-tune policy-manifest rollback checkpoint-fence post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift determinism hardening
 178. `I-0469` (`M90-S2`) QA counterexample gate for post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift determinism + invariant safety
+179. `I-0473` (`M91-S1`) PRD R6/R7 topology-parity + strict chain-isolation deterministic gate hardening
+180. `I-0474` (`M91-S2`) QA counterexample gate for PRD R6/R7 topology-parity + strict chain-isolation evidence
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -3549,6 +3551,49 @@ Eliminate duplicate/missing-event and cursor-safety risk when post-reintegration
 - Gate: post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift sequencing can race with delayed reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal echoes and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch, resurrection_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch)` post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift ordering with explicit lineage diagnostics, pin last verified rollback-safe pre-late-resurrection-quarantine-reintegration-seal-drift boundary on ambiguity, quarantine unresolved reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift candidates, and fail fast on unresolved ownership conflicts.
 
+### M91. PRD-Priority Topology Parity + Strict Chain Isolation Gate Tranche C0081 (P0, Planned)
+
+#### Objective
+Close unresolved PRD requirements before optional refinements by enforcing topology-independent canonical output equivalence and strict chain isolation across `Topology A/B/C` permutations for mandatory chains.
+
+PRD traceability:
+- `R6` deployment topology independence.
+- `R7` strict chain isolation.
+- `9.4` topology parity tests.
+- `10` acceptance criterion requiring topology parity and no cross-chain cursor bleed.
+
+#### Entry Gate
+- `M90` exit gate green and no open correctness blockers on canonical identity/replay invariants.
+- Mandatory runtime targets (`solana-devnet`, `base-sepolia`, `btc-testnet`) are wireable in all supported topology modes.
+- This PRD-priority gate executes before any new post-M90 optional reliability refinement tranche.
+
+#### Slices
+1. `M91-S1` (`I-0473`): implement deterministic tri-topology parity harness plus one-chain stress/isolation assertions so topology mode changes cannot alter canonical outputs or induce cross-chain progression bleed.
+2. `M91-S2` (`I-0474`): execute QA counterexample gate for topology parity + chain-isolation evidence, including reproducible failure fanout for any invariant breach.
+
+#### Definition Of Done
+1. For equivalent chain input ranges, topology modes `A` (chain-per-deploy), `B` (family-per-deploy), and `C` (hybrid) converge to one canonical tuple output set per mandatory chain.
+2. One-chain failure/restart/replay stress under each topology mode produces `0` cross-chain control bleed and `0` cross-chain cursor/watermark bleed.
+3. Replay/resume equivalence across topology permutations preserves deterministic canonical IDs, idempotent ingestion, cursor monotonicity, and signed-delta/fee invariants.
+4. Runtime wiring invariants remain green across all mandatory chains in each topology permutation.
+
+#### Test Contract
+1. Deterministic topology matrix tests run identical fixture ranges across `Topology A/B/C` and assert canonical tuple set equivalence per chain.
+2. Deterministic isolation tests inject one-chain failure/restart/replay in each topology mode while peer chains progress and assert no cross-chain progression coupling.
+3. Deterministic replay/resume tests from topology-specific restart boundaries assert Solana/Base fee-event continuity, BTC signed-delta conservation, and no failed-path cursor/watermark advancement.
+4. QA runs full validation commands and publishes invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs per chain across `Topology A/B/C` runs for equivalent fixture ranges.
+2. `0` cross-chain control/cursor bleed violations under one-chain stress/restart counterexamples.
+3. `0` duplicate canonical IDs and `0` missing logical events across topology-mode replay/resume permutations.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+5. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: topology-mode transitions can mask latent shared-state coupling in commit/cursor/watermark paths and produce non-deterministic parity drift.
+- Fallback: enforce deterministic topology-parity diffing keyed by `(chain, network, topology_mode, block_cursor, tx_hash, event_path, actor_address, asset_id, event_category)`, quarantine ambiguous topology-only divergences, and block tranche promotion until deterministic parity is restored.
+
 ## Decision Register (Major + Fallback)
 
 1. `DP-0101-A`: canonical `event_path` encoding.
@@ -3949,12 +3994,12 @@ Completed milestones/slices:
 173. `I-0457`
 
 Active downstream queue from this plan:
-1. `I-0466`
-2. `I-0467`
+1. `I-0473`
+2. `I-0474`
 
 Planned next tranche queue:
-1. `I-0468`
-2. `I-0469`
+1. reserved after `M91` exit gate
+2. reserved after `M91` exit gate
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -4004,3 +4049,4 @@ Superseded issues:
 - `I-0454` and `I-0455` are superseded by `I-0456` and `I-0457` to replace generic cycle placeholders with executable post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine determinism slices.
 - `I-0459` and `I-0460` are superseded by `I-0461` and `I-0462` to replace generic cycle placeholders with executable post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration determinism slices.
 - `I-0464` and `I-0465` are superseded by `I-0466` and `I-0467` to replace generic cycle placeholders with executable post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal determinism slices.
+- `I-0471` and `I-0472` are superseded by `I-0473` and `I-0474` to enforce PRD-traceable topology parity + strict chain isolation scope (`R6`, `R7`, `9.4`, `10`) before optional post-M90 refinements.
