@@ -6,7 +6,7 @@
 - Mission-critical target: canonical normalizer that indexes all asset-volatility events without duplicates
 
 ## Program Graph
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91`
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -189,6 +189,8 @@ Execution queue (dependency-ordered):
 178. `I-0469` (`M90-S2`) QA counterexample gate for post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration seal drift determinism + invariant safety
 179. `I-0473` (`M91-S1`) PRD R6/R7 topology-parity + strict chain-isolation deterministic gate hardening
 180. `I-0474` (`M91-S2`) QA counterexample gate for PRD R6/R7 topology-parity + strict chain-isolation evidence
+181. `I-0481` (`M92-S1`) PRD R6/R7 closure hardening: enforce mandatory-chain `Topology A/B/C` parity matrix + replay/isolation inventory guard
+182. `I-0482` (`M92-S2`) QA re-gate for mandatory-chain `Topology A/B/C` parity/isolation closure with explicit M91/M92 promotion recommendation
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -3551,7 +3553,7 @@ Eliminate duplicate/missing-event and cursor-safety risk when post-reintegration
 - Gate: post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift sequencing can race with delayed reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal echoes and create non-deterministic ownership arbitration across restart-time rollback/re-forward boundaries.
 - Fallback: enforce deterministic `(epoch, bridge_sequence, drain_watermark, live_head, steady_state_watermark, steady_generation, generation_retention_floor, floor_lift_epoch, settle_window_epoch, spillover_epoch, spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch, drift_reanchor_epoch, reanchor_compaction_epoch, compaction_expiry_epoch, resurrection_quarantine_epoch, resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch, resurrection_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch, resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch)` post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift ordering with explicit lineage diagnostics, pin last verified rollback-safe pre-late-resurrection-quarantine-reintegration-seal-drift boundary on ambiguity, quarantine unresolved reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift candidates, and fail fast on unresolved ownership conflicts.
 
-### M91. PRD-Priority Topology Parity + Strict Chain Isolation Gate Tranche C0081 (P0, Planned)
+### M91. PRD-Priority Topology Parity + Strict Chain Isolation Gate Tranche C0081 (P0, Blocked by QA NO-GO)
 
 #### Objective
 Close unresolved PRD requirements before optional refinements by enforcing topology-independent canonical output equivalence and strict chain isolation across `Topology A/B/C` permutations for mandatory chains.
@@ -3593,6 +3595,52 @@ PRD traceability:
 #### Risk Gate + Fallback
 - Gate: topology-mode transitions can mask latent shared-state coupling in commit/cursor/watermark paths and produce non-deterministic parity drift.
 - Fallback: enforce deterministic topology-parity diffing keyed by `(chain, network, topology_mode, block_cursor, tx_hash, event_path, actor_address, asset_id, event_category)`, quarantine ambiguous topology-only divergences, and block tranche promotion until deterministic parity is restored.
+
+### M92. PRD-Priority Topology A/B/C Mandatory-Chain Closure Gate Tranche C0082 (P0, Planned)
+
+#### Objective
+Close unresolved PRD topology obligations by converting M91 partial evidence into a promotable deterministic gate: mandatory-chain `Topology A/B/C` parity + one-chain isolation/replay proof with explicit inventory completeness checks.
+
+PRD traceability:
+- `R6` deployment topology independence.
+- `R7` strict chain isolation.
+- `9.4` topology parity tests.
+- `10` acceptance criterion requiring topology parity and no cross-chain cursor bleed.
+
+#### Entry Gate
+- M91 remains blocked by QA `NO-GO` until a fresh QA pass confirms mandatory-chain `Topology A/B/C` parity and isolation evidence (`.ralph/reports/I-0474-qa-c0081-m91-s2-topology-parity-chain-isolation-gate.md`).
+- Developer follow-up `I-0475` introduced candidate topology-matrix tests, but M91 promotion is still unproven without independent QA re-gating.
+- Fail-fast safety contract from `M34` remains enforced for correctness-impacting failures.
+
+#### Slices
+1. `M92-S1` (`I-0481`): harden and enforce mandatory-chain `Topology A/B/C` parity + one-chain restart/isolation + replay/resume matrix coverage with deterministic inventory guardrails that fail when any required chain/topology cell is missing.
+2. `M92-S2` (`I-0482`): execute QA counterexample re-gate with shuffled/repeated runs and explicit pass/fail promotion recommendation for M91/M92 topology obligations.
+
+#### Definition Of Done
+1. Deterministic tests prove canonical tuple equivalence for `solana-devnet`, `base-sepolia`, and `btc-testnet` across topology modes `A`, `B`, and `C`.
+2. Deterministic one-chain failure/restart/replay stress in each topology mode proves `0` cross-chain control bleed and `0` cross-chain cursor/watermark bleed.
+3. Topology replay/resume checks prove `canonical_event_id_unique`, `replay_idempotent`, and `cursor_monotonic` invariants across mandatory chains.
+4. Topology inventory evidence is explicit and machine-checkable (required tests listed; missing matrix cells fail the gate).
+5. QA report provides explicit `GO`/`NO-GO` promotion recommendation for M91/M92.
+
+#### Test Contract
+1. Run deterministic topology parity tests over equivalent fixture ranges for each mandatory chain in modes `A/B/C` and assert canonical tuple-set equivalence.
+2. Run deterministic one-chain restart/replay isolation tests under each topology mode while peer chains progress and assert no cross-chain control/cursor bleed.
+3. Run topology-mode replay/resume tests asserting canonical-ID uniqueness, replay idempotency, cursor monotonicity, signed-delta conservation, and fee-event invariants.
+4. Run topology inventory command/assertion proving required test matrix presence before promotion.
+5. QA runs full validation commands and records invariant-level evidence under `.ralph/reports/`.
+
+#### Exit Gate (Measurable)
+1. `0` canonical tuple diffs for mandatory chains across `Topology A/B/C` parity runs.
+2. `0` cross-chain control/cursor bleed violations in one-chain restart/replay counterexamples across topology modes.
+3. `0` duplicate canonical IDs and `0` missing logical events across topology replay/resume permutations.
+4. `0` missing required topology matrix cells in inventory guard output.
+5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+6. Validation commands pass.
+
+#### Risk Gate + Fallback
+- Gate: partial topology coverage can yield false confidence (green baseline suites without full mandatory-chain `A/B/C` matrix proof), causing premature promotion with latent coupling still present.
+- Fallback: block promotion unless deterministic inventory output confirms all mandatory-chain matrix cells and required isolation/replay tests; quarantine ambiguous evidence as correctness failure and fan out reproducible developer follow-up.
 
 ## Decision Register (Major + Fallback)
 
@@ -3994,12 +4042,12 @@ Completed milestones/slices:
 173. `I-0457`
 
 Active downstream queue from this plan:
-1. `I-0473`
-2. `I-0474`
+1. `I-0481`
+2. `I-0482`
 
 Planned next tranche queue:
-1. reserved after `M91` exit gate
-2. reserved after `M91` exit gate
+1. reserved after `M92` exit gate
+2. reserved after `M92` exit gate
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -4050,3 +4098,4 @@ Superseded issues:
 - `I-0459` and `I-0460` are superseded by `I-0461` and `I-0462` to replace generic cycle placeholders with executable post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration determinism slices.
 - `I-0464` and `I-0465` are superseded by `I-0466` and `I-0467` to replace generic cycle placeholders with executable post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal determinism slices.
 - `I-0471` and `I-0472` are superseded by `I-0473` and `I-0474` to enforce PRD-traceable topology parity + strict chain isolation scope (`R6`, `R7`, `9.4`, `10`) before optional post-M90 refinements.
+- `I-0477` and `I-0478` are superseded by `I-0481` and `I-0482` to replace generic C0082 placeholders with explicit M92 mandatory-chain `Topology A/B/C` closure scope and measurable promotion gates.
