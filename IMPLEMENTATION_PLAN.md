@@ -195,12 +195,16 @@ Execution queue (dependency-ordered):
 184. `I-0487` (`M93-S2`) execute QA counterexample gate for fail-fast continuity and restart perturbation evidence with recommendation
 185. `I-0491` (`M94-S1`) PRD event-coverage closeout gate for deterministic duplicate-free asset-volatility deltas
    - Required matrix inventory:
-     - `solana-devnet` -> `transfer`, `mint?`, `burn?`, `FEE`
-     - `base-sepolia` -> `transfer`, `mint?`, `burn?`, `fee_execution_l2`, `fee_data_l1`
+     - `solana-devnet` -> `transfer`, `mint`, `burn`, `FEE`
+     - `base-sepolia` -> `transfer`, `mint`, `burn`, `fee_execution_l2`, `fee_data_l1`
      - `btc-testnet` -> `transfer` path set (`vin`, `vout`) with miner-fee conservation assertions
    - Gate passes when each required cell above is covered by deterministic canonical outputs and no class-level duplicate/finality regressions.
 186. `I-0492` (`M94-S2`) QA event-coverage and replay continuity counterexample gate for PRD closeout
    - Requires evidence that mandatory matrix cells are complete and that replay/restart permutations remain idempotent, duplicate-free, and cursor-ordered.
+187. `I-0496` (`M94-S3`) PRD R2 mint/burn evidence debt closure for Solana/Base mandatory chains
+   - Requires deterministic `mint` and `burn` fixture-backed evidence to replace temporary `NA` cells.
+188. `I-0497` (`M94-S3`) QA counterexample gate for M94-S3 mint/burn debt closure
+   - Requires explicit `solana`/`base` mint/burn evidence artifacts and replay continuity checks before PRD closeout promotion.
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -3700,7 +3704,7 @@ PRD traceability:
 ### M94. PRD-Priority Event-Coverage + Duplicate-Free Closeout Gate Tranche C0084 (P0, Planned)
 
 #### Objective
-Close the remaining PRD-level asset-volatility coverage obligations by proving full in-scope signed delta class coverage and duplicate-free canonical output for mandatory chains.
+Close the remaining PRD-level asset-volatility coverage obligations by proving full in-scope signed delta class coverage and duplicate-free canonical output for mandatory chains, and close the temporary mint/burn coverage debt so `R2` closeout is proven with required evidence (no `NA` placeholder acceptance).
 
 PRD traceability:
 - `R1`: no-duplicate indexing.
@@ -3712,19 +3716,22 @@ PRD traceability:
 #### Entry Gate
 - `M93` exit gate green.
 - Canonical runtime-family outputs for `solana-devnet`, `base-sepolia`, and `btc-testnet` are wired and available for matrix execution.
-- `DP-0104-M94` accepted.
+- `DP-0105-M94` accepted.
 - `I-0491` evidence inventory is required before QA handoff: `.ralph/reports/I-0491-m94-s1-event-class-matrix.md` and `.ralph/reports/I-0491-m94-s1-duplicate-suppression-matrix.md`.
+- `M94-S1` temporary `NA` mint/burn entries for `solana` and `base` are treated as explicit closeout debt and must be cleared in `M94-S3`.
 
 #### Slices
 1. `M94-S1` (`I-0491`): add PRD-traceable coverage evidence for mandatory event classes and duplicate suppression across families, then codify acceptance matrices in planner/spec artifacts.
 2. `M94-S2` (`I-0492`): run counterexample gates for missing class outputs, duplicate canonical IDs, and replay continuity under mandatory-chain permutations.
+3. `M94-S3` (`I-0496`, `I-0497`): implement and validate required `mint`/`burn` fixture-driven class coverage for `solana` and `base` with deterministic duplicate-suppression and replay continuity checks.
 
 #### Definition Of Done
 1. Deterministic, signed event-class coverage is explicitly validated for `transfer`, `mint`, `burn`, and fee categories in `solana`, `base`, and `btc` families.
 2. Canonical tuple coverage is complete for equivalent fixture ranges, with explicit matrix evidence proving no dropped class rows.
-3. Coverage runs produce `0` duplicate canonical ids under rerun/replay conditions.
-4. Replay continuity assertions hold for coverage fixtures across deterministic checkpoint boundaries.
-5. Validation commands pass.
+3. `solana` and `base` provide deterministic mint/burn evidence cells (`evidence_present=true`) in `I-0496` artifacts; residual `NA` for these chains is no longer accepted as PRD-closeout success.
+4. Coverage runs produce `0` duplicate canonical ids under rerun/replay conditions.
+5. Replay continuity assertions hold for coverage fixtures across deterministic checkpoint boundaries.
+6. Validation commands pass.
 
 #### Test Contract
 1. Event-class matrix (`transfer`/`mint`/`burn`/`fee`) for mandatory chains with duplicate-free canonical tuple assertions.
@@ -3732,51 +3739,57 @@ PRD traceability:
 3. Counterexample matrix for one-chain perturbation with peer-chain progress to verify no control/cursor bleed.
 4. Event-class matrix artifact (`.ralph/reports/I-0491-m94-s1-event-class-matrix.md`) with explicit chain/class/evidence-present rows, including all non-`NA` mandatory classes.
 5. Duplicate suppression artifact (`.ralph/reports/I-0491-m94-s1-duplicate-suppression-matrix.md`) with class-path keyed deterministic tuple counts.
-6. QA evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M94`.
+6. M94-S3 debt-clearance artifacts:
+   - `.ralph/reports/I-0496-m94-s3-mint-burn-class-matrix.md`
+   - `.ralph/reports/I-0496-m94-s3-mint-burn-duplicate-suppression-matrix.md`
+7. QA evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M94`.
 
 #### Exit Gate (Measurable)
 1. `0` duplicate canonical IDs in event-class coverage families.
 2. `0` missing non-`NA` required cells in `.ralph/reports/I-0491-m94-s1-event-class-matrix.md` for mandatory chains.
-3. `0` replay tuple and balance drift for required class-coverage fixtures.
-4. `0` cross-chain control/cursor bleed under one-chain perturbation counterexamples.
-5. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
-6. Validation commands pass.
+3. `0` missing required `mint`/`burn` cells in `.ralph/reports/I-0496-m94-s3-mint-burn-class-matrix.md` for `solana` and `base`.
+4. `0` replay tuple and balance drift for required class-coverage fixtures, including mint/burn debt-clearance families.
+5. `0` cross-chain control/cursor bleed under one-chain perturbation counterexamples.
+6. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+7. Validation commands pass.
 
 #### Risk Gate + Fallback
 - Gate: class-level coverage can hide path omission if class partitioning is incomplete or unguarded.
-- Fallback: enforce `DP-0104-M94` by failing `M94` promotion until all mandatory chain-class evidence cells and replay continuity evidence are present.
+- Fallback: enforce `DP-0105-M94` by failing `M94` promotion until Solana/Base `mint`/`burn` debt-clearance artifacts are present and replay continuity evidence confirms zero drift.
 
 ## Decision Register (Major + Fallback)
 
-1. `DP-0101-A`: canonical `event_path` encoding.
+1. `DP-0105-M94`: `solana` and `base` mint/burn acceptance in `M94` is only satisfied when evidence artifacts report `evidence_present=true` for required class-path cells; temporary `NA` is only acceptable for chains that cannot represent those classes by chain family semantics.
+
+2. `DP-0101-A`: canonical `event_path` encoding.
 - Preferred: chain-specific structured path normalized into one canonical serialized key.
 - Fallback: persist structured fields + derived key; enforce uniqueness on derived key.
 
-2. `DP-0101-B`: Base L1 data fee source reliability.
+3. `DP-0101-B`: Base L1 data fee source reliability.
 - Preferred: parse receipt extension fields from selected RPC/client.
 - Fallback: explicit unavailable marker metadata while preserving deterministic execution fee event emission.
 
-3. `DP-0101-C`: reorg handling mode during hardening.
+4. `DP-0101-C`: reorg handling mode during hardening.
 - Preferred: pending/finalized lifecycle with rollback/replay.
 - Fallback: finalized-only ingestion mode with configurable confirmation lag.
 
-4. `DP-0101-D`: commit scheduling scope.
+5. `DP-0101-D`: commit scheduling scope.
 - Preferred: chain-scoped commit scheduler per `ChainRuntime`; no cross-chain shared interleaver in production runtime.
 - Fallback: if legacy shared scheduling code remains, keep it non-routable and block startup when enabled.
 
-5. `DP-0101-E`: auto-tune control scope.
+6. `DP-0101-E`: auto-tune control scope.
 - Preferred: per-chain control loop with chain-local inputs only; no cross-chain coupled throttling.
 - Fallback: disable auto-tune and run deterministic fixed coordinator profile until signal quality is restored.
 
-6. `DP-0101-F`: auto-tune restart/profile-transition state policy.
+7. `DP-0101-F`: auto-tune restart/profile-transition state policy.
 - Preferred: deterministic chain-local restart/profile-transition state handoff with explicit baseline reset and bounded warm-start adoption.
 - Fallback: force deterministic baseline profile on every restart/profile transition until restart-state contracts are extended.
 
-7. `DP-0101-G`: auto-tune signal-flap hysteresis policy.
+8. `DP-0101-G`: auto-tune signal-flap hysteresis policy.
 - Preferred: deterministic chain-local hysteresis/debounce evaluation with bounded cooldown transitions and explicit flap diagnostics.
 - Fallback: pin deterministic conservative control profile during sustained signal-flap windows until hysteresis contracts are extended.
 
-8. `DP-0101-H`: auto-tune saturation/de-saturation policy.
+9. `DP-0101-H`: auto-tune saturation/de-saturation policy.
 - Preferred: deterministic chain-local saturation-cap enforcement with bounded de-saturation transitions and explicit saturation-boundary diagnostics.
 - Fallback: pin deterministic conservative profile while saturation pressure is unresolved, then replay from last-safe boundary once saturation-transition contracts are restored.
 
@@ -4148,10 +4161,14 @@ Completed milestones/slices:
 Active downstream queue from this plan:
 1. `I-0491`
 2. `I-0492`
+3. `I-0496`
+4. `I-0497`
 
 Planned next tranche queue:
 1. `I-0491` (`M94-S1`) after `M93` exit gate
 2. `I-0492` (`M94-S2`) after `I-0491`
+3. `I-0496` (`M94-S3`) after `I-0492`
+4. `I-0497` (`M94-S3`) after `I-0496`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

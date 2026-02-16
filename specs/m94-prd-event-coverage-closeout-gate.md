@@ -2,7 +2,7 @@
 
 ## Scope
 - Milestone: `M94`
-- Execution slices: `M94-S1` (`I-0491`), `M94-S2` (`I-0492`)
+- Execution slices: `M94-S1` (`I-0491`), `M94-S2` (`I-0492`), `M94-S3` (`I-0496`/`I-0497`)
 - Mandatory chains: `solana-devnet`, `base-sepolia`, `btc-testnet`
 
 ## PRD Traceability
@@ -13,19 +13,21 @@
 - `10`: deterministic replay and no cross-chain cursor bleed acceptance.
 
 ## Problem Statement
-After `M93` continuity hardening, coverage evidence for required event classes is still implicit and not explicitly partitioned by mandatory chain. This tranche adds a closeout gate that proves each required chain/family emits deterministic canonical deltas for supported asset-volatility classes without duplicates and without class omissions.
+After `M93` continuity hardening, coverage evidence for required event classes was reduced to temporary `NA` entries for `mint` and `burn` classes in `solana-devnet` and `base-sepolia`. This tranche removes that debt with explicit deterministic mint/burn evidence to ensure `R2` cannot pass by omission.
 
 ## Coverage Contract
 1. For each mandatory chain and class combination below, required cells must be present in evidence artifacts with deterministic `canonical event` outputs:
    - `solana-devnet`:
      - `transfer` (`TRANSFER`)
      - `fee` (`FEE`)
-     - `mint`/`burn` (`MINT`/`BURN`) when fixture families produce these categories (`NA` if no mandatory fixture emits them).
+     - `mint` (`MINT`) evidence required
+     - `burn` (`BURN`) evidence required
    - `base-sepolia`:
      - `transfer` (`TRANSFER`)
      - `fee_execution_l2` (`fee_execution_l2`)
      - `fee_data_l1` (`fee_data_l1`)
-     - `mint`/`burn` (`MINT`/`BURN`) when fixture families produce these categories (`NA` if no mandatory fixture emits them).
+     - `mint` (`MINT`) evidence required
+     - `burn` (`BURN`) evidence required
    - `btc-testnet`:
      - transfer-path coverage (`vin`/`vout`, `TRANSFER`)
      - miner-fee conservation assertions (no synthetic fee event; deterministic delta set remains signer-consistent).
@@ -35,6 +37,8 @@ After `M93` continuity hardening, coverage evidence for required event classes i
 Required evidence artifacts:
 - `.ralph/reports/I-0491-m94-s1-event-class-matrix.md`
 - `.ralph/reports/I-0491-m94-s1-duplicate-suppression-matrix.md`
+- `.ralph/reports/I-0496-m94-s3-mint-burn-class-matrix.md`
+- `.ralph/reports/I-0496-m94-s3-mint-burn-duplicate-suppression-matrix.md`
 
 For each mandatory chain-family, the class-path matrix must be non-empty for every required non-`NA` cell and empty/`NA` only where explicitly permitted. Required evidence rows are keyed by `(chain, network, class_family, class_path, evidence_present)`.
 
@@ -85,4 +89,4 @@ For each mandatory chain-family, the class-path matrix must be non-empty for eve
    - mandatory-chain/class evidence coverage required for `solana-devnet`, `base-sepolia`, `btc-testnet`.
 
 ## Decision Hook
-- `DP-0104-M94`: required event-class matrix coverage is measured as `(chain, network, class, evidence_present, class_path)`; any missing non-`NA` cell fails the closeout gate.
+- `DP-0105-M94`: required event-class matrix coverage is measured as `(chain, network, class, evidence_present, class_path)`; any missing non-`NA` cell fails the closeout gate.
