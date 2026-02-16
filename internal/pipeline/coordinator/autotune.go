@@ -3357,6 +3357,19 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 		// back to marker-expiry-only ownership.
 		return false
 	}
+	_, sourceHasReintegrationBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch(sourceNormalized)
+	_, targetHasReintegrationBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch(targetNormalized)
+	if !sourceHasReintegrationBoundaryEpoch && targetHasReintegrationBoundaryEpoch {
+		// Once late-resurrection-quarantine reintegration ownership is verified for
+		// a lineage, explicit reintegration progression must win deterministically
+		// over pre-reintegration quarantine ownership.
+		return true
+	}
+	if sourceHasReintegrationBoundaryEpoch && !targetHasReintegrationBoundaryEpoch {
+		// Reject stage-regression from verified reintegration ownership back to
+		// late-resurrection-quarantine ownership.
+		return false
+	}
 	// Ownership progression is strictly monotonic under explicit
 	// (epoch, bridge_sequence, drain_watermark, live_head,
 	// steady_state_watermark, steady_generation, generation_retention_floor,
