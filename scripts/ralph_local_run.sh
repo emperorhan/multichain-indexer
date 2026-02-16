@@ -421,19 +421,21 @@ supports_codex_search() {
 meta_value() {
   local file="$1"
   local key="$2"
+  [ -f "${file}" ] || return 0
   awk -F': ' -v key="${key}" '
     $1 == key {
       sub($1": ", "");
       print;
       exit
     }
-  ' "${file}"
+  ' "${file}" 2>/dev/null || true
 }
 
 issue_reference_value() {
   local file="$1"
   local key="$2"
   local value
+  [ -f "${file}" ] || return 0
 
   value="$(meta_value "${file}" "${key}")"
   if [ -n "${value}" ]; then
@@ -452,7 +454,7 @@ issue_reference_value() {
         exit
       }
     }
-  ' "${file}"
+  ' "${file}" 2>/dev/null || true
 }
 
 now_utc() {

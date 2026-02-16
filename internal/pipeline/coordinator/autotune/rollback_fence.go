@@ -599,6 +599,35 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 		// late-resurrection-quarantine ownership for the same lineage.
 		return false
 	}
+	_, sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch(sourceNormalized)
+	_, targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch(targetNormalized)
+	if !sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch && targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch {
+		// Once reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry
+		// late-resurrection-quarantine-reintegration-seal ownership is verified
+		// for a lineage, explicit reintegration-seal progression must win
+		// deterministically over reintegration-only ownership.
+		return true
+	}
+	if sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch && !targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch {
+		// Reject stage-regression from verified reintegration-seal ownership
+		// back to reintegration-only ownership for the same lineage.
+		return false
+	}
+	_, sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch(sourceNormalized)
+	_, targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch(targetNormalized)
+	if !sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch && targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch {
+		// Once reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry
+		// late-resurrection-quarantine-reintegration-seal-drift ownership is
+		// verified for a lineage, explicit reintegration-seal-drift progression
+		// must win deterministically over reintegration-seal-only ownership.
+		return true
+	}
+	if sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch && !targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch {
+		// Reject stage-regression from verified reintegration-seal-drift
+		// ownership back to reintegration-seal-only ownership for the same
+		// lineage.
+		return false
+	}
 	// Ownership progression is strictly monotonic under explicit
 	// (epoch, bridge_sequence, drain_watermark, live_head,
 	// steady_state_watermark, steady_generation, generation_retention_floor,
@@ -619,7 +648,9 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_epoch,
 	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_epoch,
 	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch)
+	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch,
+	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch,
+	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch)
 	// ordering.
 	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }

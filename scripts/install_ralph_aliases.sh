@@ -27,7 +27,7 @@ ${BEGIN_MARK}
 alias ralph='bash ${ROOT_DIR}/scripts/ralphctl.sh'
 alias ron='ralph on'
 alias roff='ralph off'
-alias rstat='ralph status'
+alias rstat='bash ${ROOT_DIR}/scripts/ralph_local_runtime_status.sh'
 alias rkick='ralph kick'
 alias rscout='ralph scout'
 alias lralph='bash ${ROOT_DIR}/scripts/ralph_local_control.sh'

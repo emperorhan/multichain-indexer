@@ -1,48 +1,58 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Quick operator control wrapper.
+# Quick operator control wrapper (local-first).
 # Usage:
-#   scripts/ralphctl.sh on|off|status [owner/repo]
-#   scripts/ralphctl.sh kick [owner/repo] [max_issues]
-#   scripts/ralphctl.sh scout [owner/repo] [max_issues]
-
-if ! command -v gh >/dev/null 2>&1; then
-  echo "gh CLI is required. Install from https://cli.github.com/" >&2
-  exit 1
-fi
+#   scripts/ralphctl.sh on|off|status
+#   scripts/ralphctl.sh kick|scout|agents|tail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CMD="${1:-}"
-REPO_DEFAULT="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+RUNTIME_STATUS_CMD="${ROOT_DIR}/scripts/ralph_local_runtime_status.sh"
+DAEMON_CMD="${ROOT_DIR}/scripts/ralph_local_daemon.sh"
+AUTOMANAGER_CMD="${ROOT_DIR}/scripts/ralph_local_manager_autofill.sh"
+AGENT_TRACKER_CMD="${ROOT_DIR}/scripts/ralph_local_agent_tracker.sh"
+
+if [ "$#" -gt 1 ]; then
+  echo "note: GitHub repo/max_issues arguments are ignored in local mode." >&2
+fi
 
 usage() {
   cat <<'EOF'
 Usage:
-  ralphctl.sh on [owner/repo]
-  ralphctl.sh off [owner/repo]
-  ralphctl.sh status [owner/repo]
-  ralphctl.sh kick [owner/repo] [max_issues]
-  ralphctl.sh scout [owner/repo] [max_issues]
+  ralphctl.sh on
+  ralphctl.sh off
+  ralphctl.sh status
+  ralphctl.sh kick
+  ralphctl.sh scout
+  ralphctl.sh agents
+  ralphctl.sh tail
 EOF
 }
 
 case "${CMD}" in
-  on|off|status)
-    REPO="${2:-${REPO_DEFAULT}}"
-    "${ROOT_DIR}/scripts/toggle_ralph_loop.sh" "${CMD}" "${REPO}"
+  on|start)
+    "${DAEMON_CMD}" start
+    ;;
+  off|stop)
+    "${DAEMON_CMD}" stop
+    ;;
+  status)
+    "${RUNTIME_STATUS_CMD}"
     ;;
   kick)
-    REPO="${2:-${REPO_DEFAULT}}"
-    MAX_ISSUES="${3:-1}"
-    gh workflow run "Agent Loop" --repo "${REPO}" -f dry_run=false -f max_issues="${MAX_ISSUES}"
-    echo "Triggered Agent Loop on ${REPO} (max_issues=${MAX_ISSUES})"
+    "${DAEMON_CMD}" start
+    "${RUNTIME_STATUS_CMD}"
     ;;
   scout)
-    REPO="${2:-${REPO_DEFAULT}}"
-    MAX_ISSUES="${3:-1}"
-    gh workflow run "Issue Scout" --repo "${REPO}" -f dry_run=false -f max_issues="${MAX_ISSUES}"
-    echo "Triggered Issue Scout on ${REPO} (max_issues=${MAX_ISSUES})"
+    "${AUTOMANAGER_CMD}"
+    "${RUNTIME_STATUS_CMD}"
+    ;;
+  agents)
+    "${AGENT_TRACKER_CMD}"
+    ;;
+  tail)
+    "${DAEMON_CMD}" tail
     ;;
   *)
     usage >&2

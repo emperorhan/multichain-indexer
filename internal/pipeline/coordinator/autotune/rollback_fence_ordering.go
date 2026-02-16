@@ -6,38 +6,40 @@ import (
 )
 
 type rollbackFenceOwnershipOrdering struct {
-	epoch                                                                                                                              int64
-	bridgeSequence                                                                                                                     int64
-	drainWatermark                                                                                                                     int64
-	liveHead                                                                                                                           int64
-	steadyStateWatermark                                                                                                               int64
-	steadyGeneration                                                                                                                   int64
-	generationFloor                                                                                                                    int64
-	floorLiftEpoch                                                                                                                     int64
-	settleWindowEpoch                                                                                                                  int64
-	spilloverEpoch                                                                                                                     int64
-	spilloverRejoinEpoch                                                                                                               int64
-	rejoinSealEpoch                                                                                                                    int64
-	sealDriftEpoch                                                                                                                     int64
-	driftReanchorEpoch                                                                                                                 int64
-	reanchorCompactionEpoch                                                                                                            int64
-	compactionExpiryEpoch                                                                                                              int64
-	resurrectionEpoch                                                                                                                  int64
-	reintegrationEpoch                                                                                                                 int64
-	reintegrationSealEpoch                                                                                                             int64
-	reintegrationSealDriftEpoch                                                                                                        int64
-	reintegrationSealDriftReanchorEpoch                                                                                                int64
-	reintegrationSealDriftReanchorCompactionEpoch                                                                                      int64
-	reintegrationSealDriftReanchorCompactionExpiryEpoch                                                                                int64
-	reintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch                                                                      int64
-	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch                                                         int64
-	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch                                                     int64
-	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch                                                int64
-	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorEpoch                                        int64
-	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionEpoch                              int64
-	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryEpoch                        int64
-	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch              int64
-	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch int64
+	epoch                                                                                                                                       int64
+	bridgeSequence                                                                                                                              int64
+	drainWatermark                                                                                                                              int64
+	liveHead                                                                                                                                    int64
+	steadyStateWatermark                                                                                                                        int64
+	steadyGeneration                                                                                                                            int64
+	generationFloor                                                                                                                             int64
+	floorLiftEpoch                                                                                                                              int64
+	settleWindowEpoch                                                                                                                           int64
+	spilloverEpoch                                                                                                                              int64
+	spilloverRejoinEpoch                                                                                                                        int64
+	rejoinSealEpoch                                                                                                                             int64
+	sealDriftEpoch                                                                                                                              int64
+	driftReanchorEpoch                                                                                                                          int64
+	reanchorCompactionEpoch                                                                                                                     int64
+	compactionExpiryEpoch                                                                                                                       int64
+	resurrectionEpoch                                                                                                                           int64
+	reintegrationEpoch                                                                                                                          int64
+	reintegrationSealEpoch                                                                                                                      int64
+	reintegrationSealDriftEpoch                                                                                                                 int64
+	reintegrationSealDriftReanchorEpoch                                                                                                         int64
+	reintegrationSealDriftReanchorCompactionEpoch                                                                                               int64
+	reintegrationSealDriftReanchorCompactionExpiryEpoch                                                                                         int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch                                                                               int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch                                                                  int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch                                                              int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch                                                         int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorEpoch                                                 int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionEpoch                                       int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryEpoch                                 int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch                       int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch          int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch      int64
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch int64
 }
 
 type rollbackFenceOwnershipPrefixFields struct {
@@ -211,6 +213,8 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryEpoch, hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryEpoch(normalized)
 	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch, hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch(normalized)
 	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch, hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch(normalized)
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch, hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch(normalized)
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch, hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch(normalized)
 	if hasBridgeSequence != hasExplicitWatermark {
 		// Quarantine ambiguous late-bridge markers until both sequence and
 		// release watermark are present for deterministic ordering.
@@ -396,6 +400,22 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		// until explicit late-resurrection-quarantine ownership is present.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch &&
+		!hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch {
+		// Quarantine post-reintegration-seal drift-reanchor lineage-compaction
+		// marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction
+		// marker-expiry-late-resurrection-quarantine-reintegration-seal
+		// candidates until explicit reintegration ownership is present.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	if hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch &&
+		!hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch {
+		// Quarantine post-reintegration-seal drift-reanchor lineage-compaction
+		// marker-expiry late-resurrection quarantine reintegration-seal-drift-reanchor-lineage-compaction
+		// marker-expiry-late-resurrection-quarantine-reintegration-seal-drift
+		// candidates until explicit reintegration-seal ownership is present.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	if !hasBridgeSequence {
 		bridgeSequence = 0
 		releaseWatermark = releaseEpoch
@@ -501,6 +521,12 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	}
 	if !hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch {
 		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch = 0
+	}
+	if !hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch {
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch = 0
+	}
+	if !hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch {
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch = 0
 	}
 	if hasResurrectionEpoch && resurrectionEpoch <= compactionExpiryEpoch {
 		// Quarantine ambiguous late-resurrection markers that do not advance
@@ -619,6 +645,25 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		// ownership.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch &&
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch <= reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch {
+		// Quarantine ambiguous reintegration-seal drift-reanchor
+		// lineage-compaction marker-expiry late-resurrection quarantine
+		// reintegration-seal-drift-reanchor-lineage-compaction marker-expiry
+		// late-resurrection-quarantine-reintegration-seal candidates that do
+		// not advance strictly beyond verified reintegration ownership.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	if hasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch &&
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch <= reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch {
+		// Quarantine ambiguous reintegration-seal drift-reanchor
+		// lineage-compaction marker-expiry late-resurrection quarantine
+		// reintegration-seal-drift-reanchor-lineage-compaction marker-expiry
+		// late-resurrection-quarantine-reintegration-seal-drift candidates
+		// that do not advance strictly beyond verified reintegration-seal
+		// ownership.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	if generationFloor > steadyGeneration {
 		// Quarantine unresolved retired-generation markers whose ownership
 		// points below the active retention floor.
@@ -646,17 +691,19 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		reintegrationSealEpoch:              reintegrationSealEpoch,
 		reintegrationSealDriftEpoch:         reintegrationSealDriftEpoch,
 		reintegrationSealDriftReanchorEpoch: reintegrationSealDriftReanchorEpoch,
-		reintegrationSealDriftReanchorCompactionEpoch:                                                                                      reintegrationSealDriftReanchorCompactionEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryEpoch:                                                                                reintegrationSealDriftReanchorCompactionExpiryEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch:                                                                      reintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch:                                                         reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch:                                                     reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch:                                                reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorEpoch:                                        reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionEpoch:                              reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryEpoch:                        reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch:              reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch,
-		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch: reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch,
+		reintegrationSealDriftReanchorCompactionEpoch:                                                                                               reintegrationSealDriftReanchorCompactionEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryEpoch:                                                                                         reintegrationSealDriftReanchorCompactionExpiryEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch:                                                                               reintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch:                                                                  reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch:                                                              reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch:                                                         reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorEpoch:                                                 reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionEpoch:                                       reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryEpoch:                                 reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch:                       reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch:          reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch:      reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch,
+		reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch: reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch,
 	}, true
 }
 
@@ -855,6 +902,18 @@ func compareRollbackFenceOwnershipOrdering(
 	case left.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch < right.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch:
 		return -1
 	case left.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch > right.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch:
+		return 1
+	}
+	switch {
+	case left.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch < right.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch:
+		return -1
+	case left.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch > right.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch:
+		return 1
+	}
+	switch {
+	case left.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch < right.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch:
+		return -1
+	case left.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch > right.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch:
 		return 1
 	default:
 		return 0

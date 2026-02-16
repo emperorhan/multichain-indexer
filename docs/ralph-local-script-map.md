@@ -22,6 +22,7 @@
 - `scripts/validate_planning_output.sh`: planner 출력 JSON 검증
 
 ## D. 선택 기능 (필요할 때만)
+- `scripts/ralphctl.sh`: 로컬 운영 단축 제어 래퍼(`on|off|status|kick|scout`)
 - `scripts/ralph_local_manager_autofill.sh`: ready 이슈가 없을 때 자동 이슈 생성
 - `scripts/install_ralph_local_service.sh`: user systemd 서비스 설치
 - `scripts/install_ralph_aliases.sh`: `lr*`/`r*` alias 설치
@@ -40,4 +41,3 @@
 - `scripts/setup_agent_loop.sh`
 - `scripts/setup_branch_protection.sh`
 - `scripts/issue_scout.sh`
-- `scripts/ralphctl.sh`

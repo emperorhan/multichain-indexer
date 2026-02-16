@@ -17355,6 +17355,397 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePostReintegrationSealDriftReanchorLineageCompactionMarkerExpiryLateResurrectionQuarantineReintegrationSealDriftReanchorLineageCompactionMarkerExpiryLateResurrectionQuarantineReintegrationSealDriftPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKreintdrfracmpexpqadcompexpq3",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcfdreintdrfracmpexpqadcompexpq3",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestreintdrfracmpexpqadcompexpq333",
+		},
+	}
+
+	base := buildAutoTunePostReintegrationSealDriftReanchorLineageCompactionMarkerExpiryLateResurrectionQuarantineReintegrationSealDriftReanchorFixtures()
+	reintegrationSealDriftReanchorCompaction2Cfg := base.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchor2Cfg
+	reintegrationSealDriftReanchorCompaction2Cfg.PolicyManifestDigest = base.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchor2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-epoch=28"
+	reintegrationSealDriftReanchorCompactionExpiry2Cfg := reintegrationSealDriftReanchorCompaction2Cfg
+	reintegrationSealDriftReanchorCompactionExpiry2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-epoch=30"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantine1Cfg := reintegrationSealDriftReanchorCompactionExpiry2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantine1Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-epoch=31"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg := reintegrationSealDriftReanchorCompactionExpiry2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-epoch=32"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration1Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration1Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-epoch=33"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-epoch=34"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal1Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal1Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=35"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=36"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift1Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift1Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=37"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=38"
+	staleReintegrationSealDriftCfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg
+	staleReintegrationSealDriftCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=37"
+	staleReintegrationSealEchoCfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	staleReintegrationSealEchoCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=39"
+	ambiguousReintegrationSealDriftCfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	ambiguousReintegrationSealDriftCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=40"
+
+	baselineSchedule := cloneAutoTunePolicySchedule(base.reintegrationSealDriftReanchorLineageCompactionMarkerExpiryLateResurrectionQuarantineReintegrationSealDriftReanchorReplaySchedule)
+	for i := 133; i <= 149; i++ {
+		baselineSchedule[i] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg
+	}
+
+	replaySchedule := cloneAutoTunePolicySchedule(baselineSchedule)
+	replaySchedule[134] = reintegrationSealDriftReanchorCompactionExpiryQuarantine1Cfg
+	replaySchedule[135] = reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg
+	replaySchedule[136] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration1Cfg
+	replaySchedule[137] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	replaySchedule[138] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal1Cfg
+	replaySchedule[139] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg
+	replaySchedule[140] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift1Cfg
+	replaySchedule[141] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg
+	for i := 142; i <= 149; i++ {
+		replaySchedule[i] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg
+	}
+
+	rollbackReforwardSchedule := cloneAutoTunePolicySchedule(baselineSchedule)
+	rollbackReforwardSchedule[134] = reintegrationSealDriftReanchorCompactionExpiryQuarantine1Cfg
+	rollbackReforwardSchedule[135] = reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg
+	rollbackReforwardSchedule[136] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration1Cfg
+	rollbackReforwardSchedule[137] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	rollbackReforwardSchedule[138] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal1Cfg
+	rollbackReforwardSchedule[139] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg
+	rollbackReforwardSchedule[140] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift1Cfg
+	rollbackReforwardSchedule[141] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg
+	rollbackReforwardSchedule[142] = staleReintegrationSealDriftCfg
+	rollbackReforwardSchedule[143] = staleReintegrationSealEchoCfg
+	rollbackReforwardSchedule[144] = ambiguousReintegrationSealDriftCfg
+	rollbackReforwardSchedule[145] = base.segment3Cfg
+	rollbackReforwardSchedule[146] = base.segment3Cfg
+	rollbackReforwardSchedule[147] = base.segment3Cfg
+	rollbackReforwardSchedule[148] = base.segment3Cfg
+	rollbackReforwardSchedule[149] = base.segment3Cfg
+
+	const tickCount = 150
+	heads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		heads = append(heads, 260+int64(i))
+	}
+
+	permutations := []struct {
+		name                string
+		policySchedule      map[int]AutoTuneConfig
+		staleFenceCapture   map[int]struct{}
+		crashpoints         []autoTuneCheckpointFenceCrashpoint
+		assertControlParity bool
+	}{
+		{
+			name:                "reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift-apply",
+			policySchedule:      replaySchedule,
+			assertControlParity: true,
+		},
+		{
+			name:                "crash-during-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift-restart",
+			policySchedule:      replaySchedule,
+			staleFenceCapture:   map[int]struct{}{140: {}},
+			crashpoints:         []autoTuneCheckpointFenceCrashpoint{{Tick: 141, UseStaleFenceState: true}},
+			assertControlParity: false,
+		},
+		{
+			name:                "rollback-reforward-after-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift",
+			policySchedule:      rollbackReforwardSchedule,
+			assertControlParity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				base.segment1Cfg,
+				baselineSchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						base.segment1Cfg,
+						permutation.policySchedule,
+						permutation.staleFenceCapture,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift permutations must converge to deterministic canonical tuples")
+					if permutation.assertControlParity {
+						assert.Equal(t, baselineBatches, candidateBatches, "post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift replay permutations must preserve deterministic control decisions")
+					}
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "post-reintegration-seal drift-reanchor lineage-compaction marker-expiry late-resurrection-quarantine-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegrationSealDriftReanchorLineageCompactionMarkerExpiryLateResurrectionQuarantineReintegrationSealDriftReanchorLineageCompactionMarkerExpiryLateResurrectionQuarantineReintegrationSealDriftDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	base := buildAutoTunePostReintegrationSealDriftReanchorLineageCompactionMarkerExpiryLateResurrectionQuarantineReintegrationSealDriftReanchorFixtures()
+	reintegrationSealDriftReanchorCompaction2Cfg := base.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchor2Cfg
+	reintegrationSealDriftReanchorCompaction2Cfg.PolicyManifestDigest = base.reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchor2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-epoch=28"
+	reintegrationSealDriftReanchorCompactionExpiry2Cfg := reintegrationSealDriftReanchorCompaction2Cfg
+	reintegrationSealDriftReanchorCompactionExpiry2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-epoch=30"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantine1Cfg := reintegrationSealDriftReanchorCompactionExpiry2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantine1Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-epoch=31"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg := reintegrationSealDriftReanchorCompactionExpiry2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiry2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-epoch=32"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration1Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration1Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-epoch=33"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-epoch=34"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal1Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal1Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=35"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=36"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift1Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift1Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=37"
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg
+	reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=38"
+	staleReintegrationSealDriftCfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg
+	staleReintegrationSealDriftCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=37"
+	staleReintegrationSealEchoCfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	staleReintegrationSealEchoCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest + "|rollback-fence-post-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-epoch=39"
+	ambiguousReintegrationSealDriftCfg := reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	ambiguousReintegrationSealDriftCfg.PolicyManifestDigest = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-reanchor-compaction-expiry-quarantine-reintegration-seal-drift-epoch=40"
+
+	baselineSchedule := cloneAutoTunePolicySchedule(base.reintegrationSealDriftReanchorLineageCompactionMarkerExpiryLateResurrectionQuarantineReintegrationSealDriftReanchorReplaySchedule)
+	for i := 133; i <= 149; i++ {
+		baselineSchedule[i] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg
+	}
+
+	rollbackReforwardSchedule := cloneAutoTunePolicySchedule(baselineSchedule)
+	rollbackReforwardSchedule[134] = reintegrationSealDriftReanchorCompactionExpiryQuarantine1Cfg
+	rollbackReforwardSchedule[135] = reintegrationSealDriftReanchorCompactionExpiryQuarantine2Cfg
+	rollbackReforwardSchedule[136] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration1Cfg
+	rollbackReforwardSchedule[137] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegration2Cfg
+	rollbackReforwardSchedule[138] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal1Cfg
+	rollbackReforwardSchedule[139] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSeal2Cfg
+	rollbackReforwardSchedule[140] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift1Cfg
+	rollbackReforwardSchedule[141] = reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg
+	rollbackReforwardSchedule[142] = staleReintegrationSealDriftCfg
+	rollbackReforwardSchedule[143] = staleReintegrationSealEchoCfg
+	rollbackReforwardSchedule[144] = ambiguousReintegrationSealDriftCfg
+	rollbackReforwardSchedule[145] = base.segment3Cfg
+	rollbackReforwardSchedule[146] = base.segment3Cfg
+	rollbackReforwardSchedule[147] = base.segment3Cfg
+	rollbackReforwardSchedule[148] = base.segment3Cfg
+	rollbackReforwardSchedule[149] = base.segment3Cfg
+
+	const tickCount = 150
+	healthyBaseAddress := "0xfffffffffffffffffffffffffffffffdreintdrfracmpexpqadcompexpq3"
+	healthyBTCAddress := "tb1qmanifestreintdrfracmpexpqadcompexpqhealthy3"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKreintdrfracmpexpqadcompexpq4"
+
+	healthyHeads := make([]int64, 0, tickCount)
+	laggingHeads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		healthyHeads = append(healthyHeads, 130+int64(i))
+		laggingHeads = append(laggingHeads, 260+int64(i))
+	}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		base.segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		base.segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		base.segment1Cfg,
+		baselineSchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		base.segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		base.segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		base.segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := base.segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{140: {}}
+	crashpoints := map[int]bool{141: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := rollbackReforwardSchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 137 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest)
+				assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 139 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest)
+				assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 141 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest)
+				assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 142 || i == 143 || i == 144 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestDigest, state.PolicyManifestDigest)
+				assert.Equal(t, reintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDrift2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 145 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, base.segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest)
+				assert.Equal(t, base.segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "late-resurrection-quarantine-reintegration-seal-drift crashpoint requires captured pre-restart state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry-late-resurrection-quarantine-reintegration-seal-drift replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
