@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -6418,9 +6419,10 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 		expectedHead  string
 	}
 	type topologyRun struct {
-		tupleSet   map[string]struct{}
-		eventIDSet map[string]struct{}
-		finalHead  string
+		tupleSetWithMode   map[string]struct{}
+		tupleSetLogical    map[string]struct{}
+		eventIDSet        map[string]struct{}
+		finalHead         string
 	}
 
 	signatureForMode := func(mode string, fixture topologyFixture) string {
@@ -6450,18 +6452,35 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 			}
 		}
 	}
-	canonicalTupleKey := func(batch event.NormalizedBatch, tx event.NormalizedTransaction, be event.NormalizedBalanceEvent) string {
+	canonicalTupleInventoryKey := func(chain model.Chain, network model.Network, mode string) string {
+		return strings.Join([]string{string(chain), string(network), mode}, "|")
+	}
+	canonicalTupleKeyNoMode := func(batch event.NormalizedBatch, tx event.NormalizedTransaction, be event.NormalizedBalanceEvent) string {
 		return strings.Join([]string{
 			string(batch.Chain),
 			string(batch.Network),
+			strconv.FormatInt(tx.BlockCursor, 10),
 			tx.TxHash,
 			be.EventPath,
 			be.ActorAddress,
 			be.AssetID,
 			string(be.EventCategory),
-			be.Delta,
 		}, "|")
 	}
+	canonicalTupleKey := func(mode string, batch event.NormalizedBatch, tx event.NormalizedTransaction, be event.NormalizedBalanceEvent) string {
+		return strings.Join([]string{
+			string(batch.Chain),
+			string(batch.Network),
+			mode,
+			strconv.FormatInt(tx.BlockCursor, 10),
+			tx.TxHash,
+			be.EventPath,
+			be.ActorAddress,
+			be.AssetID,
+			string(be.EventCategory),
+		}, "|")
+	}
+	topologyModes := []string{"A", "B", "C"}
 	topologyPartitions := map[string][][]int{
 		"A": {{0, 1}},
 		"B": {{0}, {1}},
@@ -6768,7 +6787,8 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 				return &sidecarv1.DecodeSolanaTransactionBatchResponse{Results: results}, nil
 			})
 
-		tupleSet := make(map[string]struct{}, 16)
+		tupleSetWithMode := make(map[string]struct{}, 16)
+		tupleSetLogical := make(map[string]struct{}, 16)
 		eventIDs := make(map[string]struct{}, 16)
 		prevCursor := strPtr(tc.initialCursor)
 		prevSequence := tc.fixtures[0].sequence - 1
@@ -6811,7 +6831,8 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 					_, exists := eventIDs[be.EventID]
 					require.False(t, exists, "duplicate canonical event id in topology %s: %s", mode, be.EventID)
 					eventIDs[be.EventID] = struct{}{}
-					tupleSet[canonicalTupleKey(normalized, tx, be)] = struct{}{}
+					tupleSetWithMode[canonicalTupleKey(mode, normalized, tx, be)] = struct{}{}
+					tupleSetLogical[canonicalTupleKeyNoMode(normalized, tx, be)] = struct{}{}
 				}
 			}
 
@@ -6854,11 +6875,20 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 		assert.GreaterOrEqual(t, replayRun.NewCursorSequence, lastPartition.NewCursorSequence)
 
 		return topologyRun{
-			tupleSet:   tupleSet,
-			eventIDSet: eventIDs,
-			finalHead:  finalHead,
+			tupleSetWithMode: tupleSetWithMode,
+			tupleSetLogical:  tupleSetLogical,
+			eventIDSet:      eventIDs,
+			finalHead:       finalHead,
 		}
 	}
+
+	requiredTopologyInventory := make(map[string]struct{}, len(testCases)*len(topologyModes))
+	for _, tc := range testCases {
+		for _, mode := range topologyModes {
+			requiredTopologyInventory[canonicalTupleInventoryKey(tc.chain, tc.network, mode)] = struct{}{}
+		}
+	}
+	observedTopologyInventory := make(map[string]struct{}, len(testCases)*len(topologyPartitions))
 
 	for _, tc := range testCases {
 		tc := tc
@@ -6867,8 +6897,12 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 			topologyB := runTopology(t, tc, "B")
 			topologyC := runTopology(t, tc, "C")
 
-			assert.Equal(t, topologyA.tupleSet, topologyB.tupleSet, "topology A/B must converge to one canonical tuple set")
-			assert.Equal(t, topologyA.tupleSet, topologyC.tupleSet, "topology A/C must converge to one canonical tuple set")
+			observedTopologyInventory[canonicalTupleInventoryKey(tc.chain, tc.network, "A")] = struct{}{}
+			observedTopologyInventory[canonicalTupleInventoryKey(tc.chain, tc.network, "B")] = struct{}{}
+			observedTopologyInventory[canonicalTupleInventoryKey(tc.chain, tc.network, "C")] = struct{}{}
+
+			assert.Equal(t, topologyA.tupleSetLogical, topologyB.tupleSetLogical, "topology A/B must converge to one canonical tuple set")
+			assert.Equal(t, topologyA.tupleSetLogical, topologyC.tupleSetLogical, "topology A/C must converge to one canonical tuple set")
 			assert.Equal(t, topologyA.eventIDSet, topologyB.eventIDSet, "topology A/B canonical event id set must match")
 			assert.Equal(t, topologyA.eventIDSet, topologyC.eventIDSet, "topology A/C canonical event id set must match")
 
@@ -6877,6 +6911,14 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 			assert.Equal(t, tc.expectedHead, topologyC.finalHead)
 		})
 	}
+
+	missingInventory := make([]string, 0)
+	for cell := range requiredTopologyInventory {
+		if _, ok := observedTopologyInventory[cell]; !ok {
+			missingInventory = append(missingInventory, cell)
+		}
+	}
+	require.Empty(t, missingInventory, "mandatory topology parity inventory is incomplete: %v", missingInventory)
 }
 
 func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithoutSyntheticFeeEvent(t *testing.T) {
