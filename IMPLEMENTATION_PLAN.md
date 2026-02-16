@@ -202,7 +202,7 @@ Execution queue (dependency-ordered):
 186. `I-0492` (`M94-S2`) QA event-coverage and replay continuity counterexample gate for PRD closeout
    - Requires evidence that mandatory matrix cells are complete and that replay/restart permutations remain idempotent, duplicate-free, and cursor-ordered.
 187. `I-0496` (`M94-S3`) PRD R2 mint/burn evidence debt closure for Solana/Base mandatory chains
-   - Requires deterministic `mint` and `burn` fixture-backed evidence to replace temporary `NA` cells.
+   - Requires deterministic `mint` and `burn` fixture-backed evidence to replace missing coverage cells.
 188. `I-0497` (`M94-S3`) QA counterexample gate for M94-S3 mint/burn debt closure
    - Requires explicit `solana`/`base` mint/burn evidence artifacts and replay continuity checks before PRD closeout promotion.
 
@@ -3704,7 +3704,7 @@ PRD traceability:
 ### M94. PRD-Priority Event-Coverage + Duplicate-Free Closeout Gate Tranche C0084 (P0, Planned)
 
 #### Objective
-Close the remaining PRD-level asset-volatility coverage obligations by proving full in-scope signed delta class coverage and duplicate-free canonical output for mandatory chains, and close the temporary mint/burn coverage debt so `R2` closeout is proven with required evidence (no `NA` placeholder acceptance).
+Close the remaining PRD-level asset-volatility coverage obligations by proving full in-scope signed delta class coverage and duplicate-free canonical output for mandatory chains, and clear mint/burn coverage debt so `R2` closeout is proven with required evidence (no `NA` placeholder acceptance).
 
 PRD traceability:
 - `R1`: no-duplicate indexing.
@@ -3718,7 +3718,9 @@ PRD traceability:
 - Canonical runtime-family outputs for `solana-devnet`, `base-sepolia`, and `btc-testnet` are wired and available for matrix execution.
 - `DP-0105-M94` accepted.
 - `I-0491` evidence inventory is required before QA handoff: `.ralph/reports/I-0491-m94-s1-event-class-matrix.md` and `.ralph/reports/I-0491-m94-s1-duplicate-suppression-matrix.md`.
-- `M94-S1` temporary `NA` mint/burn entries for `solana` and `base` are treated as explicit closeout debt and must be cleared in `M94-S3`.
+- I-0496 S3 debt-clearance artifacts are required before PRD closure:
+  - `.ralph/reports/I-0496-m94-s3-mint-burn-class-matrix.md`
+  - `.ralph/reports/I-0496-m94-s3-mint-burn-duplicate-suppression-matrix.md`.
 
 #### Slices
 1. `M94-S1` (`I-0491`): add PRD-traceable coverage evidence for mandatory event classes and duplicate suppression across families, then codify acceptance matrices in planner/spec artifacts.
