@@ -3569,6 +3569,19 @@ func TestAutoTuneController_RollbackCheckpointFencePostDriftReanchorRejectsStale
 	conflictingReanchorCompactionAliasReverseCfg := reanchor2Cfg
 	conflictingReanchorCompactionAliasReverseCfg.PolicyManifestDigest = reanchor2Cfg.PolicyManifestDigest + "|rollback-fence-reanchor-compaction-epoch=1|rollback-fence-post-reanchor-compaction-epoch=3"
 	stalePreReanchorCompactionCfg := reanchor2Cfg
+	compactionExpiry1Cfg := reanchorCompaction2Cfg
+	compactionExpiry1Cfg.PolicyManifestDigest = reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-compaction-expiry-epoch=1"
+	compactionExpiry2Cfg := reanchorCompaction2Cfg
+	compactionExpiry2Cfg.PolicyManifestDigest = reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-post-lineage-compaction-expiry-epoch=2"
+	staleCompactionExpiryCfg := reanchorCompaction2Cfg
+	staleCompactionExpiryCfg.PolicyManifestDigest = reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-compaction-expiry-epoch=1"
+	ambiguousCompactionExpiryCfg := reanchor2Cfg
+	ambiguousCompactionExpiryCfg.PolicyManifestDigest = reanchor2Cfg.PolicyManifestDigest + "|rollback-fence-compaction-expiry-epoch=3"
+	conflictingCompactionExpiryAliasForwardCfg := reanchorCompaction2Cfg
+	conflictingCompactionExpiryAliasForwardCfg.PolicyManifestDigest = reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-post-lineage-compaction-expiry-epoch=3|rollback-fence-compaction-expiry-epoch=1"
+	conflictingCompactionExpiryAliasReverseCfg := reanchorCompaction2Cfg
+	conflictingCompactionExpiryAliasReverseCfg.PolicyManifestDigest = reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-compaction-expiry-epoch=1|rollback-fence-post-lineage-compaction-expiry-epoch=3"
+	stalePreCompactionExpiryCfg := reanchorCompaction2Cfg
 
 	baseSeed := 230
 	baseController := newAutoTuneControllerWithSeed(100, drift2Cfg, &baseSeed)
@@ -3790,13 +3803,115 @@ func TestAutoTuneController_RollbackCheckpointFencePostDriftReanchorRejectsStale
 	assert.Equal(t, reanchorCompaction2Cfg.PolicyManifestRefreshEpoch, stalePreReanchorCompactionDecision.PolicyEpoch)
 	assert.Equal(t, 0, stalePreReanchorCompactionDecision.PolicyActivationTicks)
 
-	reForwardSeed := stalePreReanchorCompactionController.currentBatch
+	compactionExpiry1Seed := stalePreReanchorCompactionController.currentBatch
+	compactionExpiry1Controller := newAutoTuneControllerWithSeed(100, compactionExpiry1Cfg, &compactionExpiry1Seed)
+	require.NotNil(t, compactionExpiry1Controller)
+	compactionExpiry1Controller.reconcilePolicyTransition(stalePreReanchorCompactionController.exportPolicyTransition())
+	batch, compactionExpiry1Decision := compactionExpiry1Controller.Resolve(highLag)
+	assert.Equal(t, compactionExpiry1Seed, batch)
+	assert.Equal(t, "clamped_increase", compactionExpiry1Decision.Decision)
+	assert.Equal(t, compactionExpiry1Cfg.PolicyManifestDigest, compactionExpiry1Decision.PolicyManifestDigest)
+	assert.Equal(t, compactionExpiry1Cfg.PolicyManifestRefreshEpoch, compactionExpiry1Decision.PolicyEpoch)
+	assert.Equal(t, 0, compactionExpiry1Decision.PolicyActivationTicks)
+
+	compactionExpiry2Seed := compactionExpiry1Controller.currentBatch
+	compactionExpiry2Controller := newAutoTuneControllerWithSeed(100, compactionExpiry2Cfg, &compactionExpiry2Seed)
+	require.NotNil(t, compactionExpiry2Controller)
+	compactionExpiry2Controller.reconcilePolicyTransition(compactionExpiry1Controller.exportPolicyTransition())
+	batch, compactionExpiry2Decision := compactionExpiry2Controller.Resolve(highLag)
+	assert.Equal(t, compactionExpiry2Seed, batch)
+	assert.Equal(t, "clamped_increase", compactionExpiry2Decision.Decision)
+	assert.Equal(t, compactionExpiry2Cfg.PolicyManifestDigest, compactionExpiry2Decision.PolicyManifestDigest)
+	assert.Equal(t, compactionExpiry2Cfg.PolicyManifestRefreshEpoch, compactionExpiry2Decision.PolicyEpoch)
+	assert.Equal(t, 0, compactionExpiry2Decision.PolicyActivationTicks)
+
+	staleCompactionExpirySeed := compactionExpiry2Controller.currentBatch
+	staleCompactionExpiryController := newAutoTuneControllerWithSeed(100, staleCompactionExpiryCfg, &staleCompactionExpirySeed)
+	require.NotNil(t, staleCompactionExpiryController)
+	staleCompactionExpiryController.reconcilePolicyTransition(compactionExpiry2Controller.exportPolicyTransition())
+	batch, staleCompactionExpiryDecision := staleCompactionExpiryController.Resolve(highLag)
+	assert.Equal(t, staleCompactionExpirySeed, batch)
+	assert.Equal(t, "clamped_increase", staleCompactionExpiryDecision.Decision)
+	assert.Equal(
+		t,
+		compactionExpiry2Cfg.PolicyManifestDigest,
+		staleCompactionExpiryDecision.PolicyManifestDigest,
+		"lower marker-expiry epochs must remain pinned behind latest verified marker-expiry ownership",
+	)
+	assert.Equal(t, compactionExpiry2Cfg.PolicyManifestRefreshEpoch, staleCompactionExpiryDecision.PolicyEpoch)
+	assert.Equal(t, 0, staleCompactionExpiryDecision.PolicyActivationTicks)
+
+	ambiguousCompactionExpirySeed := staleCompactionExpiryController.currentBatch
+	ambiguousCompactionExpiryController := newAutoTuneControllerWithSeed(100, ambiguousCompactionExpiryCfg, &ambiguousCompactionExpirySeed)
+	require.NotNil(t, ambiguousCompactionExpiryController)
+	ambiguousCompactionExpiryController.reconcilePolicyTransition(staleCompactionExpiryController.exportPolicyTransition())
+	batch, ambiguousCompactionExpiryDecision := ambiguousCompactionExpiryController.Resolve(highLag)
+	assert.Equal(t, ambiguousCompactionExpirySeed, batch)
+	assert.Equal(t, "clamped_increase", ambiguousCompactionExpiryDecision.Decision)
+	assert.Equal(
+		t,
+		compactionExpiry2Cfg.PolicyManifestDigest,
+		ambiguousCompactionExpiryDecision.PolicyManifestDigest,
+		"marker-expiry markers must remain quarantined until post-reanchor compaction ownership is explicit",
+	)
+	assert.Equal(t, compactionExpiry2Cfg.PolicyManifestRefreshEpoch, ambiguousCompactionExpiryDecision.PolicyEpoch)
+	assert.Equal(t, 0, ambiguousCompactionExpiryDecision.PolicyActivationTicks)
+
+	conflictingCompactionExpiryForwardSeed := ambiguousCompactionExpiryController.currentBatch
+	conflictingCompactionExpiryForwardController := newAutoTuneControllerWithSeed(100, conflictingCompactionExpiryAliasForwardCfg, &conflictingCompactionExpiryForwardSeed)
+	require.NotNil(t, conflictingCompactionExpiryForwardController)
+	conflictingCompactionExpiryForwardController.reconcilePolicyTransition(ambiguousCompactionExpiryController.exportPolicyTransition())
+	batch, conflictingCompactionExpiryForwardDecision := conflictingCompactionExpiryForwardController.Resolve(highLag)
+	assert.Equal(t, conflictingCompactionExpiryForwardSeed, batch)
+	assert.Equal(t, "clamped_increase", conflictingCompactionExpiryForwardDecision.Decision)
+	assert.Equal(
+		t,
+		compactionExpiry2Cfg.PolicyManifestDigest,
+		conflictingCompactionExpiryForwardDecision.PolicyManifestDigest,
+		"conflicting marker-expiry alias values must remain quarantined regardless of token order",
+	)
+	assert.Equal(t, compactionExpiry2Cfg.PolicyManifestRefreshEpoch, conflictingCompactionExpiryForwardDecision.PolicyEpoch)
+	assert.Equal(t, 0, conflictingCompactionExpiryForwardDecision.PolicyActivationTicks)
+
+	conflictingCompactionExpiryReverseSeed := conflictingCompactionExpiryForwardController.currentBatch
+	conflictingCompactionExpiryReverseController := newAutoTuneControllerWithSeed(100, conflictingCompactionExpiryAliasReverseCfg, &conflictingCompactionExpiryReverseSeed)
+	require.NotNil(t, conflictingCompactionExpiryReverseController)
+	conflictingCompactionExpiryReverseController.reconcilePolicyTransition(conflictingCompactionExpiryForwardController.exportPolicyTransition())
+	batch, conflictingCompactionExpiryReverseDecision := conflictingCompactionExpiryReverseController.Resolve(highLag)
+	assert.Equal(t, conflictingCompactionExpiryReverseSeed, batch)
+	assert.Equal(t, "clamped_increase", conflictingCompactionExpiryReverseDecision.Decision)
+	assert.Equal(
+		t,
+		compactionExpiry2Cfg.PolicyManifestDigest,
+		conflictingCompactionExpiryReverseDecision.PolicyManifestDigest,
+		"conflicting marker-expiry alias values must remain quarantined regardless of token order",
+	)
+	assert.Equal(t, compactionExpiry2Cfg.PolicyManifestRefreshEpoch, conflictingCompactionExpiryReverseDecision.PolicyEpoch)
+	assert.Equal(t, 0, conflictingCompactionExpiryReverseDecision.PolicyActivationTicks)
+
+	stalePreCompactionExpirySeed := conflictingCompactionExpiryReverseController.currentBatch
+	stalePreCompactionExpiryController := newAutoTuneControllerWithSeed(100, stalePreCompactionExpiryCfg, &stalePreCompactionExpirySeed)
+	require.NotNil(t, stalePreCompactionExpiryController)
+	stalePreCompactionExpiryController.reconcilePolicyTransition(conflictingCompactionExpiryReverseController.exportPolicyTransition())
+	batch, stalePreCompactionExpiryDecision := stalePreCompactionExpiryController.Resolve(highLag)
+	assert.Equal(t, stalePreCompactionExpirySeed, batch)
+	assert.Equal(t, "clamped_increase", stalePreCompactionExpiryDecision.Decision)
+	assert.Equal(
+		t,
+		compactionExpiry2Cfg.PolicyManifestDigest,
+		stalePreCompactionExpiryDecision.PolicyManifestDigest,
+		"post-lineage-compaction marker-expiry stale pre-expiry markers must not reclaim ownership",
+	)
+	assert.Equal(t, compactionExpiry2Cfg.PolicyManifestRefreshEpoch, stalePreCompactionExpiryDecision.PolicyEpoch)
+	assert.Equal(t, 0, stalePreCompactionExpiryDecision.PolicyActivationTicks)
+
+	reForwardSeed := stalePreCompactionExpiryController.currentBatch
 	reForwardController := newAutoTuneControllerWithSeed(100, segment3Cfg, &reForwardSeed)
 	require.NotNil(t, reForwardController)
-	reForwardController.reconcilePolicyTransition(stalePreReanchorCompactionController.exportPolicyTransition())
+	reForwardController.reconcilePolicyTransition(stalePreCompactionExpiryController.exportPolicyTransition())
 	batch, reForwardHold := reForwardController.Resolve(highLag)
 	assert.Equal(t, reForwardSeed, batch)
-	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after reanchor compaction must deterministically apply one activation hold")
+	assert.Equal(t, "hold_policy_transition", reForwardHold.Decision, "rollback+re-forward after lineage-compaction marker-expiry must deterministically apply one activation hold")
 	assert.Equal(t, segment3Cfg.PolicyManifestDigest, reForwardHold.PolicyManifestDigest)
 	assert.Equal(t, segment3Cfg.PolicyManifestRefreshEpoch, reForwardHold.PolicyEpoch)
 	assert.Equal(t, 1, reForwardHold.PolicyActivationTicks)

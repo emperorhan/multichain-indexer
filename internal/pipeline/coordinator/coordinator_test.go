@@ -11390,6 +11390,353 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReanchorL
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+type autoTunePostLineageCompactionMarkerExpiryFixtures struct {
+	segment1Cfg                                AutoTuneConfig
+	reanchorCompaction2Cfg                     AutoTuneConfig
+	compactionExpiry1Cfg                       AutoTuneConfig
+	compactionExpiry2Cfg                       AutoTuneConfig
+	segment3Cfg                                AutoTuneConfig
+	lineageCompactionBaselineSchedule          map[int]AutoTuneConfig
+	markerExpiryReplaySchedule                 map[int]AutoTuneConfig
+	rollbackReforwardAfterMarkerExpirySchedule map[int]AutoTuneConfig
+}
+
+func buildAutoTunePostLineageCompactionMarkerExpiryFixtures() autoTunePostLineageCompactionMarkerExpiryFixtures {
+	base := buildAutoTunePostReanchorLineageCompactionFixtures()
+
+	compactionExpiry1Cfg := base.reanchorCompaction2Cfg
+	compactionExpiry1Cfg.PolicyManifestDigest = base.reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-compaction-expiry-epoch=1"
+	compactionExpiry2Cfg := base.reanchorCompaction2Cfg
+	compactionExpiry2Cfg.PolicyManifestDigest = base.reanchorCompaction2Cfg.PolicyManifestDigest + "|rollback-fence-post-lineage-compaction-expiry-epoch=2"
+	ambiguousCompactionExpiryCfg := base.reanchor2Cfg
+	ambiguousCompactionExpiryCfg.PolicyManifestDigest = base.reanchor2Cfg.PolicyManifestDigest + "|rollback-fence-compaction-expiry-epoch=3"
+	stalePreCompactionExpiryCfg := base.reanchorCompaction2Cfg
+
+	lineageCompactionBaselineSchedule := cloneAutoTunePolicySchedule(base.lineageCompactionReplaySchedule)
+	for i := 61; i <= 66; i++ {
+		lineageCompactionBaselineSchedule[i] = base.reanchorCompaction2Cfg
+	}
+
+	markerExpiryReplaySchedule := cloneAutoTunePolicySchedule(lineageCompactionBaselineSchedule)
+	markerExpiryReplaySchedule[61] = compactionExpiry1Cfg
+	markerExpiryReplaySchedule[62] = compactionExpiry2Cfg
+	for i := 63; i <= 66; i++ {
+		markerExpiryReplaySchedule[i] = compactionExpiry2Cfg
+	}
+
+	rollbackReforwardAfterMarkerExpirySchedule := cloneAutoTunePolicySchedule(lineageCompactionBaselineSchedule)
+	rollbackReforwardAfterMarkerExpirySchedule[61] = compactionExpiry1Cfg
+	rollbackReforwardAfterMarkerExpirySchedule[62] = compactionExpiry2Cfg
+	rollbackReforwardAfterMarkerExpirySchedule[63] = compactionExpiry1Cfg
+	rollbackReforwardAfterMarkerExpirySchedule[64] = ambiguousCompactionExpiryCfg
+	rollbackReforwardAfterMarkerExpirySchedule[65] = stalePreCompactionExpiryCfg
+	rollbackReforwardAfterMarkerExpirySchedule[66] = base.segment3Cfg
+
+	return autoTunePostLineageCompactionMarkerExpiryFixtures{
+		segment1Cfg:                                base.segment1Cfg,
+		reanchorCompaction2Cfg:                     base.reanchorCompaction2Cfg,
+		compactionExpiry1Cfg:                       compactionExpiry1Cfg,
+		compactionExpiry2Cfg:                       compactionExpiry2Cfg,
+		segment3Cfg:                                base.segment3Cfg,
+		lineageCompactionBaselineSchedule:          lineageCompactionBaselineSchedule,
+		markerExpiryReplaySchedule:                 markerExpiryReplaySchedule,
+		rollbackReforwardAfterMarkerExpirySchedule: rollbackReforwardAfterMarkerExpirySchedule,
+	}
+}
+
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePostLineageCompactionMarkerExpiryPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKcmpct91",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcdefff91",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestmarkexp0000000000000000",
+		},
+	}
+
+	fixture := buildAutoTunePostLineageCompactionMarkerExpiryFixtures()
+	const tickCount = 67
+	heads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		heads = append(heads, 260+int64(i))
+	}
+
+	permutations := []struct {
+		name                  string
+		policySchedule        map[int]AutoTuneConfig
+		staleFenceCaptureTick map[int]struct{}
+		crashpoints           []autoTuneCheckpointFenceCrashpoint
+		assertControlParity   bool
+	}{
+		{
+			name:                "marker-expiry-replay",
+			policySchedule:      fixture.markerExpiryReplaySchedule,
+			assertControlParity: true,
+		},
+		{
+			name:                  "crash-during-marker-expiry-restart",
+			policySchedule:        fixture.markerExpiryReplaySchedule,
+			staleFenceCaptureTick: map[int]struct{}{61: {}},
+			crashpoints: []autoTuneCheckpointFenceCrashpoint{
+				{Tick: 62, UseStaleFenceState: true},
+			},
+			assertControlParity: false,
+		},
+		{
+			name:                "rollback-reforward-after-marker-expiry",
+			policySchedule:      fixture.rollbackReforwardAfterMarkerExpirySchedule,
+			assertControlParity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				fixture.segment1Cfg,
+				fixture.lineageCompactionBaselineSchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						fixture.segment1Cfg,
+						permutation.policySchedule,
+						permutation.staleFenceCaptureTick,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "post-lineage-compaction marker-expiry permutations must converge to deterministic canonical tuples")
+					if permutation.assertControlParity {
+						assert.Equal(t, baselineBatches, candidateBatches, "post-lineage-compaction marker-expiry replay permutations must preserve deterministic control decisions")
+					}
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "post-lineage-compaction marker-expiry baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLineageCompactionMarkerExpiryDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	fixture := buildAutoTunePostLineageCompactionMarkerExpiryFixtures()
+
+	const tickCount = 67
+	healthyBaseAddress := "0xfffffffffffffffffffffffffffffffffffebb90"
+	healthyBTCAddress := "tb1qmanifestmarkexphealthy0000000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKcmpct92"
+
+	healthyHeads := make([]int64, 0, tickCount)
+	laggingHeads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		healthyHeads = append(healthyHeads, 130+int64(i))
+		laggingHeads = append(laggingHeads, 260+int64(i))
+	}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+		fixture.lineageCompactionBaselineSchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := fixture.segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{61: {}}
+	crashpoints := map[int]bool{62: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := fixture.rollbackReforwardAfterMarkerExpirySchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 60 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.reanchorCompaction2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-lineage-compaction baseline must converge before marker-expiry progression")
+				assert.Equal(t, fixture.reanchorCompaction2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 61 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.compactionExpiry1Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "marker-expiry replay must adopt first marker-expiry ownership deterministically")
+				assert.Equal(t, fixture.compactionExpiry1Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 62 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "marker-expiry replay must advance to deterministic second marker-expiry ownership")
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 63 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "lower marker-expiry epochs must remain pinned behind latest marker-expiry ownership")
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 64 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "marker-expiry markers must remain quarantined until post-reanchor compaction ownership is explicit")
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 65 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-lineage-compaction marker-expiry stale pre-expiry markers must not reclaim ownership")
+				assert.Equal(t, fixture.compactionExpiry2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 66 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rollback+re-forward after marker-expiry must deterministically promote forward lineage")
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "marker-expiry crashpoint requires captured pre-restart state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-lineage-compaction marker-expiry transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-lineage-compaction marker-expiry transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-lineage-compaction marker-expiry transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-lineage-compaction marker-expiry transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-lineage-compaction marker-expiry replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-lineage-compaction marker-expiry replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-lineage-compaction marker-expiry replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-lineage-compaction marker-expiry replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
