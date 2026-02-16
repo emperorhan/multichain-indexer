@@ -1174,6 +1174,7 @@ type rollbackFenceOwnershipOrdering struct {
 	compactionExpiryEpoch   int64
 	resurrectionEpoch       int64
 	reintegrationEpoch      int64
+	reintegrationSealEpoch  int64
 }
 
 func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFenceOwnershipOrdering, bool) {
@@ -1206,6 +1207,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	compactionExpiryEpoch, hasCompactionExpiryEpoch := parseRollbackFenceCompactionExpiryEpoch(normalized)
 	resurrectionEpoch, hasResurrectionEpoch := parseRollbackFenceResurrectionQuarantineEpoch(normalized)
 	reintegrationEpoch, hasReintegrationEpoch := parseRollbackFenceResurrectionReintegrationEpoch(normalized)
+	reintegrationSealEpoch, hasReintegrationSealEpoch := parseRollbackFenceResurrectionReintegrationSealEpoch(normalized)
 	if hasBridgeSequence != hasExplicitWatermark {
 		// Quarantine ambiguous late-bridge markers until both sequence and
 		// release watermark are present for deterministic ordering.
@@ -1297,6 +1299,11 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		// quarantine ownership is present.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
+	if hasReintegrationSealEpoch && !hasReintegrationEpoch {
+		// Quarantine post-reintegration seal markers until explicit reintegration
+		// ownership is present.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
 	if !hasBridgeSequence {
 		bridgeSequence = 0
 		releaseWatermark = releaseEpoch
@@ -1361,6 +1368,9 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if !hasReintegrationEpoch {
 		reintegrationEpoch = 0
 	}
+	if !hasReintegrationSealEpoch {
+		reintegrationSealEpoch = 0
+	}
 	if hasResurrectionEpoch && resurrectionEpoch <= compactionExpiryEpoch {
 		// Quarantine ambiguous late-resurrection markers that do not advance
 		// strictly beyond verified marker-expiry ownership.
@@ -1369,6 +1379,11 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 	if hasReintegrationEpoch && reintegrationEpoch <= resurrectionEpoch {
 		// Quarantine ambiguous reintegration markers that do not advance
 		// strictly beyond verified late-resurrection ownership.
+		return rollbackFenceOwnershipOrdering{}, false
+	}
+	if hasReintegrationSealEpoch && reintegrationSealEpoch <= reintegrationEpoch {
+		// Quarantine ambiguous reintegration seal markers that do not advance
+		// strictly beyond verified reintegration ownership.
 		return rollbackFenceOwnershipOrdering{}, false
 	}
 	if generationFloor > steadyGeneration {
@@ -1395,6 +1410,7 @@ func parseRollbackFenceOwnershipOrdering(epoch int64, digest string) (rollbackFe
 		compactionExpiryEpoch:   compactionExpiryEpoch,
 		resurrectionEpoch:       resurrectionEpoch,
 		reintegrationEpoch:      reintegrationEpoch,
+		reintegrationSealEpoch:  reintegrationSealEpoch,
 	}, true
 }
 
@@ -1509,6 +1525,12 @@ func compareRollbackFenceOwnershipOrdering(
 	case left.reintegrationEpoch < right.reintegrationEpoch:
 		return -1
 	case left.reintegrationEpoch > right.reintegrationEpoch:
+		return 1
+	}
+	switch {
+	case left.reintegrationSealEpoch < right.reintegrationSealEpoch:
+		return -1
+	case left.reintegrationSealEpoch > right.reintegrationSealEpoch:
 		return 1
 	default:
 		return 0
@@ -1938,6 +1960,60 @@ func parseRollbackFenceResurrectionReintegrationEpoch(digest string) (int64, boo
 	return resurrectionReintegrationEpoch, true
 }
 
+func parseRollbackFenceResurrectionReintegrationSealEpoch(digest string) (int64, bool) {
+	const (
+		resurrectionReintegrationSealEpochKey     = "rollback-fence-resurrection-reintegration-seal-epoch="
+		lateResurrectionReintegrationSealEpochKey = "rollback-fence-late-resurrection-reintegration-seal-epoch="
+		postQuarantineReintegrationSealEpochKey   = "rollback-fence-post-late-resurrection-reintegration-seal-epoch="
+		postMarkerReintegrationSealEpochKey       = "rollback-fence-post-marker-expiry-late-resurrection-reintegration-seal-epoch="
+		postReintegrationSealEpochKey             = "rollback-fence-post-reintegration-seal-epoch="
+	)
+
+	var (
+		resurrectionReintegrationSealEpoch int64
+		seen                               bool
+	)
+
+	for _, rawToken := range strings.Split(digest, "|") {
+		token := strings.TrimSpace(rawToken)
+		var value string
+		switch {
+		case strings.HasPrefix(token, resurrectionReintegrationSealEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, resurrectionReintegrationSealEpochKey))
+		case strings.HasPrefix(token, lateResurrectionReintegrationSealEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, lateResurrectionReintegrationSealEpochKey))
+		case strings.HasPrefix(token, postQuarantineReintegrationSealEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, postQuarantineReintegrationSealEpochKey))
+		case strings.HasPrefix(token, postMarkerReintegrationSealEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, postMarkerReintegrationSealEpochKey))
+		case strings.HasPrefix(token, postReintegrationSealEpochKey):
+			value = strings.TrimSpace(strings.TrimPrefix(token, postReintegrationSealEpochKey))
+		default:
+			continue
+		}
+		if value == "" {
+			return 0, false
+		}
+		parsedEpoch, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsedEpoch < 0 {
+			return 0, false
+		}
+		if !seen {
+			resurrectionReintegrationSealEpoch = parsedEpoch
+			seen = true
+			continue
+		}
+		if resurrectionReintegrationSealEpoch != parsedEpoch {
+			return 0, false
+		}
+	}
+
+	if !seen {
+		return 0, false
+	}
+	return resurrectionReintegrationSealEpoch, true
+}
+
 func isRollbackFenceTombstoneExpiryDigest(epoch int64, digest string) bool {
 	if epoch < 0 {
 		return false
@@ -2282,7 +2358,8 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	// spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch,
 	// drift_reanchor_epoch, reanchor_compaction_epoch,
 	// compaction_expiry_epoch, resurrection_quarantine_epoch,
-	// resurrection_reintegration_epoch) ordering.
+	// resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch)
+	// ordering.
 	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }
 

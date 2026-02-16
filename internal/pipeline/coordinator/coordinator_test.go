@@ -12427,6 +12427,353 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLateResur
 	assertCursorMonotonicByAddress(t, laggingSnapshots)
 }
 
+type autoTunePostReintegrationSealFixtures struct {
+	segment1Cfg                                     AutoTuneConfig
+	reintegration2Cfg                               AutoTuneConfig
+	reintegrationSeal1Cfg                           AutoTuneConfig
+	reintegrationSeal2Cfg                           AutoTuneConfig
+	segment3Cfg                                     AutoTuneConfig
+	reintegrationSealBaselineSchedule               map[int]AutoTuneConfig
+	reintegrationSealReplaySchedule                 map[int]AutoTuneConfig
+	rollbackReforwardAfterReintegrationSealSchedule map[int]AutoTuneConfig
+}
+
+func buildAutoTunePostReintegrationSealFixtures() autoTunePostReintegrationSealFixtures {
+	base := buildAutoTunePostLateResurrectionQuarantineReintegrationFixtures()
+
+	reintegrationSeal1Cfg := base.reintegration2Cfg
+	reintegrationSeal1Cfg.PolicyManifestDigest = base.reintegration2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-epoch=7"
+	reintegrationSeal2Cfg := base.reintegration2Cfg
+	reintegrationSeal2Cfg.PolicyManifestDigest = base.reintegration2Cfg.PolicyManifestDigest + "|rollback-fence-post-late-resurrection-reintegration-seal-epoch=8"
+	staleReintegrationSealCfg := base.reintegration2Cfg
+	staleReintegrationSealCfg.PolicyManifestDigest = base.reintegration2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-epoch=7"
+	ambiguousReintegrationSealCfg := base.lateResurrection2Cfg
+	ambiguousReintegrationSealCfg.PolicyManifestDigest = base.lateResurrection2Cfg.PolicyManifestDigest + "|rollback-fence-resurrection-reintegration-seal-epoch=9"
+	stalePreReintegrationSealCfg := base.reintegration2Cfg
+
+	reintegrationSealBaselineSchedule := cloneAutoTunePolicySchedule(base.reintegrationReplaySchedule)
+	for i := 79; i <= 84; i++ {
+		reintegrationSealBaselineSchedule[i] = base.reintegration2Cfg
+	}
+
+	reintegrationSealReplaySchedule := cloneAutoTunePolicySchedule(reintegrationSealBaselineSchedule)
+	reintegrationSealReplaySchedule[79] = reintegrationSeal1Cfg
+	reintegrationSealReplaySchedule[80] = reintegrationSeal2Cfg
+	for i := 81; i <= 84; i++ {
+		reintegrationSealReplaySchedule[i] = reintegrationSeal2Cfg
+	}
+
+	rollbackReforwardAfterReintegrationSealSchedule := cloneAutoTunePolicySchedule(reintegrationSealBaselineSchedule)
+	rollbackReforwardAfterReintegrationSealSchedule[79] = reintegrationSeal1Cfg
+	rollbackReforwardAfterReintegrationSealSchedule[80] = reintegrationSeal2Cfg
+	rollbackReforwardAfterReintegrationSealSchedule[81] = staleReintegrationSealCfg
+	rollbackReforwardAfterReintegrationSealSchedule[82] = ambiguousReintegrationSealCfg
+	rollbackReforwardAfterReintegrationSealSchedule[83] = stalePreReintegrationSealCfg
+	rollbackReforwardAfterReintegrationSealSchedule[84] = base.segment3Cfg
+
+	return autoTunePostReintegrationSealFixtures{
+		segment1Cfg:                                     base.segment1Cfg,
+		reintegration2Cfg:                               base.reintegration2Cfg,
+		reintegrationSeal1Cfg:                           reintegrationSeal1Cfg,
+		reintegrationSeal2Cfg:                           reintegrationSeal2Cfg,
+		segment3Cfg:                                     base.segment3Cfg,
+		reintegrationSealBaselineSchedule:               reintegrationSealBaselineSchedule,
+		reintegrationSealReplaySchedule:                 reintegrationSealReplaySchedule,
+		rollbackReforwardAfterReintegrationSealSchedule: rollbackReforwardAfterReintegrationSealSchedule,
+	}
+}
+
+func TestTick_AutoTunePolicyManifestRollbackCheckpointFencePostReintegrationSealPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+		address string
+	}
+
+	tests := []testCase{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKreintseal95",
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			address: "0xabcdefabcdefabcdefabcdefabcdefabcdefffseal95",
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "tb1qmanifestreintegrationseal000000",
+		},
+	}
+
+	fixture := buildAutoTunePostReintegrationSealFixtures()
+	const tickCount = 85
+	heads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		heads = append(heads, 260+int64(i))
+	}
+
+	permutations := []struct {
+		name                string
+		policySchedule      map[int]AutoTuneConfig
+		staleFenceCapture   map[int]struct{}
+		crashpoints         []autoTuneCheckpointFenceCrashpoint
+		assertControlParity bool
+	}{
+		{
+			name:                "reintegration-seal-apply",
+			policySchedule:      fixture.reintegrationSealReplaySchedule,
+			assertControlParity: true,
+		},
+		{
+			name:                "crash-during-reintegration-seal-restart",
+			policySchedule:      fixture.reintegrationSealReplaySchedule,
+			staleFenceCapture:   map[int]struct{}{79: {}},
+			crashpoints:         []autoTuneCheckpointFenceCrashpoint{{Tick: 80, UseStaleFenceState: true}},
+			assertControlParity: false,
+		},
+		{
+			name:                "rollback-reforward-after-reintegration-seal",
+			policySchedule:      fixture.rollbackReforwardAfterReintegrationSealSchedule,
+			assertControlParity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			baselineSnapshots, baselineBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+				t,
+				tc.chain,
+				tc.network,
+				tc.address,
+				100,
+				heads,
+				fixture.segment1Cfg,
+				fixture.reintegrationSealBaselineSchedule,
+				nil,
+				nil,
+			)
+
+			for _, permutation := range permutations {
+				permutation := permutation
+				t.Run(permutation.name, func(t *testing.T) {
+					candidateSnapshots, candidateBatches := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+						t,
+						tc.chain,
+						tc.network,
+						tc.address,
+						100,
+						heads,
+						fixture.segment1Cfg,
+						permutation.policySchedule,
+						permutation.staleFenceCapture,
+						permutation.crashpoints,
+					)
+
+					assert.Equal(t, baselineSnapshots, candidateSnapshots, "post-reintegration seal permutations must converge to deterministic canonical tuples")
+					if permutation.assertControlParity {
+						assert.Equal(t, baselineBatches, candidateBatches, "post-reintegration seal replay permutations must preserve deterministic control decisions")
+					}
+					assertNoDuplicateOrMissingLogicalSnapshots(t, baselineSnapshots, candidateSnapshots, "post-reintegration seal baseline vs candidate")
+					assertCursorMonotonicByAddress(t, candidateSnapshots)
+				})
+			}
+		})
+	}
+}
+
+func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegrationSealDoesNotBleedAcrossOtherMandatoryChains(t *testing.T) {
+	fixture := buildAutoTunePostReintegrationSealFixtures()
+
+	const tickCount = 85
+	healthyBaseAddress := "0xfffffffffffffffffffffffffffffffffffebseal95"
+	healthyBTCAddress := "tb1qmanifestreintsealhealthy000000"
+	laggingSolanaAddress := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKreintseal96"
+
+	healthyHeads := make([]int64, 0, tickCount)
+	laggingHeads := make([]int64, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		healthyHeads = append(healthyHeads, 130+int64(i))
+		laggingHeads = append(laggingHeads, 260+int64(i))
+	}
+
+	baseBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	baseBaselineSnapshots, baseBaselineBatches := collectAutoTuneTrace(t, baseBaseline, tickCount)
+
+	btcBaseline := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcBaselineSnapshots, btcBaselineBatches := collectAutoTuneTrace(t, btcBaseline, tickCount)
+
+	laggingBaselineSnapshots, _ := runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
+		t,
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+		fixture.reintegrationSealBaselineSchedule,
+		nil,
+		nil,
+	)
+
+	baseInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyBaseAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	btcInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainBTC,
+		model.NetworkTestnet,
+		healthyBTCAddress,
+		120,
+		healthyHeads,
+		fixture.segment1Cfg,
+	)
+	laggingInterleaved := newAutoTuneHarnessWithHeadSeries(
+		model.ChainSolana,
+		model.NetworkDevnet,
+		laggingSolanaAddress,
+		100,
+		laggingHeads,
+		fixture.segment1Cfg,
+	)
+
+	baseSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	baseBatches := make([]int, 0, tickCount)
+	btcSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+	btcBatches := make([]int, 0, tickCount)
+	laggingSnapshots := make([]lagAwareJobSnapshot, 0, tickCount)
+
+	activeLaggingCfg := fixture.segment1Cfg
+	staleFenceCaptureTicks := map[int]struct{}{79: {}}
+	crashpoints := map[int]bool{80: true}
+	var latestStaleFenceState *AutoTuneRestartState
+
+	for i := 0; i < tickCount; i++ {
+		if cfg, ok := fixture.rollbackReforwardAfterReintegrationSealSchedule[i]; ok {
+			activeLaggingCfg = cfg
+			laggingInterleaved.coordinator.WithAutoTune(cfg)
+			if _, capture := staleFenceCaptureTicks[i]; capture {
+				latestStaleFenceState = cloneAutoTuneRestartState(laggingInterleaved.coordinator.ExportAutoTuneRestartState())
+				require.NotNil(t, latestStaleFenceState)
+			}
+			if i == 78 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.reintegration2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-reintegration-seal baseline must converge before seal progression")
+				assert.Equal(t, fixture.reintegration2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 79 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.reintegrationSeal1Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "reintegration-seal replay must adopt first reintegration-seal ownership deterministically")
+				assert.Equal(t, fixture.reintegrationSeal1Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 80 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.reintegrationSeal2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "reintegration-seal replay must advance to deterministic second reintegration-seal ownership")
+				assert.Equal(t, fixture.reintegrationSeal2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 81 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.reintegrationSeal2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "lower reintegration-seal epochs must remain pinned behind latest reintegration-seal ownership")
+				assert.Equal(t, fixture.reintegrationSeal2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 82 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.reintegrationSeal2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "reintegration-seal markers must remain quarantined until reintegration ownership is explicit")
+				assert.Equal(t, fixture.reintegrationSeal2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 83 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.reintegrationSeal2Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "post-reintegration seal stale pre-seal markers must not reclaim ownership")
+				assert.Equal(t, fixture.reintegrationSeal2Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+			if i == 84 {
+				state := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+				require.NotNil(t, state)
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestDigest, state.PolicyManifestDigest, "rollback+re-forward after reintegration-seal must deterministically promote forward lineage")
+				assert.Equal(t, fixture.segment3Cfg.PolicyManifestRefreshEpoch, state.PolicyEpoch)
+			}
+		}
+
+		if useStaleFence, ok := crashpoints[i]; ok {
+			var restartState *AutoTuneRestartState
+			if useStaleFence {
+				require.NotNil(t, latestStaleFenceState, "reintegration-seal crashpoint requires captured pre-restart state")
+				restartState = cloneAutoTuneRestartState(latestStaleFenceState)
+			} else {
+				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
+			}
+			require.NotNil(t, restartState)
+			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
+			require.NotNil(t, resumeCursor)
+			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
+				model.ChainSolana,
+				model.NetworkDevnet,
+				laggingSolanaAddress,
+				resumeCursor.CursorSequence,
+				laggingHeads[i:],
+				activeLaggingCfg,
+				restartState,
+			)
+		}
+
+		laggingJob := laggingInterleaved.tickAndAdvance(t)
+		laggingSnapshots = append(laggingSnapshots, snapshotFromFetchJob(laggingJob))
+
+		baseJob := baseInterleaved.tickAndAdvance(t)
+		baseSnapshots = append(baseSnapshots, snapshotFromFetchJob(baseJob))
+		baseBatches = append(baseBatches, baseJob.BatchSize)
+
+		btcJob := btcInterleaved.tickAndAdvance(t)
+		btcSnapshots = append(btcSnapshots, snapshotFromFetchJob(btcJob))
+		btcBatches = append(btcBatches, btcJob.BatchSize)
+	}
+
+	assert.Equal(t, baseBaselineSnapshots, baseSnapshots, "solana post-reintegration seal transition must not bleed cursor progression into base")
+	assert.Equal(t, baseBaselineBatches, baseBatches, "solana post-reintegration seal transition must not bleed control decisions into base")
+	assert.Equal(t, btcBaselineSnapshots, btcSnapshots, "solana post-reintegration seal transition must not bleed cursor progression into btc")
+	assert.Equal(t, btcBaselineBatches, btcBatches, "solana post-reintegration seal transition must not bleed control decisions into btc")
+
+	assert.Equal(t, laggingBaselineSnapshots, laggingSnapshots, "lagging post-reintegration seal replay/resume must preserve canonical tuples")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, baseBaselineSnapshots, baseSnapshots, "base baseline vs interleaved one-chain post-reintegration seal replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, btcBaselineSnapshots, btcSnapshots, "btc baseline vs interleaved one-chain post-reintegration seal replay")
+	assertNoDuplicateOrMissingLogicalSnapshots(t, laggingBaselineSnapshots, laggingSnapshots, "lagging baseline vs interleaved post-reintegration seal replay")
+
+	assertCursorMonotonicByAddress(t, baseSnapshots)
+	assertCursorMonotonicByAddress(t, btcSnapshots)
+	assertCursorMonotonicByAddress(t, laggingSnapshots)
+}
+
 func TestTick_AutoTuneOneChainPolicyManifestTransitionDoesNotBleedControlAcrossOtherMandatoryChains(t *testing.T) {
 	manifestV2aCfg := AutoTuneConfig{
 		Enabled:                    true,
