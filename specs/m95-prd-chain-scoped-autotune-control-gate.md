@@ -9,6 +9,7 @@
 - `R9`: chain-scoped adaptive throughput control.
 - `9.4`: topology parity/continuity validation principles.
 - `10`: deterministic replay and no cross-chain cursor bleed acceptance criteria.
+- I-0509 dependency: reproducibility fixture seed provenance and artifact manifest must be committed before `M95-S3` begins; `M95-S3` unblocks only on explicit `I-0507` reproducibility evidence artifacts.
 
 ## Problem Statement
 PRD `R9` requires control-plane safety such that throughput-control behavior for one chain does not alter another chain’s cursor, watermark, or checkpoint progression.
@@ -37,6 +38,7 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
    - `cross_chain_reads=true` or `cross_chain_writes=true`
    - `peer_cursor_delta != 0` or `peer_watermark_delta != 0`
    - missing required row schema.
+6. A counterexample outcome is `NO-GO` when required rows are missing or malformed, or when any required row has `evidence_present=false`.
 
 ## Reproducibility Contract (`M95-S3`)
 - `I-0507` requires replayable control-coupling counterexamples with fixed fixture metadata.
@@ -44,6 +46,7 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
   - `.ralph/reports/I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
   - `.ralph/reports/I-0507-m95-s3-replay-continuity-matrix.md`
   - `.ralph/reports/I-0508-m95-s4-qa-repro-gate-matrix.md`
+- Hard artifact unlock: `M95-S3` stays blocked until reproducibility seed provenance + fixture commitments from `I-0509` are available, and all mandatory matrix rows satisfy `evidence_present=true` and `outcome=GO`.
 - Control-coupling reproducibility row keys (re-runnable from fixed `fixture_seed` + `run_id`):
   - `fixture_id` (string)
   - `fixture_seed` (string)
@@ -81,6 +84,9 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
   - `outcome` (enum: `GO`/`NO-GO`)
   - `evidence_present` (boolean)
   - `failure_mode` (string, required when `outcome=NO-GO`; blank on `GO`)
+- `M95-S3` machine-checkable contract:
+  - required keys for every required matrix row: `fixture_id`, `fixture_seed`, `run_id`, `evidence_present`, `outcome`.
+  - required acceptance for `I-0507`: `evidence_present=true` and `outcome=GO` for every required row.
 - QA gate row keys:
   - `check`
   - `scope`
@@ -127,6 +133,9 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
   - `single_chain_telemetry_glitch`
   - `single_chain_override_conflict`
 - Each row must expose:
+  - `fixture_id`
+  - `fixture_seed`
+  - `run_id`
   - `test_id`
   - `mutated_chain`
   - `control_input_perturbation`
@@ -137,6 +146,7 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
   - `peer_watermark_delta`
   - `outcome` (`GO` / `NO-GO`)
   - `evidence_present` (`true` / `false`)
+- `GO` rows for control-coupling reproducibility evidence require `evidence_present=true`.
 - GO rule:
   - all perturbation rows for a test have `cross_chain_reads=false`, `cross_chain_writes=false`, `peer_cursor_delta=0`, `peer_watermark_delta=0`, `outcome=GO`, and `evidence_present=true`.
 - NO-GO triggers if:

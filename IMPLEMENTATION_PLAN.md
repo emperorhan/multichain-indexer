@@ -209,7 +209,12 @@ Execution queue (dependency-ordered):
 190. `I-0502` (`M95-S2`) QA counterexample gate for chain-scoped auto-tune control isolation and cross-coupling verification
 191. `I-0507` (`M95-S3`) PRD `R9` reproducibility and fixture-determinism gate contract for chain-scoped control coupling
    - Traceable to `R9`, `9.4`, and `10`.
-   - Adds deterministic reproducibility metadata (`fixture_id`, `fixture_seed`, `run_id`, `evidence_present`, `outcome`) and requires `I-0507-m95-s3-control-coupling-reproducibility-matrix.md`.
+   - Blocked until `I-0509` publishes explicit reproducibility fixture commitments and seed provenance.
+   - Unblocked only when these artifacts are present in `.ralph/reports/` and all mandatory rows satisfy `evidence_present=true` and `outcome=GO`:
+     - `I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
+     - `I-0507-m95-s3-replay-continuity-matrix.md`
+     - `I-0508-m95-s4-qa-repro-gate-matrix.md`
+   - Adds deterministic reproducibility metadata (`fixture_id`, `fixture_seed`, `run_id`, `evidence_present`, `outcome`).
 192. `I-0508` (`M95-S4`) QA reproducibility gate for deterministic control-coupling evidence and replay continuity
 
 ## Global Verification Contract
@@ -3786,7 +3791,8 @@ PRD traceability:
 1. `M95-S1` (`I-0501`): define PRD-traceable chain-scoped control contracts and control-metric inventory requirements in `IMPLEMENTATION_PLAN.md` and `specs/m95-prd-chain-scoped-autotune-control-gate.md`.
 2. `M95-S2` (`I-0502`): execute QA counterexample gate for control bleed and control-triggered progress bleed across mandatory chains.
 3. `M95-S3` (`I-0507`): add reproducibility contracts for re-runnable chain-coupling fixtures (`seed`, `run_id`, `evidence_present`, `outcome`) and cross-chain bleed invariants in `IMPLEMENTATION_PLAN.md` and `specs/m95-prd-chain-scoped-autotune-control-gate.md`.
-   - Requires reproducibility artifacts:
+   - Hard dependency: `I-0509` acceptance (fixture seed manifest + reproducibility control policy inputs).
+   - Artifact-unlock gates for slice start and completion:
      - `.ralph/reports/I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
      - `.ralph/reports/I-0507-m95-s3-replay-continuity-matrix.md`
      - `.ralph/reports/I-0508-m95-s4-qa-repro-gate-matrix.md`
