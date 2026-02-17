@@ -266,6 +266,120 @@ describe('PluginDispatcher', () => {
     expect(events[0].eventAction).toBe('accepted');
   });
 
+  it('handles plugin that throws an exception in parse()', () => {
+    const throwingPlugin: EventPlugin = {
+      id: 'thrower',
+      priority: 50,
+      programIds: new Set([SYSTEM_PROGRAM]),
+      parse() {
+        throw new Error('plugin internal error');
+      },
+    };
+
+    const fallbackPlugin: EventPlugin = {
+      id: 'fallback',
+      priority: 10,
+      programIds: new Set([SYSTEM_PROGRAM]),
+      parse(outer) {
+        return [{
+          outerInstructionIndex: outer.outerIndex,
+          innerInstructionIndex: -1,
+          eventCategory: 'TRANSFER',
+          eventAction: 'fallback_action',
+          programId: SYSTEM_PROGRAM,
+          address: 'addr1',
+          contractAddress: SYSTEM_PROGRAM,
+          delta: '-100',
+          counterpartyAddress: 'addr2',
+          tokenSymbol: 'SOL',
+          tokenName: 'Solana',
+          tokenDecimals: 9,
+          tokenType: 'NATIVE',
+          metadata: {},
+        }];
+      },
+    };
+
+    const dispatcher = new PluginDispatcher([throwingPlugin, fallbackPlugin]);
+    const outerInstructions: ParsedOuterInstruction[] = [
+      makeOuter(0, SYSTEM_PROGRAM, {
+        parsed: { type: 'transfer', info: { source: 'addr1', destination: 'addr2', lamports: 100 } },
+      }),
+    ];
+
+    // The dispatcher should propagate the exception (not swallow it)
+    expect(() => dispatcher.dispatch(outerInstructions, watched, accountKeyMap, {})).toThrow('plugin internal error');
+  });
+
+  it('returns no events when watched set is empty', () => {
+    const systemPlugin: EventPlugin = {
+      id: 'generic_system',
+      priority: 10,
+      programIds: new Set([SYSTEM_PROGRAM]),
+      parse(outer, watchedSet) {
+        // Only produce events if the address is watched
+        if (!watchedSet.has('addr1')) return null;
+        return [{
+          outerInstructionIndex: outer.outerIndex,
+          innerInstructionIndex: -1,
+          eventCategory: 'TRANSFER',
+          eventAction: 'system_transfer',
+          programId: SYSTEM_PROGRAM,
+          address: 'addr1',
+          contractAddress: SYSTEM_PROGRAM,
+          delta: '-100',
+          counterpartyAddress: 'addr2',
+          tokenSymbol: 'SOL',
+          tokenName: 'Solana',
+          tokenDecimals: 9,
+          tokenType: 'NATIVE',
+          metadata: {},
+        }];
+      },
+    };
+
+    const dispatcher = new PluginDispatcher([systemPlugin]);
+    const outerInstructions: ParsedOuterInstruction[] = [
+      makeOuter(0, SYSTEM_PROGRAM, {
+        parsed: { type: 'transfer', info: { source: 'addr1', destination: 'addr2', lamports: 100 } },
+      }),
+    ];
+
+    const emptyWatched = new Set<string>();
+    const events = dispatcher.dispatch(outerInstructions, emptyWatched, accountKeyMap, {});
+    expect(events).toHaveLength(0);
+  });
+
+  it('returns no events for empty outer instructions', () => {
+    const systemPlugin: EventPlugin = {
+      id: 'generic_system',
+      priority: 10,
+      programIds: new Set([SYSTEM_PROGRAM]),
+      parse() {
+        return [{
+          outerInstructionIndex: 0,
+          innerInstructionIndex: -1,
+          eventCategory: 'TRANSFER',
+          eventAction: 'should_not_appear',
+          programId: SYSTEM_PROGRAM,
+          address: 'addr1',
+          contractAddress: SYSTEM_PROGRAM,
+          delta: '-100',
+          counterpartyAddress: 'addr2',
+          tokenSymbol: 'SOL',
+          tokenName: 'Solana',
+          tokenDecimals: 9,
+          tokenType: 'NATIVE',
+          metadata: {},
+        }];
+      },
+    };
+
+    const dispatcher = new PluginDispatcher([systemPlugin]);
+    const events = dispatcher.dispatch([], watched, accountKeyMap, {});
+    expect(events).toHaveLength(0);
+  });
+
   it('plugin returning empty array claims ownership with no events', () => {
     const claimingPlugin: EventPlugin = {
       id: 'claimer',

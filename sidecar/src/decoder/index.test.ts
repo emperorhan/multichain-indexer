@@ -172,4 +172,50 @@ describe('decodeSolanaTransactionBatch', () => {
     expect(result.results[0].balanceEvents.find((ev) => ev.eventAction === 'vin_spend')).toBeDefined();
     expect(result.results[0].balanceEvents.find((ev) => ev.eventAction === 'vout_receive')).toBeDefined();
   });
+
+  it('routes ambiguous payload with tx+receipt to base decoder', () => {
+    const baseWatched = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const transactions = [
+      {
+        signature: 'ambiguousSig',
+        rawJson: Buffer.from(JSON.stringify({
+          tx: {
+            hash: '0xambiguous',
+            blockNumber: '0x10',
+            from: baseWatched,
+            to: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            value: '0x1',
+          },
+          receipt: {
+            transactionHash: '0xambiguous',
+            status: '0x1',
+            gasUsed: '0x1',
+            effectiveGasPrice: '0x1',
+            logs: [],
+          },
+        })),
+      },
+    ];
+
+    const result = decodeSolanaTransactionBatch(transactions, [baseWatched]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.results).toHaveLength(1);
+    // Should be decoded by base decoder since it has tx+receipt
+    expect(result.results[0].txHash).toBe('0xambiguous');
+  });
+
+  it('handles empty watched addresses', () => {
+    const transactions = [
+      {
+        signature: 'noWatchSig',
+        rawJson: Buffer.from(JSON.stringify(solTransferTx)),
+      },
+    ];
+
+    const result = decodeSolanaTransactionBatch(transactions, []);
+    expect(result.errors).toHaveLength(0);
+    expect(result.results).toHaveLength(1);
+    // With no watched addresses, no balance events should be generated
+    expect(result.results[0].balanceEvents).toHaveLength(0);
+  });
 });

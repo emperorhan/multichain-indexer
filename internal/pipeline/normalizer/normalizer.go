@@ -612,7 +612,8 @@ func (n *Normalizer) buildTransportCredentials() (credentials.TransportCredentia
 	}
 
 	tlsCfg := &tls.Config{
-		RootCAs: certPool,
+		RootCAs:    certPool,
+		MinVersion: tls.VersionTLS12,
 	}
 
 	// mTLS: load client certificate if provided.

@@ -56,6 +56,12 @@ func WithCommitInterleaver(interleaver CommitInterleaver) Option {
 	}
 }
 
+func WithReorgHandler(handler func(context.Context, *sql.Tx, event.NormalizedBatch) error) Option {
+	return func(ing *Ingester) {
+		ing.reorgHandler = handler
+	}
+}
+
 func New(
 	db store.TxBeginner,
 	txRepo store.TransactionRepository,

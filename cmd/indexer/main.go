@@ -105,7 +105,7 @@ func main() {
 	if cfg.Tracing.Enabled {
 		tracingEndpoint = cfg.Tracing.Endpoint
 	}
-	shutdownTracing, err := tracing.Init(context.Background(), "multichain-indexer", tracingEndpoint)
+	shutdownTracing, err := tracing.Init(context.Background(), "multichain-indexer", tracingEndpoint, cfg.Tracing.Insecure)
 	if err != nil {
 		logger.Error("failed to initialize tracing", "error", err)
 		os.Exit(1)
