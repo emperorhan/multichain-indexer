@@ -332,3 +332,59 @@ Required PRD hard-stop decision hook:
 
 #### C0115 Decision Hook
 - `DP-0150-C0115`: C0115 remains blocked unless all required `I-0611` rows for mandatory chains in the three artifacts are present and satisfy the hard-stop contract above.
+
+### C0117 (`I-0617`) recovery-aware asset-volatility class/factor revalidation addendum
+- Focused PRD requirements:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `reorg_recovery_deterministic`: recovery/replay determinism under fork and restart perturbation.
+  - `chain_adapter_runtime_wired`: runtime/wiring invariance under required perturbations.
+- `C0117` queue adjacency: hard dependency `I-0616 -> I-0617 -> I-0618`.
+- `C0117` lock state: `C0117-PRD-RECONVERGED-CLASSEVENT-RECOVERY-REVALIDATION`.
+- C0117 artifacts are required for the same mandatory class-path matrix families as previous `C0115` plus recovery perturbation columns:
+  - `.ralph/reports/I-0617-m96-s1-coverage-recovery-hardening-matrix.md`
+  - `.ralph/reports/I-0617-m96-s2-dup-suppression-recovery-matrix.md`
+  - `.ralph/reports/I-0617-m96-s3-recovery-continuity-matrix.md`
+
+#### C0117 Mandatory class/recovery contract rows
+- Mandatory class-path cells:
+  - `solana` + `solana-devnet` -> `TRANSFER`, `MINT`, `BURN`, `FEE`
+  - `base` + `base-sepolia` -> `TRANSFER`, `MINT`, `BURN`, `fee_execution_l2`, `fee_data_l1`
+  - `btc` + `btc-testnet` -> `TRANSFER:vin`, `TRANSFER:vout`, `miner_fee`
+- Recovery perturbations:
+  - `one_block_reorg`
+  - `multi_block_reorg`
+  - `canonical_range_replay`
+  - `finalized_to_pending_crossover`
+  - `restart_from_rollback_boundary`
+
+#### C0117 Matrix Contracts (`I-0617`)
+- `I-0617-m96-s1-coverage-recovery-hardening-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fork_type`, `recovery_permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0617-m96-s2-dup-suppression-recovery-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0617-m96-s3-recovery-continuity-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+
+#### C0117 Hard-stop checks
+- For every required `GO` row:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `solana_fee_event_coverage_ok=true`
+  - `base_fee_split_coverage_ok=true`
+  - `reorg_recovery_deterministic_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `failure_mode` is empty
+- For required `NO-GO` rows:
+  - `failure_mode` must be non-empty.
+
+#### C0117 Decision Hook
+- `DP-0152-C0117`: `C0117` remains blocked unless all required `I-0617` rows for mandatory chains in the three C0117 artifacts are present and satisfy all hard-stop checks above.

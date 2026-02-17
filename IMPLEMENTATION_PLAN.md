@@ -5032,3 +5032,46 @@ Superseded issues:
   - No runtime implementation changes are executed in this planner tranche; planning/spec handoff updates only.
 - Hard-stop decision hook prepared in C0116:
   - `DP-0151-C0116` keeps `I-0614` blocked until all required `I-0614` rows are present and satisfy the hard-stop conditions.
+
+## C0117 (`I-0616`) tranche activation
+- Focus: PRD-priority class-coverage + reorg/recovery continuity revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `reorg_recovery_deterministic`: rollback/recovery determinism under fork/restart perturbation.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring invariance under required counterexamples.
+- C0117 lock state: `C0117-PRD-RECONVERGED-CLASSEVENT-RECOVERY-REVALIDATION`.
+- C0117 queue adjacency: hard dependency `I-0616 -> I-0617 -> I-0618`.
+- Downstream execution pair:
+  - `I-0617` (developer) — PRD handoff and artifact contract definition for C0117 recovery-aware class/fidelity revalidation.
+  - `I-0618` (qa) — PRD-focused counterexample gate and recommendation closure for `C0117`.
+- Slice gates for this tranche:
+  - `I-0617` updates this plan with explicit `C0117` lock state and queue order `I-0616 -> I-0617 -> I-0618`.
+  - `I-0617` updates `specs/m96-prd-asset-volatility-closeout.md` with a `C0117` addendum that binds `R1`, `R2`, `R3`, `8.5`, `reorg_recovery_deterministic`, and `chain_adapter_runtime_wired` to required artifacts and hard-stop semantics.
+  - `I-0617` defines required artifacts for this handoff:
+    - `.ralph/reports/I-0617-m96-s1-coverage-recovery-hardening-matrix.md`
+    - `.ralph/reports/I-0617-m96-s2-dup-suppression-recovery-matrix.md`
+    - `.ralph/reports/I-0617-m96-s3-recovery-continuity-matrix.md`
+  - Required for all `I-0617` C0117 artifacts:
+    - `outcome=GO`
+    - `evidence_present=true`
+    - `canonical_event_id_unique_ok=true`
+    - `replay_idempotent_ok=true`
+    - `cursor_monotonic_ok=true`
+    - `signed_delta_conservation_ok=true`
+    - `solana_fee_event_coverage_ok=true`
+    - `base_fee_split_coverage_ok=true`
+    - `reorg_recovery_deterministic_ok=true`
+    - `chain_adapter_runtime_wired_ok=true`
+    - `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer isolation fields are required
+    - `failure_mode` empty for `GO`, non-empty for `NO-GO`
+  - `I-0618` blocks `C0117` on any required row with:
+    - `outcome=NO-GO`
+    - `evidence_present=false`
+    - hard-stop invariant false
+    - non-zero required peer deltas
+- No runtime implementation changes are executed in this planner tranche; planning/spec handoff updates only.
+- C0117 hard-stop decision hook:
+  - `DP-0152-C0117` keeps `I-0617` blocked unless all required `I-0617` rows in the three C0117 artifacts are present and satisfy `GO` hard-stop constraints.
