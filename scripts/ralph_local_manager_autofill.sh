@@ -395,10 +395,26 @@ EOF
 }
 
 SPEC_ONLY_CYCLE_CHECK_COUNT="${RALPH_SPEC_ONLY_CYCLE_CHECK_COUNT:-3}"
+SPEC_ONLY_CYCLE_GUARD_ENABLED="${RALPH_SPEC_ONLY_CYCLE_GUARD_ENABLED:-true}"
+
+spec_only_cycle_guard_enabled() {
+  case "${SPEC_ONLY_CYCLE_GUARD_ENABLED}" in
+    false|FALSE|False|no|NO|No|0)
+      return 1
+      ;;
+  esac
+  return 0
+}
 
 recent_cycles_produced_no_code() {
   local check_count="${1:-${SPEC_ONLY_CYCLE_CHECK_COUNT}}"
   local cycle_num code_found=0 count=0
+  if ! spec_only_cycle_guard_enabled; then
+    return 1
+  fi
+  if ! [[ "${check_count}" =~ ^[0-9]+$ ]] || [ "${check_count}" -le 0 ]; then
+    return 1
+  fi
   cycle_num="$(awk 'NR==1{print $1+0; exit}' "${CYCLE_STATE_FILE}" 2>/dev/null || echo 0)"
   while [ "${count}" -lt "${check_count}" ] && [ "${cycle_num}" -gt 0 ]; do
     local cycle_id dev_key

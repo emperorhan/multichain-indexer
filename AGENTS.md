@@ -18,10 +18,10 @@ This repository runs a multi-agent autonomous loop for a multi-chain on-chain in
   - Discovers whitelist subsets and creates `qa-ready` issues
 
 ## Loop Governance
-- Global ON/OFF switch: repository variable `RALPH_LOOP_ENABLED`
-- Toggle via:
-  - `.github/workflows/ralph-loop-control.yml`
-  - `scripts/toggle_ralph_loop.sh on|off|status`
+- Local ON/OFF:
+  - `scripts/ralph_local_control.sh on|off|status`
+- Local daemon mode:
+  - `scripts/ralph_local_daemon.sh start|stop|status`
 - Local iterative mode (feature branch only):
   - `scripts/ralph_loop_local.sh`
 

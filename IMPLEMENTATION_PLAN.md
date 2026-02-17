@@ -7,6 +7,28 @@
 
 ## Program Graph
 
+## C0124 (`I-0644`) tranche activation
+- Focus: PRD-priority implementation hardening slice before optional reliability refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing via deterministic canonical event ownership.
+  - `R2`: explicit in-scope asset-volatility event coverage.
+  - `R3`: family-specific fee completeness (`solana_fee_event_coverage`, `base_fee_split_coverage`) with explicit signed debit accounting.
+  - `8.4`/`8.5`: fail-fast correctness-impacting errors with failed-path cursor/watermark freeze.
+  - `reorg_recovery_deterministic`: deterministic replay safety after restart boundaries.
+  - `chain_adapter_runtime_wired`: runtime wiring remains chain-scoped and restart-safe.
+- Slice execution order: `I-0643` -> `I-0644` -> `I-0645`.
+- Downstream execution pair:
+  - `I-0644` (developer) — production PRD-priority implementation for mandatory-chain fee/coverage/replay hardening.
+  - `I-0645` (qa) — PRD-priority gate with mandatory-chain matrix evidence and peer-isolation checks.
+- Slice gates for this tranche:
+  - `I-0644` publishes implementation evidence rows in:
+    - `.ralph/reports/I-0644-m96-s1-asset-volatility-coverage-matrix.md`
+    - `.ralph/reports/I-0644-m96-s2-fail-fast-continuity-matrix.md`
+  - required invariant columns in required rows: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`.
+  - `I-0645` must block progression unless all required rows for `solana-devnet`, `base-sepolia`, and `btc-testnet` are `outcome=GO`, `evidence_present=true`, and `peer_cursor_delta=0`/`peer_watermark_delta=0` where required.
+  - Hard-stop lock state text in this section: `C0124-PRD-PRIORITY-ASSET-VOLATILITY-HARDENING`.
+  - no runtime implementation changes are executed in this planner tranche.
+
 ## C0089 (`I-0512`) tranche activation
 - Focus: `M96-S1` (PRD R1/R2 mandatory-chain asset-volatility closeout).
 - Slice execution order: `I-0512` -> `I-0515` -> `I-0516`.

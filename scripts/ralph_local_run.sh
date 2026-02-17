@@ -1895,6 +1895,39 @@ is_spec_only_commit() {
   return 0
 }
 
+issue_requires_code_changes() {
+  local issue_file="$1"
+  local role="$2"
+  local explicit allowed entry
+
+  [ "${role}" = "developer" ] || return 1
+
+  explicit="$(meta_value "${issue_file}" "requires_code_changes")"
+  case "${explicit}" in
+    true|TRUE|True|yes|YES|Yes|1)
+      return 0
+      ;;
+    false|FALSE|False|no|NO|No|0)
+      return 1
+      ;;
+  esac
+
+  allowed="$(meta_value "${issue_file}" "allowed_paths")"
+  [ -n "${allowed}" ] || allowed="$(default_issue_value "allowed_paths" "${role}")"
+
+  while IFS= read -r entry; do
+    entry="$(printf '%s' "${entry}" | trim_ws)"
+    [ -n "${entry}" ] || continue
+    case "${entry}" in
+      cmd/|cmd/*|internal/|internal/*|pkg/|pkg/*|proto/|proto/*|sidecar/|sidecar/*|scripts/|scripts/*|go.mod|go.sum|Makefile|Dockerfile|configs/|configs/*)
+        return 0
+        ;;
+    esac
+  done < <(printf '%s\n' "${allowed}" | tr ',' '\n')
+
+  return 1
+}
+
 SPEC_ONLY_LIMIT="${RALPH_SPEC_ONLY_LIMIT:-3}"
 loop_count=0
 noop_count=0
@@ -2145,7 +2178,7 @@ while true; do
     continue
   fi
 
-  if [ "${role}" = "developer" ] && [ -n "$(git status --porcelain)" ]; then
+  if [ "${role}" = "developer" ] && issue_requires_code_changes "${in_progress_path}" "${role}" && [ -n "$(git status --porcelain)" ]; then
     git add -A
     changed_files="$(git diff --cached --name-only 2>/dev/null || true)"
     has_code_change="false"
@@ -2207,7 +2240,7 @@ while true; do
     generate_evidence_pack "${in_progress_path}" "${issue_id}" "${role}" "${model}" "${validation_state}" "${log_file}" "${commit_sha}"
     publish_to_main_if_ready || true
     noop_count=0
-    if is_spec_only_commit; then
+    if [ "${role}" = "developer" ] && issue_requires_code_changes "${in_progress_path}" "${role}" && is_spec_only_commit; then
       spec_only_count=$((spec_only_count + 1))
       echo "[ralph-local] spec-only commit ${spec_only_count}/${SPEC_ONLY_LIMIT}"
     else
