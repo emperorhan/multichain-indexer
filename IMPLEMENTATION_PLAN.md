@@ -228,16 +228,35 @@
   - `I-0557` updates `specs/m93-prd-fail-fast-continuity-gate.md` with C0101 hard-stop transitions and publishes planner-ready evidence artifacts:
     - `.ralph/reports/I-0557-m93-s1-fail-fast-continuity-matrix.md`
     - `.ralph/reports/I-0557-m93-s2-one-chain-isolation-matrix.md`
-  - `I-0557` evidence artifacts must bind all required chain rows and invariant checks for:
+- `I-0557` evidence artifacts must bind all required chain rows and invariant checks for:
     - `canonical_event_id_unique`
     - `replay_idempotent`
     - `cursor_monotonic`
     - `signed_delta_conservation`
     - `chain_adapter_runtime_wired`
-  - `I-0557` must preserve mandatory-chain one-chain perturbation isolation checks with zero peer-chain deltas:
+- `I-0557` must preserve mandatory-chain one-chain perturbation isolation checks with zero peer-chain deltas:
     - `peer_cursor_delta=0`
     - `peer_watermark_delta=0`
 - `I-0558` verifies all required rows are `outcome=GO`, `evidence_present=true`, invariants complete, and `peer_cursor_delta=0` / `peer_watermark_delta=0`.
+
+## C0103 (`I-0565`) tranche activation
+- Focus: PRD runtime-wire topology revalidation after `I-0562` and before `I-0566`.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R6`: deployment topology independence.
+  - `R7`: strict chain isolation.
+  - `10`: deterministic replay acceptance and one-chain perturbation isolation.
+  - `chain_adapter_runtime_wired`: adapter wiring must remain invariant under topology and perturbation.
+- C0103 lock state: `C0103-PRD-RUNTIME-WIRE-REVALIDATION`.
+- C0103 queue adjacency: hard dependency `I-0562 -> I-0565 -> I-0566`.
+- Downstream execution pair:
+  - `I-0565` (developer) — C0103 contract handoff, PRD traceability refresh, and required artifact publication.
+  - `I-0566` (qa) — C0103 counterexample gate and explicit recommendation for topology/runtime-wire readiness before optional refinements resume.
+- Slice gates for this tranche:
+  - `I-0565` updates `IMPLEMENTATION_PLAN.md` and `specs/m99-prd-runtime-wire-topology-continuity-gate.md` with explicit C0103 hard-stop traceability.
+  - `I-0565` publishes `.ralph/reports/I-0565-m99-s1-runtime-wiring-matrix.md` and `.ralph/reports/I-0565-m99-s2-one-chain-adapter-coupling-isolation-matrix.md`.
+  - `I-0566` requires all required rows to satisfy `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, and `chain_adapter_runtime_wired`.
+  - Any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks C0103 and optional-refinement continuation.
+  - No runtime implementation changes are executed in this tranche.
 - Any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks C0101.
 - C0101 hard-stop invariants are:
   - `canonical_event_id_unique`
