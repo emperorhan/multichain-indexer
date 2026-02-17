@@ -388,6 +388,124 @@ func TestTriChainInterleaving_FailFastNoProgressAndDeterministicReplayPerMandato
 	}
 }
 
+func TestTriChainInterleaving_FailFastRestartPermutationRevalidation(t *testing.T) {
+	ctx := context.Background()
+	maxSkew := 20 * time.Millisecond
+	mandatoryChains := []model.Chain{
+		model.ChainSolana,
+		model.ChainBase,
+		model.ChainBTC,
+	}
+
+	canonicalDelays := map[model.Chain]time.Duration{
+		model.ChainSolana: 3 * time.Millisecond,
+		model.ChainBase:   1 * time.Millisecond,
+		model.ChainBTC:    0,
+	}
+	replayOrderSwapDelays := map[model.Chain]time.Duration{
+		model.ChainSolana: 0,
+		model.ChainBase:   4 * time.Millisecond,
+		model.ChainBTC:    2 * time.Millisecond,
+	}
+
+	baselineState := newInterleaveState(nil)
+	baselineIngesters := newTriChainIngesters(t, baselineState, maxSkew)
+	require.Empty(t, runTriChainPermutation(ctx, baselineIngesters, canonicalDelays))
+	baseline := snapshotTriChainState(baselineState)
+
+	assertReplayMatchesBaseline := func(t *testing.T, permutation string, delays map[model.Chain]time.Duration) {
+		t.Helper()
+		t.Run(permutation, func(t *testing.T) {
+			state := newInterleaveState(nil)
+			ings := newTriChainIngesters(t, state, maxSkew)
+			retryErrs := runTriChainPermutation(ctx, ings, delays)
+			require.Empty(t, retryErrs)
+
+			replay := snapshotTriChainState(state)
+			assert.Equal(t, baseline.tupleKeys, replay.tupleKeys)
+			assert.Equal(t, baseline.eventIDs, replay.eventIDs)
+			assert.Equal(t, baseline.categoryCounts, replay.categoryCounts)
+			assert.Equal(t, baseline.cursorSeq, replay.cursorSeq)
+			assert.Equal(t, baseline.watermarks, replay.watermarks)
+			assert.Equal(t, baseline.btcTotalDelta, replay.btcTotalDelta)
+
+			assertNoDuplicateEventIDs(t, replay.eventIDCounts)
+			assertMonotonicWrites(t, replay.cursorWrites, "tri-chain "+permutation+" cursor writes")
+			assertMonotonicWrites(t, replay.watermarkWrites, "tri-chain "+permutation+" watermark writes")
+		})
+	}
+
+	runFailedPathRecovery := func(permutation string, replayDelays map[model.Chain]time.Duration) {
+		t.Run(permutation, func(t *testing.T) {
+			for _, tc := range mandatoryChains {
+				tc := tc
+				t.Run(string(tc), func(t *testing.T) {
+					failChainKey := interleaveKey(tc, triChainNetwork(tc))
+					state := newInterleaveState(map[string]error{
+						failChainKey: errors.New("correctness-impacting terminal defect"),
+					})
+					ings := newTriChainIngesters(t, state, maxSkew)
+					failErrs := runTriChainPermutation(ctx, ings, canonicalDelays)
+					require.Len(t, failErrs, 1)
+
+					first := snapshotTriChainState(state)
+					assert.Equal(t, 0, chainEventCount(first, tc))
+					assert.Equal(t, len(baseline.eventIDs)-chainEventCount(baseline, tc), len(first.eventIDs))
+
+					failCursorKey := fmt.Sprintf("%s|%s", failChainKey, triChainAddress(tc))
+					_, failCursorWritten := first.cursorSeq[failCursorKey]
+					assert.False(t, failCursorWritten)
+					_, failWatermarkWritten := first.watermarks[failChainKey]
+					assert.False(t, failWatermarkWritten)
+					assert.Empty(t, first.cursorWrites[failCursorKey])
+					assert.Empty(t, first.watermarkWrites[failChainKey])
+
+					for _, peerChain := range mandatoryChains {
+						if peerChain == tc {
+							continue
+						}
+						assert.Equal(t, chainEventCount(baseline, peerChain), chainEventCount(first, peerChain))
+
+						peerCursorKey := fmt.Sprintf("%s|%s", interleaveKey(peerChain, triChainNetwork(peerChain)), triChainAddress(peerChain))
+						peerWatermarkKey := interleaveKey(peerChain, triChainNetwork(peerChain))
+						assert.Equal(t, baseline.cursorSeq[peerCursorKey], first.cursorSeq[peerCursorKey])
+						assert.Equal(t, baseline.watermarks[peerWatermarkKey], first.watermarks[peerWatermarkKey])
+					}
+
+					replayIngesters := newTriChainIngesters(t, state, maxSkew)
+					replayErrs := runTriChainPermutation(ctx, replayIngesters, replayDelays)
+					require.Empty(t, replayErrs)
+
+					recovered := snapshotTriChainState(state)
+					assert.Equal(t, baseline.eventIDs, recovered.eventIDs)
+					assert.Equal(t, baseline.tupleKeys, recovered.tupleKeys)
+					assert.Equal(t, baseline.eventIDCounts, recovered.eventIDCounts)
+					assert.Equal(t, baseline.cursorSeq, recovered.cursorSeq)
+					assert.Equal(t, baseline.watermarks, recovered.watermarks)
+					assert.Equal(t, baseline.btcTotalDelta, recovered.btcTotalDelta)
+
+					assertNoDuplicateEventIDs(t, recovered.eventIDCounts)
+					assertMonotonicWrites(t, recovered.cursorWrites, "tri-chain "+string(tc)+" "+permutation+" replay cursor writes")
+					assertMonotonicWrites(t, recovered.watermarkWrites, "tri-chain "+string(tc)+" "+permutation+" replay watermark writes")
+				})
+			}
+		})
+	}
+
+	t.Run("canonical_range_replay", func(t *testing.T) {
+		assertReplayMatchesBaseline(t, "canonical_range_replay", canonicalDelays)
+	})
+	t.Run("replay_order_swap", func(t *testing.T) {
+		assertReplayMatchesBaseline(t, "replay_order_swap", replayOrderSwapDelays)
+	})
+	t.Run("failed_path_restart_recovery", func(t *testing.T) {
+		runFailedPathRecovery("failed_path_restart_recovery", canonicalDelays)
+	})
+	t.Run("one_chain_restart_perturbation", func(t *testing.T) {
+		runFailedPathRecovery("one_chain_restart_perturbation", replayOrderSwapDelays)
+	})
+}
+
 func TestDeterministicMandatoryChainInterleaver_FailedAttemptDoesNotAdvanceCheckpoint(t *testing.T) {
 	ctx := context.Background()
 
