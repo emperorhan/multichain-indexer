@@ -1,6 +1,9 @@
 package autotune
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"strings"
 )
 
@@ -39,6 +42,7 @@ type autoTuneInputs struct {
 	MinCursorSequence  int64
 	QueueDepth         int
 	QueueCapacity      int
+	DecisionEpochMs    int64
 }
 
 type autoTuneDiagnostics struct {
@@ -60,6 +64,17 @@ type autoTuneDiagnostics struct {
 	PolicyManifestDigest   string
 	PolicyEpoch            int64
 	PolicyActivationTicks  int
+	DecisionInputsHash     string
+	LocalInputsDigest      string
+	DecisionInputsChainScoped bool
+	DecisionScope          string
+	CrossChainReads        bool
+	CrossChainWrites       bool
+	ChangedPeerCursor      int
+	ChangedPeerWatermark    int
+	DecisionOutputs        string
+	DecisionEpochMs        int64
+	DecisionSequence       int64
 }
 
 type autoTuneSignal string
@@ -134,10 +149,85 @@ type autoTuneController struct {
 	lastApplied            autoTuneSignal
 	saturationSignal       autoTuneSignal
 	streak                 int
+	decisionSequence       int64
 }
 
 const defaultAutoTunePolicyVersion = "policy-v1"
 const defaultAutoTunePolicyManifestDigest = "manifest-v1"
+const autoTuneDecisionScopeChainOnly = "this-chain-only"
+
+func makeDigest(parts ...string) string {
+	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hex.EncodeToString(h[:])
+}
+
+func (a *autoTuneController) decisionInputsDigest(inputs autoTuneInputs) string {
+	return makeDigest(
+		"v1",
+		formatBool(inputs.HasHeadSignal),
+		fmt.Sprintf("%d", inputs.HeadSequence),
+		formatBool(inputs.HasMinCursorSignal),
+		fmt.Sprintf("%d", inputs.MinCursorSequence),
+		fmt.Sprintf("%d", inputs.QueueDepth),
+		fmt.Sprintf("%d", inputs.QueueCapacity),
+	)
+}
+
+func (a *autoTuneController) decisionOutputsString(before, after int, decision string, streak, cooldown int) string {
+	return fmt.Sprintf("decision=%s batch_before=%d batch_after=%d streak=%d cooldown=%d", decision, before, after, streak, cooldown)
+}
+
+func (a *autoTuneController) decisionInputsHash(inputs autoTuneInputs, outputs string) string {
+	return makeDigest(
+		inputs.decisionEpochMsString(),
+		inputs.hashContextString(),
+		outputs,
+		autoTuneDecisionScopeChainOnly,
+	)
+}
+
+func (i autoTuneInputs) decisionEpochMsString() string {
+	return fmt.Sprintf("%d", i.DecisionEpochMs)
+}
+
+func (i autoTuneInputs) hashContextString() string {
+	return fmt.Sprintf("%t|%d|%t|%d|%d|%d", i.HasHeadSignal, i.HeadSequence, i.HasMinCursorSignal, i.MinCursorSequence, i.QueueDepth, i.QueueCapacity)
+}
+
+func formatBool(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
+}
+
+func (a *autoTuneController) nextDecisionSequence() int64 {
+	a.decisionSequence++
+	return a.decisionSequence
+}
+
+func (a *autoTuneController) enrichDecisionDiagnostics(
+	inputs autoTuneInputs,
+	diagnostics autoTuneDiagnostics,
+	decision string,
+	streak int,
+	cooldown int,
+) autoTuneDiagnostics {
+	inputsHash := a.decisionInputsDigest(inputs)
+	afterOutputs := a.decisionOutputsString(diagnostics.BatchBefore, diagnostics.BatchAfter, decision, streak, cooldown)
+	diagnostics.DecisionInputsHash = a.decisionInputsHash(inputs, afterOutputs)
+	diagnostics.LocalInputsDigest = inputsHash
+	diagnostics.DecisionInputsChainScoped = true
+	diagnostics.DecisionScope = autoTuneDecisionScopeChainOnly
+	diagnostics.CrossChainReads = false
+	diagnostics.CrossChainWrites = false
+	diagnostics.ChangedPeerCursor = 0
+	diagnostics.ChangedPeerWatermark = 0
+	diagnostics.DecisionOutputs = afterOutputs
+	diagnostics.DecisionEpochMs = inputs.DecisionEpochMs
+	diagnostics.DecisionSequence = a.nextDecisionSequence()
+	return diagnostics
+}
 
 func newAutoTuneController(baseBatchSize int, cfg AutoTuneConfig) *autoTuneController {
 	return newAutoTuneControllerWithSeed(baseBatchSize, cfg, nil)
@@ -312,14 +402,15 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 	if overrideState == autoTuneOverrideManualHold {
 		a.currentBatch = clampInt(a.operatorOverrideBatch, a.minBatchSize, a.maxBatchSize)
 		a.resetAdaptiveControlState()
-		return a.currentBatch, autoTuneDiagnostics{
+		decision := "hold_operator_override"
+		return a.currentBatch, a.enrichDecisionDiagnostics(inputs, autoTuneDiagnostics{
 			LagSequence:            lagSequence,
 			QueueDepth:             inputs.QueueDepth,
 			QueueCapacity:          inputs.QueueCapacity,
 			TelemetryState:         string(telemetryState),
 			OverrideState:          string(overrideState),
 			Signal:                 string(autoTuneSignalHold),
-			Decision:               "hold_operator_override",
+			Decision:               decision,
 			BatchBefore:            before,
 			BatchAfter:             a.currentBatch,
 			Streak:                 a.streak,
@@ -331,7 +422,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 			PolicyManifestDigest:   a.policyManifestDigest,
 			PolicyEpoch:            a.policyEpoch,
 			PolicyActivationTicks:  a.policyActivationLeft,
-		}
+		}, decision, a.streak, a.cooldownLeft)
 	}
 	if overrideState == autoTuneOverrideReleaseHold {
 		remainingBefore := a.overrideReleaseLeft
@@ -339,14 +430,15 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		if a.overrideReleaseLeft > 0 {
 			a.overrideReleaseLeft--
 		}
-		return a.currentBatch, autoTuneDiagnostics{
+		decision := "hold_operator_release"
+		return a.currentBatch, a.enrichDecisionDiagnostics(inputs, autoTuneDiagnostics{
 			LagSequence:            lagSequence,
 			QueueDepth:             inputs.QueueDepth,
 			QueueCapacity:          inputs.QueueCapacity,
 			TelemetryState:         string(telemetryState),
 			OverrideState:          string(overrideState),
 			Signal:                 string(autoTuneSignalHold),
-			Decision:               "hold_operator_release",
+			Decision:               decision,
 			BatchBefore:            before,
 			BatchAfter:             a.currentBatch,
 			Streak:                 a.streak,
@@ -358,20 +450,21 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 			PolicyManifestDigest:   a.policyManifestDigest,
 			PolicyEpoch:            a.policyEpoch,
 			PolicyActivationTicks:  a.policyActivationLeft,
-		}
+		}, decision, a.streak, a.cooldownLeft)
 	}
 	if a.policyActivationLeft > 0 {
 		remainingBefore := a.policyActivationLeft
 		a.resetAdaptiveControlState()
 		a.policyActivationLeft--
-		return a.currentBatch, autoTuneDiagnostics{
+		decision := "hold_policy_transition"
+		return a.currentBatch, a.enrichDecisionDiagnostics(inputs, autoTuneDiagnostics{
 			LagSequence:            lagSequence,
 			QueueDepth:             inputs.QueueDepth,
 			QueueCapacity:          inputs.QueueCapacity,
 			TelemetryState:         string(telemetryState),
 			OverrideState:          string(overrideState),
 			Signal:                 string(autoTuneSignalHold),
-			Decision:               "hold_policy_transition",
+			Decision:               decision,
 			BatchBefore:            before,
 			BatchAfter:             a.currentBatch,
 			Streak:                 a.streak,
@@ -383,7 +476,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 			PolicyManifestDigest:   a.policyManifestDigest,
 			PolicyEpoch:            a.policyEpoch,
 			PolicyActivationTicks:  remainingBefore,
-		}
+		}, decision, a.streak, a.cooldownLeft)
 	}
 
 	signal := autoTuneSignalHold
@@ -477,7 +570,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		}
 	}
 
-	return a.currentBatch, autoTuneDiagnostics{
+	return a.currentBatch, a.enrichDecisionDiagnostics(inputs, autoTuneDiagnostics{
 		LagSequence:            lagSequence,
 		QueueDepth:             inputs.QueueDepth,
 		QueueCapacity:          inputs.QueueCapacity,
@@ -496,7 +589,7 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 		PolicyManifestDigest:   a.policyManifestDigest,
 		PolicyEpoch:            a.policyEpoch,
 		PolicyActivationTicks:  a.policyActivationLeft,
-	}
+	}, decision, a.streak, a.cooldownLeft)
 }
 
 func (a *autoTuneController) exportOverrideTransition() autoTuneOverrideTransition {

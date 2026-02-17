@@ -151,6 +151,51 @@ func TestAutoTuneController_CooldownDefersOppositeSignalJitter(t *testing.T) {
 	assert.Equal(t, "apply_decrease", d4.Decision)
 }
 
+func TestAutoTuneController_DecisionDiagnosticsEmitChainScopedAuditFields(t *testing.T) {
+	controller := newAutoTuneController(80, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          40,
+		MaxBatchSize:          120,
+		StepUp:                20,
+		StepDown:              15,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 80,
+		QueueLowWatermarkPct:  30,
+		HysteresisTicks:       1,
+		CooldownTicks:         1,
+	})
+	require.NotNil(t, controller)
+
+	inputs := autoTuneInputs{
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         2,
+		QueueCapacity:      10,
+		DecisionEpochMs:    1_700_000_000_000,
+	}
+	batchAfter, d1 := controller.Resolve(inputs)
+	assert.Equal(t, 100, batchAfter)
+	assert.Equal(t, "apply_increase", d1.Decision)
+	assert.Equal(t, autoTuneDecisionScopeChainOnly, d1.DecisionScope)
+	assert.True(t, d1.DecisionInputsChainScoped)
+	assert.False(t, d1.CrossChainReads)
+	assert.False(t, d1.CrossChainWrites)
+	assert.Equal(t, 0, d1.ChangedPeerCursor)
+	assert.Equal(t, 0, d1.ChangedPeerWatermark)
+	assert.Equal(t, inputs.DecisionEpochMs, d1.DecisionEpochMs)
+	assert.Equal(t, controller.decisionInputsDigest(inputs), d1.LocalInputsDigest)
+	assert.NotEmpty(t, d1.DecisionInputsHash)
+	assert.Equal(t, controller.decisionInputsHash(inputs, d1.DecisionOutputs), d1.DecisionInputsHash)
+	assert.Equal(t, int64(1), d1.DecisionSequence)
+
+	_, d2 := controller.Resolve(inputs)
+	assert.Equal(t, controller.decisionInputsDigest(inputs), d2.LocalInputsDigest, "same decision inputs produce identical local input digest")
+	assert.Equal(t, int64(2), d2.DecisionSequence)
+}
+
 func TestAutoTuneController_CooldownPreservesOppositeStreakForDeterministicRecovery(t *testing.T) {
 	controller := newAutoTuneController(80, AutoTuneConfig{
 		Enabled:               true,

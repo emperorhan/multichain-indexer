@@ -319,6 +319,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			MinCursorSequence:  minCursorSequence,
 			QueueDepth:         len(c.jobCh),
 			QueueCapacity:      cap(c.jobCh),
+			DecisionEpochMs:    time.Now().UnixMilli(),
 		})
 		batchSize = resolved
 		c.logger.Debug("coordinator auto-tune decision",
@@ -342,6 +343,17 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			"policy_manifest_digest", diagnostics.PolicyManifestDigest,
 			"policy_epoch", diagnostics.PolicyEpoch,
 			"policy_activation_ticks", diagnostics.PolicyActivationTicks,
+			"decision_inputs_hash", diagnostics.DecisionInputsHash,
+			"local_inputs_digest", diagnostics.LocalInputsDigest,
+			"decision_inputs_chain_scoped", diagnostics.DecisionInputsChainScoped,
+			"decision_scope", diagnostics.DecisionScope,
+			"cross_chain_reads", diagnostics.CrossChainReads,
+			"cross_chain_writes", diagnostics.CrossChainWrites,
+			"changed_peer_cursor", diagnostics.ChangedPeerCursor,
+			"changed_peer_watermark", diagnostics.ChangedPeerWatermark,
+			"decision_outputs", diagnostics.DecisionOutputs,
+			"decision_epoch_ms", diagnostics.DecisionEpochMs,
+			"decision_sequence", diagnostics.DecisionSequence,
 		)
 	}
 
