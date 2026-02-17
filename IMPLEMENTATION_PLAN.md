@@ -4563,12 +4563,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0581` (`C0108-S1`) after `I-0580`
-2. `I-0582` (`C0108-S2`) after `I-0581`
+1. `I-0585` (`C0109-S1`) after `I-0584`
+2. `I-0587` (`C0109-S2`) after `I-0585`
 
 Planned next tranche queue:
-1. `I-0581` (`C0108-S1`) after `I-0580`
-2. `I-0582` (`C0108-S2`) after `I-0581`
+1. `I-0585` (`C0109-S1`) after `I-0584`
+2. `I-0587` (`C0109-S2`) after `I-0585`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -4813,4 +4813,25 @@ Superseded issues:
   - `I-0580` updates this plan with explicit `C0108` lock state and queue order `I-0579 -> I-0580 -> I-0581 -> I-0582`.
   - `I-0581` updates `specs/m95-prd-chain-scoped-autotune-control-gate.md` with a `C0108` addendum covering required artifacts and machine-checkable row fields.
   - `I-0582` verifies all required `I-0581` rows with `outcome=GO`, `evidence_present=true`, required hard-stop booleans true, and required `peer_cursor_delta=0` / `peer_watermark_delta=0`.
+  - No runtime implementation changes are executed in this planner tranche.
+
+## C0109 (`I-0584`) tranche activation
+- Focus: PRD-priority fail-fast continuity and one-chain restart/cross-coupling revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `8.4`: restart + failed-path replay continuity while preserving cursor/watermark correctness.
+  - `8.5`: correctness-impacting errors abort immediately and must not advance failed-path cursor/watermark.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: chain adapter/runtime wiring invariance under fail-fast perturbation.
+- C0109 lock state: `C0109-PRD-FAILFAST-CONTINUITY-COUNTEREXAMPLE-REVALIDATION`.
+- C0109 queue adjacency: hard dependency `I-0582 -> I-0584 -> I-0585 -> I-0587`.
+- C0109 queue handoff trace:
+  - `I-0584` publishes lock-state evidence and handoff metadata for `I-0585`.
+  - `I-0585` publishes C0109 matrix contracts for `I-0587`.
+- Downstream execution pair:
+  - `I-0585` (developer) — PRD handoff to define C0109 fail-fast continuity evidence contracts and required counterexample row schemas.
+  - `I-0587` (qa) — PRD counterexample gate on required artifacts for fail-fast restart continuity and peer-isolation.
+- Slice gates for this tranche:
+  - `I-0584` updates this plan with explicit `C0109` lock state and queue order `I-0582 -> I-0584 -> I-0585 -> I-0587`.
+  - `I-0585` updates `specs/m93-prd-fail-fast-continuity-gate.md` with a `C0109` addendum covering required artifacts and machine-checkable row fields.
+  - `I-0587` verifies all required `I-0585` rows with `outcome=GO`, `evidence_present=true`, hard-stop booleans true, and required `peer_cursor_delta=0` / `peer_watermark_delta=0`.
   - No runtime implementation changes are executed in this planner tranche.

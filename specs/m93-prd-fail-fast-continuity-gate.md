@@ -114,3 +114,27 @@ The PRD `R5/R8` controls are still not closed with an explicit, testable gate. C
 - Required artifacts for hard-stop handoff are:
   - `.ralph/reports/I-0557-m93-s1-fail-fast-continuity-matrix.md`
   - `.ralph/reports/I-0557-m93-s2-one-chain-isolation-matrix.md`
+
+## C0109 (`I-0584`) Tranche Issue Mapping
+- tranche: `C0109` (`I-0584 -> I-0585 -> I-0587`)
+- `I-0585` defines C0109 PRD handoff artifacts on `I-0584` fail-fast continuity continuation under mandatory-chain one-chain perturbation:
+  - `.ralph/reports/I-0585-m93-s1-fail-fast-continuity-matrix.md`
+  - `.ralph/reports/I-0585-m93-s2-one-chain-isolation-matrix.md`
+- Required row keys for `I-0585-m93-s1-fail-fast-continuity-matrix.md`:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required row keys for `I-0585-m93-s2-one-chain-isolation-matrix.md`:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Required C0109 hard-stop checks for `GO` rows:
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `evidence_present=true`
+  - `outcome=GO`
+  - `peer_cursor_delta=0` where required
+  - `peer_watermark_delta=0` where required
+- `I-0585` must report non-empty `failure_mode` on required `NO-GO` rows.
+- `I-0587` verifies `I-0585` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) and blocks C0109 on any required `NO-GO`, missing evidence, false required booleans, or non-zero peer deltas.
+- Required C0109 decision hook:
+  - `DP-0142-C0109`: C0109 remains blocked unless all required `I-0585` matrix rows for mandatory chains are present and satisfy `outcome=GO`, `evidence_present=true`, required hard-stop booleans, and required peer deltas zero where required.
