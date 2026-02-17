@@ -5250,3 +5250,38 @@ Superseded issues:
     - `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
   - `I-0639` verifies required `I-0638` rows for all mandatory chains and blocks `C0122` on any required `NO-GO`, `evidence_present=false`, false hard-stop booleans, non-zero required peer deltas, or missing `failure_mode` on `NO-GO` rows.
   - No runtime implementation changes are executed in this planner tranche; planning/spec updates only.
+
+## C0123 (`I-0640`) tranche activation
+- Focus: PRD-priority hardening slice before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: fee delta completeness (`solana_fee_event_coverage`, `base_fee_split_coverage`).
+  - `R4`: deterministic replay.
+  - `8.4`/`8.5`: failed-path cursor/watermark safety and fail-fast restart continuity.
+  - `reorg_recovery_deterministic` recovery determinism.
+  - `chain_adapter_runtime_wired` adapter/runtime invariance under perturbation.
+- C0123 lock state: `C0123-PRD-PRIORITY-ASSET-VOLATILITY-HARDENING`.
+- C0123 queue adjacency: hard dependency `I-0640 -> I-0641 -> I-0642`.
+- Downstream execution pair:
+  - `I-0641` (developer) — C0123 PRD-priority hardening contract and evidence preparation.
+  - `I-0642` (qa) — C0123 PRD-priority counterexample gate and recommendation closure.
+- Slice gates for this tranche:
+  - `I-0641` updates `specs/m96-prd-asset-volatility-closeout.md` with an `C0123` addendum that binds `R1`, `R2`, `R3`, `R4`, `8.4`, `8.5`, `reorg_recovery_deterministic`, and `chain_adapter_runtime_wired` to required artifacts.
+  - `I-0641` publishes `.ralph/reports/I-0641-m96-s1-priority-hardening-coverage-matrix.md` and `.ralph/reports/I-0641-m96-s2-priority-hardening-isolation-matrix.md` with required mandatory-chain cells, invariant columns, and peer-isolation checks.
+  - `I-0642` validates all required `I-0641` rows and blocks C0123 on any required:
+    - required `NO-GO` outcome,
+    - missing or false hard-stop invariant rows,
+    - missing evidence,
+    - required `peer_cursor_delta` or `peer_watermark_delta` divergence.
+  - `I-0640` does not execute runtime implementation changes.
+  - Validation baseline remains `make test`, `make test-sidecar`, `make lint` in all required check/gate stages.
+- Hard-stop invariants for C0123:
+  - `canonical_event_id_unique`
+  - `replay_idempotent`
+  - `cursor_monotonic`
+  - `signed_delta_conservation`
+  - `solana_fee_event_coverage`
+  - `base_fee_split_coverage`
+  - `reorg_recovery_deterministic`
+  - `chain_adapter_runtime_wired`
