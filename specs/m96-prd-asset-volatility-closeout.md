@@ -408,6 +408,16 @@ Required PRD hard-stop decision hook:
 - `base` + `base-sepolia` -> `TRANSFER`, `MINT`, `BURN`, `fee_execution_l2`, `fee_data_l1`
 - `btc` + `btc-testnet` -> `TRANSFER:vin`, `TRANSFER:vout`, `miner_fee`
 
+#### C0118 Perturbation and proof constraints
+- Required duplicate-suppression perturbation axis:
+  - `canonical_range_replay`
+  - `replay_order_swap`
+  - `one_chain_restart_perturbation`
+- All required rows in the C0118 artifacts must be machine-checkable:
+  - `outcome` is only `GO` or `NO-GO`
+  - `evidence_present=true` for every `GO`
+  - `failure_mode` is empty for `GO` and non-empty for `NO-GO`
+
 #### C0118 Matrix Contracts (`I-0622`)
 - `I-0622-m96-s1-coverage-runtime-hardening-matrix.md` required row fields:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`

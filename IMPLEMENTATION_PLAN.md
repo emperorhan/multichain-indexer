@@ -5086,6 +5086,7 @@ Superseded issues:
   - `chain_adapter_runtime_wired`: adapter/runtime wiring remains deterministic under one-chain perturbation.
 - C0118 lock state: `C0118-PRD-ASSET-VOLATILITY-CONTINUITY-IMPLEMENTATION`.
 - C0118 queue adjacency: hard dependency `I-0619 -> I-0622 -> I-0623`.
+- Active handoff state for this tranche: `I-0619` (producer) -> `I-0622` (handoff implementer) -> `I-0623` (qa gate); do not advance queue until `I-0623` is complete.
 - Downstream execution pair:
   - `I-0622` (developer) — PRD handoff and artifact contract definition for C0118 production handoff.
   - `I-0623` (qa) — PRD counterexample gate and recommendation closure for `C0118`.
