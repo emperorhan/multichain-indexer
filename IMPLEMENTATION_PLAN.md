@@ -60,6 +60,10 @@
 ## C0093 (`I-0526`) tranche activation
 - Focus: `M98` PRD closeout lock and optional-refinement handoff.
 - Slice execution order: `I-0526` -> `I-0527` -> `I-0528`.
+- C0093 closeout checkpoint contract:
+  - `I-0526` writes the initial `C0093` lock metadata and marks the checkpoint precondition as `CLOSEOUT_PRECHECK`.
+  - `I-0527` updates checkpoint metadata and marks lock state `CLOSEOUT_READY` only after `DP-0109-M96`, `DP-0109-M97`, and `DP-0110-M98` evidence readiness checks are wired.
+  - `I-0528` flips lock state to `CLOSEOUT_VERIFIED` and only then may optional refinements resume.
 - Downstream execution pair:
   - `I-0527` (developer) — PRD closeout lock artifact contract and gating metadata update.
   - `I-0528` (qa) — PRD closeout lock and recommendation verification before any post-PRD optional refinement tranche.

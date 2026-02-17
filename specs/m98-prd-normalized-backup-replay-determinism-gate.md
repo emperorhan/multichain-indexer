@@ -13,6 +13,12 @@
 ## Problem Statement
 `M97` validated rollback/reorg recovery continuity, but PRD `8.4` also requires deterministic replay behavior from persisted normalized artifacts. This tranche adds explicit evidence contracts so `M98` promotion is blocked unless persisted-backup replay and chain-isolation restart perturbations are reproducible.
 
+## PRD closeout lock (C0093)
+- Cross-milestone lock-in checks required before optional refinements resume:
+  - `M96`: `DP-0109-M96` in `specs/m96-prd-asset-volatility-closeout.md` must have all required rows with `evidence_present=true` and `outcome=GO`.
+  - `M97`: `DP-0109-M97` in `specs/m97-prd-reorg-recovery-determinism-gate.md` must have all required fork/recovery/isolation rows with `outcome=GO`, zero peer deltas where required, and `evidence_present=true`.
+  - `M98`: this spec rows must have all required `outcome=GO`, invariant flags true, and required peer deltas zero where required.
+
 ## Backup Replay Contract
 1. Persisted normalized replay must preserve all mandatory class-path outputs for mandatory chains and produce stable ordered canonical identity.
 2. Replay with checkpoint persistence + restart perturbation must preserve:
@@ -59,6 +65,7 @@ Required enum/value constraints:
 - `cursor_monotonic`
 - `signed_delta_conservation`
 - `chain_adapter_runtime_wired`
+- `reorg_recovery_deterministic`
 
 ## Measurable Exit Gates
 1. `0` missing required class-path rows in the backup replay continuity and class-coverage matrices for mandatory chains.
@@ -68,3 +75,4 @@ Required enum/value constraints:
 
 ## Decision Hook
 - `DP-0110-M98`: any required `(chain, network, class_path)` missing evidence, any required row with `outcome=NO-GO`, any required row with `evidence_present=false`, or any required peer-delta row with non-zero movement is a hard NO-GO for `M98` promotion.
+- `DP-0111-C0093`: any required `M96`/`M97`/`M98` closeout row missing, `evidence_present=false`, `outcome=NO-GO`, or required peer-delta row with non-zero movement is a hard NO-GO for optional refinement progression.
