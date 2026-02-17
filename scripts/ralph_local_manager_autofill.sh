@@ -74,6 +74,18 @@ issue_is_stale_superseded_blocked() {
   issue_marked_superseded "${file}"
 }
 
+issue_is_terminal() {
+  local file="$1"
+  local status
+  status="$(issue_status "${file}")"
+  case "${status}" in
+    done|closed|cancelled|canceled)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 issue_exists_with_key_in_dirs() {
   local key="$1"
   shift
@@ -95,6 +107,10 @@ issue_exists_with_prefix_open() {
   while IFS= read -r file; do
     [ -f "${file}" ] || continue
     if ! text_exists "automanager_key:[[:space:]]*${prefix}" "${file}"; then
+      continue
+    fi
+    # Done/closed issues should never keep a cycle "open".
+    if issue_is_terminal "${file}"; then
       continue
     fi
     # Ignore stale blocked issues already superseded by newer tasks.
