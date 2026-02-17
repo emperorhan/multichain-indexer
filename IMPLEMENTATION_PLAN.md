@@ -5151,3 +5151,28 @@ Superseded issues:
     - non-zero required peer deltas
   - No runtime implementation changes are executed in this C0119 planner tranche; planning/spec-doc handoff only.
 - `DP-0154-C0119`: C0119 remains blocked unless all required rows in the two artifacts above for `solana-devnet`, `base-sepolia`, and `btc-testnet` are `GO` with the hard-stop checks and one-chain bleed checks above.
+
+## C0120 (`I-0629`) tranche activation
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `8.4`: failed-path replay continuity while preserving cursor/watermark safety.
+  - `8.5`: correctness-impacting path abort semantics remain fail-fast.
+  - `10`: deterministic replay and peer-isolation acceptance under one-chain perturbation.
+- C0120 lock state: `C0120-PRD-FAILFAST-RESTART-COUNTEREXAMPLE-REVALIDATION`.
+- C0120 queue adjacency: hard dependency `I-0629 -> I-0630 -> I-0631`.
+- Downstream execution pair:
+  - `I-0630` (developer) — PRD handoff and artifact contract definition for mandatory-chain fail-fast restart continuity revalidation.
+  - `I-0631` (qa) — PRD counterexample gate and explicit recommendation closure for `C0120`.
+- Slice gates for this tranche:
+  - `I-0630` updates this plan with explicit `C0120` lock state and queue order `I-0629 -> I-0630 -> I-0631`.
+  - `I-0630` updates `specs/m93-prd-fail-fast-continuity-gate.md` with a `C0120` addendum that binds `8.4`, `8.5`, and `10` to required artifacts and one-chain perturbation rows.
+  - `I-0630` requires these artifacts:
+    - `.ralph/reports/I-0630-m93-s1-fail-fast-continuity-revalidation-matrix.md`
+    - `.ralph/reports/I-0630-m93-s2-one-chain-isolation-revalidation-matrix.md`
+  - `I-0631` verifies all required `I-0630` rows for mandatory chains and blocks `C0120` on any required:
+    - `outcome=NO-GO`
+    - `evidence_present=false`
+    - required hard-stop invariants false for required fields
+    - non-zero required peer deltas
+    - missing `failure_mode` for required `NO-GO`
+  - No runtime implementation changes are executed in this planner tranche; planning/spec-doc handoff updates only.
+- `DP-0155-C0120`: C0120 remains blocked unless all required `I-0630` rows for `solana-devnet`, `base-sepolia`, and `btc-testnet` are present, `outcome=GO`, `evidence_present=true`, required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`), and required peer deltas are zero where required in one-chain isolation rows.
