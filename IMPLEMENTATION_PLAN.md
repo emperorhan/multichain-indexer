@@ -4563,12 +4563,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0578` (`C0107-S1`) after `I-0576`
-2. `I-0579` (`C0107-S2`) after `I-0578`
+1. `I-0581` (`C0108-S1`) after `I-0580`
+2. `I-0582` (`C0108-S2`) after `I-0581`
 
 Planned next tranche queue:
-1. `I-0578` (`C0107-S1`) after `I-0576`
-2. `I-0579` (`C0107-S2`) after `I-0578`
+1. `I-0581` (`C0108-S1`) after `I-0580`
+2. `I-0582` (`C0108-S2`) after `I-0581`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -4791,6 +4791,23 @@ Superseded issues:
     - `outcome=GO`
     - `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer columns are present.
     - `failure_mode` must be empty for `GO`.
-  - Required hard-stop `NO-GO` rows in `I-0578` artifacts must include non-empty `failure_mode`.
-  - `I-0579` verifies all required `I-0578` rows and blocks promotion on any required `NO-GO`, evidence gap, required hard-stop false, or peer bleed.
-  - No runtime implementation changes are executed in this tranche.
+- Required hard-stop `NO-GO` rows in `I-0578` artifacts must include non-empty `failure_mode`.
+- `I-0579` verifies all required `I-0578` rows and blocks promotion on any required `NO-GO`, evidence gap, required hard-stop false, or peer bleed.
+- No runtime implementation changes are executed in this tranche.
+
+## C0108 (`I-0580`) tranche activation
+- Focus: PRD-priority chain-scoped throughput-control and peer-isolation revalidation before optional reliability refinements resume.
+- Focused unresolved PRD requirements:
+  - `R9`: chain-scoped adaptive throughput control.
+  - `9.4`: topology parity and continuity principles.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+- C0108 lock state: `C0108-PRD-CONTROL-COUPLING-COUNTEREXAMPLE-REVALIDATION`.
+- C0108 queue adjacency: hard dependency `I-0579 -> I-0580 -> I-0581 -> I-0582`.
+- Downstream execution pair:
+  - `I-0581` (developer) — PRD handoff to define C0108 control-coupling evidence contracts and required counterexample row schemas.
+  - `I-0582` (qa) — PRD counterexample gate on required artifacts for chain-scoped control coupling and reproducibility.
+- Slice gates for this tranche:
+  - `I-0580` updates this plan with explicit `C0108` lock state and queue order `I-0579 -> I-0580 -> I-0581 -> I-0582`.
+  - `I-0581` updates `specs/m95-prd-chain-scoped-autotune-control-gate.md` with a `C0108` addendum covering required artifacts and machine-checkable row fields.
+  - `I-0582` verifies all required `I-0581` rows with `outcome=GO`, `evidence_present=true`, required hard-stop booleans true, and required `peer_cursor_delta=0` / `peer_watermark_delta=0`.
+  - No runtime implementation changes are executed in this planner tranche.

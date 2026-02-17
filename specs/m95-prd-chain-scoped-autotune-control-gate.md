@@ -255,3 +255,62 @@ Required artifact schema: one row per control cycle, keyed by `(chain, network, 
 
 ## Decision Hook
 - `DP-0106-M95`: control telemetry and control outputs are chain-local for mandatory chains; any measurable cross-chain control coupling is a hard gate failure until remediated.
+
+## C0108 (`I-0581`) tranche activation
+- Focus: PRD-priority chain-scoped control-coupling counterexample revalidation after optional-retry queue churn.
+- PRD traceability:
+  - `R9`: control-coupling must remain chain-local under perturbation.
+  - `9.4`: topology continuity continuity and isolated replay behavior.
+  - `10`: deterministic replay and peer isolation acceptance.
+- Focused required artifacts for C0108 (`I-0581` handoff):
+  - `.ralph/reports/I-0581-m95-s1-control-scope-metric-matrix.md`
+  - `.ralph/reports/I-0581-m95-s1-cross-coupling-matrix.md`
+  - `.ralph/reports/I-0581-m95-s1-control-perturbation-continuity-matrix.md`
+  - `.ralph/reports/I-0581-m95-s1-control-coupling-reproducibility-matrix.md`
+
+#### Control scope matrix (`I-0581-m95-s1-control-scope-metric-matrix.md`)
+- Required fields: `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `control_input_perturbation`, `decision_scope`, `cross_chain_reads`, `cross_chain_writes`, `evidence_present`, `outcome`, `failure_mode`.
+- Required hard-stop for `outcome=GO` rows:
+  - `cross_chain_reads=false`
+  - `cross_chain_writes=false`
+  - `evidence_present=true`
+  - `outcome=GO`
+  - `failure_mode` is empty
+
+#### Cross-coupling matrix (`I-0581-m95-s1-cross-coupling-matrix.md`)
+- Required fields: `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `mutated_chain`, `peer_chain`, `control_input_perturbation`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`.
+- Required hard-stop for `outcome=GO` rows:
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `evidence_present=true`
+  - `outcome=GO`
+  - `failure_mode` is empty
+
+#### Perturbation continuity matrix (`I-0581-m95-s1-control-perturbation-continuity-matrix.md`)
+ - Required fields: `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `mutated_chain`, `control_input_perturbation`, `permutation`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`.
+- Required hard-stop for `outcome=GO` rows:
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `evidence_present=true`
+  - `outcome=GO`
+  - `failure_mode` is empty
+
+#### Reproducibility matrix (`I-0581-m95-s1-control-coupling-reproducibility-matrix.md`)
+- Required fields: `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `mutated_chain`, `control_input_perturbation`, `permutation`, `peer_chain`, `cross_chain_reads`, `cross_chain_writes`, `peer_cursor_delta`, `peer_watermark_delta`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`.
+- Required hard-stop for `outcome=GO` rows:
+  - `cross_chain_reads=false`
+  - `cross_chain_writes=false`
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - all listed invariant booleans are `true`
+  - `evidence_present=true`
+  - `outcome=GO`
+  - `failure_mode` is empty
+
+#### C0108 Decision Hook
+- `DP-0139-C0108`: C0108 remains blocked unless all required `I-0581` rows for mandatory chains are present with `outcome=GO`, `evidence_present=true`, all required chain-scope/continuity fields correct, and all required peer deltas equal zero where required.
