@@ -4564,12 +4564,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0560` (`C0102-S1`) after `I-0558`
-2. `I-0561` (`C0102-S2`) after `I-0560`
+1. `I-0569` (`C0104-S1`) after `I-0568`
+2. `I-0570` (`C0104-S2`) after `I-0569`
 
 Planned next tranche queue:
-1. `I-0560` (`C0102-S1`) after `I-0558`
-2. `I-0561` (`C0102-S2`) after `I-0560`
+1. `I-0569` (`C0104-S1`) after `I-0568`
+2. `I-0570` (`C0104-S2`) after `I-0569`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -4653,3 +4653,26 @@ Superseded issues:
     - `peer_watermark_delta=0` where reported
   - `I-0566` verifies all required rows for `solana-devnet`, `base-sepolia`, and `btc-testnet`; blocks C0103 on any required `NO-GO`, missing evidence, false required invariant fields, or non-zero required peer deltas.
   - No runtime implementation changes are executed in this planner slice.
+
+## C0104 (`I-0568`) tranche activation
+- Focus: PRD replay/recovery revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R4`: deterministic replay.
+  - `8.4`: failed-path replay continuity from committed boundaries.
+  - `8.5`: no cursor/watermark advancement on failed-path.
+  - `10`: deterministic replay and one-chain perturbation isolation.
+  - `reorg_recovery_deterministic`: replay/recovery behavior remains deterministic under fork and rollback.
+- C0104 lock state: `C0104-PRD-REPLAY-RECOVERY-REVALIDATION`.
+- C0104 queue adjacency: hard dependency `I-0566 -> I-0568 -> I-0569 -> I-0570`.
+- Downstream execution pair:
+  - `I-0569` (developer) — PRD revalidation contract handoff and evidence refresh.
+  - `I-0570` (qa) — PRD-focused counterexample gate on recovery replay and one-chain isolation.
+- Slice gates for this tranche:
+  - `I-0568` updates this plan with explicit `C0104` lock state and queue order `I-0566 -> I-0568 -> I-0569 -> I-0570`.
+  - `I-0569` updates `specs/m97-prd-reorg-recovery-determinism-gate.md` with a `C0104` addendum for replay/recovery hard-stop artifacts and required row schema.
+  - `I-0569` defines required artifacts:
+    - `.ralph/reports/I-0569-m97-s1-recovery-replay-revalidation-matrix.md`
+    - `.ralph/reports/I-0569-m97-s2-recovery-isolation-revalidation-matrix.md`
+  - `I-0570` verifies all required rows report `outcome=GO`, `evidence_present=true`, required invariant columns `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `reorg_recovery_deterministic_ok`, and zero peer-chain deltas where applicable.
+  - `I-0570` emits a hard recommendation and blocks C0104 on any required missing evidence, `NO-GO`, `evidence_present=false`, or required peer delta non-zero.
+- No runtime implementation changes are executed in this planner slice.

@@ -10,7 +10,7 @@
 - `R8`: fail-fast correctness-impacting path safety.
 - `8`: reorg/finality handling and replay from safe boundaries.
 - `10`: deterministic replay acceptance behavior.
-- `I-0545`/`I-0546` (`C0098`) handoff: residual PRD replay/recovery hardening for `R4`, `R8`, `8.4`, `8.5`, and `10`.
+- `I-0545`/`I-0546` (`C0098`) handoff: residual PRD replay/recovery hardening for `R4`, `8.4`, `8.5`, and `10`.
 - `DP-0114-C0098`: required C0098 evidence blockers for any missing row, `NO-GO`, `evidence_present=false`, or non-zero required peer deltas.
 
 ## Problem Statement
@@ -37,6 +37,26 @@
 - QA peer-isolation matrix (`.ralph/reports/I-0546-m97-s2-peer-isolation-matrix.md`) required row keys:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `outcome`, `evidence_present`, `failure_mode`
 - Required peer-isolation hard-stop columns: `peer_cursor_delta=0`, `peer_watermark_delta=0`, `outcome=GO`, `evidence_present=true`.
+
+## C0104 (`I-0568`) revalidation addendum
+- Focused unresolved PRD requirements (`R4`, `R8`, `8.4`, `8.5`, `10`) before optional refinement reentry.
+- Required hard-stop row contracts for revalidation artifacts:
+  - `.ralph/reports/I-0569-m97-s1-recovery-replay-revalidation-matrix.md`
+  - `.ralph/reports/I-0569-m97-s2-recovery-isolation-revalidation-matrix.md`
+- Required row fields for `I-0569` s1 matrix:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fork_type`, `recovery_permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required row fields for `I-0569` s2 matrix:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Required hard-stop semantics for all required `GO` rows:
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `reorg_recovery_deterministic_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `evidence_present=true`
+  - `outcome=GO`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where applicable.
 
 ## C0099 PRD Closeout Transition Handoff
 
@@ -79,3 +99,5 @@
 ## Decision Hook
 - `DP-0109-M97`: any missing cell, any `outcome=NO-GO`, any non-unique canonical-ID family result, or any required row with non-zero peer deltas is a hard NO-GO for `M97` promotion.
 - `DP-0114-C0098`: any required `I-0545`/`I-0546` matrix row missing, with `outcome=NO-GO`, `evidence_present=false`, `failure_mode` missing on `NO-GO`, or non-zero required peer deltas is a hard NO-GO for C0098 and optional refinement unblocking.
+- `DP-0121-C0104`: any required C0104 row in `I-0569` artifacts missing, `NO-GO`, `evidence_present=false`, invariant false for required gates, or non-zero required peer deltas is a hard NO-GO for C0104 and optional-refinement advance.
+
