@@ -5075,3 +5075,39 @@ Superseded issues:
 - No runtime implementation changes are executed in this planner tranche; planning/spec handoff updates only.
 - C0117 hard-stop decision hook:
   - `DP-0152-C0117` keeps `I-0617` blocked unless all required `I-0617` rows in the three C0117 artifacts are present and satisfy `GO` hard-stop constraints.
+
+## C0118 (`I-0619`) tranche activation
+- Focus: PRD-priority unresolved class-coverage + replay continuity implementation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring remains deterministic under one-chain perturbation.
+- C0118 lock state: `C0118-PRD-ASSET-VOLATILITY-CONTINUITY-IMPLEMENTATION`.
+- C0118 queue adjacency: hard dependency `I-0619 -> I-0622 -> I-0623`.
+- Downstream execution pair:
+  - `I-0622` (developer) — PRD handoff and artifact contract definition for C0118 production handoff.
+  - `I-0623` (qa) — PRD counterexample gate and recommendation closure for `C0118`.
+- Slice gates for this tranche:
+  - `I-0622` updates this plan with explicit `C0118` lock state and queue order `I-0619 -> I-0622 -> I-0623`.
+  - `I-0622` updates `specs/m96-prd-asset-volatility-closeout.md` with a `C0118` addendum that binds `R1`, `R2`, `R3`, `10`, and `chain_adapter_runtime_wired` to required artifacts.
+  - `I-0622` defines required artifacts:
+    - `.ralph/reports/I-0622-m96-s1-coverage-runtime-hardening-matrix.md`
+    - `.ralph/reports/I-0622-m96-s2-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0622-m96-s3-one-chain-adapter-isolation-matrix.md`
+  - `I-0622` enforces C0118 row-key contracts:
+    - `I-0622-m96-s1-coverage-runtime-hardening-matrix.md` required row keys:
+      - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+    - `I-0622-m96-s2-dup-suppression-matrix.md` required row keys:
+      - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+    - `I-0622-m96-s3-one-chain-adapter-isolation-matrix.md` required row keys:
+      - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+  - `I-0623` verifies all required `I-0622` rows for mandatory chains and blocks `C0118` on any required:
+    - `outcome=NO-GO`
+    - `evidence_present=false`
+    - required hard-stop booleans false for required fields
+    - `peer_cursor_delta != 0` or `peer_watermark_delta != 0` in peer-isolation rows.
+  - No runtime implementation changes are executed in this planner tranche; planning/spec handoff updates only.
+- C0118 hard-stop decision hook:
+  - `DP-0153-C0118` keeps `I-0622` blocked until all required `I-0622` rows in the three artifacts are present and satisfy `GO` hard-stop constraints.

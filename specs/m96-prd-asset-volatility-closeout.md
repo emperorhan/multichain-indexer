@@ -388,3 +388,46 @@ Required PRD hard-stop decision hook:
 
 #### C0117 Decision Hook
 - `DP-0152-C0117`: `C0117` remains blocked unless all required `I-0617` rows for mandatory chains in the three C0117 artifacts are present and satisfy all hard-stop checks above.
+
+### C0118 (`I-0622`) implementation/continuity production handoff
+- Focused PRD requirements:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring invariance under required perturbations.
+- `C0118` queue adjacency: hard dependency `I-0619 -> I-0622 -> I-0623`.
+- `C0118` lock state: `C0118-PRD-ASSET-VOLATILITY-CONTINUITY-IMPLEMENTATION`.
+- C0118 required artifacts:
+  - `.ralph/reports/I-0622-m96-s1-coverage-runtime-hardening-matrix.md`
+  - `.ralph/reports/I-0622-m96-s2-dup-suppression-matrix.md`
+  - `.ralph/reports/I-0622-m96-s3-one-chain-adapter-isolation-matrix.md`
+
+#### C0118 Mandatory class-path coverage rows
+- `solana` + `solana-devnet` -> `TRANSFER`, `MINT`, `BURN`, `FEE`
+- `base` + `base-sepolia` -> `TRANSFER`, `MINT`, `BURN`, `fee_execution_l2`, `fee_data_l1`
+- `btc` + `btc-testnet` -> `TRANSFER:vin`, `TRANSFER:vout`, `miner_fee`
+
+#### C0118 Matrix Contracts (`I-0622`)
+- `I-0622-m96-s1-coverage-runtime-hardening-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0622-m96-s2-dup-suppression-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0622-m96-s3-one-chain-adapter-isolation-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+
+#### C0118 Hard-stop checks
+- Required `outcome=GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+  - peer isolation rows require `peer_cursor_delta=0` and `peer_watermark_delta=0`
+- Required `NO-GO` rows must include non-empty `failure_mode`.
+
+#### C0118 Decision Hook
+- `DP-0153-C0118`: `C0118` remains blocked unless all required `I-0622` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) in the three C0118 artifacts are present, satisfy hard-stop booleans above, and peer deltas are zero where required.
