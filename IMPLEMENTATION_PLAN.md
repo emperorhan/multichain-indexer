@@ -73,6 +73,21 @@
   - `I-0528` verifies all required `M96`/`M97`/`M98` evidence artifacts are present, `GO`-capable, and invariant-complete.
   - no runtime implementation changes are executed in this planner slice.
 
+## C0094 (`I-0529`) tranche activation
+- Focus: PRD-priority unresolved requirement tranche before optional refinements resume.
+- Slice execution order: `I-0529` -> `I-0530` -> `I-0531`.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - PRD §8.4 and §8.5: fail-fast safety with failed-path cursor/watermark protection.
+  - PRD acceptance checklist: replay/recovery continuity and deterministic tuple equality under one-chain perturbation.
+- Downstream execution pair:
+  - `I-0530` (developer) — PRD-anchored unresolved-requirement slice contract handoff and evidence prep.
+  - `I-0531` (qa) — PRD-focused counterexample gate for invariant/peer-isolation restart perturbation.
+- Slice gates for this tranche:
+  - `I-0529` updates `IMPLEMENTATION_PLAN.md` to lock C0094 scope, PRD traceability, and queue handoff from `C0093` to PRD-priority unresolved-gate execution.
+  - `I-0530` publishes PRD-traceable evidence planning artifacts with bounded scope for `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
+  - `I-0531` verifies one-chain restart/fail-fast perturbations with peer-chain isolation (`peer_cursor_delta=0`, `peer_watermark_delta=0`) and records explicit promotion recommendation.
+  - no runtime implementation changes are executed in this planner slice.
+
 `M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95 -> M97 -> M98`
 
 Execution queue (dependency-ordered):
@@ -289,6 +304,9 @@ Execution queue (dependency-ordered):
 196. `I-0520` (`M97`) planner tranche activation and downstream issue handoff
 197. `I-0521` (`M97-S1`) Developer execution of reorg recovery determinism evidence contracts
 198. `I-0522` (`M97-S2`) QA peer-isolation and replay-continuity counterexample gate
+199. `I-0529` (`C0094`) PRD-priority unresolved requirement tranche activation
+200. `I-0530` (`C0094-S1`) Developer PRD-priority contract handoff
+201. `I-0531` (`C0094-S2`) QA PRD-priority counterexample gate
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -4326,14 +4344,17 @@ Completed milestones/slices:
 181. `I-0492`
 182. `I-0496`
 183. `I-0497`
+184. `I-0526` (`C0093`) after `I-0525`
+185. `I-0528` (`C0093`) after `I-0527`
 
 Active downstream queue from this plan:
-1. `I-0526` (`C0093`) after `I-0525`
-2. `I-0527` (`M98 closure lock S1`) after `I-0526`
+1. `I-0529` (`C0094`) after `I-0528`
+2. `I-0530` (`C0094-S1`) after `I-0529`
+3. `I-0531` (`C0094-S2`) after `I-0530`
 
 Planned next tranche queue:
-1. `I-0527` (`M98 closure lock S1`) after `I-0526`
-2. `I-0528` (`M98 closure lock S2`) after `I-0527`
+1. `I-0530` (`C0094-S1`) after `I-0529`
+2. `I-0531` (`C0094-S2`) after `I-0530`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
