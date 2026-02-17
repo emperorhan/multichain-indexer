@@ -16,6 +16,34 @@
 - `I-0539` defines the planner handoff contract for PRD `R9` control-coupling evidence in this tranche.
 - `I-0540` enforces QA promotion policy with chain-scoped perturbation rows and deterministic peer isolation checks.
 
+## C0096 Hand-off Evidence Matrix Contract (`I-0539`)
+
+- Required artifacts:
+  - `.ralph/reports/I-0539-m95-s1-control-scope-metric-matrix.md`
+  - `.ralph/reports/I-0539-m95-s1-cross-coupling-matrix.md`
+  - `.ralph/reports/I-0539-m95-s1-control-perturbation-continuity-matrix.md`
+  - `.ralph/reports/I-0539-m95-s1-control-coupling-reproducibility-matrix.md`
+- Deterministic row key contract (required and exact):
+  - `control-scope`: `chain`, `network`, `cycle_seq`, `decision_epoch_ms`, `control_input_perturbation`, `decision_inputs_chain_scoped`, `decision_scope`, `cross_chain_reads`, `cross_chain_writes`, `changed_peer_cursor`, `changed_peer_watermark`, `outcome`, `evidence_present`
+  - `cross-coupling`: `chain`, `network`, `test_id`, `control_input_perturbation`, `peer_chain`, `cross_chain_reads`, `cross_chain_writes`, `peer_cursor_delta`, `peer_watermark_delta`, `outcome`, `evidence_present`
+  - `perturbation-continuity`: `test_id`, `mutated_chain`, `network`, `peer_chain`, `control_input_perturbation`, `cross_chain_reads`, `cross_chain_writes`, `peer_cursor_delta`, `peer_watermark_delta`, `outcome`, `evidence_present`
+  - `reproducibility`: `fixture_id`, `fixture_seed`, `run_id`, `test_id`, `chain`, `network`, `perturbation`, `peer_chain`, `cross_chain_reads`, `cross_chain_writes`, `peer_cursor_delta`, `peer_watermark_delta`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `evidence_present`
+- Hard-stop gate columns (required true/zero condition on every required row):
+  - `cross_chain_reads=false`
+  - `cross_chain_writes=false`
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `evidence_present=true`
+  - `outcome=GO`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+- Promotion policy:
+  - Missing required rows, malformed `required_row_keys`, any hard-stop false, or any `NO-GO` row => hard blocker for C0096.
+- Any required matrix row using legacy non-deterministic identifiers or non-local peer identifiers is a hard blocker (`outcome=NO-GO`).
+
 ## Problem Statement
 PRD `R9` requires control-plane safety such that throughput-control behavior for one chain does not alter another chain’s cursor, watermark, or checkpoint progression.
 After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-scoped control contract and counterexample matrix that proves no control bleed across mandatory chains.
