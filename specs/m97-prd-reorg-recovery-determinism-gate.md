@@ -147,6 +147,13 @@
   - required row fields: `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `canonical_id_count`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
 - Required matrix artifact 3: `.ralph/reports/I-0594-m97-s3-one-chain-isolation-matrix.md`
   - required row fields: `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- C0111 addendum hard-stop artifact gate (`I-0594`):
+  - Required perturbation classes: `one_block_reorg`, `multi_block_reorg`, `canonical_range_replay`, `finalized_to_pending_crossover`, `restart_from_rollback_boundary`
+  - Required artifacts:
+    - `.ralph/reports/I-0594-m97-s1-reorg-recovery-matrix.md`
+    - `.ralph/reports/I-0594-m97-s2-recovery-continuity-matrix.md`
+    - `.ralph/reports/I-0594-m97-s3-one-chain-isolation-matrix.md`
+  - For `I-0594`, all required rows in these artifacts must be `outcome=GO` and `evidence_present=true`; all hard-stop booleans are required true and peer deltas must be zero where represented.
 - Machine-checkable hard-stop semantics for `GO` rows:
   - `outcome=GO`
   - `evidence_present=true`
