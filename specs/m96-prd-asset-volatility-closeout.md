@@ -187,7 +187,7 @@ Required enum/value constraints:
 #### C0107 Decision Hook
 - `DP-0138-C0107` blocks promotion if any required `I-0578` row fails the hard-stop contract above.
 
-### C0112 (`I-0596`) revalidation addendum
+### C0112 (`I-0597`) revalidation addendum
 - Focused unresolved PRD requirements from `PRD.md`:
   - `R1`: no-duplicate indexing.
   - `R2`: full in-scope asset-volatility event coverage.
@@ -195,10 +195,34 @@ Required enum/value constraints:
   - `8.5`: failed-path cursor/watermark progression is forbidden.
   - `10`: deterministic replay and one-chain perturbation acceptance.
   - `chain_adapter_runtime_wired`: adapter/runtime wiring must stay invariant under one-chain perturbation.
+- `solana_fee_event_coverage`: required explicit fee coverage for Solana transaction fee debit semantics.
+- `base_fee_split_coverage`: required explicit split of Base fee semantics (`fee_execution_l2`, `fee_data_l1`).
+- C0112 queue adjacency: hard dependency `I-0596 -> I-0597 -> I-0598`.
 - C0112 hard-stop artifact requirements:
   - `.ralph/reports/I-0597-m96-s1-coverage-class-revalidation-matrix.md`
   - `.ralph/reports/I-0597-m96-s2-dup-suppression-matrix.md`
   - `.ralph/reports/I-0597-m96-s3-chain-isolation-matrix.md`
+
+#### C0112 Mandatory coverage class rows
+| chain | network | class_path |
+|---|---|---|
+| `solana` | `devnet` | `TRANSFER` |
+| `solana` | `devnet` | `MINT` |
+| `solana` | `devnet` | `BURN` |
+| `solana` | `devnet` | `FEE` |
+| `base` | `sepolia` | `TRANSFER` |
+| `base` | `sepolia` | `MINT` |
+| `base` | `sepolia` | `BURN` |
+| `base` | `sepolia` | `fee_execution_l2` |
+| `base` | `sepolia` | `fee_data_l1` |
+| `btc` | `testnet` | `TRANSFER:vin` |
+| `btc` | `testnet` | `TRANSFER:vout` |
+| `btc` | `testnet` | `miner_fee` |
+
+#### C0112 Replay perturbation axis
+- `canonical_range_replay`
+- `replay_order_swap`
+- `one_chain_restart_perturbation`
 
 #### C0112 Matrix Contracts (`I-0597`)
 - `I-0597-m96-s1-coverage-class-revalidation-matrix.md` required row fields:
@@ -206,7 +230,7 @@ Required enum/value constraints:
 - `I-0597-m96-s2-dup-suppression-matrix.md` required row fields:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
 - `I-0597-m96-s3-chain-isolation-matrix.md` required row fields:
-  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
 
 Required hard-stop checks for all required `GO` rows in C0112:
 - `outcome=GO`
@@ -220,6 +244,8 @@ Required hard-stop checks for all required `GO` rows in C0112:
 - `chain_adapter_runtime_wired_ok=true`
 - `failure_mode` is empty
 - `peer_cursor_delta=0` and `peer_watermark_delta=0` where applicable in `I-0597-m96-s3-chain-isolation-matrix.md`
+- `outcome=NO-GO` requires non-empty `failure_mode`.
+- Downstream validation commands remain unchanged: `make test`, `make test-sidecar`, `make lint`.
 
 Required PRD hard-stop decision hook:
 - `DP-0145-C0112`: C0112 remains blocked unless all required `I-0597` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) in the three C0112 artifacts are present and satisfy the hard-stop checks above.
