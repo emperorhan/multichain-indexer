@@ -47,7 +47,7 @@
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fork_type`, `recovery_permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
 - Required row fields for `I-0569` s2 matrix:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
-- Required hard-stop semantics for all required `GO` rows:
+- `I-0569` hard-stop semantics for all required `GO` rows:
   - `canonical_event_id_unique_ok=true`
   - `replay_idempotent_ok=true`
   - `cursor_monotonic_ok=true`
@@ -56,7 +56,32 @@
   - `chain_adapter_runtime_wired_ok=true`
   - `evidence_present=true`
   - `outcome=GO`
+  - `failure_mode` empty for `GO`
   - `peer_cursor_delta=0` and `peer_watermark_delta=0` where applicable.
+- Required machine-checkable constraints for `I-0569-m97-s1-recovery-replay-revalidation-matrix.md`:
+  - `fork_type` and `recovery_permutation` must be one of:
+    - `one_block_reorg`
+    - `multi_block_reorg`
+    - `canonical_range_replay`
+    - `finalized_to_pending_crossover`
+    - `restart_from_rollback_boundary`
+  - `chain` is one of `solana`, `base`, `btc`.
+  - `network` is one of `devnet`, `sepolia`, `testnet`.
+  - `outcome` is `GO` or `NO-GO`.
+  - For required `NO-GO` rows, `failure_mode` must be non-empty.
+  - For required `GO` rows, all hard-stop booleans above must be `true` and `failure_mode` must be empty.
+- Required machine-checkable constraints for `I-0569-m97-s2-recovery-isolation-revalidation-matrix.md`:
+  - `chain` is one of `solana`, `base`, `btc`.
+  - `network` is one of `devnet`, `sepolia`, `testnet`.
+  - `peer_cursor_delta` and `peer_watermark_delta` are integers.
+  - `outcome` is `GO` or `NO-GO`.
+  - For required `NO-GO` rows, `failure_mode` must be non-empty.
+  - For required `GO` rows, `evidence_present=true`, `peer_cursor_delta=0`, `peer_watermark_delta=0`, and `failure_mode` empty.
+- Required decision contract for `DP-0121-C0104`:
+  - `I-0569` artifacts must exist at required paths.
+  - every required row required by this section must be present and `outcome=GO`.
+  - all hard-stop rows for `I-0569` artifacts must be true, and `evidence_present=true`.
+  - any required row with non-zero required peer deltas, `outcome=NO-GO`, or `evidence_present=false` blocks `C0104`.
 
 ## C0099 PRD Closeout Transition Handoff
 
@@ -100,4 +125,3 @@
 - `DP-0109-M97`: any missing cell, any `outcome=NO-GO`, any non-unique canonical-ID family result, or any required row with non-zero peer deltas is a hard NO-GO for `M97` promotion.
 - `DP-0114-C0098`: any required `I-0545`/`I-0546` matrix row missing, with `outcome=NO-GO`, `evidence_present=false`, `failure_mode` missing on `NO-GO`, or non-zero required peer deltas is a hard NO-GO for C0098 and optional refinement unblocking.
 - `DP-0121-C0104`: any required C0104 row in `I-0569` artifacts missing, `NO-GO`, `evidence_present=false`, invariant false for required gates, or non-zero required peer deltas is a hard NO-GO for C0104 and optional-refinement advance.
-
