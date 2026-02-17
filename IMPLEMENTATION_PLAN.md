@@ -5176,3 +5176,25 @@ Superseded issues:
     - missing `failure_mode` for required `NO-GO`
   - No runtime implementation changes are executed in this planner tranche; planning/spec-doc handoff updates only.
 - `DP-0155-C0120`: C0120 remains blocked unless all required `I-0630` rows for `solana-devnet`, `base-sepolia`, and `btc-testnet` are present, `outcome=GO`, `evidence_present=true`, required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`), and required peer deltas are zero where required in one-chain isolation rows.
+
+## C0121 (`I-0632`) tranche activation
+- Focus: PRD-priority continuation tranche before optional refinements resume.
+- PRD traceability focus: `R1` (no-duplicate indexing), `8.4` (failed-path replay continuity with cursor/watermark rollback safety), `8.5` (fail-fast abort semantics), and `10` (deterministic replay/one-chain perturbation).
+- C0121 lock state: `C0121-PRD-FAILFAST-CHAIN-ADAPTER-WIRING-RESTART-HARDENING`.
+- Slice execution order: `I-0632 -> I-0635 -> I-0636`.
+- Downstream execution pair:
+  - `I-0635` (developer) — PRD handoff contract and evidence artifact schema for chain-adapter-wired counterexample validation.
+  - `I-0636` (qa) — PRD counterexample gate and recommendation closure for `C0121`.
+- Slice gates for this tranche:
+  - `I-0635` updates `IMPLEMENTATION_PLAN.md` with explicit `C0121` lock state, queue order, and hard-stop contract references.
+  - `I-0635` updates `specs/m93-prd-fail-fast-continuity-gate.md` with explicit `C0121` traceability and required artifacts for `8.4`, `8.5`, and `10`.
+  - `I-0635` requires these artifacts:
+    - `.ralph/reports/I-0635-m93-s1-fail-fast-continuity-matrix.md`
+    - `.ralph/reports/I-0635-m93-s2-one-chain-isolation-matrix.md`
+  - `I-0636` verifies all required `I-0635` rows for `solana-devnet`, `base-sepolia`, and `btc-testnet` and blocks `C0121` on any required:
+    - `outcome=NO-GO`
+    - `evidence_present=false`
+    - hard-stop invariant failures
+    - non-zero required peer deltas in isolation rows
+  - No runtime implementation changes are executed in this planner tranche.
+- `DP-0156-C0121`: C0121 remains blocked unless all required `I-0635` rows in both artifacts are `GO`, `evidence_present=true`, required invariants true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`), required peer deltas are zero where reported, and required `failure_mode` semantics are respected (`empty` for `GO`, non-empty for `NO-GO`).
