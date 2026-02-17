@@ -4563,16 +4563,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0572` (`C0105-S1`) after `I-0570`
-2. `I-0573` (`C0105-S2`) after `I-0572`
-3. `I-0575` (`C0106-S1`) after `I-0573`
-4. `I-0576` (`C0106-S2`) after `I-0575`
+1. `I-0578` (`C0107-S1`) after `I-0576`
+2. `I-0579` (`C0107-S2`) after `I-0578`
 
 Planned next tranche queue:
-1. `I-0572` (`C0105-S1`) after `I-0570`
-2. `I-0573` (`C0105-S2`) after `I-0572`
-3. `I-0575` (`C0106-S1`) after `I-0573`
-4. `I-0576` (`C0106-S2`) after `I-0575`
+1. `I-0578` (`C0107-S1`) after `I-0576`
+2. `I-0579` (`C0107-S2`) after `I-0578`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -4738,4 +4734,29 @@ Superseded issues:
     - `chain_adapter_runtime_wired_ok=true`
     - `peer_cursor_delta=0`, `peer_watermark_delta=0` where peer fields are required
   - `I-0576` blocks `C0106` on any required `NO-GO`, `evidence_present=false`, required hard-stop booleans false, or required peer deltas non-zero.
+  - No runtime implementation changes are executed in this planner slice.
+
+## C0107 (`I-0577`) tranche activation
+- Focus: PRD-priority continuity counterexample revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `8.5`: failed-path cursor/watermark progression is forbidden.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: chain runtime/adapter wiring remains invariant under one-chain perturbation.
+- C0107 lock state: `C0107-PRD-CONTINUITY-COUNTEREXAMPLE-REVALIDATION`.
+- C0107 queue adjacency: hard dependency `I-0576 -> I-0578 -> I-0579`.
+- Downstream execution pair:
+  - `I-0578` (developer) — PRD handoff to define C0107 artifact contracts and required row schema.
+  - `I-0579` (qa) — PRD counterexample gate and explicit GO/NO-GO recommendation for `I-0578` evidence.
+- Slice gates for this tranche:
+  - `I-0577` updates this plan with explicit `C0107` lock state and queue order `I-0576 -> I-0578 -> I-0579`.
+  - `I-0577` updates active and planned queue sections to reflect the C0107 handoff and one-hop follow-through.
+  - `I-0578` updates one PRD spec (`specs/m96-prd-asset-volatility-closeout.md` and/or `specs/m94-prd-event-coverage-closeout-gate.md`) with C0107 hard-stop contracts covering required chain classes and one-chain perturbation.
+  - `I-0578` defines required artifacts:
+    - `.ralph/reports/I-0578-m96-s1-coverage-revalidation-matrix.md`
+    - `.ralph/reports/I-0578-m96-s2-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0578-m96-s3-chain-isolation-matrix.md`
+  - `I-0579` verifies all required C0107 rows for mandatory chains with `outcome=GO`, `evidence_present=true`, required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`), and required peer deltas zero where reported.
+  - `I-0579` issues explicit GO/NO-GO recommendation for C0107 and blocks continuation on any required `NO-GO`, `evidence_present=false`, required booleans false, required peer deltas non-zero, or missing `failure_mode` on required `NO-GO` rows.
   - No runtime implementation changes are executed in this planner slice.
