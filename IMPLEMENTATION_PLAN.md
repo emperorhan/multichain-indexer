@@ -4857,5 +4857,29 @@ Superseded issues:
     - `.ralph/reports/I-0591-m94-s1-event-coverage-matrix.md`
     - `.ralph/reports/I-0591-m94-s2-dup-suppression-matrix.md`
     - `.ralph/reports/I-0591-m94-s3-chain-isolation-matrix.md`
-  - `I-0592` verifies all required `I-0591` rows for mandatory chains and blocks `C0110` on any required `NO-GO`, `evidence_present=false`, required hard-stop booleans false, or non-zero required peer deltas.
+- `I-0592` verifies all required `I-0591` rows for mandatory chains and blocks `C0110` on any required `NO-GO`, `evidence_present=false`, required hard-stop booleans false, or non-zero required peer deltas.
+- No runtime implementation changes are executed in this planner tranche; only contract/spec/queue planning is executed.
+
+## C0111 (`I-0593`) tranche activation
+- Focus: PRD-priority reorg-recovery + restart continuity implementation slice before optional reliability refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R4`: deterministic replay.
+  - `8.4`: failed-path replay continuity from last committed cursor/watermark boundary.
+  - `8.5`: correctness-impacting failures must abort and never advance failed-path cursor/watermark.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `reorg_recovery_deterministic`: rollback/replay behavior remains deterministic under fork vectors and restart perturbation.
+  - `chain_adapter_runtime_wired`: chain adapter wiring remains stable under recovery perturbation.
+- C0111 lock state: `C0111-PRD-REORG-RECOVERY-CONTINUITY-IMPLEMENTATION`.
+- C0111 queue adjacency: hard dependency `I-0592 -> I-0593 -> I-0594 -> I-0595`.
+- Downstream execution pair:
+  - `I-0594` (developer) — PRD-facing handoff for deterministic reorg-recovery continuity implementation and evidence rows.
+  - `I-0595` (qa) — PRD counterexample gate and recommendation for `C0111`.
+- Slice gates for this tranche:
+  - `I-0593` updates this plan with explicit `C0111` lock state and queue order `I-0592 -> I-0593 -> I-0594 -> I-0595`.
+  - `I-0594` updates `specs/m97-prd-reorg-recovery-determinism-gate.md` with a `C0111` addendum that defines required artifacts and PRD requirement traceability under restart/recovery perturbation.
+  - `I-0594` publishes required C0111 matrix artifacts:
+    - `.ralph/reports/I-0594-m97-s1-reorg-recovery-matrix.md`
+    - `.ralph/reports/I-0594-m97-s2-recovery-continuity-matrix.md`
+    - `.ralph/reports/I-0594-m97-s3-one-chain-isolation-matrix.md`
+  - `I-0595` verifies all required C0111 rows for mandatory chains and blocks `C0111` on any required `NO-GO`, `evidence_present=false`, required hard-stop booleans false, or non-zero required `peer_cursor_delta`/`peer_watermark_delta`.
   - No runtime implementation changes are executed in this planner tranche; only contract/spec/queue planning is executed.

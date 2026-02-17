@@ -125,3 +125,41 @@
 - `DP-0109-M97`: any missing cell, any `outcome=NO-GO`, any non-unique canonical-ID family result, or any required row with non-zero peer deltas is a hard NO-GO for `M97` promotion.
 - `DP-0114-C0098`: any required `I-0545`/`I-0546` matrix row missing, with `outcome=NO-GO`, `evidence_present=false`, `failure_mode` missing on `NO-GO`, or non-zero required peer deltas is a hard NO-GO for C0098 and optional refinement unblocking.
 - `DP-0121-C0104`: any required C0104 row in `I-0569` artifacts missing, `NO-GO`, `evidence_present=false`, invariant false for required gates, or non-zero required peer deltas is a hard NO-GO for C0104 and optional-refinement advance.
+
+## C0111 (`I-0593`) tranche activation
+- Focused PRD requirements:
+  - `R4`: deterministic replay.
+  - `8.4`: failed-path replay continuity from committed boundaries.
+  - `8.5`: fail-fast behavior and no failed-path cursor/watermark progression.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `reorg_recovery_deterministic`: rollback/replay behavior remains deterministic under fork and restart stressors.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring remains invariant under required recovery counterexamples.
+- C0111 lock state: `C0111-PRD-REORG-RECOVERY-CONTINUITY-IMPLEMENTATION`.
+- C0111 queue adjacency: hard dependency `I-0592 -> I-0593 -> I-0594 -> I-0595`.
+- Downstream execution pair:
+  - `I-0594` (developer) — PRD handoff contract and required artifact production for deterministic recovery and restart continuity.
+  - `I-0595` (qa) — PRD-focused counterexample validation and hard-stop recommendation for `C0111`.
+
+### C0111 Matrix Contracts (`I-0594`)
+- Required matrix artifact 1: `.ralph/reports/I-0594-m97-s1-reorg-recovery-matrix.md`
+  - required row fields: `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fork_type`, `recovery_permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required matrix artifact 2: `.ralph/reports/I-0594-m97-s2-recovery-continuity-matrix.md`
+  - required row fields: `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `canonical_id_count`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required matrix artifact 3: `.ralph/reports/I-0594-m97-s3-one-chain-isolation-matrix.md`
+  - required row fields: `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Machine-checkable hard-stop semantics for `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `reorg_recovery_deterministic_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `failure_mode` empty
+- `outcome=NO-GO` rows must include non-empty `failure_mode`.
+
+### C0111 Decision Hook
+- `DP-0144-C0111`: `C0111` remains blocked unless all required `I-0594` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) in all three artifacts are `outcome=GO`, `evidence_present=true`, required hard-stop booleans true, and required peer deltas are zero where fields are present.
