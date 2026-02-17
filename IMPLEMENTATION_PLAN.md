@@ -4943,3 +4943,31 @@ Superseded issues:
     - required hard-stop booleans false (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`)
     - required peer deltas not equal to zero in `I-0602-m98-s3-backup-restart-isolation-matrix.md`.
   - No runtime implementation changes are executed in this planner tranche; work remains contract/spec/queue planning only.
+
+## C0114 (`I-0604`) tranche activation
+- Focus: PRD-priority implementation tranche to close remaining mandatory-chain asset-volatility event-completeness and duplicate-suppression gaps in the required runtime path.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: fail-fast paths do not progress cursor/watermark.
+  - `10`: deterministic replay and peer-isolation acceptance.
+- C0114 lock state: `C0114-PRD-ASSET-VOLATILITY-DUPLICATE-COVERAGE-IMPLEMENTATION`.
+- C0114 queue adjacency: hard dependency `I-0604 -> I-0605 -> I-0606`.
+- Downstream execution pair:
+  - `I-0605` (developer) — PRD-facing implementation handoff for mandatory-chain coverage/duplicate-suppression contracts and deterministic evidence row schema.
+  - `I-0606` (qa) — PRD-focused counterexample gate for `R1`/`R2`/`R3`/`8.5`/`10` artifact contracts.
+- Slice gates for this tranche:
+  - `I-0605` updates this plan with explicit `C0114` lock state and queue order `I-0604 -> I-0605 -> I-0606`.
+  - `I-0605` updates `specs/m96-prd-asset-volatility-closeout.md` with a `C0114` addendum that defines required artifacts and row schema for:
+    - `I-0605-m96-s1-coverage-class-hardening-matrix.md`
+    - `I-0605-m96-s2-dup-suppression-matrix.md`
+    - `I-0605-m96-s3-replay-continuity-matrix.md`
+  - `I-0605` ensures these artifacts are mandatory for `solana-devnet`, `base-sepolia`, and `btc-testnet` in the listed matrix contracts.
+  - `I-0606` verifies all required `C0114` rows for mandatory chains and blocks C0114 on any required:
+    - required row missing
+    - `outcome=NO-GO`
+    - `evidence_present=false`
+    - required hard-stop booleans false (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`)
+    - required peer deltas not equal to zero in peer-isolation rows.
+  - No runtime implementation changes are executed in this planner tranche; work remains contract/spec/queue planning only.

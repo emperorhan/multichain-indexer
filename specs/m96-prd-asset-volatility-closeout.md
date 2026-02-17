@@ -250,3 +250,32 @@ Required hard-stop checks for all required `GO` rows in C0112:
 Required PRD hard-stop decision hook:
 - `DP-0145-C0112`: C0112 remains blocked unless all required `I-0597` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) in the three C0112 artifacts are present and satisfy the hard-stop checks above.
 - Required `NO-GO` rows in C0112 artifacts must include non-empty `failure_mode`.
+
+### C0114 (`I-0605`) implementation tranche handoff
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression remains prohibited.
+  - `10`: deterministic replay and peer-isolation acceptance.
+  - `solana_fee_event_coverage`: explicit Solana fee debit class row.
+  - `base_fee_split_coverage`: explicit Base execution-vs-data fee class rows.
+  - `chain_adapter_runtime_wired`: runtime adapters remain deterministic under one-chain perturbation.
+- `C0114` queue adjacency: hard dependency `I-0604 -> I-0605 -> I-0606`.
+- `I-0605` updates this spec with required hard-stop contracts for implementation + reproducible peer-isolation evidence.
+- `I-0605` matrix contracts (`I-0605`):
+  - `I-0605-m96-s1-coverage-class-hardening-matrix.md` required row fields:
+    - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+  - `I-0605-m96-s2-dup-suppression-matrix.md` required row fields:
+    - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+  - `I-0605-m96-s3-replay-continuity-matrix.md` required row fields:
+    - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `C0114` hard-stop checks for all required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - all required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`)
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` in `I-0605-m96-s3-replay-continuity-matrix.md`
+  - `failure_mode` is empty.
+- For required `NO-GO` rows, `failure_mode` must be non-empty.
+- C0114 decision hook:
+  - `DP-0147-C0114`: C0114 remains blocked unless all required `I-0605` rows across all three artifacts and mandatory chains are present and satisfy `outcome=GO`, `evidence_present=true`, hard-stop booleans true, and zero peer deltas where required.
