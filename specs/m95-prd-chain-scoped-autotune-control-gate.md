@@ -11,6 +11,11 @@
 - `10`: deterministic replay and no cross-chain cursor bleed acceptance criteria.
 - I-0509 dependency: reproducibility fixture seed provenance and artifact manifest must be committed before `M95-S3` begins; `M95-S3` unblocks only on explicit `I-0507` reproducibility evidence artifacts.
 
+## C0096 Tranche Issue Mapping
+- tranche: `C0096` (`I-0536 -> I-0539 -> I-0540`)
+- `I-0539` defines the planner handoff contract for PRD `R9` control-coupling evidence in this tranche.
+- `I-0540` enforces QA promotion policy with chain-scoped perturbation rows and deterministic peer isolation checks.
+
 ## Problem Statement
 PRD `R9` requires control-plane safety such that throughput-control behavior for one chain does not alter another chain’s cursor, watermark, or checkpoint progression.
 After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-scoped control contract and counterexample matrix that proves no control bleed across mandatory chains.
