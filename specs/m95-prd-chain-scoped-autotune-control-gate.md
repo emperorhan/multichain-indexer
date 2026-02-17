@@ -62,6 +62,22 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
   - Auto-tune emits only local knob updates (`batch`, `tick_interval`, `concurrency`) for that same chain runtime.
   - A one-chain control perturbation must not change any peer-chain watermark or cursor path, even if that peer’s throughput profile differs.
 
+## C0100 PRD Revalidation Addendum
+- C0100 requires explicit C0100 handoff evidence for topology-runtime adapter wiring in addition to control perturbation closure under `I-0554`/`I-0555`.
+- C0100 hard-stop evidence rows must satisfy:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `cross_chain_reads=false`
+  - `cross_chain_writes=false`
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+- `DP-0116-C0100` is the handoff decision hook tying this revalidation to topology-adapter wiring evidence before optional refinements resume.
+
 ## Reliability Contract
 1. Auto-tune/control outputs for one chain are driven by chain-local metrics only.
 2. One-chain control perturbation while peers progress produces `0` cross-chain control bleed and `0` cross-chain cursor/watermark bleed in deterministic counterexamples.

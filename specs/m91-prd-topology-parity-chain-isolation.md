@@ -47,3 +47,16 @@ Deployment-shape changes previously masked shared-state coupling risks; the clos
 
 ## Decision Hook
 - `DP-0101-BD`: topology parity diff key is `(chain, network, topology_mode, block_cursor, tx_hash, event_path, actor_address, asset_id, event_category)`; ambiguous topology-only divergence is quarantined and treated as correctness failure until deterministic equivalence is restored.
+
+## C0100 PRD Revalidation Addendum
+- This slice (`I-0554` -> `I-0555`) revalidates topology/runtime wiring with explicit `chain_adapter_runtime_wired` hard-stop semantics for PRD `R6`, `R7`, `9.4`, and `10`.
+- For this tranche, `I-0555` evidence must report:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique=true`
+  - `replay_idempotent=true`
+  - `cursor_monotonic=true`
+  - `signed_delta_conservation=true`
+  - `chain_adapter_runtime_wired=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required by the peer-isolation matrix.
+- `DP-0116-C0100` (handoff transition) is the explicit promotion decision hook for optional-refinement unblocking after mandatory-chain topology/adapter evidence is clean.

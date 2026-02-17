@@ -55,3 +55,16 @@ This requirement is now documented as closed, and it now serves as the determini
 
 ## Decision Hook
 - `DP-0102-M92`: topology parity comparison includes deterministic key `(chain, network, topology_mode, block_cursor, tx_hash, event_path, actor_address, asset_id, event_category)`; gate fails when required mandatory-chain topology cells are not present.
+
+## C0100 PRD Revalidation Addendum
+- This tranche (`I-0554` -> `I-0555`) revalidates topology-adapter runtime wiring under PRD `R6`, `R7`, `9.4`, and `10` with explicit zero-peer bleed requirements.
+- Required evidence for C0100 includes:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique=true`
+  - `replay_idempotent=true`
+  - `cursor_monotonic=true`
+  - `signed_delta_conservation=true`
+  - `chain_adapter_runtime_wired=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
+- `DP-0116-C0100` gates optional-refinement unblocking after mandatory chain topology/mode inventory and wiring evidence pass.
