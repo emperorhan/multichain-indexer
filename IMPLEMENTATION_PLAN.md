@@ -57,7 +57,19 @@
   - any `outcome=NO-GO` or missing evidence in required families blocks downstream promotion.
 - No runtime implementation changes are executed in this planner slice.
 
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95 -> M97`
+## C0093 (`I-0526`) tranche activation
+- Focus: `M98` PRD closeout lock and optional-refinement handoff.
+- Slice execution order: `I-0526` -> `I-0527` -> `I-0528`.
+- Downstream execution pair:
+  - `I-0527` (developer) — PRD closeout lock artifact contract and gating metadata update.
+  - `I-0528` (qa) — PRD closeout lock and recommendation verification before any post-PRD optional refinement tranche.
+- Slice gates for this tranche:
+  - `I-0526` writes explicit PRD closeout checkpoint metadata for `M96` through `M98` in `IMPLEMENTATION_PLAN.md`.
+  - `I-0527` updates `specs/m98-prd-normalized-backup-replay-determinism-gate.md` with PRD closeout checklist fields required by the planner before optional refinements resume.
+  - `I-0528` verifies all required `M96`/`M97`/`M98` evidence artifacts are present, `GO`-capable, and invariant-complete.
+  - no runtime implementation changes are executed in this planner slice.
+
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95 -> M97 -> M98`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -4312,12 +4324,12 @@ Completed milestones/slices:
 183. `I-0497`
 
 Active downstream queue from this plan:
-1. `I-0507` (`M95-S3`) after `I-0509`
-2. `I-0508` (`M95-S4`) after `I-0507`
+1. `I-0526` (`C0093`) after `I-0525`
+2. `I-0527` (`M98 closure lock S1`) after `I-0526`
 
 Planned next tranche queue:
-1. `I-0507` (`M95-S3`) after `I-0509`
-2. `I-0508` (`M95-S4`) after `I-0507`
+1. `I-0527` (`M98 closure lock S1`) after `I-0526`
+2. `I-0528` (`M98 closure lock S2`) after `I-0527`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
