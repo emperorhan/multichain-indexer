@@ -9,6 +9,7 @@
 - `R4`: deterministic replay.
 - `8.4`: replay from persisted normalized artifacts must be deterministic.
 - `10`: deterministic replay acceptance behavior.
+- `I-0545`/`I-0546` (`C0098`) handoff: residual PRD replay/recovery hardening for `R4`, `8.4`, and `10` with mandatory perturbation coverage.
 
 ## Problem Statement
 `M97` validated rollback/reorg recovery continuity, but PRD `8.4` also requires deterministic replay behavior from persisted normalized artifacts. This tranche adds explicit evidence contracts so `M98` promotion is blocked unless persisted-backup replay and chain-isolation restart perturbations are reproducible.
@@ -18,6 +19,7 @@
   - `M96`: `DP-0109-M96` in `specs/m96-prd-asset-volatility-closeout.md` must have all required rows with `evidence_present=true` and `outcome=GO`.
   - `M97`: `DP-0109-M97` in `specs/m97-prd-reorg-recovery-determinism-gate.md` must have all required fork/recovery/isolation rows with `outcome=GO`, zero peer deltas where required, and `evidence_present=true`.
   - `M98`: this spec rows must have all required `outcome=GO`, invariant flags true, and required peer deltas zero where required.
+- `DP-0114-C0098`: required C0098 artifacts for `I-0545`/`I-0546` remain hard blockers for optional refinement continuation.
 
 ## Backup Replay Contract
 1. Persisted normalized replay must preserve all mandatory class-path outputs for mandatory chains and produce stable ordered canonical identity.
@@ -45,13 +47,19 @@ Required class-path basis (mandatory baseline from prior PRD closeouts):
   - `TRANSFER:vout`
   - `miner_fee`
 
-## Required Matrices
-- Backup replay continuity matrix (`.ralph/reports/I-0524-m98-s1-backup-replay-continuity-matrix.md`) required row keys:
+## C0098 Matrix Contracts (`I-0545` / `I-0546`)
+- Required perturbation families for replay source permutations:
+  - `persisted_checkpoint_restart`
+  - `persisted_checkpoint_restart_with_cross_chain_stress`
+  - `backup_replay_reproducibility_seeded`
+- Backup replay continuity matrix (`.ralph/reports/I-0545-m98-s1-backup-replay-continuity-matrix.md`) required row keys:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `replay_source`, `permutation`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `evidence_present`, `outcome`, `failure_mode`
-- Backup replay class-path coverage matrix (`.ralph/reports/I-0524-m98-s1-backup-class-coverage-matrix.md`) required row keys:
+- Backup replay class-path coverage matrix (`.ralph/reports/I-0545-m98-s1-backup-class-coverage-matrix.md`) required row keys:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `replay_source`, `peer_chain`, `evidence_present`, `outcome`, `failure_mode`, `notes`
-- Backup replay isolation matrix (`.ralph/reports/I-0525-m98-s2-backup-restart-isolation-matrix.md`) required row keys:
+  - hard-stop columns when `outcome=GO`: `canonical_event_id_unique_ok=true`, `replay_idempotent_ok=true`, `cursor_monotonic_ok=true`, `signed_delta_conservation_ok=true`, `evidence_present=true`, `outcome=GO`.
+- Backup replay isolation matrix (`.ralph/reports/I-0546-m98-s2-backup-restart-isolation-matrix.md`) required row keys:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Hard-stop columns for required isolation rows: `peer_cursor_delta=0`, `peer_watermark_delta=0`, `outcome=GO`, `evidence_present=true`.
 
 Required enum/value constraints:
 - `outcome` must be `GO` or `NO-GO`.
@@ -76,3 +84,4 @@ Required enum/value constraints:
 ## Decision Hook
 - `DP-0110-M98`: any required `(chain, network, class_path)` missing evidence, any required row with `outcome=NO-GO`, any required row with `evidence_present=false`, or any required peer-delta row with non-zero movement is a hard NO-GO for `M98` promotion.
 - `DP-0111-C0093`: any required `M96`/`M97`/`M98` closeout row missing, `evidence_present=false`, `outcome=NO-GO`, or required peer-delta row with non-zero movement is a hard NO-GO for optional refinement progression.
+- `DP-0114-C0098`: any required `I-0545`/`I-0546` row missing, with `outcome=NO-GO`, `evidence_present=false`, non-empty `failure_mode` missing on `NO-GO`, or non-zero required peer deltas is a hard NO-GO for C0098 and optional refinement continuation.

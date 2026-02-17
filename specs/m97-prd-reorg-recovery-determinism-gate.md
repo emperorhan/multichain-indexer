@@ -10,6 +10,8 @@
 - `R8`: fail-fast correctness-impacting path safety.
 - `8`: reorg/finality handling and replay from safe boundaries.
 - `10`: deterministic replay acceptance behavior.
+- `I-0545`/`I-0546` (`C0098`) handoff: residual PRD replay/recovery hardening for `R4`, `R8`, `8.4`, `8.5`, and `10`.
+- `DP-0114-C0098`: required C0098 evidence blockers for any missing row, `NO-GO`, `evidence_present=false`, or non-zero required peer deltas.
 
 ## Problem Statement
 `M95` completed control-scoping hardening, but deterministic fork-depth recovery behavior still requires an explicit gate before optional post-PRD work resumes. We must prove that deterministic replay remains unique and cursor-safe when a chain observation is invalidated by fork/hash mismatch or restart from committed recovery boundaries.
@@ -20,13 +22,21 @@
 3. Required matrix families must be chain-scoped and include explicit fork/perturbation metadata.
 4. Any one-chain recovery perturbation while peers advance requires zero peer cursor and watermark movement (`peer_cursor_delta=0`, `peer_watermark_delta=0`).
 
-## Required Matrices
-- Fork recovery matrix (`.ralph/reports/I-0521-m97-s1-fork-recovery-matrix.md`) required row keys:
+## C0098 Matrix Contracts (`I-0545` / `I-0546`)
+- Required perturbation classes (`fork_recovery`):
+  - `one_block_reorg`
+  - `multi_block_reorg`
+  - `canonical_range_replay`
+  - `finalized_to_pending_crossover`
+  - `restart_from_rollback_boundary`
+- Fork recovery matrix (`.ralph/reports/I-0545-m97-s1-fork-recovery-matrix.md`) required row keys:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fork_type`, `permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `evidence_present`, `outcome`, `failure_mode`
-- Replay continuity matrix (`.ralph/reports/I-0521-m97-s1-recovery-continuity-matrix.md`) required row keys:
+- Replay continuity matrix (`.ralph/reports/I-0545-m97-s1-recovery-continuity-matrix.md`) required row keys:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `recovery_permutation`, `class_path`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `evidence_present`, `outcome`, `failure_mode`
-- QA peer-isolation matrix (`.ralph/reports/I-0522-m97-s2-reorg-peer-isolation-matrix.md`) required row keys:
+  - mandatory hard-stop columns per required row: `canonical_event_id_unique_ok=true`, `replay_idempotent_ok=true`, `cursor_monotonic_ok=true`, `signed_delta_conservation_ok=true`, `evidence_present=true`, `outcome=GO`, `peer_cursor_delta=0`, `peer_watermark_delta=0` where peer deltas are required.
+- QA peer-isolation matrix (`.ralph/reports/I-0546-m97-s2-peer-isolation-matrix.md`) required row keys:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `outcome`, `evidence_present`, `failure_mode`
+- Required peer-isolation hard-stop columns: `peer_cursor_delta=0`, `peer_watermark_delta=0`, `outcome=GO`, `evidence_present=true`.
 
 ## Invariants
 - `canonical_event_id_unique`
@@ -44,3 +54,4 @@
 
 ## Decision Hook
 - `DP-0109-M97`: any missing cell, any `outcome=NO-GO`, any non-unique canonical-ID family result, or any required row with non-zero peer deltas is a hard NO-GO for `M97` promotion.
+- `DP-0114-C0098`: any required `I-0545`/`I-0546` matrix row missing, with `outcome=NO-GO`, `evidence_present=false`, `failure_mode` missing on `NO-GO`, or non-zero required peer deltas is a hard NO-GO for C0098 and optional refinement unblocking.
