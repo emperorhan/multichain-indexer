@@ -3453,6 +3453,95 @@ func TestProcessBatch_UpsertTxError(t *testing.T) {
 	assert.Contains(t, err.Error(), "upsert tx")
 }
 
+func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransitionError(t *testing.T) {
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+
+	txID := uuid.New()
+	tokenID := uuid.New()
+	cursorVal := "sig1"
+
+	batch := event.NormalizedBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: "addr1",
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:      "sig1",
+				BlockCursor: 100,
+				FeeAmount:   "0",
+				FeePayer:    "other",
+				Status:      model.TxStatusSuccess,
+				ChainData:   json.RawMessage("{}"),
+				BalanceEvents: []event.NormalizedBalanceEvent{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						EventCategory:         model.EventCategoryTransfer,
+						EventAction:           "transfer",
+						ProgramID:             "11111111111111111111111111111111",
+						ContractAddress:       "11111111111111111111111111111111",
+						Address:               "addr1",
+						CounterpartyAddress:   "counterparty",
+						Delta:                 "-1",
+						TokenType:             model.TokenTypeNative,
+					},
+				},
+			},
+		},
+		NewCursorValue:    &cursorVal,
+		NewCursorSequence: 100,
+	}
+
+	setupBeginTx(mockDB)
+
+	mockTxRepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(txID, nil).
+		Times(1)
+
+	mockTokenRepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(tokenID, nil).
+		Times(1)
+
+	mockBERepo.EXPECT().
+		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(true, nil).
+		Times(1)
+
+	mockBalanceRepo.EXPECT().
+		AdjustBalanceTx(
+			gomock.Any(), gomock.Any(),
+			model.ChainSolana, model.NetworkDevnet, "addr1",
+			tokenID, nil, nil,
+			"-1", int64(100), "sig1",
+		).
+		Return(errors.New("insufficient balance for adjustment")).
+		Times(1)
+
+	mockCursorRepo.EXPECT().
+		UpsertTx(
+			gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(),
+		).
+		Times(0)
+
+	mockConfigRepo.EXPECT().
+		UpdateWatermarkTx(
+			gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(),
+		).
+		Times(0)
+
+	err := ing.processBatch(context.Background(), batch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "adjust balance")
+}
+
 func TestIngester_Run_ContextCancel(t *testing.T) {
 	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 

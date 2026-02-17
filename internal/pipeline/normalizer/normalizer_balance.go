@@ -148,11 +148,11 @@ func buildCanonicalBaseBalanceEvents(
 func buildCanonicalBTCBalanceEvents(
 	chain model.Chain,
 	network model.Network,
-	txHash, finalityState string,
+	txHash, txStatus, feePayer, feeAmount, finalityState string,
 	rawEvents []*sidecarv1.BalanceEventInfo,
 ) []event.NormalizedBalanceEvent {
 	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents))
+	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+1)
 
 	for _, be := range rawEvents {
 		if be == nil {
@@ -176,6 +176,10 @@ func buildCanonicalBTCBalanceEvents(
 			TokenType:             model.TokenType(be.TokenType),
 			AssetID:               be.ContractAddress,
 		})
+	}
+
+	if shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount) && !hasBTCFeeEvent(normalizedEvents, feePayer) {
+		normalizedEvents = append(normalizedEvents, buildBTCFeeBalanceEvent(feePayer, feeAmount))
 	}
 
 	return canonicalizeBTCBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)
@@ -618,7 +622,11 @@ func canonicalizeBTCBalanceEvents(
 
 		be.ActorAddress = canonicalizeAddressIdentity(chain, be.Address)
 		be.AssetType = assetType
-		be.EventPathType = "btc_utxo"
+		if be.EventCategory == model.EventCategoryFee {
+			be.EventPathType = "btc_fee"
+		} else {
+			be.EventPathType = "btc_utxo"
+		}
 		be.FinalityState = finalityState
 		be.DecoderVersion = "btc-decoder-v1"
 		be.SchemaVersion = "v2"
@@ -669,6 +677,53 @@ func canonicalizeBTCAssetID(value string) string {
 		return "BTC"
 	}
 	return trimmed
+}
+
+func shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount string) bool {
+	// BTC balance snapshots for watched addresses already include spend/receive legs
+	// for each input and output participant, so adding a synthetic miner fee
+	// event double-counts signed deltas for fee-paying addresses.
+	_ = feeAmount
+	_ = txStatus
+	_ = feePayer
+	return false
+}
+
+func hasBTCFeeEvent(events []event.NormalizedBalanceEvent, feePayer string) bool {
+	feePayer = strings.TrimSpace(feePayer)
+	if feePayer == "" {
+		return false
+	}
+	for _, be := range events {
+		if be.EventCategory != model.EventCategoryFee {
+			continue
+		}
+		if strings.TrimSpace(be.Address) == feePayer {
+			return true
+		}
+	}
+	return false
+}
+
+func buildBTCFeeBalanceEvent(feePayer, feeAmount string) event.NormalizedBalanceEvent {
+	chainData, _ := json.Marshal(map[string]string{"event_path": "fee:miner"})
+	return event.NormalizedBalanceEvent{
+		OuterInstructionIndex: -1,
+		InnerInstructionIndex: -1,
+		EventCategory:         model.EventCategoryFee,
+		EventAction:           "miner_fee",
+		ProgramID:             "btc",
+		ContractAddress:       "BTC",
+		Address:               feePayer,
+		CounterpartyAddress:   "",
+		Delta:                 canonicalFeeDelta(feeAmount),
+		ChainData:             chainData,
+		TokenSymbol:           "BTC",
+		TokenName:             "Bitcoin",
+		TokenDecimals:         8,
+		TokenType:             model.TokenTypeNative,
+		AssetID:               "BTC",
+	}
 }
 
 func shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount string) bool {

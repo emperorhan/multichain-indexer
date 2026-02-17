@@ -468,6 +468,9 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			batch.Chain,
 			batch.Network,
 			txHash,
+			result.Status,
+			result.FeePayer,
+			result.FeeAmount,
 			finalityState,
 			result.BalanceEvents,
 		)

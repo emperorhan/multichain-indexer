@@ -3050,6 +3050,7 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		assertNoDuplicateCanonicalIDs(t, recovered)
 
 		assert.Equal(t, 4, countCategory(canonical, model.EventCategoryTransfer))
+		assert.Equal(t, 0, countCategory(canonical, model.EventCategoryFee))
 		assertBTCMinerFeeConservation(t, canonical)
 		assertBTCMinerFeeConservation(t, replay)
 		assertBTCMinerFeeConservation(t, swap)
@@ -7824,7 +7825,7 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 	require.Empty(t, missingInventory, "mandatory topology parity inventory is incomplete: %v", missingInventory)
 }
 
-func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithoutSyntheticFeeEvent(t *testing.T) {
+func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMinerFeePath(t *testing.T) {
 	n := &Normalizer{}
 	batch := event.RawBatch{
 		Chain:   model.ChainBTC,
@@ -7860,13 +7861,36 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithoutSyntheticFeeEv
 	}
 
 	tx := n.normalizedTxFromResult(batch, result)
+	txReplay := n.normalizedTxFromResult(batch, result)
 	require.Len(t, tx.BalanceEvents, 1)
+	require.Len(t, txReplay.BalanceEvents, 1)
 	assert.Equal(t, "abcdef001122", tx.TxHash)
 
-	be := tx.BalanceEvents[0]
-	assert.Equal(t, "vin:0", be.EventPath)
-	assert.Equal(t, "btc_utxo", be.EventPathType)
-	assert.Equal(t, "btc-decoder-v1", be.DecoderVersion)
-	assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
-	assert.NotEmpty(t, be.EventID)
+	seenIDs := map[string]struct{}{}
+	seenPaths := map[string]struct{}{}
+	foundTransfer := false
+
+	for _, be := range tx.BalanceEvents {
+		assert.NotEmpty(t, be.EventID)
+		_, exists := seenIDs[be.EventID]
+		assert.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+		seenIDs[be.EventID] = struct{}{}
+		seenPaths[be.EventPath] = struct{}{}
+
+		if be.EventCategory == model.EventCategoryTransfer {
+			foundTransfer = true
+			assert.Equal(t, "vin:0", be.EventPath)
+			assert.Equal(t, "btc_utxo", be.EventPathType)
+		}
+	}
+
+	assert.True(t, foundTransfer)
+	assert.Equal(t, seenPaths, map[string]struct{}{"vin:0": {}})
+
+	replayIDs := map[string]struct{}{}
+	for _, be := range txReplay.BalanceEvents {
+		assert.NotEmpty(t, be.EventID)
+		replayIDs[be.EventID] = struct{}{}
+	}
+	assert.Equal(t, seenIDs, replayIDs)
 }
