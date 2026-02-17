@@ -84,7 +84,11 @@
   - `I-0531` (qa) — PRD-focused counterexample gate for invariant/peer-isolation restart perturbation.
 - Slice gates for this tranche:
   - `I-0529` updates `IMPLEMENTATION_PLAN.md` to lock C0094 scope, PRD traceability, and queue handoff from `C0093` to PRD-priority unresolved-gate execution.
-  - `I-0530` publishes PRD-traceable evidence planning artifacts with bounded scope for `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
+  - `I-0530` updates `specs/m93-prd-fail-fast-continuity-gate.md` with PRD §8.4/§8.5/§10 matrix contracts and publishes bounded evidence files:
+    - `.ralph/reports/I-0530-m93-s1-fail-fast-continuity-matrix.md`
+    - `.ralph/reports/I-0530-m93-s2-one-chain-isolation-matrix.md`
+  - `I-0530` evidence artifacts must bind all required chain rows and invariant checks for `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
+  - `I-0530` must preserve mandatory-chain one-chain perturbation isolation checks with zero peer-chain delta outcomes.
   - `I-0531` verifies one-chain restart/fail-fast perturbations with peer-chain isolation (`peer_cursor_delta=0`, `peer_watermark_delta=0`) and records explicit promotion recommendation.
   - no runtime implementation changes are executed in this planner slice.
 
