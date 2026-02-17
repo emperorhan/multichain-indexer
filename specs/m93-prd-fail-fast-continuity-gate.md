@@ -18,6 +18,25 @@
   - `I-0533-m93-s2-one-chain-isolation-matrix.md`
 - `I-0534` consumes those artifacts and enforces NO-GO if any required row is missing, any `outcome=NO-GO`, or any one-chain isolation violation.
 
+## C0101 Revalidation Handoff Mapping
+- tranche: `C0101` (`I-0556 -> I-0557 -> I-0558`)
+- `I-0557` refreshes PRD `8.4`/`8.5`/`10` machine-checkable evidence artifacts under this tranche.
+- `I-0558` verifies `GO`/`evidence_present=true` continuity for required peer-isolation rows with zero bleed.
+- Required tranche artifacts for `I-0557`:
+  - `.ralph/reports/I-0557-m93-s1-fail-fast-continuity-matrix.md`
+  - `.ralph/reports/I-0557-m93-s2-one-chain-isolation-matrix.md`
+- Hard-stop expectation for C0101:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` where required
+  - `peer_watermark_delta=0` where required
+- `DP-0117-C0101`: any required C0101 continuation/continuity row with `outcome=NO-GO`, `evidence_present=false`, or any required peer delta not equal to zero blocks `I-0558` and optional-refinement unblocking.
+
 ## Problem Statement
 The PRD `R5/R8` controls are still not closed with an explicit, testable gate. Current execution requires a definitive contract proving correctness-impacting failures always abort immediately, cannot advance failed-path state, and that restart/replay reproduces equivalent outputs across mandatory chains.
 

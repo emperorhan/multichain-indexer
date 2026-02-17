@@ -210,6 +210,41 @@
     - `chain_adapter_runtime_wired`
   - No runtime implementation changes are executed in this planner slice.
 
+## C0101 (`I-0556`) tranche activation
+- Focus: PRD-priority fail-fast continuity and one-chain isolation revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - PRD §8.4: failed-path replay continuity from a deterministically safe boundary.
+  - PRD §8.5: fail-fast correctness-impacting paths with no failed-path cursor/watermark progression.
+  - PRD §10: deterministic replay acceptance and peer-isolation under one-chain perturbation.
+- C0101 lock state: `C0101-PRD-FAILFAST-COUNTEREXAMPLE-REVALIDATION`.
+- C0101 queue adjacency: hard dependency `I-0555` -> `I-0557` -> `I-0558`.
+- Downstream execution pair:
+  - `I-0557` (developer) — PRD `8.4`/`8.5`/`10` counterexample-matrix contract handoff and evidence refresh under topology-revalidated context.
+  - `I-0558` (qa) — PRD `8.4`/`8.5`/`10` counterexample gate with peer-isolation and restart continuity checks.
+- Slice gates for this tranche:
+  - `I-0556` updates this plan with explicit C0101 lock state and queue order `I-0555 -> I-0557 -> I-0558`.
+  - `I-0557` updates `specs/m93-prd-fail-fast-continuity-gate.md` with C0101 hard-stop transitions and publishes planner-ready evidence artifacts:
+    - `.ralph/reports/I-0557-m93-s1-fail-fast-continuity-matrix.md`
+    - `.ralph/reports/I-0557-m93-s2-one-chain-isolation-matrix.md`
+  - `I-0557` evidence artifacts must bind all required chain rows and invariant checks for:
+    - `canonical_event_id_unique`
+    - `replay_idempotent`
+    - `cursor_monotonic`
+    - `signed_delta_conservation`
+    - `chain_adapter_runtime_wired`
+  - `I-0557` must preserve mandatory-chain one-chain perturbation isolation checks with zero peer-chain deltas:
+    - `peer_cursor_delta=0`
+    - `peer_watermark_delta=0`
+  - `I-0558` verifies all required rows are `outcome=GO`, `evidence_present=true`, invariants complete, and `peer_cursor_delta=0` / `peer_watermark_delta=0`.
+  - Any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks C0101.
+  - C0101 hard-stop invariants are:
+    - `canonical_event_id_unique`
+    - `replay_idempotent`
+    - `cursor_monotonic`
+    - `signed_delta_conservation`
+    - `chain_adapter_runtime_wired`
+  - No runtime implementation changes are executed in this planner slice.
+
 `M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95 -> M97 -> M98`
 
 Execution queue (dependency-ordered):
