@@ -20,6 +20,8 @@ RUN_SCRIPT="${RALPH_RUN_SCRIPT:-scripts/ralph_local_run.sh}"
 RESTART_SLEEP_SEC="${RALPH_RESTART_SLEEP_SEC:-3}"
 LOCK_BUSY_SLEEP_SEC="${RALPH_LOCK_BUSY_SLEEP_SEC:-10}"
 CRASH_BACKOFF_MAX_SEC="${RALPH_CRASH_BACKOFF_MAX_SEC:-60}"
+DISABLED_SLEEP_SEC="${RALPH_DISABLED_SLEEP_SEC:-10}"
+WAIT_WHEN_DISABLED="${RALPH_SUPERVISOR_WAIT_WHEN_DISABLED:-true}"
 SUPERVISOR_LOG="${RALPH_ROOT}/logs/supervisor.out"
 SUPERVISOR_LOCK_FILE="${RALPH_ROOT}/supervisor.lock"
 
@@ -39,6 +41,16 @@ is_enabled() {
 
 log() {
   printf '[ralph-supervisor] %s\n' "$*" | tee -a "${SUPERVISOR_LOG}" >&2
+}
+
+wait_or_exit_when_disabled() {
+  if [ "${WAIT_WHEN_DISABLED}" = "true" ]; then
+    log "disabled flag detected; waiting ${DISABLED_SLEEP_SEC}s for re-enable"
+    sleep "${DISABLED_SLEEP_SEC}"
+    return 0
+  fi
+  log "disabled flag detected; stopping supervisor"
+  exit 0
 }
 
 compute_crash_backoff() {
@@ -64,8 +76,8 @@ crash_count=0
 
 while true; do
   if ! is_enabled; then
-    log "disabled flag detected; stopping supervisor"
-    exit 0
+    wait_or_exit_when_disabled
+    continue
   fi
 
   log "starting runner"
@@ -77,8 +89,8 @@ while true; do
   if [ "${runner_rc}" -eq 0 ]; then
     crash_count=0
     if ! is_enabled; then
-      log "runner finished and disabled flag is set; exiting"
-      exit 0
+      wait_or_exit_when_disabled
+      continue
     fi
     log "runner exited cleanly; restarting in ${RESTART_SLEEP_SEC}s"
     sleep "${RESTART_SLEEP_SEC}"
@@ -86,8 +98,8 @@ while true; do
   fi
 
   if ! is_enabled; then
-    log "runner failed but disabled flag is set; exiting"
-    exit 0
+    wait_or_exit_when_disabled
+    continue
   fi
 
   if [ "${runner_rc}" -eq 75 ]; then

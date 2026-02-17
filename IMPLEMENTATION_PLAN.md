@@ -4603,3 +4603,34 @@ Superseded issues:
 - `I-0471` and `I-0472` are superseded by `I-0473` and `I-0474` to enforce PRD-traceable topology parity + strict chain isolation scope (`R6`, `R7`, `9.4`, `10`) before optional post-M90 refinements.
 - `I-0477` and `I-0478` are superseded by `I-0481` and `I-0482` to replace generic C0082 placeholders with explicit M92 mandatory-chain `Topology A/B/C` closure scope and measurable promotion gates.
 - `I-0499` and `I-0500` are superseded by `I-0501` and `I-0502` to replace generic PRD-priority placeholders with PRD `R9` chain-scoped control coupling gates.
+
+## C0103 (`I-0562`) tranche activation
+- Focus: PRD-priority runtime-wire and topology-parity revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R6`: deployment topology independence.
+  - `R7`: strict chain isolation.
+  - `10`: deterministic replay acceptance, including one-chain perturbation isolation.
+  - `chain_adapter_runtime_wired`: chain adapter wiring remains stable across deployment topology and runtime boundaries.
+- C0103 lock state: `C0103-PRD-RUNTIME-WIRE-REVALIDATION`.
+- C0103 queue adjacency: hard dependency `I-0562` -> `I-0565` -> `I-0566`.
+- Downstream execution pair:
+  - `I-0565` (developer) — PRD-priority handoff contract for explicit topology/runtime hard-stop row definitions and evidence file names.
+  - `I-0566` (qa) — PRD-priority counterexample gate and recommendation under mandatory-chain peer-isolation checks.
+- Slice gates for this tranche:
+  - `I-0565` updates this plan with explicit C0103 lock state and queue order `I-0562 -> I-0565 -> I-0566`.
+  - `I-0565` updates `specs/m99-prd-runtime-wire-topology-continuity-gate.md` with PRD traceability to `R6`, `R7`, `10`, and `chain_adapter_runtime_wired`.
+  - `I-0565` defines required artifacts:
+    - `.ralph/reports/I-0565-m99-s1-runtime-wiring-matrix.md`
+    - `.ralph/reports/I-0565-m99-s2-one-chain-adapter-coupling-isolation-matrix.md`
+  - Required hard-stop gate columns in those artifacts are:
+    - `outcome=GO`
+    - `evidence_present=true`
+    - `canonical_event_id_unique_ok=true`
+    - `replay_idempotent_ok=true`
+    - `cursor_monotonic_ok=true`
+    - `signed_delta_conservation_ok=true`
+    - `chain_adapter_runtime_wired_ok=true`
+    - `peer_cursor_delta=0` where reported
+    - `peer_watermark_delta=0` where reported
+  - `I-0566` verifies all required rows for `solana-devnet`, `base-sepolia`, and `btc-testnet`; blocks C0103 on any required `NO-GO`, missing evidence, false required invariant fields, or non-zero required peer deltas.
+  - No runtime implementation changes are executed in this planner slice.
