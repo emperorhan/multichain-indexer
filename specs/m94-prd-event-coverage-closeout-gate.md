@@ -91,7 +91,7 @@ For each mandatory chain-family, the class-path matrix must be non-empty for eve
 ## Decision Hook
 - `DP-0105-M94`: required event-class matrix coverage is measured as `(chain, network, class, evidence_present, class_path)`; any missing non-`NA` cell fails the closeout gate.
 
-## C0105 (`I-0571`) tranche activation
+## C0105 (`I-0572`) tranche activation
 - Focus: PRD-priority event coverage revalidation and hard-stop refresh before optional refinements resume.
 - Focused unresolved PRD requirements:
   - `R1`: no-duplicate indexing.
