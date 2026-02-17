@@ -4565,10 +4565,14 @@ Completed milestones/slices:
 Active downstream queue from this plan:
 1. `I-0572` (`C0105-S1`) after `I-0570`
 2. `I-0573` (`C0105-S2`) after `I-0572`
+3. `I-0575` (`C0106-S1`) after `I-0573`
+4. `I-0576` (`C0106-S2`) after `I-0575`
 
 Planned next tranche queue:
 1. `I-0572` (`C0105-S1`) after `I-0570`
 2. `I-0573` (`C0105-S2`) after `I-0572`
+3. `I-0575` (`C0106-S1`) after `I-0573`
+4. `I-0576` (`C0106-S2`) after `I-0575`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -4691,13 +4695,47 @@ Superseded issues:
   - `I-0573` (qa) — PRD-focused counterexample gate and recommendation on one-chain isolation and evidence readiness.
 - Slice gates for this tranche:
   - `I-0571` updates this plan with explicit `C0105` lock state and queue order `I-0570 -> I-0572 -> I-0573`.
-  - `I-0572` updates `specs/m94-prd-event-coverage-closeout-gate.md` with a `C0105` addendum for `R1`, `R2`, `R3`, `8.5`, and `10`, including explicit hard-stop artifacts:
-    - `.ralph/reports/I-0572-m94-s1-event-coverage-matrix.md`
-    - `.ralph/reports/I-0572-m94-s2-dup-suppression-matrix.md`
-    - `.ralph/reports/I-0572-m94-s3-chain-isolation-matrix.md`
-  - `I-0572` must define hard-stop schema constraints for required classes and peer-isolation rows in those artifacts:
-    - mandatory chain coverage rows for `solana-devnet`, `base-sepolia`, and `btc-testnet`.
-    - for `GO`, all required boolean columns (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`) are true.
-    - for `GO`, `evidence_present=true`, `peer_cursor_delta=0`, `peer_watermark_delta=0` where peer fields are required.
-  - `I-0573` verifies all required `I-0572` artifact rows for mandatory chains, requires `outcome=GO`, `evidence_present=true`, and hard-stop booleans in required rows, and blocks `C0105` on any required violation.
+- `I-0572` updates `specs/m94-prd-event-coverage-closeout-gate.md` with a `C0105` addendum for `R1`, `R2`, `R3`, `8.5`, and `10`, including explicit hard-stop artifacts:
+  - `.ralph/reports/I-0572-m94-s1-event-coverage-matrix.md`
+  - `.ralph/reports/I-0572-m94-s2-dup-suppression-matrix.md`
+  - `.ralph/reports/I-0572-m94-s3-chain-isolation-matrix.md`
+- `I-0572` must define hard-stop schema constraints for required classes and peer-isolation rows in those artifacts:
+  - mandatory chain coverage rows for `solana-devnet`, `base-sepolia`, and `btc-testnet`.
+  - for `GO`, all required boolean columns (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`) are true.
+  - for `GO`, `evidence_present=true`, `peer_cursor_delta=0`, `peer_watermark_delta=0` where peer fields are required.
+- `I-0573` verifies all required `I-0572` artifact rows for mandatory chains, requires `outcome=GO`, `evidence_present=true`, and hard-stop booleans in required rows, and blocks `C0105` on any required violation.
+- No runtime implementation changes are executed in this planner slice.
+
+## C0106 (`I-0574`) tranche activation
+- Focus: PRD-priority fee-semantics and adapter-wiring hard-stop revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is forbidden.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: adapter wiring remains invariant under failed-path perturbation and peer-isolated replay.
+- C0106 lock state: `C0106-PRD-FEE-ADAPTER-CLOSEOUT-REVALIDATION`.
+- C0106 queue adjacency: hard dependency `I-0573 -> I-0575 -> I-0576`.
+- Downstream execution pair:
+  - `I-0575` (developer) — PRD handoff contract for PRD event-fee/adapter hard-stop matrix refresh and artifact naming.
+  - `I-0576` (qa) — PRD-focused counterexample gate and recommendation on `I-0575` artifacts.
+- Slice gates for this tranche:
+  - `I-0574` updates this plan with explicit `C0106` lock state and queue order `I-0573 -> I-0575 -> I-0576`.
+  - `I-0575` updates `specs/m94-prd-event-coverage-closeout-gate.md` with a `C0106` addendum for mandatory fee split and adapter-wiring hard-stop schema.
+  - `I-0575` defines required artifacts:
+    - `.ralph/reports/I-0575-m94-s1-event-coverage-matrix.md`
+    - `.ralph/reports/I-0575-m94-s2-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0575-m94-s3-chain-isolation-matrix.md`
+  - `I-0576` verifies all required `I-0575` artifact rows for all mandatory chains with hard-stop gates:
+    - `outcome=GO`
+    - `evidence_present=true`
+    - `canonical_event_id_unique_ok=true`
+    - `replay_idempotent_ok=true`
+    - `cursor_monotonic_ok=true`
+    - `signed_delta_conservation_ok=true`
+    - `solana_fee_event_coverage_ok=true`
+    - `base_fee_split_coverage_ok=true`
+    - `chain_adapter_runtime_wired_ok=true`
+    - `peer_cursor_delta=0`, `peer_watermark_delta=0` where peer fields are required
+  - `I-0576` blocks `C0106` on any required `NO-GO`, `evidence_present=false`, required hard-stop booleans false, or required peer deltas non-zero.
   - No runtime implementation changes are executed in this planner slice.

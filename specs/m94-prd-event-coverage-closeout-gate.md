@@ -127,3 +127,46 @@ For each mandatory chain-family, the class-path matrix must be non-empty for eve
 
 ## C0105 Decision Hook
 - `DP-0131-C0105`: any required `I-0572` row missing, `outcome=NO-GO`, `evidence_present=false`, required booleans false, or required peer deltas non-zero is a hard NO-GO for C0105.
+
+## C0106 (`I-0575`) tranche activation
+- Focus: PRD-priority fee-semantics and adapter-wiring hard-stop revalidation on top of C0105.
+- Focused unresolved PRD requirements:
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is forbidden.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: adapter wiring invariance under required perturbations.
+- C0106 queue adjacency: hard dependency `I-0573 -> I-0575 -> I-0576`.
+
+### C0106 Matrix Contracts (`I-0575`)
+- `I-0575-m94-s1-event-coverage-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `evidence_present`, `outcome`, `failure_mode`
+  - required hard-stop boolean fields:
+    - `canonical_event_id_unique_ok`
+    - `replay_idempotent_ok`
+    - `cursor_monotonic_ok`
+    - `signed_delta_conservation_ok`
+    - `solana_fee_event_coverage_ok`
+    - `base_fee_split_coverage_ok`
+    - `chain_adapter_runtime_wired_ok`
+- `I-0575-m94-s2-dup-suppression-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `outcome`, `failure_mode`
+  - required hard-stop boolean fields:
+    - `canonical_event_id_unique_ok`
+    - `replay_idempotent_ok`
+    - `cursor_monotonic_ok`
+    - `signed_delta_conservation_ok`
+    - `solana_fee_event_coverage_ok`
+    - `base_fee_split_coverage_ok`
+    - `chain_adapter_runtime_wired_ok`
+- `I-0575-m94-s3-chain-isolation-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+
+Required `C0106` hard-stop row constraints in `I-0575`:
+- `outcome` is required to be `GO` for all required cells and `evidence_present=true`.
+- Required hard-stop booleans are `true` for all required `GO` rows.
+- Required peer isolation checks enforce `peer_cursor_delta=0` and `peer_watermark_delta=0` where those fields exist.
+- `failure_mode` must be empty for `GO` and non-empty for `NO-GO`.
+
+## C0106 Decision Hook
+- `DP-0132-C0106`: any required `I-0575` row missing, required `GO` row with `evidence_present=false`, required hard-stop booleans false, required peer deltas non-zero, or required `NO-GO` row missing `failure_mode` is a hard NO-GO for C0106.
