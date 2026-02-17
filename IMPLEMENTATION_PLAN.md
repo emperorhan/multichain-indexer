@@ -185,6 +185,25 @@
   - `DP-0115-C0099` is the hard transition decision hook; optional refinements remain blocked unless all required C0098 evidence in `I-0546` has transition-safe state.
 - No runtime implementation changes are executed in this planner slice.
 
+## C0100 (`I-0553`) tranche activation
+- Focus: PRD-priority unresolved topology-isolation and runtime-wire revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R6`: deployment topology independence.
+  - `R7`: strict chain isolation.
+  - `9.4`: topology parity and continuity principles.
+  - `10`: deterministic replay and peer-isolation acceptance under one-chain perturbation.
+- C0100 lock state: `C0100-PRD-TOPOLOGY-WIRED-REVALIDATION`.
+- C0100 queue adjacency: hard dependency `I-0552` -> `I-0554` -> `I-0555`.
+- Downstream execution pair:
+  - `I-0554` (developer) — PRD-priority revalidation evidence handoff and topology/runtime wire hardening under explicit PRD clauses.
+  - `I-0555` (qa) — PRD-priority counterexample gate and explicit recommendation for C0100.
+- Slice gates for this tranche:
+  - `I-0554` updates this plan with explicit C0100 lock state and `I-0552 -> I-0554 -> I-0555` queue order.
+  - `I-0554` updates `specs/m91-prd-topology-parity-chain-isolation.md`, `specs/m92-prd-topology-parity-mandatory-chain-closure.md`, and `specs/m95-prd-chain-scoped-autotune-control-gate.md` with C0100 hard-stop transitions for `R6`, `R7`, `9.4`, `10`, and `chain_adapter_runtime_wired`.
+  - `I-0555` verifies required topology, adapter-wiring, and peer-isolation rows in the required artifacts with `outcome=GO`, `evidence_present=true`, invariant flags true, and `peer_cursor_delta=0` / `peer_watermark_delta=0` where required.
+  - Any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks C0100 and any optional-refinement advance.
+  - No runtime implementation changes are executed in this planner slice.
+
 `M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95 -> M97 -> M98`
 
 Execution queue (dependency-ordered):
@@ -4453,18 +4472,17 @@ Completed milestones/slices:
 193. `I-0543` (`C0097-S1`) after `I-0542`
 194. `I-0545` (`C0098`) after `I-0543`
 195. `I-0546` (`C0098-S1`) after `I-0545`
-196. `I-0551` (`C0099-S1`) after `I-0546`
-197. `I-0552` (`C0099-S2`) after `I-0551`
+196. `I-0552` (`C0099-S2`) after `I-0551`
+197. `I-0554` (`C0100-S1`) after `I-0552`
+198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0545` (`C0098`) after `I-0543`
-2. `I-0546` (`C0098-S1`) after `I-0545`
+1. `I-0554` (`C0100-S1`) after `I-0552`
+2. `I-0555` (`C0100-S2`) after `I-0554`
 
 Planned next tranche queue:
-1. `I-0545` (`C0098`) after `I-0543`
-2. `I-0546` (`C0098-S1`) after `I-0545`
-3. `I-0551` (`C0099-S1`) after `I-0546`
-4. `I-0552` (`C0099-S2`) after `I-0551`
+1. `I-0554` (`C0100-S1`) after `I-0552`
+2. `I-0555` (`C0100-S2`) after `I-0554`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
