@@ -72,7 +72,7 @@ Required enum/value constraints:
 
 ## Measurable Exit Gates
 1. `0` missing required matrix cells for non-`NA` class-paths in `solana-devnet`, `base-sepolia`, and `btc-testnet`.
-2. `0` duplicate canonical IDs across required replay permutations in `I-0516-m96-s1-replay-continuity-matrix.md`.
+2. `0` duplicate canonical IDs across required replay permutations in `I-0519-m96-s1-replay-continuity-matrix.md`.
 3. Replay permutation checks (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`) are true for all required rows.
 4. Peer isolation checks report `peer_cursor_delta=0` and `peer_watermark_delta=0` for all required rows.
 5. Validation commands remain unchanged and must pass: `make test`, `make test-sidecar`, `make lint`.
