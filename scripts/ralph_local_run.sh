@@ -2166,8 +2166,30 @@ while true; do
       CURRENT_ISSUE_ID=""
       CURRENT_IN_PROGRESS_PATH=""
       blocked_note="developer produced spec-only changes without code"
+      printf '\n- superseded_by: spec-only-cycling-guard\n' >> "${blocked_path}"
       append_result_block "${blocked_path}" "blocked" "${role}" "${model}" "${log_file}" "not-run" "${blocked_note}" ""
       echo "[ralph-local] blocked ${issue_id}: ${blocked_note}"
+
+      # Cancel sibling cycle issues (qa, etc.) so automanager can create a new cycle
+      cycle_key_prefix=""
+      if grep -q 'automanager_key:' "${blocked_path}" 2>/dev/null; then
+        cycle_key_prefix="$(grep 'automanager_key:' "${blocked_path}" | sed -E 's/.*automanager_key:[[:space:]]*//' | sed -E 's/-build$//' | head -1)"
+      fi
+      if [ -n "${cycle_key_prefix}" ]; then
+        for sibling in "${QUEUE_DIR}"/I-*.md "${BLOCKED_DIR}"/I-*.md; do
+          [ -f "${sibling}" ] || continue
+          [ "${sibling}" = "${blocked_path}" ] && continue
+          if grep -q "automanager_key:.*${cycle_key_prefix}" "${sibling}" 2>/dev/null; then
+            set_issue_status "${sibling}" "cancelled"
+            printf '\n- superseded_by: spec-only-cycling-guard\n' >> "${sibling}"
+            sibling_id="$(basename "${sibling}" .md)"
+            sibling_done="${DONE_DIR}/${sibling_id}.md"
+            mv "${sibling}" "${sibling_done}"
+            echo "[ralph-local] cancelled cycle sibling ${sibling_id}: parent developer blocked as spec-only"
+          fi
+        done
+      fi
+
       rm -f "${pre_change_snapshot}" "${SCOPE_GUARD_CHANGED_FILE:-}" "${SCOPE_GUARD_REASON_FILE:-}"
       loop_count=$((loop_count + 1))
       continue
