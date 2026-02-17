@@ -208,6 +208,8 @@ Execution queue (dependency-ordered):
 189. `I-0501` (`M95-S1`) PRD R9 chain-scoped control and throughput coupling gate
 190. `I-0502` (`M95-S2`) QA counterexample gate for chain-scoped auto-tune control isolation and cross-coupling verification
 191. `I-0507` (`M95-S3`) PRD `R9` reproducibility and fixture-determinism gate contract for chain-scoped control coupling
+   - Traceable to `R9`, `9.4`, and `10`.
+   - Adds deterministic reproducibility metadata (`fixture_id`, `fixture_seed`, `run_id`, `evidence_present`, `outcome`) and requires `I-0507-m95-s3-control-coupling-reproducibility-matrix.md`.
 192. `I-0508` (`M95-S4`) QA reproducibility gate for deterministic control-coupling evidence and replay continuity
 
 ## Global Verification Contract

@@ -12,6 +12,7 @@ RALPH_ROOT="${RALPH_ROOT:-.ralph}"
 ISSUES_DIR="${RALPH_ROOT}/issues"
 LOCK_FILE="${RALPH_ROOT}/manager.lock"
 NEW_ISSUE_SCRIPT="${RALPH_NEW_ISSUE_SCRIPT:-scripts/ralph_local_new_issue.sh}"
+ISSUE_CONTRACT_CMD="${RALPH_ISSUE_CONTRACT_CMD:-scripts/ralph_issue_contract.sh}"
 CYCLE_STATE_FILE="${RALPH_ROOT}/state.automanager_cycle"
 SEARCH_TOOL="${RALPH_SEARCH_TOOL:-}"
 
@@ -20,6 +21,10 @@ mkdir -p "${ISSUES_DIR}" "${RALPH_ROOT}/logs"
 
 if [ ! -x "${NEW_ISSUE_SCRIPT}" ]; then
   echo "[ralph-manager] missing new issue script: ${NEW_ISSUE_SCRIPT}" >&2
+  exit 2
+fi
+if [ ! -x "${ISSUE_CONTRACT_CMD}" ]; then
+  echo "[ralph-manager] missing issue contract script: ${ISSUE_CONTRACT_CMD}" >&2
   exit 2
 fi
 
@@ -119,6 +124,19 @@ set_cycle_number() {
   printf '%s\n' "${value}" > "${CYCLE_STATE_FILE}"
 }
 
+validate_created_issue_contract() {
+  local issue_path="$1"
+  local role="$2"
+  if "${ISSUE_CONTRACT_CMD}" validate "${issue_path}" "${role}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "[ralph-manager] generated invalid contract: ${issue_path} (role=${role})" >&2
+  "${ISSUE_CONTRACT_CMD}" validate "${issue_path}" "${role}" >&2 || true
+  rm -f "${issue_path}"
+  return 1
+}
+
 base_sepolia_runtime_gap_detected() {
   # Runtime still wired as Solana-only in main/indexer boot path.
   if ! text_exists "Chain:[[:space:]]*model\\.ChainSolana" cmd/indexer/main.go; then
@@ -157,6 +175,14 @@ priority: p0
 depends_on: I-0109,I-0107
 title: M6 implement Base Sepolia runtime pipeline wiring
 complexity: high
+risk_class: high
+max_diff_scope: 25
+allowed_paths: cmd/,internal/,pkg/,proto/,sidecar/,scripts/,docs/,specs/,PROMPT_build.md,PROMPT_plan.md,IMPLEMENTATION_PLAN.md,.ralph/
+denied_paths: .github/workflows/,deployments/,.git/
+acceptance_tests: make test,make test-sidecar,make lint
+invariants: canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired
+non_goals: mainnet-rollout
+evidence_required: true
 ---
 ## Objective
 - Deliver true Base Sepolia runtime indexing (not only normalization-unit support), while preserving Solana stability.
@@ -180,7 +206,11 @@ complexity: high
 ## Notes
 - automanager_key: auto-base-sepolia-runtime-gap
 - Trigger reason: runtime is currently Solana-only despite Base Sepolia target.
+
+## Non Goals
+- mainnet-rollout
 EOF
+  validate_created_issue_contract "${issue_path}" "developer"
 
   echo "[ralph-manager] created ${issue_id} for Base Sepolia runtime gap"
 }
@@ -245,6 +275,7 @@ evidence_required: true
 ## Non Goals
 - no-runtime-code-changes
 EOF
+  validate_created_issue_contract "${planner_path}" "planner"
 
   developer_path="$("${NEW_ISSUE_SCRIPT}" developer "CQ ${cycle_id} implementation: PRD-priority increment" "${planner_issue_id}" p0 high high 25 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
   developer_issue_id="$(basename "${developer_path}" .md)"
@@ -291,6 +322,7 @@ evidence_required: true
 ## Non Goals
 - infra-deployment-orchestration
 EOF
+  validate_created_issue_contract "${developer_path}" "developer"
 
   qa_path="$("${NEW_ISSUE_SCRIPT}" qa "CQ ${cycle_id} QA: PRD-priority gate and counterexample checks" "${developer_issue_id}" p0 medium medium 20 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
   qa_issue_id="$(basename "${qa_path}" .md)"
@@ -337,6 +369,7 @@ evidence_required: true
 ## Non Goals
 - bypass-failures-without-repro
 EOF
+  validate_created_issue_contract "${qa_path}" "qa"
 
   echo "[ralph-manager] seeded continuous quality cycle ${cycle_id}: ${planner_issue_id} -> ${developer_issue_id} -> ${qa_issue_id}"
 }

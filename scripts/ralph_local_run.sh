@@ -127,6 +127,9 @@ SELF_HEAL_ENABLED="${RALPH_SELF_HEAL_ENABLED:-true}"
 SELF_HEAL_MAX_ATTEMPTS="${RALPH_SELF_HEAL_MAX_ATTEMPTS:-3}"
 SELF_HEAL_LOG_TAIL_LINES="${RALPH_SELF_HEAL_LOG_TAIL_LINES:-220}"
 SELF_HEAL_RETRY_SLEEP_SEC="${RALPH_SELF_HEAL_RETRY_SLEEP_SEC:-5}"
+CONTRACT_BLOCKED_SELF_HEAL_ENABLED="${RALPH_CONTRACT_BLOCKED_SELF_HEAL_ENABLED:-true}"
+CONTRACT_BLOCKED_SELF_HEAL_IDLE_MIN_SEC="${RALPH_CONTRACT_BLOCKED_SELF_HEAL_IDLE_MIN_SEC:-180}"
+CONTRACT_BLOCKED_SELF_HEAL_COOLDOWN_SEC="${RALPH_CONTRACT_BLOCKED_SELF_HEAL_COOLDOWN_SEC:-120}"
 AUTO_PUBLISH_ENABLED="${RALPH_AUTO_PUBLISH_ENABLED:-true}"
 AUTO_PUBLISH_MIN_COMMITS="${RALPH_AUTO_PUBLISH_MIN_COMMITS:-3}"
 AUTO_PUBLISH_TARGET_BRANCH="${RALPH_AUTO_PUBLISH_TARGET_BRANCH:-main}"
@@ -193,6 +196,8 @@ EVIDENCE_FILE_PATH=""
 SCOPE_GUARD_CHANGED_FILE=""
 SCOPE_GUARD_REASON_FILE=""
 SCOPE_GUARD_CHANGED_COUNT=0
+IDLE_NO_READY_SINCE_EPOCH=0
+LAST_CONTRACT_BLOCKED_SELF_HEAL_EPOCH=0
 
 if [ "${LOCAL_TRUST_MODE}" = "true" ]; then
   CODEX_SANDBOX="${AGENT_CODEX_SANDBOX:-danger-full-access}"
@@ -830,6 +835,34 @@ ensure_issue_contract_defaults() {
       insert_meta_key_before_delimiter "${file}" "${key}" "${value}"
     fi
   done
+  if ! has_section "${file}" "Objective"; then
+    cat >>"${file}" <<'EOF'
+
+## Objective
+- replace-with-objective
+EOF
+  fi
+  if ! has_section "${file}" "In Scope"; then
+    cat >>"${file}" <<'EOF'
+
+## In Scope
+- replace-with-in-scope-item
+EOF
+  fi
+  if ! has_section "${file}" "Out of Scope"; then
+    cat >>"${file}" <<'EOF'
+
+## Out of Scope
+- replace-with-out-of-scope-item
+EOF
+  fi
+  if ! has_section "${file}" "Acceptance Criteria"; then
+    cat >>"${file}" <<'EOF'
+
+## Acceptance Criteria
+- [ ] replace-with-acceptance-criterion
+EOF
+  fi
   if ! has_section "${file}" "Non Goals"; then
     cat >>"${file}" <<'EOF'
 
@@ -838,6 +871,7 @@ ensure_issue_contract_defaults() {
 EOF
   fi
   normalize_acceptance_criteria_checkboxes "${file}"
+  ensure_acceptance_criteria_checkbox "${file}"
 }
 
 has_section() {
@@ -889,6 +923,39 @@ normalize_acceptance_criteria_checkboxes() {
   rm -f "${tmp_file}"
 }
 
+section_has_checkbox() {
+  local file="$1"
+  local section="$2"
+  awk -v section="${section}" '
+    BEGIN { in_section=0 }
+    $0 ~ ("^##[[:space:]]+" section "$") { in_section=1; next }
+    in_section && /^##[[:space:]]+/ { in_section=0 }
+    in_section && /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ { found=1 }
+    END { exit(found ? 0 : 1) }
+  ' "${file}"
+}
+
+ensure_acceptance_criteria_checkbox() {
+  local file="$1"
+  local tmp_file
+  section_has_checkbox "${file}" "Acceptance Criteria" && return 0
+
+  tmp_file="$(mktemp)"
+  awk '
+    BEGIN { inserted=0 }
+    /^##[[:space:]]+Acceptance Criteria[[:space:]]*$/ {
+      print
+      if (!inserted) {
+        print "- [ ] replace-with-acceptance-criterion"
+        inserted=1
+      }
+      next
+    }
+    { print }
+  ' "${file}" > "${tmp_file}"
+  mv "${tmp_file}" "${file}"
+}
+
 validate_issue_contract_gate() {
   local file="$1"
   local role="$2"
@@ -897,6 +964,106 @@ validate_issue_contract_gate() {
     return 0
   fi
   "${ISSUE_CONTRACT_CMD}" validate "${file}" "${role}"
+}
+
+count_blocked_issues() {
+  find "${BLOCKED_DIR}" -maxdepth 1 -type f -name 'I-*.md' 2>/dev/null | wc -l | awk '{print $1}'
+}
+
+last_blocked_note() {
+  local file="$1"
+  awk '
+    /^- note:[[:space:]]*/ {
+      line=$0
+      sub(/^- note:[[:space:]]*/, "", line)
+      note=line
+    }
+    END { print note }
+  ' "${file}" 2>/dev/null || true
+}
+
+is_contract_blocked_candidate() {
+  local file="$1"
+  local role="$2"
+  local note
+  note="$(last_blocked_note "${file}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "${note}" == *contract* ]]; then
+    return 0
+  fi
+  if ! "${ISSUE_CONTRACT_CMD}" validate "${file}" "${role}" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+contract_self_heal_blocked_once() {
+  local file issue_id role queue_path
+  [ "${CONTRACT_BLOCKED_SELF_HEAL_ENABLED}" = "true" ] || return 1
+
+  while IFS= read -r file; do
+    [ -f "${file}" ] || continue
+    role="$(meta_value "${file}" "role")"
+    [ -n "${role}" ] || role="developer"
+    if ! is_contract_blocked_candidate "${file}" "${role}"; then
+      continue
+    fi
+
+    issue_id="$(meta_value "${file}" "id")"
+    [ -n "${issue_id}" ] || issue_id="$(basename "${file}" .md)"
+
+    ensure_issue_contract_defaults "${file}" "${role}"
+    if ! "${ISSUE_CONTRACT_CMD}" validate "${file}" "${role}" >/dev/null 2>&1; then
+      echo "[ralph-local] contract self-heal unable to repair ${issue_id}; leaving blocked"
+      continue
+    fi
+
+    set_issue_status "${file}" "ready"
+    queue_path="${QUEUE_DIR}/${issue_id}.md"
+    if [ -f "${queue_path}" ]; then
+      queue_path="${QUEUE_DIR}/retry-${issue_id}-$(date -u +%Y%m%dT%H%M%SZ).md"
+    fi
+    mv "${file}" "${queue_path}"
+    clear_blocked_retry_count "${issue_id}"
+    echo "[ralph-local] contract self-heal requeued ${issue_id} from blocked"
+    return 0
+  done < <(find "${BLOCKED_DIR}" -maxdepth 1 -type f -name 'I-*.md' | sort)
+
+  return 1
+}
+
+run_contract_self_heal_watchdog() {
+  local now blocked_count idle_age elapsed
+  [ "${CONTRACT_BLOCKED_SELF_HEAL_ENABLED}" = "true" ] || return 1
+
+  blocked_count="$(count_blocked_issues)"
+  if ! [[ "${blocked_count}" =~ ^[0-9]+$ ]]; then
+    blocked_count=0
+  fi
+  [ "${blocked_count}" -gt 0 ] || return 1
+
+  now="$(date -u +%s)"
+  if [ "${IDLE_NO_READY_SINCE_EPOCH}" -le 0 ]; then
+    IDLE_NO_READY_SINCE_EPOCH="${now}"
+  fi
+  idle_age=$((now - IDLE_NO_READY_SINCE_EPOCH))
+  if [ "${idle_age}" -lt "${CONTRACT_BLOCKED_SELF_HEAL_IDLE_MIN_SEC}" ]; then
+    return 1
+  fi
+
+  if [ "${LAST_CONTRACT_BLOCKED_SELF_HEAL_EPOCH}" -gt 0 ]; then
+    elapsed=$((now - LAST_CONTRACT_BLOCKED_SELF_HEAL_EPOCH))
+    if [ "${elapsed}" -lt "${CONTRACT_BLOCKED_SELF_HEAL_COOLDOWN_SEC}" ]; then
+      return 1
+    fi
+  fi
+  LAST_CONTRACT_BLOCKED_SELF_HEAL_EPOCH="${now}"
+
+  if contract_self_heal_blocked_once; then
+    return 0
+  fi
+
+  echo "[ralph-local] contract self-heal watchdog ran (idle=${idle_age}s, blocked=${blocked_count}) with no repairable issue"
+  return 1
 }
 
 collect_changed_files_snapshot() {
@@ -1751,7 +1918,13 @@ while true; do
 
   next_issue="$(pick_next_issue || true)"
   if [ -z "${next_issue}" ]; then
+    if [ "${IDLE_NO_READY_SINCE_EPOCH}" -le 0 ]; then
+      IDLE_NO_READY_SINCE_EPOCH="$(date -u +%s)"
+    fi
     if requeue_retryable_blocked_issue; then
+      continue
+    fi
+    if run_contract_self_heal_watchdog; then
       continue
     fi
     if run_automanager_if_due; then
@@ -1765,6 +1938,7 @@ while true; do
     sleep "${IDLE_SLEEP_SEC}"
     continue
   fi
+  IDLE_NO_READY_SINCE_EPOCH=0
 
   issue_id="$(meta_value "${next_issue}" "id")"
   [ -n "${issue_id}" ] || issue_id="$(basename "${next_issue}" .md)"

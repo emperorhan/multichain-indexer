@@ -2,7 +2,7 @@
 
 ## Scope
 - Milestone: `M95`
-- Execution slices: `M95-S1` (`I-0501`), `M95-S2` (`I-0502`)
+- Execution slices: `M95-S1` (`I-0501`), `M95-S2` (`I-0502`), `M95-S3` (`I-0507`), `M95-S4` (`I-0508`)
 - Mandatory chains: `solana-devnet`, `base-sepolia`, `btc-testnet`
 
 ## PRD Traceability
@@ -37,6 +37,32 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
    - `cross_chain_reads=true` or `cross_chain_writes=true`
    - `peer_cursor_delta != 0` or `peer_watermark_delta != 0`
    - missing required row schema.
+
+## Reproducibility Contract (`M95-S3`)
+- `I-0507` requires replayable control-coupling counterexamples with fixed fixture metadata.
+- Required matrix file: `.ralph/reports/I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
+- Required row keys:
+  - `fixture_id`
+  - `fixture_seed`
+  - `run_id`
+  - `chain`
+  - `network`
+  - `test_id`
+  - `perturbation`
+  - `peer_chain`
+  - `cross_chain_reads`
+  - `cross_chain_writes`
+  - `peer_cursor_delta`
+  - `peer_watermark_delta`
+  - `outcome`
+  - `evidence_present`
+- Fixture replayability rule:
+  - Fixed `fixture_seed` + `run_id` identifies a deterministic replay permutation.
+  - `outcome` is `GO` only when all required slices complete with all peer deltas zero.
+  - `evidence_present` must be `true` for every required row.
+- Gate interpretation:
+  - `peer_cursor_delta` and `peer_watermark_delta` must be `0` for every required row.
+  - Any row with `cross_chain_reads=true`, `cross_chain_writes=true`, or `outcome=NO-GO` blocks `M95-S3` promotion.
 
 ## Invariants
 - `canonical_event_id_unique`
