@@ -171,12 +171,13 @@
   - `8.5`: fail-fast correctness with no failed-path cursor/watermark advancement.
   - `10`: deterministic replay and peer-isolation acceptance under one-chain perturbation.
 - C0099 lock state: `C0099-PRD-CLOSEOUT-TRANSITION`.
-- Slice execution order: `I-0546` -> `I-0551` -> `I-0552`.
+- C0099 queue adjacency: hard dependency `I-0546` -> `I-0551` -> `I-0552`.
+- Optional-refinement state is blocked as `CLOSED` until `I-0546` evidence is transitively validated by `I-0551` and `I-0552` under `DP-0115-C0099`.
 - Downstream execution pair:
   - `I-0551` (developer) — planner handoff: closeout transition contract updates and PRD traceability refresh.
   - `I-0552` (qa) — PRD closeout counterexample gate and explicit release recommendation.
 - Slice gates for this tranche:
-  - `I-0548` updates this plan with explicit C0099 lock state and `I-0546 -> I-0551 -> I-0552` dependency order.
+  - `I-0551` updates this plan with explicit C0099 lock state and `I-0546 -> I-0551 -> I-0552` dependency order.
   - `I-0551` updates `IMPLEMENTATION_PLAN.md`, `specs/m97-prd-reorg-recovery-determinism-gate.md`, and `specs/m98-prd-normalized-backup-replay-determinism-gate.md` with explicit C0099 hard blockers and PRD `8.4`/`8.5`/`10` traceability.
   - `I-0551` must align these blockers to the required `I-0545`/`I-0546` (C0098) artifacts referenced by PRD closeout evidence.
   - `I-0552` verifies required `I-0546` evidence rows are present and clean (`outcome=GO`, `evidence_present=true`, invariant flags true, and required peer deltas zero).

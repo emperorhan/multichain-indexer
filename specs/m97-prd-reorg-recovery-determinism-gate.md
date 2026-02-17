@@ -50,15 +50,17 @@
   - `.ralph/reports/I-0545-m97-s1-fork-recovery-matrix.md`
   - `.ralph/reports/I-0545-m97-s1-recovery-continuity-matrix.md`
   - `.ralph/reports/I-0546-m97-s2-peer-isolation-matrix.md`
-- Required hard-stop for every required row:
-  - `outcome=GO`
-  - `evidence_present=true`
-  - `canonical_event_id_unique_ok=true` (when present)
-  - `replay_idempotent_ok=true` (when present)
-  - `cursor_monotonic_ok=true` (when present)
-  - `signed_delta_conservation_ok=true` (when present)
-  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer deltas apply.
-- `DP-0115-C0099`: any required transition row with `outcome=NO-GO`, missing evidence, required invariant false, or non-zero peer deltas blocks optional-refinement unblocking.
+- Transition blockers for optional-refinement unlock and PRD gate alignment:
+  - `8.4` requires every required recovery continuity row in C0098 outputs to stay in `GO` and carry `evidence_present=true`.
+  - `8.5` requires failed-path and restart recovery proof rows to keep peer-chain bleed at zero where peer deltas are reported (`peer_cursor_delta=0`, `peer_watermark_delta=0`).
+  - `10` requires every required fork/recovery and peer-isolation row to preserve deterministic invariants (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`) as `true` when columns are present.
+- Required hard-stop for each required row in the C0098 evidence families:
+  - `outcome` must be `GO`.
+  - `evidence_present` must be `true`.
+  - `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, and `signed_delta_conservation_ok` must be `true` for rows exposing them.
+  - `peer_cursor_delta` and `peer_watermark_delta` must be `0` where those columns exist.
+  - For any `outcome=NO-GO`, `failure_mode` must be populated.
+- `DP-0115-C0099`: any required transition row violating the above (including missing evidence) blocks optional-refinement unblocking.
 
 ## Invariants
 - `canonical_event_id_unique`
