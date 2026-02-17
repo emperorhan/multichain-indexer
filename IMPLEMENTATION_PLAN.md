@@ -4249,11 +4249,11 @@ Completed milestones/slices:
 183. `I-0497`
 
 Active downstream queue from this plan:
-1. `I-0507` (`M95-S3`) after `I-0502`
+1. `I-0507` (`M95-S3`) after `I-0509`
 2. `I-0508` (`M95-S4`) after `I-0507`
 
 Planned next tranche queue:
-1. `I-0507` (`M95-S3`) after `I-0502`
+1. `I-0507` (`M95-S3`) after `I-0509`
 2. `I-0508` (`M95-S4`) after `I-0507`
 
 Superseded issues:
