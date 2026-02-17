@@ -313,6 +313,8 @@ func (c *Coordinator) tick(ctx context.Context) error {
 	batchSize := c.batchSize
 	if c.autoTune != nil && len(jobs) > 0 {
 		resolved, diagnostics := c.autoTune.Resolve(autotune.Inputs{
+			Chain:              c.chain.String(),
+			Network:            c.network.String(),
 			HasHeadSignal:      c.headProvider != nil,
 			HeadSequence:       fetchCutoffSeq,
 			HasMinCursorSignal: hasMinCursor,

@@ -36,6 +36,8 @@ type AutoTuneConfig struct {
 }
 
 type autoTuneInputs struct {
+	Chain              string
+	Network            string
 	HasHeadSignal      bool
 	HeadSequence       int64
 	HasMinCursorSignal bool
@@ -164,6 +166,8 @@ func makeDigest(parts ...string) string {
 func (a *autoTuneController) decisionInputsDigest(inputs autoTuneInputs) string {
 	return makeDigest(
 		"v1",
+		inputs.Chain,
+		inputs.Network,
 		formatBool(inputs.HasHeadSignal),
 		fmt.Sprintf("%d", inputs.HeadSequence),
 		formatBool(inputs.HasMinCursorSignal),
@@ -191,7 +195,7 @@ func (i autoTuneInputs) decisionEpochMsString() string {
 }
 
 func (i autoTuneInputs) hashContextString() string {
-	return fmt.Sprintf("%t|%d|%t|%d|%d|%d", i.HasHeadSignal, i.HeadSequence, i.HasMinCursorSignal, i.MinCursorSequence, i.QueueDepth, i.QueueCapacity)
+	return fmt.Sprintf("%s|%s|%t|%d|%t|%d|%d|%d", i.Chain, i.Network, i.HasHeadSignal, i.HeadSequence, i.HasMinCursorSignal, i.MinCursorSequence, i.QueueDepth, i.QueueCapacity)
 }
 
 func formatBool(value bool) string {

@@ -168,6 +168,8 @@ func TestAutoTuneController_DecisionDiagnosticsEmitChainScopedAuditFields(t *tes
 	require.NotNil(t, controller)
 
 	inputs := autoTuneInputs{
+		Chain:              "solana",
+		Network:            "devnet",
 		HasHeadSignal:      true,
 		HeadSequence:       1_000,
 		HasMinCursorSignal: true,
@@ -194,6 +196,46 @@ func TestAutoTuneController_DecisionDiagnosticsEmitChainScopedAuditFields(t *tes
 	_, d2 := controller.Resolve(inputs)
 	assert.Equal(t, controller.decisionInputsDigest(inputs), d2.LocalInputsDigest, "same decision inputs produce identical local input digest")
 	assert.Equal(t, int64(2), d2.DecisionSequence)
+}
+
+func TestAutoTuneController_DecisionHashIncludesChainScopedInputs(t *testing.T) {
+	controller := newAutoTuneController(80, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          40,
+		MaxBatchSize:          120,
+		StepUp:                20,
+		StepDown:              15,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 80,
+		QueueLowWatermarkPct:  30,
+		HysteresisTicks:       1,
+		CooldownTicks:         1,
+	})
+	require.NotNil(t, controller)
+
+	baseInputs := autoTuneInputs{
+		Chain:              "solana",
+		Network:            "devnet",
+		HasHeadSignal:      true,
+		HeadSequence:       1_000,
+		HasMinCursorSignal: true,
+		MinCursorSequence:  100,
+		QueueDepth:         2,
+		QueueCapacity:      10,
+		DecisionEpochMs:    1_700_000_000_000,
+	}
+	peerInputs := baseInputs
+	peerInputs.Chain = "base"
+	peerInputs.Network = "sepolia"
+
+	afterOutputs := controller.decisionOutputsString(100, 120, "apply_increase", 1, 0)
+
+	assert.NotEqual(
+		t, controller.decisionInputsHash(baseInputs, afterOutputs),
+		controller.decisionInputsHash(peerInputs, afterOutputs),
+	)
+	assert.NotEqual(t, controller.decisionInputsDigest(baseInputs), controller.decisionInputsDigest(peerInputs))
 }
 
 func TestAutoTuneController_CooldownPreservesOppositeStreakForDeterministicRecovery(t *testing.T) {
