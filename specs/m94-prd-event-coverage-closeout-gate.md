@@ -170,3 +170,54 @@ Required `C0106` hard-stop row constraints in `I-0575`:
 
 ## C0106 Decision Hook
 - `DP-0132-C0106`: any required `I-0575` row missing, required `GO` row with `evidence_present=false`, required hard-stop booleans false, required peer deltas non-zero, or required `NO-GO` row missing `failure_mode` is a hard NO-GO for C0106.
+
+## C0110 (`I-0588`) tranche activation
+- Focus: PRD-priority event-class + continuity implementation slice that explicitly maps unresolved PRD requirements to implementation-ready evidence contracts.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark must not advance on fail-fast correctness paths.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: chain adapter/runtime wiring remains invariant under perturbation.
+- C0110 lock state: `C0110-PRD-EVENT-COVERAGE-CONTINUITY-IMPLEMENTATION`.
+- C0110 queue handoff (`I-0587 -> I-0588 -> I-0591 -> I-0592`):
+  - `I-0588` publishes handoff state and queue adjacency.
+  - `I-0591` defines required artifacts and row schemas for the next PRD increment.
+  - `I-0592` verifies all required rows and blocks `C0110` on required hard-stop violations.
+
+### C0110 Matrix Contracts (`I-0591`)
+- Required row fields for `.ralph/reports/I-0591-m94-s1-event-coverage-matrix.md`:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `evidence_present`, `outcome`, `failure_mode`
+  - hard-stop boolean fields:
+    - `canonical_event_id_unique_ok`
+    - `replay_idempotent_ok`
+    - `cursor_monotonic_ok`
+    - `signed_delta_conservation_ok`
+    - `chain_adapter_runtime_wired_ok`
+- Required row fields for `.ralph/reports/I-0591-m94-s2-dup-suppression-matrix.md`:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `outcome`, `failure_mode`
+  - hard-stop boolean fields:
+    - `canonical_event_id_unique_ok`
+    - `replay_idempotent_ok`
+    - `cursor_monotonic_ok`
+    - `signed_delta_conservation_ok`
+    - `chain_adapter_runtime_wired_ok`
+- Required row fields for `.ralph/reports/I-0591-m94-s3-chain-isolation-matrix.md`:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+
+Required C0110 hard-stop checks for `I-0591` `GO` rows:
+- `canonical_event_id_unique_ok=true`
+- `replay_idempotent_ok=true`
+- `cursor_monotonic_ok=true`
+- `signed_delta_conservation_ok=true`
+- `chain_adapter_runtime_wired_ok=true`
+- `evidence_present=true`
+- `peer_cursor_delta=0` where `peer_cursor_delta` is present
+- `peer_watermark_delta=0` where `peer_watermark_delta` is present
+- `failure_mode` empty
+
+`outcome=NO-GO` rows must include non-empty `failure_mode`.
+
+## C0110 Decision Hook
+- `DP-0143-C0110`: C0110 remains blocked unless all required `I-0591` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) are present and satisfy `outcome=GO`, `evidence_present=true`, all required hard-stop booleans true, and required zero-peer-delta checks where these fields are required.

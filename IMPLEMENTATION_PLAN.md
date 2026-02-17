@@ -4835,3 +4835,27 @@ Superseded issues:
   - `I-0585` updates `specs/m93-prd-fail-fast-continuity-gate.md` with a `C0109` addendum covering required artifacts and machine-checkable row fields.
   - `I-0587` verifies all required `I-0585` rows with `outcome=GO`, `evidence_present=true`, hard-stop booleans true, and required `peer_cursor_delta=0` / `peer_watermark_delta=0`.
   - No runtime implementation changes are executed in this planner tranche.
+
+## C0110 (`I-0588`) tranche activation
+- Focus: PRD-priority event-class/continuity implementation slice before optional reliability refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: correctness-impacting errors must abort immediately and must not advance failed-path cursor/watermark.
+  - `10`: deterministic replay + one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: chain adapter/runtime wiring remains invariant under required perturbations.
+- C0110 lock state: `C0110-PRD-EVENT-COVERAGE-CONTINUITY-IMPLEMENTATION`.
+- C0110 queue adjacency: hard dependency `I-0587 -> I-0588 -> I-0591 -> I-0592`.
+- Downstream execution pair:
+  - `I-0591` (developer) — PRD-facing handoff and implementation slice execution for class-fee continuity artifacts and invariant-safe replays.
+  - `I-0592` (qa) — PRD counterexample/continuity gate and recommendation closure for `C0110`.
+- Slice gates for this tranche:
+  - `I-0588` updates this plan with explicit `C0110` lock state and queue order `I-0587 -> I-0588 -> I-0591 -> I-0592`.
+  - `I-0591` updates `specs/m94-prd-event-coverage-closeout-gate.md` with a `C0110` addendum that defines required artifacts, row schemas, and PRD requirement traceability.
+  - `I-0591` publishes required C0110 matrix contracts:
+    - `.ralph/reports/I-0591-m94-s1-event-coverage-matrix.md`
+    - `.ralph/reports/I-0591-m94-s2-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0591-m94-s3-chain-isolation-matrix.md`
+  - `I-0592` verifies all required `I-0591` rows for mandatory chains and blocks `C0110` on any required `NO-GO`, `evidence_present=false`, required hard-stop booleans false, or non-zero required peer deltas.
+  - No runtime implementation changes are executed in this planner tranche; only contract/spec/queue planning is executed.
