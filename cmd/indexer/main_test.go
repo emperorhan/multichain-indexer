@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 
@@ -84,6 +85,7 @@ func TestValidateRuntimeWiring_AllowsSingleTarget(t *testing.T) {
 		{
 			chain:   model.ChainSolana,
 			network: model.NetworkDevnet,
+			group:   config.RuntimeLikeGroupSolana,
 			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
 		},
 	}
@@ -96,11 +98,13 @@ func TestValidateRuntimeWiring_FailsWhenAdapterChainMismatched(t *testing.T) {
 		{
 			chain:   model.ChainSolana,
 			network: model.NetworkDevnet,
+			group:   config.RuntimeLikeGroupSolana,
 			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
 		},
 		{
 			chain:   model.ChainBase,
 			network: model.NetworkSepolia,
+			group:   config.RuntimeLikeGroupEVM,
 			adapter: &staticChainAdapter{chain: model.ChainEthereum.String()},
 		},
 	}
@@ -110,16 +114,34 @@ func TestValidateRuntimeWiring_FailsWhenAdapterChainMismatched(t *testing.T) {
 	assert.Contains(t, err.Error(), "adapter mismatch for base-sepolia")
 }
 
+func TestValidateRuntimeWiring_FailsWhenRuntimeGroupMismatched(t *testing.T) {
+	targets := []runtimeTarget{
+		{
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			group:   config.RuntimeLikeGroupSolana,
+			adapter: &staticChainAdapter{chain: model.ChainBase.String()},
+		},
+	}
+
+	err := validateRuntimeWiring(targets)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "runtime group mismatch for base-sepolia")
+	assert.Contains(t, err.Error(), fmt.Sprintf("expected=%s", config.RuntimeLikeGroupEVM))
+}
+
 func TestValidateRuntimeWiring_AllowsNonMandatoryNetworkWhenAdapterMatches(t *testing.T) {
 	targets := []runtimeTarget{
 		{
 			chain:   model.ChainSolana,
 			network: model.NetworkDevnet,
+			group:   config.RuntimeLikeGroupSolana,
 			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
 		},
 		{
 			chain:   model.ChainBase,
 			network: model.NetworkMainnet,
+			group:   config.RuntimeLikeGroupEVM,
 			adapter: &staticChainAdapter{chain: model.ChainBase.String()},
 		},
 	}
@@ -132,16 +154,19 @@ func TestValidateRuntimeWiring_FailsWhenMandatoryTargetHasDuplicateEntries(t *te
 		{
 			chain:   model.ChainSolana,
 			network: model.NetworkDevnet,
+			group:   config.RuntimeLikeGroupSolana,
 			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
 		},
 		{
 			chain:   model.ChainSolana,
 			network: model.NetworkDevnet,
+			group:   config.RuntimeLikeGroupSolana,
 			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
 		},
 		{
 			chain:   model.ChainBase,
 			network: model.NetworkSepolia,
+			group:   config.RuntimeLikeGroupEVM,
 			adapter: &staticChainAdapter{chain: model.ChainBase.String()},
 		},
 	}
@@ -156,11 +181,13 @@ func TestValidateRuntimeWiring_FailsWhenMandatoryTargetAdapterIsNil(t *testing.T
 		{
 			chain:   model.ChainSolana,
 			network: model.NetworkDevnet,
+			group:   config.RuntimeLikeGroupSolana,
 			adapter: nil,
 		},
 		{
 			chain:   model.ChainBase,
 			network: model.NetworkSepolia,
+			group:   config.RuntimeLikeGroupEVM,
 			adapter: &staticChainAdapter{chain: model.ChainBase.String()},
 		},
 	}

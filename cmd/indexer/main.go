@@ -246,6 +246,18 @@ func validateRuntimeWiring(targets []runtimeTarget) error {
 		}
 		targetsByKey[key] = target
 
+		expectedGroup := runtimeLikeGroupForChain(target.chain)
+		if expectedGroup == "" {
+			failures = append(failures, fmt.Sprintf("unsupported chain for target %s", key))
+			continue
+		}
+		if target.group == "" {
+			failures = append(failures, fmt.Sprintf("missing runtime group for target %s", key))
+		}
+		if target.group != expectedGroup {
+			failures = append(failures, fmt.Sprintf("runtime group mismatch for %s (expected=%s got=%s)", key, expectedGroup, target.group))
+		}
+
 		if target.adapter == nil {
 			failures = append(failures, fmt.Sprintf("nil adapter for target %s", key))
 			continue
@@ -262,6 +274,19 @@ func validateRuntimeWiring(targets []runtimeTarget) error {
 	}
 
 	return nil
+}
+
+func runtimeLikeGroupForChain(chain model.Chain) string {
+	switch chain {
+	case model.ChainSolana:
+		return config.RuntimeLikeGroupSolana
+	case model.ChainBase, model.ChainEthereum:
+		return config.RuntimeLikeGroupEVM
+	case model.ChainBTC:
+		return config.RuntimeLikeGroupBTC
+	default:
+		return ""
+	}
 }
 
 func selectRuntimeTargets(all []runtimeTarget, runtimeCfg config.RuntimeConfig) ([]runtimeTarget, error) {
