@@ -4760,3 +4760,37 @@ Superseded issues:
   - `I-0579` verifies all required C0107 rows for mandatory chains with `outcome=GO`, `evidence_present=true`, required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`), and required peer deltas zero where reported.
   - `I-0579` issues explicit GO/NO-GO recommendation for C0107 and blocks continuation on any required `NO-GO`, `evidence_present=false`, required booleans false, required peer deltas non-zero, or missing `failure_mode` on required `NO-GO` rows.
   - No runtime implementation changes are executed in this planner slice.
+
+## C0107 (`I-0578`) tranche activation
+- Focus: PRD-priority continuity and adapter-wiring revalidation after residual counterexample stabilization.
+- Focused unresolved PRD requirements:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `8.5`: failed-path cursor/watermark progression is forbidden.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: adapter wiring invariance under required perturbations.
+- C0107 lock state: `C0107-PRD-CONTINUITY-REVALIDATION`.
+- C0107 queue adjacency: hard dependency `I-0576 -> I-0578 -> I-0579`.
+- Downstream execution pair:
+  - `I-0578` (developer) — PRD/spec contract handoff for residual continuity/adapter-wiring validation.
+  - `I-0579` (qa) — PRD continuity and chain-isolation counterexample gate on required artifacts.
+- Slice gates for this tranche:
+  - `I-0578` updates `IMPLEMENTATION_PLAN.md` with this C0107 lock state and explicit `I-0576 -> I-0578 -> I-0579` queue order.
+  - `I-0578` updates `specs/m96-prd-asset-volatility-closeout.md` with explicit C0107 counterexample evidence contracts and PRD traceability for `R1`, `R2`, `8.5`, `10`, and `chain_adapter_runtime_wired`.
+  - `I-0578` publishes:
+    - `.ralph/reports/I-0578-m96-s1-coverage-revalidation-matrix.md`
+    - `.ralph/reports/I-0578-m96-s2-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0578-m96-s3-chain-isolation-matrix.md`
+  - C0107 hard-stop checks for all required `GO` rows in `I-0578` artifacts:
+    - `canonical_event_id_unique_ok=true`
+    - `replay_idempotent_ok=true`
+    - `cursor_monotonic_ok=true`
+    - `signed_delta_conservation_ok=true`
+    - `chain_adapter_runtime_wired_ok=true`
+    - `evidence_present=true`
+    - `outcome=GO`
+    - `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer columns are present.
+    - `failure_mode` must be empty for `GO`.
+  - Required hard-stop `NO-GO` rows in `I-0578` artifacts must include non-empty `failure_mode`.
+  - `I-0579` verifies all required `I-0578` rows and blocks promotion on any required `NO-GO`, evidence gap, required hard-stop false, or peer bleed.
+  - No runtime implementation changes are executed in this tranche.

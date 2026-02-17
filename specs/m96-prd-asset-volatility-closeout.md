@@ -131,3 +131,58 @@ Required enum/value constraints:
   - `peer_watermark_delta=0`
   - `failure_mode` is non-empty for `outcome=NO-GO`.
 - `DP-0118-C0102`: C0102 remains blocked until required rows in all three artifacts are `GO`, evidence is complete, invariants are true, and peer deltas are zero where required.
+
+### C0107 (`I-0578`) handoff: continuity and adapter-wiring revalidation
+- PRD traceability scope:
+  - `R1`
+  - `R2`
+  - `8.5`
+  - `10`
+  - `chain_adapter_runtime_wired`
+- Scope: mandatory-chain C0107 continuity continuity must remain duplicate-free, deterministic under perturbation, and one-chain isolated for adapter-wired paths.
+- Required evidence artifacts:
+  - `.ralph/reports/I-0578-m96-s1-coverage-revalidation-matrix.md`
+  - `.ralph/reports/I-0578-m96-s2-dup-suppression-matrix.md`
+  - `.ralph/reports/I-0578-m96-s3-chain-isolation-matrix.md`
+
+#### C0107 Matrix Contracts (`I-0578`)
+- `I-0578-m96-s1-coverage-revalidation-matrix.md` required row keys:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0578-m96-s2-dup-suppression-matrix.md` required row keys:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0578-m96-s3-chain-isolation-matrix.md` required row keys:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+
+#### C0107 Hard-stop Rules
+- Required `outcome=GO` row contract for required artifacts:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+- For required peer/isolation rows where peer deltas are present:
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+- Required `outcome=NO-GO` rows must include non-empty `failure_mode`.
+
+#### C0107 Mandatory C0107 class rows
+| chain | network | class_path |
+|---|---|---|
+| `solana` | `devnet` | `TRANSFER` |
+| `solana` | `devnet` | `MINT` |
+| `solana` | `devnet` | `BURN` |
+| `solana` | `devnet` | `FEE` |
+| `base` | `sepolia` | `TRANSFER` |
+| `base` | `sepolia` | `MINT` |
+| `base` | `sepolia` | `BURN` |
+| `base` | `sepolia` | `fee_execution_l2` |
+| `base` | `sepolia` | `fee_data_l1` |
+| `btc` | `testnet` | `TRANSFER:vin` |
+| `btc` | `testnet` | `TRANSFER:vout` |
+| `btc` | `testnet` | `miner_fee` |
+
+#### C0107 Decision Hook
+- `DP-0138-C0107` blocks promotion if any required `I-0578` row fails the hard-stop contract above.
