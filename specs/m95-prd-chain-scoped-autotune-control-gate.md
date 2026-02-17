@@ -40,8 +40,11 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
 
 ## Reproducibility Contract (`M95-S3`)
 - `I-0507` requires replayable control-coupling counterexamples with fixed fixture metadata.
-- Required matrix file: `.ralph/reports/I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
-- Required row keys:
+- Required matrix files:
+  - `.ralph/reports/I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
+  - `.ralph/reports/I-0507-m95-s3-replay-continuity-matrix.md`
+  - `.ralph/reports/I-0508-m95-s4-qa-repro-gate-matrix.md`
+- Control-coupling reproducibility row keys:
   - `fixture_id`
   - `fixture_seed`
   - `run_id`
@@ -56,13 +59,50 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
   - `peer_watermark_delta`
   - `outcome`
   - `evidence_present`
+- Replay-continuity row keys:
+  - `fixture_id`
+  - `fixture_seed`
+  - `run_id`
+  - `test_id`
+  - `chain`
+  - `network`
+  - `perturbation`
+  - `peer_chain`
+  - `replay_phase`
+  - `cross_chain_reads`
+  - `cross_chain_writes`
+  - `peer_cursor_delta`
+  - `peer_watermark_delta`
+  - `canonical_event_id_unique_ok`
+  - `replay_idempotent_ok`
+  - `cursor_monotonic_ok`
+  - `signed_delta_conservation_ok`
+  - `outcome`
+  - `evidence_present`
+- QA gate row keys:
+  - `check`
+  - `scope`
+  - `required_artifacts_present`
+  - `cross_chain_reads_ok`
+  - `cross_chain_writes_ok`
+  - `peer_cursor_delta_ok`
+  - `peer_watermark_delta_ok`
+  - `replay_continuity_ok`
+  - `reproducible_fixture_ok`
+  - `outcome`
+  - `evidence_present`
+  - `recommendation`
 - Fixture replayability rule:
   - Fixed `fixture_seed` + `run_id` identifies a deterministic replay permutation.
   - `outcome` is `GO` only when all required slices complete with all peer deltas zero.
   - `evidence_present` must be `true` for every required row.
+- Replay reproducibility rule:
+  - In replay rows, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, and `signed_delta_conservation_ok` must all be `true`.
 - Gate interpretation:
   - `peer_cursor_delta` and `peer_watermark_delta` must be `0` for every required row.
-  - Any row with `cross_chain_reads=true`, `cross_chain_writes=true`, or `outcome=NO-GO` blocks `M95-S3` promotion.
+  - `replay_phase` rows must keep all required invariant checks true.
+  - Any row with `cross_chain_reads=true`, `cross_chain_writes=true`, `outcome=NO-GO`, or any required invariant false blocks promotion.
+  - `I-0508` gate `recommendation=GO` and all checks true are required for `M95-S4` promotion.
 
 ## Invariants
 - `canonical_event_id_unique`

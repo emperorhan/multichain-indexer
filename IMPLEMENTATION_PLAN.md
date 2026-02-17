@@ -3786,6 +3786,10 @@ PRD traceability:
 1. `M95-S1` (`I-0501`): define PRD-traceable chain-scoped control contracts and control-metric inventory requirements in `IMPLEMENTATION_PLAN.md` and `specs/m95-prd-chain-scoped-autotune-control-gate.md`.
 2. `M95-S2` (`I-0502`): execute QA counterexample gate for control bleed and control-triggered progress bleed across mandatory chains.
 3. `M95-S3` (`I-0507`): add reproducibility contracts for re-runnable chain-coupling fixtures (`seed`, `run_id`, `evidence_present`, `outcome`) and cross-chain bleed invariants in `IMPLEMENTATION_PLAN.md` and `specs/m95-prd-chain-scoped-autotune-control-gate.md`.
+   - Requires reproducibility artifacts:
+     - `.ralph/reports/I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
+     - `.ralph/reports/I-0507-m95-s3-replay-continuity-matrix.md`
+     - `.ralph/reports/I-0508-m95-s4-qa-repro-gate-matrix.md`
 4. `M95-S4` (`I-0508`): execute reproducibility QA gate for deterministic replay, fixture drift checks, and explicit `GO`/`NO-GO` promotion recommendation for `M95`.
 
 #### Definition Of Done
