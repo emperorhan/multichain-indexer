@@ -441,3 +441,73 @@ Required PRD hard-stop decision hook:
 
 #### C0118 Decision Hook
 - `DP-0153-C0118`: `C0118` remains blocked unless all required `I-0622` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) in the three C0118 artifacts are present, satisfy hard-stop booleans above, and peer deltas are zero where required.
+
+### C0122 (`I-0638`) implementation/recovery continuity handoff
+- PRD traceability focus:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility coverage.
+  - `R3`: chain-family fee completeness.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `reorg_recovery_deterministic`: deterministic recovery/reorg continuity.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring invariance under required perturbations.
+  - `solana_fee_event_coverage`: explicit Solana fee debit class row.
+  - `base_fee_split_coverage`: explicit Base execution-vs-data fee split classes.
+- C0122 lock state: `C0122-PRD-ASSET-VOLATILITY-RECOVERY-COUNTEREXAMPLE-HARDENING`.
+- C0122 queue adjacency: hard dependency `I-0637 -> I-0638 -> I-0639`.
+- Required artifacts:
+  - `.ralph/reports/I-0638-m96-s1-coverage-recovery-hardening-matrix.md`
+  - `.ralph/reports/I-0638-m96-s2-dup-suppression-recovery-matrix.md`
+  - `.ralph/reports/I-0638-m96-s3-recovery-continuity-matrix.md`
+
+#### C0122 mandatory class-path coverage rows
+| chain | network | class_path |
+|---|---|---|
+| `solana` | `solana-devnet` | `TRANSFER` |
+| `solana` | `solana-devnet` | `MINT` |
+| `solana` | `solana-devnet` | `BURN` |
+| `solana` | `solana-devnet` | `FEE` |
+| `base` | `base-sepolia` | `TRANSFER` |
+| `base` | `base-sepolia` | `MINT` |
+| `base` | `base-sepolia` | `BURN` |
+| `base` | `base-sepolia` | `fee_execution_l2` |
+| `base` | `base-sepolia` | `fee_data_l1` |
+| `btc` | `btc-testnet` | `TRANSFER:vin` |
+| `btc` | `btc-testnet` | `TRANSFER:vout` |
+| `btc` | `btc-testnet` | `miner_fee` |
+
+#### C0122 required perturbation axis
+- `canonical_range_replay`
+- `replay_order_swap`
+- `one_chain_restart_perturbation`
+- `one_block_reorg`
+- `multi_block_reorg`
+- `finalized_to_pending_crossover`
+- `restart_from_rollback_boundary`
+
+#### C0122 matrix contracts (`I-0638`)
+- `I-0638-m96-s1-coverage-recovery-hardening-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fork_type`, `recovery_permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0638-m96-s2-dup-suppression-recovery-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0638-m96-s3-recovery-continuity-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+
+#### C0122 hard-stop checks
+- Required `outcome=GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `solana_fee_event_coverage_ok=true`
+  - `base_fee_split_coverage_ok=true`
+  - `reorg_recovery_deterministic_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `failure_mode` is empty
+- Required `outcome=NO-GO` rows must include non-empty `failure_mode`.
+
+#### C0122 decision hook
+- `DP-0157-C0122`: C0122 remains blocked unless all required `I-0638` rows for mandatory chains in the three artifacts are present with required `GO` hard-stop fields true, `evidence_present=true`, required peer deltas zero, and non-empty `failure_mode` for required `NO-GO` rows.

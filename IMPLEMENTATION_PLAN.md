@@ -5222,3 +5222,31 @@ Superseded issues:
     - `peer_cursor_delta=0` and `peer_watermark_delta=0` where one-chain isolation is required.
   - Any required `outcome=NO-GO`, `evidence_present=false`, or required-peer-delta violations block C0121.
 - No runtime implementation changes are executed in this plan slice.
+
+## C0122 (`I-0638`) tranche activation
+- Focus: PRD-priority asset-volatility recovery continuity and fee-completeness hardening before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `reorg_recovery_deterministic`: deterministic recovery/reorg continuity.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring invariance under perturbation.
+- C0122 lock state: `C0122-PRD-ASSET-VOLATILITY-RECOVERY-COUNTEREXAMPLE-HARDENING`.
+- C0122 queue adjacency: hard dependency `I-0637 -> I-0638 -> I-0639`.
+- Downstream execution pair:
+  - `I-0638` (developer) — PRD handoff of `m96` matrix contracts and evidence-binding paths for mandatory chains.
+  - `I-0639` (qa) — PRD counterexample gate for required continuity/recovery artifacts and peer-isolation recommendation.
+- Slice gates for this tranche:
+  - `I-0638` updates `specs/m96-prd-asset-volatility-closeout.md` with a `C0122` addendum that binds the requirements above to explicit artifacts and required row schemas.
+  - `I-0638` publishes required artifact contract paths:
+    - `.ralph/reports/I-0638-m96-s1-coverage-recovery-hardening-matrix.md`
+    - `.ralph/reports/I-0638-m96-s2-dup-suppression-recovery-matrix.md`
+    - `.ralph/reports/I-0638-m96-s3-recovery-continuity-matrix.md`
+  - Required row schemas for C0122 include:
+    - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fork_type`, `recovery_permutation`, `class_path`, `peer_chain`
+    - `canonical_id_count` for duplication families
+    - required hard-stop booleans: `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`
+    - `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+  - `I-0639` verifies required `I-0638` rows for all mandatory chains and blocks `C0122` on any required `NO-GO`, `evidence_present=false`, false hard-stop booleans, non-zero required peer deltas, or missing `failure_mode` on `NO-GO` rows.
+  - No runtime implementation changes are executed in this planner tranche; planning/spec updates only.
