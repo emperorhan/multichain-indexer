@@ -1483,6 +1483,7 @@ Role: Developer
 - Update tests/docs as required by acceptance criteria.
 - Respect issue contract boundaries (`allowed_paths`, `denied_paths`, `max_diff_scope`).
 - Preserve declared invariants in `invariants`.
+- You MUST modify at least one production code file (under cmd/, internal/, pkg/, proto/, or sidecar/src/). Spec-only or doc-only changes will be rejected.
 EOF
       ;;
   esac

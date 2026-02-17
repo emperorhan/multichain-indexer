@@ -272,6 +272,7 @@ evidence_required: true
 - Update \`IMPLEMENTATION_PLAN.md\` and/or \`specs/*\` with PRD-traceable milestone/slice updates.
 - Create at least one downstream developer issue and one downstream qa issue in \`.ralph/issues/\`.
 - Emit planner contract JSON at \`.ralph/plans/plan-output-${planner_issue_id}.json\`.
+- Ensure downstream developer issues target actual code implementation, not documentation-only tasks.
 
 ## Out of Scope
 - Direct production runtime implementation in this planner issue.
@@ -279,6 +280,7 @@ evidence_required: true
 ## Acceptance Criteria
 - [ ] Updated milestone and acceptance gates are committed in plan/spec docs with explicit PRD requirement traceability.
 - [ ] At least one developer issue and one qa issue are created with explicit invariants and diff bounds.
+- [ ] Developer issues created by this planner MUST require production code changes (not just spec/doc updates).
 - [ ] Planner contract JSON exists and passes schema validation.
 - [ ] Validation remains green: \`make test\`, \`make test-sidecar\`, \`make lint\`.
 
@@ -319,12 +321,14 @@ evidence_required: true
 - Execute one concrete planner-selected slice that explicitly traces to unresolved PRD requirement(s).
 - Add/extend deterministic tests proving the increment.
 - Update docs/specs only when needed to keep behavior auditable.
+- You MUST modify production code files (Go or TypeScript). Spec/doc-only changes are not acceptable for developer issues.
 
 ## Out of Scope
 - Broad refactors unrelated to the selected reliability slice.
 
 ## Acceptance Criteria
 - [ ] The selected PRD-priority increment is implemented with bounded diff scope.
+- [ ] At least one file under \`cmd/\`, \`internal/\`, \`pkg/\`, \`proto/\`, or \`sidecar/src/\` is modified with production code changes.
 - [ ] New/updated tests fail before and pass after the change.
 - [ ] No invariant regression across mandatory-chain canonical indexing paths (Solana/Base/BTC).
 - [ ] Validation passes: \`make test\`, \`make test-sidecar\`, \`make lint\`.
