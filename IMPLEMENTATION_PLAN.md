@@ -207,6 +207,8 @@ Execution queue (dependency-ordered):
    - Requires explicit `solana`/`base` mint/burn evidence artifacts and replay continuity checks before PRD closeout promotion.
 189. `I-0501` (`M95-S1`) PRD R9 chain-scoped control and throughput coupling gate
 190. `I-0502` (`M95-S2`) QA counterexample gate for chain-scoped auto-tune control isolation and cross-coupling verification
+191. `I-0507` (`M95-S3`) PRD `R9` reproducibility and fixture-determinism gate contract for chain-scoped control coupling
+192. `I-0508` (`M95-S4`) QA reproducibility gate for deterministic control-coupling evidence and replay continuity
 
 ## Global Verification Contract
 Every implementation slice must pass:
@@ -3761,29 +3763,34 @@ PRD traceability:
 - Gate: class-level coverage can hide path omission if class partitioning is incomplete or unguarded.
 - Fallback: enforce `DP-0105-M94` by failing `M94` promotion until Solana/Base `mint`/`burn` debt-clearance artifacts are present and replay continuity evidence confirms zero drift.
 
-### M95. PRD-Priority Chain-Scoped Throughput Control Isolation Gate Tranche C0086 (P0, Active)
+### M95. PRD-Priority Chain-Scoped Throughput Control Isolation + Reproducibility Gate Tranche C0086/C0087 (P0, Active)
 
 #### Objective
-Close remaining PRD `R9` obligations by proving chain-scoped auto-tune/control signals do not couple mandatory chains, while preserving PRD identity/replay invariants and fail-fast safety under control perturbation.
+Close remaining PRD `R9` obligations by proving chain-scoped auto-tune/control signals do not couple mandatory chains, and close the reproducibility follow-on by making control-coupling evidence deterministic and replay-safe before optional reliability work.
 
 PRD traceability:
 - `R9`: chain-scoped adaptive throughput control.
 - `9.4`: parity/continuity validation principles.
 - `10`: deterministic replay and no cross-chain cursor bleed acceptance criteria.
+- Unresolved C0087 reproducibility gap: deterministic re-runnable chain-coupling fixtures, evidence manifests, and explicit GO/NO-GO gates.
 
 #### Entry Gate
 - `M94` exit gate green with PRD closeout evidence for event coverage and fail-fast continuity.
 - Existing control telemetry and control-surface contracts for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) are documented and reviewable.
 - `I-0501` must publish a deterministic control-metric inventory and evidence contract in `specs/m95-prd-chain-scoped-autotune-control-gate.md` before `M95-S2`.
+- `I-0502` must define reproducible perturbation fixtures plus machine-readable counterexample schema before `M95-S3`.
 
 #### Slices
 1. `M95-S1` (`I-0501`): define PRD-traceable chain-scoped control contracts and control-metric inventory requirements in `IMPLEMENTATION_PLAN.md` and `specs/m95-prd-chain-scoped-autotune-control-gate.md`.
 2. `M95-S2` (`I-0502`): execute QA counterexample gate for control bleed and control-triggered progress bleed across mandatory chains.
+3. `M95-S3` (`I-0507`): add reproducibility contracts for re-runnable chain-coupling fixtures (`seed`, `run_id`, `evidence_present`, `outcome`) and cross-chain bleed invariants in `IMPLEMENTATION_PLAN.md` and `specs/m95-prd-chain-scoped-autotune-control-gate.md`.
+4. `M95-S4` (`I-0508`): execute reproducibility QA gate for deterministic replay, fixture drift checks, and explicit `GO`/`NO-GO` promotion recommendation for `M95`.
 
 #### Definition Of Done
 1. Mandatory-chain control contracts make explicit that auto-tune/control decisions for one chain consume only chain-local telemetry and do not write/drive another chain’s cursor/watermark behavior.
-2. Control coupling counterexample matrix and evidence requirements are defined with deterministic reproducibility under peer-chain progress and explicit machine-checkable row contracts for `cross_chain_reads`, `cross_chain_writes`, and peer cursor/watermark deltas.
-3. PRD acceptance contract remains `make test`, `make test-sidecar`, `make lint`.
+2. Reproducibility closure slice (`M95-S3`) and gate (`M95-S4`) are PRD-traceable with explicit deterministic fixture schema, fixed replay boundaries, and `evidence_present`/`outcome` machine semantics.
+3. Control coupling counterexample and reproducibility matrices are defined with deterministic row contracts for `cross_chain_reads`, `cross_chain_writes`, `peer_cursor_delta`, `peer_watermark_delta`, and fixture metadata (`fixture_id`, `fixture_seed`, `run_id`).
+4. PRD acceptance contract remains `make test`, `make test-sidecar`, `make lint`.
 4. Cross-chain control perturbation cases define measurable `GO`/`NO-GO` outcomes for `M95` via the schema in the chain-scoped control spec.
 5. Required evidentiary artifacts are defined with deterministic row schema and stored under `.ralph/reports/`.
 
@@ -3791,24 +3798,31 @@ PRD traceability:
 1. Deterministic control-metric matrix asserting chain-local decision inputs for `solana`, `base`, and `btc`, with row keys and checks:  
    `chain`, `network`, `cycle_seq`, `decision_epoch_ms`, `decision_inputs_hash`, `decision_outputs`, `cross_chain_reads`, `cross_chain_writes`, `peer_cursor_delta`, `peer_watermark_delta`.
 2. One-chain control perturbation fixture families with peer-chain progression asserting `0` cross-chain control/cursor bleed and `0` failed-path cursor/watermark progression.
-3. Replay continuity assertions preserve `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`, and `signed_delta_conservation`.
-4. QA evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M95`.
-5. `I-0501` evidence artifacts:
+3. Reproducibility matrix rows include fixture provenance and deterministic replay keys: `fixture_id`, `fixture_seed`, `run_id`, `evidence_present`, and `outcome` in addition to control-coupling counters.
+4. Replay continuity assertions preserve `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `chain_adapter_runtime_wired`, and `signed_delta_conservation`.
+5. QA evidence report under `.ralph/reports/` with explicit `GO`/`NO-GO` recommendation for `M95`.
+6. `I-0501` evidence artifacts:
    - `.ralph/reports/I-0501-m95-s1-control-scope-metric-matrix.md`
    - `.ralph/reports/I-0501-m95-s1-cross-coupling-matrix.md`
    - `.ralph/reports/I-0501-m95-s1-control-perturbation-continuity-matrix.md`
+7. `I-0507`/`I-0508` reproducibility artifacts:
+   - `.ralph/reports/I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
+   - `.ralph/reports/I-0507-m95-s3-replay-continuity-matrix.md`
+   - `.ralph/reports/I-0508-m95-s4-qa-repro-gate-matrix.md`
 
 #### Exit Gate (Measurable)
 1. `0` cross-chain control bleed findings in deterministic control perturbation matrices for mandatory chains.
 2. `0` failed-path cursor/watermark progression findings in control perturbation matrices.
-3. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
-4. Artifact schema checks pass for `I-0501` matrices (required row keys and `NO-GO` conditions absent):
+3. `I-0507` defines reproducible contract tables with explicit `evidence_present=true`, `outcome=GO` entries and stable fixture metadata in required report rows.
+4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
+5. Artifact schema checks pass for `I-0501` matrices (required row keys and `NO-GO` conditions absent):
    - `cross_chain_reads=false`
    - `cross_chain_writes=false`
    - `peer_cursor_delta=0`
    - `peer_watermark_delta=0`
    - perturbation row outcome must include `outcome=GO`.
-5. Validation commands pass.
+6. Reproducibility gate artifacts for `I-0507` and `I-0508` pass schema checks with deterministic `fixture_id`, `fixture_seed`, and `run_id` and promotion-ready `NO-GO` absence.
+7. Validation commands pass.
 
 #### Risk Gate + Fallback
 - Gate: PRD `R9` can become untestable if control coupling checks only cover nominal telemetry and omit adversarial perturbation.
@@ -4228,12 +4242,12 @@ Completed milestones/slices:
 183. `I-0497`
 
 Active downstream queue from this plan:
-1. `I-0501` (`M95-S1`) after `M94` exit gate
-2. `I-0502` (`M95-S2`) after `I-0501`
+1. `I-0507` (`M95-S3`) after `I-0502`
+2. `I-0508` (`M95-S4`) after `I-0507`
 
 Planned next tranche queue:
-1. `I-0501` (`M95-S1`) after `M94` exit gate
-2. `I-0502` (`M95-S2`) after `I-0501`
+1. `I-0507` (`M95-S3`) after `I-0502`
+2. `I-0508` (`M95-S4`) after `I-0507`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
