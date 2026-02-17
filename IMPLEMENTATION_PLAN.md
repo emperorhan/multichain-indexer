@@ -5000,5 +5000,35 @@ Superseded issues:
       - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
     - `I-0611-m96-s3-replay-continuity-matrix.md` required row keys:
       - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
-  - `I-0612` verifies all required `I-0611` rows for mandatory chains and blocks `C0115` on any required `outcome=NO-GO`, `evidence_present=false`, hard-stop invariant false, or non-zero required peer deltas.
+- `I-0612` verifies all required `I-0611` rows for mandatory chains and blocks `C0115` on any required `outcome=NO-GO`, `evidence_present=false`, hard-stop invariant false, or non-zero required peer deltas.
   - No runtime implementation changes are executed in this planner tranche; planning/spec handoff updates only.
+
+## C0116 (`I-0613`) tranche activation
+- Focus: PRD-priority reorg/recovery continuity revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R4`: deterministic replay.
+  - `8.4`: failed-path replay continuity from last committed boundary.
+  - `8.5`: correctness-impacting failure paths must not advance cursor/watermark.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `reorg_recovery_deterministic`: rollback/replay behavior must remain deterministic.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring must remain invariant under recovery perturbation.
+- C0116 lock state: `C0116-PRD-REORG-FAILFAST-RECOVERY-REVALIDATION`.
+- C0116 queue adjacency: hard dependency `I-0613 -> I-0614 -> I-0615`.
+- Downstream execution pair:
+  - `I-0614` (developer) — PRD handoff and evidence contract definition for the `C0116` revalidation slice.
+  - `I-0615` (qa) — PRD counterexample gate and recommendation closure for `C0116`.
+- Slice gates for this tranche:
+  - `I-0614` updates this plan with explicit `C0116` lock state and queue order `I-0613 -> I-0614 -> I-0615`.
+  - `I-0614` updates `specs/m97-prd-reorg-recovery-determinism-gate.md` with a `C0116` addendum that binds `R4`, `8.4`, `8.5`, `10`, `reorg_recovery_deterministic`, and `chain_adapter_runtime_wired` to required artifacts.
+  - `I-0614` defines required artifacts for this handoff:
+    - `.ralph/reports/I-0614-m97-s1-recovery-continuity-matrix.md`
+    - `.ralph/reports/I-0614-m97-s2-recovery-reproducibility-matrix.md`
+    - `.ralph/reports/I-0614-m97-s3-one-chain-isolation-matrix.md`
+  - `I-0615` verifies all required `I-0614` rows for mandatory chains and blocks `C0116` on any required:
+    - `outcome=NO-GO`
+    - `evidence_present=false`
+    - required hard-stop booleans false for `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`
+    - `peer_cursor_delta != 0` or `peer_watermark_delta != 0` in required peer-isolation rows.
+  - No runtime implementation changes are executed in this planner tranche; planning/spec handoff updates only.
+- Hard-stop decision hook prepared in C0116:
+  - `DP-0151-C0116` keeps `I-0614` blocked until all required `I-0614` rows are present and satisfy the hard-stop conditions.

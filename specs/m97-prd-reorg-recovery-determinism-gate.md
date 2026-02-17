@@ -170,3 +170,42 @@
 
 ### C0111 Decision Hook
 - `DP-0144-C0111`: `C0111` remains blocked unless all required `I-0594` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) in all three artifacts are `outcome=GO`, `evidence_present=true`, required hard-stop booleans true, and required peer deltas are zero where fields are present.
+
+## C0116 (`I-0614`) addendum
+- Focused PRD requirements from `PRD.md`:
+  - `R4`: deterministic replay.
+  - `8.4`: failed-path replay continuity from last committed cursor/watermark boundary.
+  - `8.5`: fail-fast errors must abort immediately and may not advance cursor/watermark.
+  - `10`: deterministic replay under one-chain perturbation.
+  - `reorg_recovery_deterministic`: rollback/recovery remains deterministic under reorg/restart perturbations.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring remains invariant under required recovery counterexamples.
+- C0116 lock state: `C0116-PRD-REORG-FAILFAST-RECOVERY-REVALIDATION`.
+- C0116 queue adjacency: hard dependency `I-0613 -> I-0614 -> I-0615`.
+- C0116 artifact contracts (`I-0614`) are required:
+  - `.ralph/reports/I-0614-m97-s1-recovery-continuity-matrix.md`
+  - `.ralph/reports/I-0614-m97-s2-recovery-reproducibility-matrix.md`
+  - `.ralph/reports/I-0614-m97-s3-one-chain-isolation-matrix.md`
+- Required row keys for `I-0614-m97-s1-recovery-continuity-matrix.md`:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fork_type`, `recovery_permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required row keys for `I-0614-m97-s2-recovery-reproducibility-matrix.md`:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `recovery_permutation`, `class_path`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required row keys for `I-0614-m97-s3-one-chain-isolation-matrix.md`:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Required perturbation classes for required rows:
+  - `one_block_reorg`
+  - `multi_block_reorg`
+  - `canonical_range_replay`
+  - `finalized_to_pending_crossover`
+  - `restart_from_rollback_boundary`
+- Hard-stop row contract for required rows:
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `reorg_recovery_deterministic_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `evidence_present=true`
+  - `outcome=GO`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where fields are required
+  - `failure_mode` empty on `GO` and non-empty on `NO-GO`
+- `DP-0151-C0116`: `C0116` remains blocked unless all required `I-0614` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) are present and satisfy `GO` + hard-stop constraints above.
