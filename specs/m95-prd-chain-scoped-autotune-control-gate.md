@@ -44,41 +44,43 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
   - `.ralph/reports/I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
   - `.ralph/reports/I-0507-m95-s3-replay-continuity-matrix.md`
   - `.ralph/reports/I-0508-m95-s4-qa-repro-gate-matrix.md`
-- Control-coupling reproducibility row keys:
-  - `fixture_id`
-  - `fixture_seed`
-  - `run_id`
-  - `chain`
-  - `network`
-  - `test_id`
-  - `perturbation`
-  - `peer_chain`
-  - `cross_chain_reads`
-  - `cross_chain_writes`
-  - `peer_cursor_delta`
-  - `peer_watermark_delta`
-  - `outcome`
-  - `evidence_present`
-- Replay-continuity row keys:
-  - `fixture_id`
-  - `fixture_seed`
-  - `run_id`
-  - `test_id`
-  - `chain`
-  - `network`
-  - `perturbation`
-  - `peer_chain`
-  - `replay_phase`
-  - `cross_chain_reads`
-  - `cross_chain_writes`
-  - `peer_cursor_delta`
-  - `peer_watermark_delta`
-  - `canonical_event_id_unique_ok`
-  - `replay_idempotent_ok`
-  - `cursor_monotonic_ok`
-  - `signed_delta_conservation_ok`
-  - `outcome`
-  - `evidence_present`
+- Control-coupling reproducibility row keys (re-runnable from fixed `fixture_seed` + `run_id`):
+  - `fixture_id` (string)
+  - `fixture_seed` (string)
+  - `run_id` (string)
+  - `chain` (string)
+  - `network` (string)
+  - `test_id` (string)
+  - `perturbation` (string)
+  - `peer_chain` (string)
+  - `cross_chain_reads` (boolean)
+  - `cross_chain_writes` (boolean)
+  - `peer_cursor_delta` (integer)
+  - `peer_watermark_delta` (integer)
+  - `outcome` (enum: `GO`/`NO-GO`)
+  - `evidence_present` (boolean)
+  - `failure_mode` (string, required when `outcome=NO-GO`; blank on `GO`)
+- Replay-continuity row keys (fixed seed/replay permutation):
+  - `fixture_id` (string)
+  - `fixture_seed` (string)
+  - `run_id` (string)
+  - `test_id` (string)
+  - `chain` (string)
+  - `network` (string)
+  - `perturbation` (string)
+  - `peer_chain` (string)
+  - `replay_phase` (string)
+  - `cross_chain_reads` (boolean)
+  - `cross_chain_writes` (boolean)
+  - `peer_cursor_delta` (integer)
+  - `peer_watermark_delta` (integer)
+  - `canonical_event_id_unique_ok` (boolean)
+  - `replay_idempotent_ok` (boolean)
+  - `cursor_monotonic_ok` (boolean)
+  - `signed_delta_conservation_ok` (boolean)
+  - `outcome` (enum: `GO`/`NO-GO`)
+  - `evidence_present` (boolean)
+  - `failure_mode` (string, required when `outcome=NO-GO`; blank on `GO`)
 - QA gate row keys:
   - `check`
   - `scope`
@@ -101,7 +103,7 @@ After PRD core gates `M91`-`M94`, the remaining hardening is an explicit chain-s
 - Gate interpretation:
   - `peer_cursor_delta` and `peer_watermark_delta` must be `0` for every required row.
   - `replay_phase` rows must keep all required invariant checks true.
-  - Any row with `cross_chain_reads=true`, `cross_chain_writes=true`, `outcome=NO-GO`, or any required invariant false blocks promotion.
+  - Any row with `cross_chain_reads=true`, `cross_chain_writes=true`, `outcome=NO-GO`, missing/blank `failure_mode` on `NO-GO`, or any required invariant false blocks promotion.
   - `I-0508` gate `recommendation=GO` and all checks true are required for `M95-S4` promotion.
 
 ## Invariants

@@ -3790,6 +3790,7 @@ PRD traceability:
      - `.ralph/reports/I-0507-m95-s3-control-coupling-reproducibility-matrix.md`
      - `.ralph/reports/I-0507-m95-s3-replay-continuity-matrix.md`
      - `.ralph/reports/I-0508-m95-s4-qa-repro-gate-matrix.md`
+   - S3 PRD acceptance posture: traceable to `R9`, `9.4`, and `10` only when every required row with matching `fixture_seed` + `run_id` returns `evidence_present=true`, `outcome=GO`, and zero `peer_*` deltas.
 4. `M95-S4` (`I-0508`): execute reproducibility QA gate for deterministic replay, fixture drift checks, and explicit `GO`/`NO-GO` promotion recommendation for `M95`.
 
 #### Definition Of Done
@@ -3819,7 +3820,7 @@ PRD traceability:
 #### Exit Gate (Measurable)
 1. `0` cross-chain control bleed findings in deterministic control perturbation matrices for mandatory chains.
 2. `0` failed-path cursor/watermark progression findings in control perturbation matrices.
-3. `I-0507` defines reproducible contract tables with explicit `evidence_present=true`, `outcome=GO` entries and stable fixture metadata in required report rows.
+3. `I-0507` defines reproducible contract tables with explicit `evidence_present=true`, `outcome=GO` entries and stable fixture metadata in required report rows; any `NO-GO` row must include a `failure_mode`.
 4. `0` regressions on invariants: `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired`.
 5. Artifact schema checks pass for `I-0501` matrices (required row keys and `NO-GO` conditions absent):
    - `cross_chain_reads=false`
