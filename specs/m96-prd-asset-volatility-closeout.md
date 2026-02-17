@@ -186,3 +186,41 @@ Required enum/value constraints:
 
 #### C0107 Decision Hook
 - `DP-0138-C0107` blocks promotion if any required `I-0578` row fails the hard-stop contract above.
+
+### C0112 (`I-0596`) revalidation addendum
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is forbidden.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring must stay invariant under one-chain perturbation.
+- C0112 hard-stop artifact requirements:
+  - `.ralph/reports/I-0597-m96-s1-coverage-class-revalidation-matrix.md`
+  - `.ralph/reports/I-0597-m96-s2-dup-suppression-matrix.md`
+  - `.ralph/reports/I-0597-m96-s3-chain-isolation-matrix.md`
+
+#### C0112 Matrix Contracts (`I-0597`)
+- `I-0597-m96-s1-coverage-class-revalidation-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0597-m96-s2-dup-suppression-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0597-m96-s3-chain-isolation-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+
+Required hard-stop checks for all required `GO` rows in C0112:
+- `outcome=GO`
+- `evidence_present=true`
+- `canonical_event_id_unique_ok=true`
+- `replay_idempotent_ok=true`
+- `cursor_monotonic_ok=true`
+- `signed_delta_conservation_ok=true`
+- `solana_fee_event_coverage_ok=true`
+- `base_fee_split_coverage_ok=true`
+- `chain_adapter_runtime_wired_ok=true`
+- `failure_mode` is empty
+- `peer_cursor_delta=0` and `peer_watermark_delta=0` where applicable in `I-0597-m96-s3-chain-isolation-matrix.md`
+
+Required PRD hard-stop decision hook:
+- `DP-0145-C0112`: C0112 remains blocked unless all required `I-0597` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) in the three C0112 artifacts are present and satisfy the hard-stop checks above.
+- Required `NO-GO` rows in C0112 artifacts must include non-empty `failure_mode`.

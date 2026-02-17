@@ -4883,3 +4883,33 @@ Superseded issues:
     - `.ralph/reports/I-0594-m97-s3-one-chain-isolation-matrix.md`
   - `I-0595` verifies all required C0111 rows for mandatory chains and blocks `C0111` on any required `NO-GO`, `evidence_present=false`, required hard-stop booleans false, or non-zero required `peer_cursor_delta`/`peer_watermark_delta`.
   - No runtime implementation changes are executed in this planner tranche; only contract/spec/queue planning is executed.
+
+## C0112 (`I-0596`) tranche activation
+- Focus: PRD-priority event-coverage + fee-semantics continuity revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness (Solana and Base fee paths).
+  - `8.5`: failed-path cursor/watermark progression is forbidden.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring must remain invariant across coverage perturbations.
+- `solana_fee_event_coverage`: required explicit fee coverage for Solana fee debit semantics.
+- `base_fee_split_coverage`: required explicit split of Base L2 execution vs L1 data fee semantics.
+- C0112 lock state: `C0112-PRD-EVENT-FEES-ADAPTER-CONTINUITY-REVALIDATION`.
+- C0112 queue adjacency: hard dependency `I-0595 -> I-0596 -> I-0597 -> I-0598`.
+- Downstream execution pair:
+  - `I-0597` (developer) — PRD handoff to define C0112 evidence contracts and required matrix artifacts for mandatory-chain class-fee continuity.
+  - `I-0598` (qa) — PRD counterexample gate and explicit recommendation closure for `C0112`.
+- Slice gates for this tranche:
+  - `I-0596` updates this plan with explicit `C0112` lock state, queue order, and requirement traceability to `R1`, `R2`, `R3`, `8.5`, `10`, `chain_adapter_runtime_wired`.
+  - `I-0597` updates `specs/m96-prd-asset-volatility-closeout.md` with a `C0112` addendum that defines required artifacts and row schema for fee-coverage continuity under one-chain perturbation.
+  - `I-0597` defines required C0112 matrix artifact names:
+    - `.ralph/reports/I-0597-m96-s1-coverage-class-revalidation-matrix.md`
+    - `.ralph/reports/I-0597-m96-s2-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0597-m96-s3-chain-isolation-matrix.md`
+  - `I-0598` verifies all required rows in the above artifacts for mandatory chains and blocks `C0112` on any required:
+    - `outcome=NO-GO`
+    - `evidence_present=false`
+    - required hard-stop booleans false for `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`
+    - required peer deltas non-zero where those columns are present (`peer_cursor_delta!=0` or `peer_watermark_delta!=0`).
+  - No runtime implementation changes are executed in this planner tranche; only contract/spec/queue planning is executed.
