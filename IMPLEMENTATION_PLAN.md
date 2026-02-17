@@ -19,6 +19,18 @@
   - no chain-pair control bleed in required counterexample rows (`peer_cursor_delta=0`, `peer_watermark_delta=0`).
 - No runtime implementation changes are executed in this planner slice.
 
+## C0090 (`I-0517`) tranche activation
+- Focus: `M96-S1` (unresolved PRD-closeout: event-class coverage + replay determinism before optional refinements).
+- Slice execution order: `I-0517` -> `I-0518` -> `I-0519`.
+- Downstream execution pair:
+  - `I-0518` (developer) — PRD-anchored `M96-S1` class-path/replay artifact contract execution.
+  - `I-0519` (qa) — PRD-anchored `M96-S1` counterexample gate and promotion recommendation.
+- Slice gates for this tranche:
+  - required chain/class-path coverage cells are present and `evidence_present=true` for mandatory chains.
+  - replay permutations satisfy `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`.
+  - peer coupling checks remain zero where required (`peer_cursor_delta=0`, `peer_watermark_delta=0`).
+- No runtime implementation changes are executed in this planner slice.
+
 `M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95`
 
 Execution queue (dependency-ordered):
@@ -229,6 +241,9 @@ Execution queue (dependency-ordered):
      - `I-0508-m95-s4-qa-repro-gate-matrix.md`
    - Adds deterministic reproducibility metadata (`fixture_id`, `fixture_seed`, `run_id`, `evidence_present`, `outcome`).
 192. `I-0508` (`M95-S4`) QA reproducibility gate for deterministic control-coupling evidence and replay continuity
+193. `I-0517` (`M96-S1`) PRD-priority closeout tranche kickoff and downstream contract handoff
+194. `I-0518` (`M96-S1`) Developer execution of class coverage + replay gate artifacts
+195. `I-0519` (`M96-S1`) QA counterexample gate and promotion recommendation for `M96`
 
 ## Global Verification Contract
 Every implementation slice must pass:

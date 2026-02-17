@@ -14,7 +14,7 @@
 - `10`: deterministic replay acceptance behavior.
 
 ## Problem Statement
-`I-0512` must close the remaining PRD class-coverage/replay gap by defining explicit, machine-checkable gates for mandatory-chain class completeness **before** optional reliability work.
+`I-0517` must close the remaining PRD class-coverage/replay gap by defining explicit, machine-checkable gates for mandatory-chain class completeness **before** optional reliability work.
 
 ## Coverage Matrix Contract (Mandatory-Chain Class Cells)
 All required matrix rows must be present and set `evidence_present=true` in the required `M96` artifacts.
@@ -48,11 +48,11 @@ Mandatory rows:
   - `cursor_monotonic_ok=true`
   - `signed_delta_conservation_ok=true`
 
-## Evidence Artifacts (to be produced by downstream `I-0515`/`I-0516`)
-- `.ralph/reports/I-0515-m96-s1-class-coverage-matrix.md`
-- `.ralph/reports/I-0515-m96-s1-dup-suppression-matrix.md`
-- `.ralph/reports/I-0516-m96-s1-replay-continuity-matrix.md`
-- `.ralph/reports/I-0516-m96-s1-chain-isolation-matrix.md`
+## Evidence Artifacts (to be produced by downstream `I-0518`/`I-0519`)
+- `.ralph/reports/I-0518-m96-s1-class-coverage-matrix.md`
+- `.ralph/reports/I-0518-m96-s1-dup-suppression-matrix.md`
+- `.ralph/reports/I-0519-m96-s1-replay-continuity-matrix.md`
+- `.ralph/reports/I-0519-m96-s1-chain-isolation-matrix.md`
 
 ## Machine-Checkable Evidence Schema
 - Class-coverage matrix rows:
