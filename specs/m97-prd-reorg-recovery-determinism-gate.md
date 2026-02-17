@@ -185,6 +185,13 @@
   - `.ralph/reports/I-0614-m97-s1-recovery-continuity-matrix.md`
   - `.ralph/reports/I-0614-m97-s2-recovery-reproducibility-matrix.md`
   - `.ralph/reports/I-0614-m97-s3-one-chain-isolation-matrix.md`
+- PRD-to-artifact binding for `C0116`:
+  - `R4`: `.ralph/reports/I-0614-m97-s1-recovery-continuity-matrix.md`, `.ralph/reports/I-0614-m97-s2-recovery-reproducibility-matrix.md`, `.ralph/reports/I-0614-m97-s3-one-chain-isolation-matrix.md`
+  - `8.4`: `.ralph/reports/I-0614-m97-s1-recovery-continuity-matrix.md`, `.ralph/reports/I-0614-m97-s2-recovery-reproducibility-matrix.md`
+  - `8.5`: `.ralph/reports/I-0614-m97-s3-one-chain-isolation-matrix.md`
+  - `10`: `.ralph/reports/I-0614-m97-s1-recovery-continuity-matrix.md`, `.ralph/reports/I-0614-m97-s3-one-chain-isolation-matrix.md`
+  - `reorg_recovery_deterministic`: `.ralph/reports/I-0614-m97-s1-recovery-continuity-matrix.md`, `.ralph/reports/I-0614-m97-s2-recovery-reproducibility-matrix.md`, `.ralph/reports/I-0614-m97-s3-one-chain-isolation-matrix.md`
+  - `chain_adapter_runtime_wired`: `.ralph/reports/I-0614-m97-s1-recovery-continuity-matrix.md`, `.ralph/reports/I-0614-m97-s2-recovery-reproducibility-matrix.md`, `.ralph/reports/I-0614-m97-s3-one-chain-isolation-matrix.md`
 - Required row keys for `I-0614-m97-s1-recovery-continuity-matrix.md`:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fork_type`, `recovery_permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
 - Required row keys for `I-0614-m97-s2-recovery-reproducibility-matrix.md`:
@@ -197,6 +204,12 @@
   - `canonical_range_replay`
   - `finalized_to_pending_crossover`
   - `restart_from_rollback_boundary`
+- Required chain/network scope for required rows:
+  - `chain` is one of `solana`, `base`, `btc`.
+  - `network` is one of `devnet`, `sepolia`, `testnet`.
+  - For `chain=solana`, `peer_chain` must be `base-sepolia,btc-testnet` where peer isolation is reported.
+  - For `chain=base`, `peer_chain` must be `solana-devnet,btc-testnet` where peer isolation is reported.
+  - For `chain=btc`, `peer_chain` must be `solana-devnet,base-sepolia` where peer isolation is reported.
 - Hard-stop row contract for required rows:
   - `canonical_event_id_unique_ok=true`
   - `replay_idempotent_ok=true`
@@ -208,4 +221,9 @@
   - `outcome=GO`
   - `peer_cursor_delta=0` and `peer_watermark_delta=0` where fields are required
   - `failure_mode` empty on `GO` and non-empty on `NO-GO`
+- Machine-checkable `GO` and `NO-GO` outcomes for all `I-0614` artifacts:
+  - `outcome` must be `GO` or `NO-GO`.
+  - `evidence_present=true` for every required `GO` row.
+  - For required `NO-GO` rows, `failure_mode` must be non-empty and hard-stop booleans are not interpreted as passing.
+  - For required `GO` rows, all listed hard-stop booleans are true, peer deltas are zero where required, and `failure_mode` is empty.
 - `DP-0151-C0116`: `C0116` remains blocked unless all required `I-0614` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) are present and satisfy `GO` + hard-stop constraints above.
