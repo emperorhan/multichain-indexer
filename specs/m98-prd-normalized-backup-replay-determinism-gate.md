@@ -131,16 +131,19 @@ Required enum/value constraints:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `outcome`, `failure_mode`
 - `I-0602-m98-s3-backup-restart-isolation-matrix.md` required columns:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Mandatory one-chain peer-isolation constraints for C0113 replay perturbation rows:
+  - `solana`/`devnet`: `peer_chain=base-sepolia,btc-testnet`
+  - `base`/`sepolia`: `peer_chain=solana-devnet,btc-testnet`
+  - `btc`/`testnet`: `peer_chain=solana-devnet,base-sepolia`
 - Required `C0113` perturbation families for C0113 replay continuity rows:
   - `persisted_checkpoint_restart`
   - `persisted_checkpoint_restart_with_cross_chain_stress`
   - `backup_replay_reproducibility_seeded`
-- `C0113` hard-stop checks for required `GO` rows:
-  - `outcome=GO`
-  - `evidence_present=true`
-  - all booleans in required columns are `true`
-  - `peer_cursor_delta=0` and `peer_watermark_delta=0` in `I-0602-m98-s3-backup-restart-isolation-matrix.md`
-  - `failure_mode` is empty
+- `C0113` hard-stop checks for required `GO` rows by artifact:
+  - `I-0602-m98-s1-backup-replay-continuity-matrix.md`: `outcome=GO`, `evidence_present=true`, and all invariant booleans true where present (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`)
+  - `I-0602-m98-s2-backup-class-coverage-matrix.md`: `outcome=GO` and `evidence_present=true`
+  - `I-0602-m98-s3-backup-restart-isolation-matrix.md`: `outcome=GO`, `evidence_present=true`, `peer_cursor_delta=0`, and `peer_watermark_delta=0`
+  - all required `GO` rows must keep `failure_mode` empty
 - Any required `NO-GO` row in any required C0113 artifact must include non-empty `failure_mode`.
 
 #### C0113 Decision Hook
