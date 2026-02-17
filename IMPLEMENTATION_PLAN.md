@@ -5198,3 +5198,27 @@ Superseded issues:
     - non-zero required peer deltas in isolation rows
   - No runtime implementation changes are executed in this planner tranche.
 - `DP-0156-C0121`: C0121 remains blocked unless all required `I-0635` rows in both artifacts are `GO`, `evidence_present=true`, required invariants true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`), required peer deltas are zero where reported, and required `failure_mode` semantics are respected (`empty` for `GO`, non-empty for `NO-GO`).
+
+## C0121 (`I-0635`) tranche activation
+- Focus: `M93` fail-fast continuity + chain-adapter-wiring restart counterexample closure under one-chain perturbation.
+- C0121 lock state: `C0121-PRD-FAILFAST-CHAIN-ADAPTER-WIRING-RESTART-HARDENING`.
+- C0121 queue adjacency: `I-0632 -> I-0635 -> I-0636`.
+- Downstream execution pair:
+  - `I-0635` (developer) — PRD 8.4/8.5/10 + `R1` hard-stop matrix artifact contract handoff.
+  - `I-0636` (qa) — chain-adapter continuity counterexample gate and mandatory-governance recommendation.
+- Slice gates for this tranche:
+  - `I-0635` updates `specs/m93-prd-fail-fast-continuity-gate.md` with the C0121 lock state, queue adjacency, and matrix addendum for `I-0635` artifacts.
+  - `I-0635` publishes planner-ready evidence references for:
+    - `.ralph/reports/I-0635-m93-s1-fail-fast-continuity-matrix.md`
+    - `.ralph/reports/I-0635-m93-s2-one-chain-isolation-matrix.md`
+  - `I-0635` hard-stop checks require `solana-devnet`, `base-sepolia`, and `btc-testnet` rows with:
+    - `outcome=GO`
+    - `evidence_present=true`
+    - `canonical_event_id_unique_ok=true`
+    - `replay_idempotent_ok=true`
+    - `cursor_monotonic_ok=true`
+    - `signed_delta_conservation_ok=true`
+    - `chain_adapter_runtime_wired_ok=true`
+    - `peer_cursor_delta=0` and `peer_watermark_delta=0` where one-chain isolation is required.
+  - Any required `outcome=NO-GO`, `evidence_present=false`, or required-peer-delta violations block C0121.
+- No runtime implementation changes are executed in this plan slice.

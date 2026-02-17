@@ -292,6 +292,49 @@ The PRD `R5/R8` controls are still not closed with an explicit, testable gate. C
 - `failed_path_restart_recovery`
 - `one_chain_restart_perturbation`
 
+#### C0121 (I-0635) matrix addendum
+- Required artifact files:
+  - `.ralph/reports/I-0635-m93-s1-fail-fast-continuity-matrix.md`
+  - `.ralph/reports/I-0635-m93-s2-one-chain-isolation-matrix.md`
+- Required row keys for I-0635 continuity rows:
+  - `fixture_id`
+  - `fixture_seed`
+  - `run_id`
+  - `chain`
+  - `network`
+  - `permutation`
+  - `class_path`
+  - `peer_chain`
+  - `canonical_event_id_unique_ok`
+  - `replay_idempotent_ok`
+  - `cursor_monotonic_ok`
+  - `signed_delta_conservation_ok`
+  - `chain_adapter_runtime_wired_ok`
+  - `evidence_present`
+  - `outcome`
+  - `failure_mode`
+- Required row keys for I-0635 one-chain isolation rows:
+  - `fixture_id`
+  - `fixture_seed`
+  - `run_id`
+  - `chain`
+  - `network`
+  - `peer_chain`
+  - `peer_cursor_delta`
+  - `peer_watermark_delta`
+  - `evidence_present`
+  - `outcome`
+  - `failure_mode`
+- I-0635 hard-stop conditions:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` for required isolation rows
+
 #### C0121 hard-stop checks
 - For required `I-0635` rows with `outcome=GO`:
   - `evidence_present=true`
