@@ -234,7 +234,7 @@ func TestTick_CursorGetError_FailsFast(t *testing.T) {
 	assert.Empty(t, jobCh)
 }
 
-func TestRun_PanicsOnTickError(t *testing.T) {
+func TestRun_ReturnsErrorOnTickFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
 	mockCursor := storemocks.NewMockCursorRepository(ctrl)
@@ -251,12 +251,13 @@ func TestRun_PanicsOnTickError(t *testing.T) {
 		GetActive(gomock.Any(), model.ChainSolana, model.NetworkDevnet).
 		Return(nil, errors.New("db connection lost"))
 
-	require.Panics(t, func() {
-		_ = c.Run(context.Background())
-	})
+	err := c.Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "coordinator tick failed")
+	assert.Contains(t, err.Error(), "db connection lost")
 }
 
-func TestRun_PanicsOnTickError_WithAutoTuneEnabled(t *testing.T) {
+func TestRun_ReturnsErrorOnTickFailure_WithAutoTuneEnabled(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
 	mockCursor := storemocks.NewMockCursorRepository(ctrl)
@@ -284,9 +285,10 @@ func TestRun_PanicsOnTickError_WithAutoTuneEnabled(t *testing.T) {
 		GetActive(gomock.Any(), model.ChainSolana, model.NetworkDevnet).
 		Return(nil, errors.New("db connection lost"))
 
-	require.Panics(t, func() {
-		_ = c.Run(context.Background())
-	})
+	err := c.Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "coordinator tick failed")
+	assert.Contains(t, err.Error(), "db connection lost")
 }
 
 func TestTick_ContextCanceled(t *testing.T) {

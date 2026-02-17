@@ -13,8 +13,13 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/emperorhan/multichain-indexer/internal/store"
+	"github.com/emperorhan/multichain-indexer/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	otelTrace "go.opentelemetry.io/otel/trace"
 	"github.com/google/uuid"
 )
 
@@ -99,13 +104,32 @@ func (ing *Ingester) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if err := ing.processBatchWithRetry(ctx, batch); err != nil {
+			spanCtx, span := tracing.Tracer("ingester").Start(ctx, "ingester.processBatch",
+				otelTrace.WithAttributes(
+					attribute.String("chain", batch.Chain.String()),
+					attribute.String("network", batch.Network.String()),
+					attribute.String("address", batch.Address),
+					attribute.Int("tx_count", len(batch.Transactions)),
+				),
+			)
+			start := time.Now()
+			if err := ing.processBatchWithRetry(spanCtx, batch); err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				span.End()
+				metrics.IngesterErrors.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+				metrics.IngesterLatency.WithLabelValues(batch.Chain.String(), batch.Network.String()).Observe(time.Since(start).Seconds())
 				ing.logger.Error("process batch failed",
 					"address", batch.Address,
 					"error", err,
 				)
-				panic(fmt.Sprintf("ingester process batch failed: address=%s err=%v", batch.Address, err))
+				// Fail-fast: return error so errgroup cancels the entire pipeline.
+				// The process will restart from the last committed cursor.
+				return fmt.Errorf("ingester process batch failed: address=%s: %w", batch.Address, err)
 			}
+			span.End()
+			metrics.IngesterBatchesProcessed.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+			metrics.IngesterLatency.WithLabelValues(batch.Chain.String(), batch.Network.String()).Observe(time.Since(start).Seconds())
 		}
 	}
 }
@@ -459,6 +483,9 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		return fmt.Errorf("commit: %w", err)
 	}
 	committed = true
+
+	metrics.IngesterBalanceEventsWritten.WithLabelValues(batch.Chain.String(), batch.Network.String()).Add(float64(totalEvents))
+	metrics.PipelineCursorSequence.WithLabelValues(batch.Chain.String(), batch.Network.String(), batch.Address).Set(float64(batch.NewCursorSequence))
 
 	ing.logger.Info("batch ingested",
 		"address", batch.Address,

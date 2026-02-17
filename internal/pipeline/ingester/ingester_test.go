@@ -3466,7 +3466,7 @@ func TestIngester_Run_ContextCancel(t *testing.T) {
 	assert.Equal(t, context.Canceled, err)
 }
 
-func TestIngester_Run_PanicsOnProcessBatchError(t *testing.T) {
+func TestIngester_Run_ReturnsErrorOnProcessBatchFailure(t *testing.T) {
 	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
@@ -3492,9 +3492,10 @@ func TestIngester_Run_PanicsOnProcessBatchError(t *testing.T) {
 	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Nil()).
 		Return(nil, errors.New("db down"))
 
-	require.Panics(t, func() {
-		_ = ing.Run(context.Background())
-	})
+	err := ing.Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ingester process batch failed")
+	assert.Contains(t, err.Error(), "db down")
 }
 
 func TestCanonicalSignatureIdentity_BTC(t *testing.T) {

@@ -19,6 +19,7 @@ type Config struct {
 	Pipeline PipelineConfig
 	Server   ServerConfig
 	Log      LogConfig
+	Tracing  TracingConfig
 }
 
 type DBConfig struct {
@@ -33,8 +34,12 @@ type RedisConfig struct {
 }
 
 type SidecarConfig struct {
-	Addr    string
-	Timeout time.Duration
+	Addr       string
+	Timeout    time.Duration
+	TLSEnabled bool
+	TLSCert    string // client cert for mTLS (PEM path)
+	TLSKey     string // client key for mTLS (PEM path)
+	TLSCA      string // CA cert to verify server (PEM path)
 }
 
 type SolanaConfig struct {
@@ -107,6 +112,11 @@ type LogConfig struct {
 	Level string
 }
 
+type TracingConfig struct {
+	Enabled  bool
+	Endpoint string // OTLP gRPC endpoint (e.g. "localhost:4317")
+}
+
 func Load() (*Config, error) {
 	pipelineBatchSize := getEnvInt("BATCH_SIZE", 100)
 
@@ -121,8 +131,12 @@ func Load() (*Config, error) {
 			URL: getEnv("REDIS_URL", "redis://localhost:6380"),
 		},
 		Sidecar: SidecarConfig{
-			Addr:    getEnv("SIDECAR_ADDR", "localhost:50051"),
-			Timeout: time.Duration(getEnvInt("SIDECAR_TIMEOUT_SEC", 30)) * time.Second,
+			Addr:       getEnv("SIDECAR_ADDR", "localhost:50051"),
+			Timeout:    time.Duration(getEnvInt("SIDECAR_TIMEOUT_SEC", 30)) * time.Second,
+			TLSEnabled: getEnvBool("SIDECAR_TLS_ENABLED", false),
+			TLSCert:    getEnv("SIDECAR_TLS_CERT", ""),
+			TLSKey:     getEnv("SIDECAR_TLS_KEY", ""),
+			TLSCA:      getEnv("SIDECAR_TLS_CA", ""),
 		},
 		Solana: SolanaConfig{
 			RPCURL:  getEnvAny([]string{"SOLANA_DEVNET_RPC_URL", "SOLANA_RPC_URL"}, "https://api.devnet.solana.com"),
@@ -171,6 +185,10 @@ func Load() (*Config, error) {
 		Log: LogConfig{
 			Level: getEnv("LOG_LEVEL", "info"),
 		},
+		Tracing: TracingConfig{
+			Enabled:  getEnvBool("OTEL_TRACING_ENABLED", false),
+			Endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		},
 	}
 
 	cfg.Pipeline.SolanaWatchedAddresses = parseAddressCSV(
@@ -195,6 +213,9 @@ func (c *Config) validate() error {
 	}
 	if c.Sidecar.Addr == "" {
 		return fmt.Errorf("SIDECAR_ADDR is required")
+	}
+	if c.Sidecar.TLSEnabled && c.Sidecar.TLSCA == "" {
+		return fmt.Errorf("SIDECAR_TLS_CA is required when SIDECAR_TLS_ENABLED=true")
 	}
 	switch c.Runtime.DeploymentMode {
 	case RuntimeDeploymentModeLikeGroup, RuntimeDeploymentModeIndependent:

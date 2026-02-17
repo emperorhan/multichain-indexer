@@ -13,7 +13,13 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/metrics"
+	"github.com/emperorhan/multichain-indexer/internal/tracing"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	otelTrace "go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -77,38 +83,57 @@ func New(
 func (f *Fetcher) Run(ctx context.Context) error {
 	f.logger.Info("fetcher started", "workers", f.workerCount)
 
-	var wg sync.WaitGroup
+	// Use errgroup so that a worker error propagates up and cancels all
+	// sibling workers via gCtx, achieving fail-fast without panic.
+	g, gCtx := errgroup.WithContext(ctx)
 	for i := 0; i < f.workerCount; i++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			f.worker(ctx, workerID)
-		}(i)
+		workerID := i
+		g.Go(func() error {
+			return f.worker(gCtx, workerID)
+		})
 	}
 
-	wg.Wait()
+	err := g.Wait()
 	f.logger.Info("fetcher stopped")
-	return ctx.Err()
+	return err
 }
 
-func (f *Fetcher) worker(ctx context.Context, workerID int) {
+func (f *Fetcher) worker(ctx context.Context, workerID int) error {
 	log := f.logger.With("worker", workerID)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case job, ok := <-f.jobCh:
 			if !ok {
-				return
+				return nil
 			}
-			if err := f.processJob(ctx, log, job); err != nil {
+			spanCtx, span := tracing.Tracer("fetcher").Start(ctx, "fetcher.processJob",
+				otelTrace.WithAttributes(
+					attribute.String("chain", job.Chain.String()),
+					attribute.String("network", job.Network.String()),
+					attribute.String("address", job.Address),
+				),
+			)
+			start := time.Now()
+			if err := f.processJob(spanCtx, log, job); err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				span.End()
+				metrics.FetcherErrors.WithLabelValues(job.Chain.String(), job.Network.String()).Inc()
+				metrics.FetcherLatency.WithLabelValues(job.Chain.String(), job.Network.String()).Observe(time.Since(start).Seconds())
 				log.Error("process job failed",
 					"address", job.Address,
 					"error", err,
 				)
-				panic(fmt.Sprintf("fetcher process job failed: address=%s err=%v", job.Address, err))
+				// Fail-fast: return error so errgroup cancels all workers and
+				// the pipeline restarts from the last committed cursor.
+				return fmt.Errorf("fetcher process job failed: address=%s: %w", job.Address, err)
 			}
+			span.End()
+			metrics.FetcherBatchesProcessed.WithLabelValues(job.Chain.String(), job.Network.String()).Inc()
+			metrics.FetcherLatency.WithLabelValues(job.Chain.String(), job.Network.String()).Observe(time.Since(start).Seconds())
 		}
 	}
 }
@@ -182,6 +207,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 
 	select {
 	case f.rawBatchCh <- batch:
+		metrics.FetcherTxFetched.WithLabelValues(job.Chain.String(), job.Network.String()).Add(float64(len(rawTxs)))
 		log.Info("raw batch sent",
 			"address", job.Address,
 			"tx_count", len(rawTxs),

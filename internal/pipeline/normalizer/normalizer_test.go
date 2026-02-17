@@ -4638,7 +4638,7 @@ func TestProcessBatchWithRetry_TransientDecodeFailureExhausted_StageDiagnostic(t
 	assert.Contains(t, err.Error(), "transient_recovery_exhausted stage=normalizer.decode_batch")
 }
 
-func TestWorker_PanicsOnProcessBatchError(t *testing.T) {
+func TestWorker_ReturnsErrorOnProcessBatchFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockChainDecoderClient(ctrl)
 
@@ -4668,9 +4668,10 @@ func TestWorker_PanicsOnProcessBatchError(t *testing.T) {
 		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("sidecar unavailable"))
 
-	require.Panics(t, func() {
-		n.worker(context.Background(), 0, mockClient)
-	})
+	err := n.worker(context.Background(), 0, mockClient)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "normalizer process batch failed")
+	assert.Contains(t, err.Error(), "sidecar unavailable")
 }
 
 func TestProcessBatch_RawSignatureLengthMismatch(t *testing.T) {

@@ -25,9 +25,13 @@ type Config struct {
 	FetchWorkers        int
 	NormalizerWorkers   int
 	ChannelBufferSize   int
-	SidecarAddr         string
-	SidecarTimeout      time.Duration
-	CommitInterleaver   ingester.CommitInterleaver
+	SidecarAddr       string
+	SidecarTimeout    time.Duration
+	SidecarTLSEnabled bool
+	SidecarTLSCert    string
+	SidecarTLSKey     string
+	SidecarTLSCA      string
+	CommitInterleaver ingester.CommitInterleaver
 }
 
 type CoordinatorAutoTuneConfig struct {
@@ -133,6 +137,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		p.cfg.SidecarAddr, p.cfg.SidecarTimeout,
 		rawBatchCh, normalizedCh,
 		p.cfg.NormalizerWorkers, p.logger,
+		normalizer.WithTLS(p.cfg.SidecarTLSEnabled, p.cfg.SidecarTLSCA, p.cfg.SidecarTLSCert, p.cfg.SidecarTLSKey),
 	)
 
 	ingest := ingester.New(

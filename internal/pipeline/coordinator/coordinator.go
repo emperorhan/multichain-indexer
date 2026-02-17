@@ -10,6 +10,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	autotune "github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 )
@@ -222,9 +223,23 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
-	// Run immediately on start, then on interval
-	if err := c.tick(ctx); err != nil {
-		panic(fmt.Sprintf("coordinator tick failed: %v", err))
+	chainLabel := c.chain.String()
+	networkLabel := c.network.String()
+
+	runTick := func() error {
+		metrics.CoordinatorTicksTotal.WithLabelValues(chainLabel, networkLabel).Inc()
+		if err := c.tick(ctx); err != nil {
+			metrics.CoordinatorTickErrors.WithLabelValues(chainLabel, networkLabel).Inc()
+			return fmt.Errorf("coordinator tick failed: %w", err)
+		}
+		return nil
+	}
+
+	// Run immediately on start, then on interval.
+	// Fail-fast: any tick error halts the coordinator so errgroup cancels the
+	// entire pipeline and the process restarts from the last committed cursor.
+	if err := runTick(); err != nil {
+		return err
 	}
 
 	for {
@@ -233,8 +248,8 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			c.logger.Info("coordinator stopping")
 			return ctx.Err()
 		case <-ticker.C:
-			if err := c.tick(ctx); err != nil {
-				panic(fmt.Sprintf("coordinator tick failed: %v", err))
+			if err := runTick(); err != nil {
+				return err
 			}
 		}
 	}
@@ -363,6 +378,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 		job.BatchSize = batchSize
 		select {
 		case c.jobCh <- job:
+			metrics.CoordinatorJobsCreated.WithLabelValues(c.chain.String(), c.network.String()).Inc()
 		case <-ctx.Done():
 			return ctx.Err()
 		}

@@ -21,6 +21,8 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
+	"github.com/emperorhan/multichain-indexer/internal/tracing"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -97,6 +99,25 @@ func main() {
 		"base_watched_addresses", len(cfg.Pipeline.BaseWatchedAddresses),
 		"btc_watched_addresses", len(cfg.Pipeline.BTCWatchedAddresses),
 	)
+
+	// Initialize OpenTelemetry tracing
+	tracingEndpoint := ""
+	if cfg.Tracing.Enabled {
+		tracingEndpoint = cfg.Tracing.Endpoint
+	}
+	shutdownTracing, err := tracing.Init(context.Background(), "multichain-indexer", tracingEndpoint)
+	if err != nil {
+		logger.Error("failed to initialize tracing", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			logger.Warn("tracing shutdown error", "error", err)
+		}
+	}()
+	if cfg.Tracing.Enabled {
+		logger.Info("tracing enabled", "endpoint", cfg.Tracing.Endpoint)
+	}
 
 	// Connect to PostgreSQL
 	db, err := postgres.New(postgres.Config{
@@ -184,6 +205,10 @@ func main() {
 			ChannelBufferSize: cfg.Pipeline.ChannelBufferSize,
 			SidecarAddr:       cfg.Sidecar.Addr,
 			SidecarTimeout:    cfg.Sidecar.Timeout,
+			SidecarTLSEnabled: cfg.Sidecar.TLSEnabled,
+			SidecarTLSCert:    cfg.Sidecar.TLSCert,
+			SidecarTLSKey:     cfg.Sidecar.TLSKey,
+			SidecarTLSCA:      cfg.Sidecar.TLSCA,
 			CommitInterleaver: commitInterleaver,
 		}
 		pipelines = append(pipelines, pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL)))
@@ -406,6 +431,7 @@ func runHealthServer(ctx context.Context, port int, logger *slog.Logger) error {
 			logger.Warn("failed to write health response", "error", err)
 		}
 	})
+	mux.Handle("/metrics", promhttp.Handler())
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),

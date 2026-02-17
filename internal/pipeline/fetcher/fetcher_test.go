@@ -186,7 +186,7 @@ func TestFetcher_Run_ContextCancel(t *testing.T) {
 	assert.Equal(t, context.Canceled, err)
 }
 
-func TestFetcher_Worker_PanicsOnProcessJobError(t *testing.T) {
+func TestFetcher_Worker_ReturnsErrorOnProcessJobFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
 
@@ -212,9 +212,10 @@ func TestFetcher_Worker_PanicsOnProcessJobError(t *testing.T) {
 		FetchNewSignatures(gomock.Any(), "addr1", (*string)(nil), 100).
 		Return(nil, errors.New("rpc timeout"))
 
-	require.Panics(t, func() {
-		f.worker(context.Background(), 0)
-	})
+	err := f.worker(context.Background(), 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fetcher process job failed")
+	assert.Contains(t, err.Error(), "rpc timeout")
 }
 
 func TestProcessJob_RetryBackoffAndAdaptiveReduction(t *testing.T) {

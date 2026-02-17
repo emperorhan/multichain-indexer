@@ -2,6 +2,7 @@ import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
 import { decodeSolanaTransactionBatch } from './decoder';
+import logger from './logger';
 
 const PROTO_PATH = path.resolve(__dirname, '../../proto/sidecar/v1/decoder.proto');
 
@@ -68,7 +69,7 @@ function handleDecodeSolanaTransactionBatch(
 
     callback(null, { results: mappedResults, errors: result.errors });
   } catch (err: any) {
-    console.error('Error decoding batch:', err);
+    logger.error({ err }, 'error decoding batch');
     callback({
       code: grpc.status.INTERNAL,
       message: err.message || 'Internal error',

@@ -2,9 +2,12 @@ package normalizer
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,8 +16,15 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
+	"github.com/emperorhan/multichain-indexer/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	otelTrace "go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -39,6 +49,24 @@ type Normalizer struct {
 	sleepFn          func(context.Context, time.Duration) error
 	coverageFloorMu  sync.Mutex
 	coverageFloor    map[string]*sidecarv1.TransactionResult
+	tlsEnabled       bool
+	tlsCA            string
+	tlsCert          string
+	tlsKey           string
+}
+
+type Option func(*Normalizer)
+
+// WithTLS configures TLS for the gRPC connection to the sidecar.
+// If enabled is false, insecure credentials are used (suitable for local dev).
+// caPath is required when enabled. certPath and keyPath are optional (for mTLS).
+func WithTLS(enabled bool, caPath, certPath, keyPath string) Option {
+	return func(n *Normalizer) {
+		n.tlsEnabled = enabled
+		n.tlsCA = caPath
+		n.tlsCert = certPath
+		n.tlsKey = keyPath
+	}
 }
 
 func New(
@@ -48,8 +76,9 @@ func New(
 	normalizedCh chan<- event.NormalizedBatch,
 	workerCount int,
 	logger *slog.Logger,
+	opts ...Option,
 ) *Normalizer {
-	return &Normalizer{
+	n := &Normalizer{
 		sidecarAddr:      sidecarAddr,
 		sidecarTimeout:   sidecarTimeout,
 		rawBatchCh:       rawBatchCh,
@@ -61,14 +90,25 @@ func New(
 		retryDelayMax:    defaultRetryDelayMax,
 		sleepFn:          sleepContext,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(n)
+		}
+	}
+	return n
 }
 
 func (n *Normalizer) Run(ctx context.Context) error {
-	n.logger.Info("normalizer started", "sidecar_addr", n.sidecarAddr, "workers", n.workerCount)
+	n.logger.Info("normalizer started", "sidecar_addr", n.sidecarAddr, "workers", n.workerCount, "tls", n.tlsEnabled)
+
+	transportCreds, err := n.buildTransportCredentials()
+	if err != nil {
+		return fmt.Errorf("build transport credentials: %w", err)
+	}
 
 	conn, err := grpc.NewClient(
 		n.sidecarAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(transportCreds),
 	)
 	if err != nil {
 		return fmt.Errorf("connect sidecar: %w", err)
@@ -77,38 +117,57 @@ func (n *Normalizer) Run(ctx context.Context) error {
 
 	client := sidecarv1.NewChainDecoderClient(conn)
 
-	var wg sync.WaitGroup
+	// Use errgroup so that a worker error propagates up and cancels all
+	// sibling workers via gCtx, achieving fail-fast without panic.
+	g, gCtx := errgroup.WithContext(ctx)
 	for i := 0; i < n.workerCount; i++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			n.worker(ctx, workerID, client)
-		}(i)
+		workerID := i
+		g.Go(func() error {
+			return n.worker(gCtx, workerID, client)
+		})
 	}
 
-	wg.Wait()
+	waitErr := g.Wait()
 	n.logger.Info("normalizer stopped")
-	return ctx.Err()
+	return waitErr
 }
 
-func (n *Normalizer) worker(ctx context.Context, workerID int, client sidecarv1.ChainDecoderClient) {
+func (n *Normalizer) worker(ctx context.Context, workerID int, client sidecarv1.ChainDecoderClient) error {
 	log := n.logger.With("worker", workerID)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case batch, ok := <-n.rawBatchCh:
 			if !ok {
-				return
+				return nil
 			}
-			if err := n.processBatchWithRetry(ctx, log, client, batch); err != nil {
+			spanCtx, span := tracing.Tracer("normalizer").Start(ctx, "normalizer.processBatch",
+				otelTrace.WithAttributes(
+					attribute.String("chain", batch.Chain.String()),
+					attribute.String("network", batch.Network.String()),
+					attribute.String("address", batch.Address),
+				),
+			)
+			start := time.Now()
+			if err := n.processBatchWithRetry(spanCtx, log, client, batch); err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				span.End()
+				metrics.NormalizerErrors.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+				metrics.NormalizerLatency.WithLabelValues(batch.Chain.String(), batch.Network.String()).Observe(time.Since(start).Seconds())
 				log.Error("process batch failed",
 					"address", batch.Address,
 					"error", err,
 				)
-				panic(fmt.Sprintf("normalizer process batch failed: address=%s err=%v", batch.Address, err))
+				// Fail-fast: return error so errgroup cancels all workers and
+				// the pipeline restarts from the last committed cursor.
+				return fmt.Errorf("normalizer process batch failed: address=%s: %w", batch.Address, err)
 			}
+			span.End()
+			metrics.NormalizerBatchesProcessed.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+			metrics.NormalizerLatency.WithLabelValues(batch.Chain.String(), batch.Network.String()).Observe(time.Since(start).Seconds())
 		}
 	}
 }
@@ -536,6 +595,36 @@ func isHexString(v string) bool {
 		}
 	}
 	return true
+}
+
+func (n *Normalizer) buildTransportCredentials() (credentials.TransportCredentials, error) {
+	if !n.tlsEnabled {
+		return insecure.NewCredentials(), nil
+	}
+
+	caCert, err := os.ReadFile(n.tlsCA)
+	if err != nil {
+		return nil, fmt.Errorf("read CA cert %s: %w", n.tlsCA, err)
+	}
+	certPool := x509.NewCertPool()
+	if !certPool.AppendCertsFromPEM(caCert) {
+		return nil, fmt.Errorf("failed to parse CA cert %s", n.tlsCA)
+	}
+
+	tlsCfg := &tls.Config{
+		RootCAs: certPool,
+	}
+
+	// mTLS: load client certificate if provided.
+	if n.tlsCert != "" && n.tlsKey != "" {
+		clientCert, err := tls.LoadX509KeyPair(n.tlsCert, n.tlsKey)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert/key: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{clientCert}
+	}
+
+	return credentials.NewTLS(tlsCfg), nil
 }
 
 func (n *Normalizer) effectiveRetryMaxAttempts() int {

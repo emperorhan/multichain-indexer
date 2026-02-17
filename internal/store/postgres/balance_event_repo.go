@@ -35,7 +35,7 @@ func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.B
 			actor_address, asset_type, asset_id,
 			finality_state, decoder_version, schema_version
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
-		ON CONFLICT (event_id) DO UPDATE
+		ON CONFLICT (event_id, block_time) DO UPDATE
 		SET
 			finality_state = EXCLUDED.finality_state,
 			block_hash = COALESCE(NULLIF(EXCLUDED.block_hash, ''), balance_events.block_hash),
