@@ -138,3 +138,58 @@ The PRD `R5/R8` controls are still not closed with an explicit, testable gate. C
 - `I-0587` verifies `I-0585` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) and blocks C0109 on any required `NO-GO`, missing evidence, false required booleans, or non-zero peer deltas.
 - Required C0109 decision hook:
   - `DP-0142-C0109`: C0109 remains blocked unless all required `I-0585` matrix rows for mandatory chains are present and satisfy `outcome=GO`, `evidence_present=true`, required hard-stop booleans, and required peer deltas zero where required.
+
+### C0119 (`I-0627`) handoff: fail-fast restart continuity revalidation
+- PRD traceability for C0119:
+  - `8.4`: failed-path replay continuity with cursor/watermark rollback safety.
+  - `8.5`: correctness-impacting path abort semantics remain fail-fast.
+  - `10`: deterministic replay and peer-isolation acceptance under one-chain perturbation.
+- C0119 queue adjacency: hard dependency `I-0624 -> I-0627 -> I-0628`.
+- Required artifacts:
+  - `.ralph/reports/I-0627-m93-s1-fail-fast-continuity-matrix.md`
+  - `.ralph/reports/I-0627-m93-s2-one-chain-isolation-matrix.md`
+
+#### C0119 mandatory class coverage rows
+| chain | network | class_path |
+|---|---|---|
+| `solana` | `devnet` | `TRANSFER` |
+| `solana` | `devnet` | `MINT` |
+| `solana` | `devnet` | `BURN` |
+| `solana` | `devnet` | `FEE` |
+| `base` | `sepolia` | `TRANSFER` |
+| `base` | `sepolia` | `MINT` |
+| `base` | `sepolia` | `BURN` |
+| `base` | `sepolia` | `fee_execution_l2` |
+| `base` | `sepolia` | `fee_data_l1` |
+| `btc` | `testnet` | `TRANSFER:vin` |
+| `btc` | `testnet` | `TRANSFER:vout` |
+| `btc` | `testnet` | `miner_fee` |
+
+#### C0119 matrix contracts for `I-0627`
+- `I-0627-m93-s1-fail-fast-continuity-matrix.md` required row keys:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0627-m93-s2-one-chain-isolation-matrix.md` required row keys:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Required `permutation` enum for continuity rows:
+  - `canonical_range_replay`
+  - `replay_order_swap`
+  - `one_chain_restart_perturbation`
+
+#### C0119 hard-stop checks
+- For required `I-0627` rows with `outcome=GO`:
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+- For required one-chain isolation rows with `outcome=GO`:
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `evidence_present=true`
+  - `failure_mode` is empty
+- Required `NO-GO` rows in either artifact must include non-empty `failure_mode`.
+
+#### C0119 decision hook
+- `DP-0154-C0119`: C0119 remains blocked unless all required `I-0627` rows for mandatory chains in both C0119 artifacts are present, `outcome=GO`, `evidence_present=true`, hard-stop booleans true, and required peer deltas are zero where required.

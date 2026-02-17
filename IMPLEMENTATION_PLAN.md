@@ -5112,3 +5112,37 @@ Superseded issues:
   - No runtime implementation changes are executed in this planner tranche; planning/spec handoff updates only.
 - C0118 hard-stop decision hook:
   - `DP-0153-C0118` keeps `I-0622` blocked until all required `I-0622` rows in the three artifacts are present and satisfy `GO` hard-stop constraints.
+
+## C0119 (`I-0627`) tranche activation
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `8.4`: failed-path replay continuity while preserving cursor/watermark safety.
+  - `8.5`: fail-fast correctness impact abort semantics.
+  - `10`: deterministic replay and peer-isolation acceptance under one-chain perturbation.
+- C0119 lock state: `C0119-PRD-FAILFAST-RESTART-ISOLATION-HARDENING`.
+- C0119 queue adjacency: hard dependency `I-0624 -> I-0627 -> I-0628`.
+- Downstream execution pair:
+  - `I-0627` (developer) — PRD handoff and artifact contract definition for mandatory-chain fail-fast restart continuity revalidation.
+  - `I-0628` (qa) — PRD counterexample gate and explicit recommendation closure for `C0119`.
+- Slice gates for this tranche:
+  - `I-0627` updates `IMPLEMENTATION_PLAN.md` with explicit `C0119` lock state and queue order `I-0624 -> I-0627 -> I-0628`.
+  - `I-0627` updates `specs/m93-prd-fail-fast-continuity-gate.md` with a C0119 addendum that binds `8.4`, `8.5`, and `10` to required artifacts.
+  - `I-0627` requires these artifacts:
+    - `.ralph/reports/I-0627-m93-s1-fail-fast-continuity-matrix.md`
+    - `.ralph/reports/I-0627-m93-s2-one-chain-isolation-matrix.md`
+  - Required hard-stop checks for all required `I-0627` rows:
+    - `outcome=GO`
+    - `evidence_present=true`
+    - `canonical_event_id_unique_ok=true`
+    - `replay_idempotent_ok=true`
+    - `cursor_monotonic_ok=true`
+    - `signed_delta_conservation_ok=true`
+    - `chain_adapter_runtime_wired_ok=true`
+    - `peer_cursor_delta=0` and `peer_watermark_delta=0` where columns are defined
+    - `failure_mode` is empty for `GO` and non-empty for `NO-GO`
+  - `I-0628` verifies all required `I-0627` rows for mandatory chains and blocks `C0119` on any required:
+    - `outcome=NO-GO`
+    - `evidence_present=false`
+    - required hard-stop invariants false
+    - non-zero required peer deltas
+  - No runtime implementation changes are executed in this C0119 planner tranche; planning/spec-doc handoff only.
+- `DP-0154-C0119`: C0119 remains blocked unless all required rows in the two artifacts above for `solana-devnet`, `base-sepolia`, and `btc-testnet` are `GO` with the hard-stop checks and one-chain bleed checks above.
