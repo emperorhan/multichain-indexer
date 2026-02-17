@@ -237,9 +237,34 @@
   - `I-0557` must preserve mandatory-chain one-chain perturbation isolation checks with zero peer-chain deltas:
     - `peer_cursor_delta=0`
     - `peer_watermark_delta=0`
-  - `I-0558` verifies all required rows are `outcome=GO`, `evidence_present=true`, invariants complete, and `peer_cursor_delta=0` / `peer_watermark_delta=0`.
-  - Any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks C0101.
-  - C0101 hard-stop invariants are:
+- `I-0558` verifies all required rows are `outcome=GO`, `evidence_present=true`, invariants complete, and `peer_cursor_delta=0` / `peer_watermark_delta=0`.
+- Any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks C0101.
+- C0101 hard-stop invariants are:
+  - `canonical_event_id_unique`
+  - `replay_idempotent`
+  - `cursor_monotonic`
+  - `signed_delta_conservation`
+  - `chain_adapter_runtime_wired`
+- No runtime implementation changes are executed in this planner slice.
+
+## C0102 (`I-0559`) tranche activation
+- Focus: PRD-priority asset-volatility class/fee coverage revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility coverage.
+  - `R3`: chain-family fee completeness.
+  - `10`: deterministic replay acceptance and peer-isolation under one-chain perturbation.
+- C0102 lock state: `C0102-PRD-CLASS-FEE-COVERAGE-REVALIDATION`.
+- C0102 queue adjacency: hard dependency `I-0558` -> `I-0560` -> `I-0561`.
+- Downstream execution pair:
+  - `I-0560` (developer) — PRD-priority revalidation contract handoff and M96 class/fee evidence refresh under planner-visible row contracts.
+  - `I-0561` (qa) — PRD-priority counterexample gate and explicit one-chain isolation continuity recommendation for C0102.
+- Slice gates for this tranche:
+  - `I-0559` updates this plan with explicit C0102 lock state and queue order `I-0558 -> I-0560 -> I-0561`.
+  - `I-0560` updates `specs/m96-prd-asset-volatility-closeout.md` with C0102 hard-stop row contracts and explicit evidence artifact names for class/fee replay revalidation.
+  - `I-0561` verifies required C0102 rows are present in the corresponding artifacts with `outcome=GO`, `evidence_present=true`, and invariant fields `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `chain_adapter_runtime_wired` all true for required rows.
+  - `I-0561` blocks C0102 on any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0`.
+  - C0102 hard-stop invariants are:
     - `canonical_event_id_unique`
     - `replay_idempotent`
     - `cursor_monotonic`
@@ -4520,12 +4545,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0554` (`C0100-S1`) after `I-0552`
-2. `I-0555` (`C0100-S2`) after `I-0554`
+1. `I-0560` (`C0102-S1`) after `I-0558`
+2. `I-0561` (`C0102-S2`) after `I-0560`
 
 Planned next tranche queue:
-1. `I-0554` (`C0100-S1`) after `I-0552`
-2. `I-0555` (`C0100-S2`) after `I-0554`
+1. `I-0560` (`C0102-S1`) after `I-0558`
+2. `I-0561` (`C0102-S2`) after `I-0560`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

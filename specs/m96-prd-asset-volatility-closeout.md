@@ -88,3 +88,28 @@ Required enum/value constraints:
 ## Decision Hook
 - `DP-0109-M96`: Any required class-path cell missing evidence, or any required row with `outcome=NO-GO`/invalid fail-mode semantics, is a hard NO-GO for milestone promotion.
 - `DP-0119-C0097`: Any required row with `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks promotion into optional post-PRD continuation.
+
+## C0102 (`I-0559`) revalidation addendum
+- Focus: PRD-priority class/fee coverage continuity revalidation before optional refinements resume.
+- PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility coverage.
+  - `R3`: chain-family fee completeness.
+  - `10`: deterministic replay acceptance under one-chain perturbation.
+- C0102 planner contract (`I-0559 -> I-0560 -> I-0561`) updates `specs/m96-prd-asset-volatility-closeout.md` to require:
+  - `.ralph/reports/I-0560-m96-s1-class-coverage-revalidation-matrix.md`
+  - `.ralph/reports/I-0560-m96-s1-chain-isolation-revalidation-matrix.md`
+  - `.ralph/reports/I-0560-m96-s1-replay-continuity-revalidation-matrix.md`
+- Required schema for C0102 evidence rows:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `permutation`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Required hard-stop gates for C0102:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `failure_mode` is non-empty for `outcome=NO-GO`.
+- `DP-0118-C0102`: C0102 remains blocked until required rows in all three artifacts are `GO`, evidence is complete, invariants are true, and peer deltas are zero where required.
