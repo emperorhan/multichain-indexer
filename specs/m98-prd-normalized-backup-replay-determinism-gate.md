@@ -67,6 +67,28 @@ Required enum/value constraints:
 - For `outcome=NO-GO`, `failure_mode` must be non-empty.
 - For required `peer` rows with `GO`, `peer_cursor_delta=0` and `peer_watermark_delta=0`.
 
+## C0099 PRD Closeout Transition Handoff
+
+## PRD Traceability
+- `8.4`: deterministic replay from persisted normalized artifacts and safe replay boundaries.
+- `8.5`: no failed-path cursor/watermark progression on abort path.
+- `10`: deterministic replay and peer-isolation acceptance under perturbation.
+
+## C0099 Transition Blockers
+- Required `I-0545`/`I-0546` evidence families for closeout transition unblocking:
+  - `.ralph/reports/I-0545-m98-s1-backup-replay-continuity-matrix.md`
+  - `.ralph/reports/I-0545-m98-s1-backup-class-coverage-matrix.md`
+  - `.ralph/reports/I-0546-m98-s2-backup-restart-isolation-matrix.md`
+- Required hard-stop for every required row:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true` (when present)
+  - `replay_idempotent_ok=true` (when present)
+  - `cursor_monotonic_ok=true` (when present)
+  - `signed_delta_conservation_ok=true` (when present)
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer deltas apply.
+- `DP-0115-C0099`: any required transition row with `outcome=NO-GO`, missing evidence, required invariant false, or non-zero peer deltas blocks optional-refinement unblocking.
+
 ## Invariants
 - `canonical_event_id_unique`
 - `replay_idempotent`

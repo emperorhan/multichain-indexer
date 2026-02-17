@@ -38,6 +38,28 @@
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `outcome`, `evidence_present`, `failure_mode`
 - Required peer-isolation hard-stop columns: `peer_cursor_delta=0`, `peer_watermark_delta=0`, `outcome=GO`, `evidence_present=true`.
 
+## C0099 PRD Closeout Transition Handoff
+
+## PRD Traceability
+- `8.4`: restart continuity checks for failed-path recovery.
+- `8.5`: no failed-path cursor/watermark progression.
+- `10`: deterministic replay and peer-isolation behavior under one-chain perturbation.
+
+## C0099 Transition Blockers
+- Required `I-0545`/`I-0546` evidence families for closeout transition unblocking:
+  - `.ralph/reports/I-0545-m97-s1-fork-recovery-matrix.md`
+  - `.ralph/reports/I-0545-m97-s1-recovery-continuity-matrix.md`
+  - `.ralph/reports/I-0546-m97-s2-peer-isolation-matrix.md`
+- Required hard-stop for every required row:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true` (when present)
+  - `replay_idempotent_ok=true` (when present)
+  - `cursor_monotonic_ok=true` (when present)
+  - `signed_delta_conservation_ok=true` (when present)
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer deltas apply.
+- `DP-0115-C0099`: any required transition row with `outcome=NO-GO`, missing evidence, required invariant false, or non-zero peer deltas blocks optional-refinement unblocking.
+
 ## Invariants
 - `canonical_event_id_unique`
 - `replay_idempotent`
