@@ -99,3 +99,18 @@ The PRD `R5/R8` controls are still not closed with an explicit, testable gate. C
 ## Decision Hook
 - `DP-0103-M93`: treat any observed failed-path cursor/watermark progression as a hard contract failure; fail gate for the corresponding slice until deterministic replay and fault-matrix parity are re-proven.
 - `DP-0113-C0095`: C0095 remains blocked unless required `I-0533` matrix artifacts for all mandatory chains have `outcome=GO`, `evidence_present=true`, and required invariants true.
+
+## C0101 Decision and Artifact Gate
+- `DP-0117-C0101`: C0101 remains blocked unless the `I-0557` fail-fast continuity and one-chain isolation artifacts show all required mandatory-chain rows as:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` where required
+  - `peer_watermark_delta=0` where required
+- Required artifacts for hard-stop handoff are:
+  - `.ralph/reports/I-0557-m93-s1-fail-fast-continuity-matrix.md`
+  - `.ralph/reports/I-0557-m93-s2-one-chain-isolation-matrix.md`

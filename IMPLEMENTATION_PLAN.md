@@ -217,11 +217,13 @@
   - PRD §8.5: fail-fast correctness-impacting paths with no failed-path cursor/watermark progression.
   - PRD §10: deterministic replay acceptance and peer-isolation under one-chain perturbation.
 - C0101 lock state: `C0101-PRD-FAILFAST-COUNTEREXAMPLE-REVALIDATION`.
-- C0101 queue adjacency: hard dependency `I-0555` -> `I-0557` -> `I-0558`.
-- Downstream execution pair:
+ - C0101 queue adjacency: hard dependency `I-0555` -> `I-0557` -> `I-0558`.
+ - `DP-0117-C0101` decision hook gates C0101 unblocking when evidence rows are complete and `outcome=GO`.
+  - Downstream execution pair:
   - `I-0557` (developer) — PRD `8.4`/`8.5`/`10` counterexample-matrix contract handoff and evidence refresh under topology-revalidated context.
   - `I-0558` (qa) — PRD `8.4`/`8.5`/`10` counterexample gate with peer-isolation and restart continuity checks.
 - Slice gates for this tranche:
+  - Required evidence artifacts: `.ralph/reports/I-0557-m93-s1-fail-fast-continuity-matrix.md`, `.ralph/reports/I-0557-m93-s2-one-chain-isolation-matrix.md`.
   - `I-0556` updates this plan with explicit C0101 lock state and queue order `I-0555 -> I-0557 -> I-0558`.
   - `I-0557` updates `specs/m93-prd-fail-fast-continuity-gate.md` with C0101 hard-stop transitions and publishes planner-ready evidence artifacts:
     - `.ralph/reports/I-0557-m93-s1-fail-fast-continuity-matrix.md`
