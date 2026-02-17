@@ -1879,8 +1879,25 @@ self_heal_validation_failure() {
   return 1
 }
 
+is_spec_only_commit() {
+  local changed
+  changed="$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)"
+  [ -n "${changed}" ] || return 0
+  while IFS= read -r f; do
+    case "${f}" in
+      *.md|specs/*|docs/*|.ralph/*|.agent/*|PROMPT_*|IMPLEMENTATION_PLAN*)
+        continue ;;
+      *)
+        return 1 ;;
+    esac
+  done <<< "${changed}"
+  return 0
+}
+
+SPEC_ONLY_LIMIT="${RALPH_SPEC_ONLY_LIMIT:-3}"
 loop_count=0
 noop_count=0
+spec_only_count=0
 CURRENT_ISSUE_ID=""
 CURRENT_IN_PROGRESS_PATH=""
 
@@ -2127,6 +2144,37 @@ while true; do
     continue
   fi
 
+  if [ "${role}" = "developer" ] && [ -n "$(git status --porcelain)" ]; then
+    git add -A
+    changed_files="$(git diff --cached --name-only 2>/dev/null || true)"
+    has_code_change="false"
+    while IFS= read -r f; do
+      [ -n "${f}" ] || continue
+      case "${f}" in
+        *.md|specs/*|docs/*|.ralph/*|.agent/*|PROMPT_*|IMPLEMENTATION_PLAN*) continue ;;
+        *) has_code_change="true"; break ;;
+      esac
+    done <<< "${changed_files}"
+
+    if [ "${has_code_change}" = "false" ]; then
+      git reset HEAD -- . >/dev/null 2>&1 || true
+      git checkout -- . 2>/dev/null || true
+      git clean -fd 2>/dev/null || true
+      blocked_path="${BLOCKED_DIR}/${issue_id}.md"
+      set_issue_status "${in_progress_path}" "blocked"
+      mv "${in_progress_path}" "${blocked_path}"
+      CURRENT_ISSUE_ID=""
+      CURRENT_IN_PROGRESS_PATH=""
+      blocked_note="developer produced spec-only changes without code"
+      append_result_block "${blocked_path}" "blocked" "${role}" "${model}" "${log_file}" "not-run" "${blocked_note}" ""
+      echo "[ralph-local] blocked ${issue_id}: ${blocked_note}"
+      rm -f "${pre_change_snapshot}" "${SCOPE_GUARD_CHANGED_FILE:-}" "${SCOPE_GUARD_REASON_FILE:-}"
+      loop_count=$((loop_count + 1))
+      continue
+    fi
+    git reset HEAD -- . >/dev/null 2>&1 || true
+  fi
+
   commit_sha=""
   if [ -n "$(git status --porcelain)" ]; then
     safe_title="$(printf '%s' "${issue_title}" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
@@ -2136,6 +2184,12 @@ while true; do
     generate_evidence_pack "${in_progress_path}" "${issue_id}" "${role}" "${model}" "${validation_state}" "${log_file}" "${commit_sha}"
     publish_to_main_if_ready || true
     noop_count=0
+    if is_spec_only_commit; then
+      spec_only_count=$((spec_only_count + 1))
+      echo "[ralph-local] spec-only commit ${spec_only_count}/${SPEC_ONLY_LIMIT}"
+    else
+      spec_only_count=0
+    fi
   else
     noop_count=$((noop_count + 1))
   fi
@@ -2159,6 +2213,10 @@ while true; do
   loop_count=$((loop_count + 1))
   if [ "${noop_count}" -ge "${NOOP_LIMIT}" ]; then
     echo "[ralph-local] repeated no-op completions reached limit (${NOOP_LIMIT}), stopping"
+    break
+  fi
+  if [ "${spec_only_count}" -ge "${SPEC_ONLY_LIMIT}" ]; then
+    echo "[ralph-local] spec-only cycling detected (${spec_only_count} consecutive spec-only commits); stopping"
     break
   fi
 done
