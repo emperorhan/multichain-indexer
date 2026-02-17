@@ -31,7 +31,20 @@
   - peer coupling checks remain zero where required (`peer_cursor_delta=0`, `peer_watermark_delta=0`).
 - No runtime implementation changes are executed in this planner slice.
 
-`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95`
+## C0091 (`I-0520`) tranche activation
+- Focus: `M97` PRD-priority reorg recovery + replay determinism gate.
+- Slice execution order: `I-0520` -> `I-0521` -> `I-0522`.
+- Downstream execution pair:
+  - `I-0521` (developer) — PRD-boundary reorg/fork recovery matrix contracts and replay continuity evidence execution.
+  - `I-0522` (qa) — PRD-boundary peer-isolation and fork-recovery continuity counterexample gate.
+- Slice gates for this tranche:
+  - required fork vectors and continuity classes produce complete, evidence-backed rows with `outcome=GO`.
+  - replay continuity rows satisfy `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`.
+  - one-chain perturbation rows keep chain isolation (`peer_cursor_delta=0`, `peer_watermark_delta=0`) for required classes.
+  - any NO-GO finding blocks downstream promotion.
+- No runtime implementation changes are executed in this planner slice.
+
+`M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95 -> M97`
 
 Execution queue (dependency-ordered):
 1. `I-0102` (`M1-S1`) canonical envelope + schema scaffolding
@@ -244,6 +257,9 @@ Execution queue (dependency-ordered):
 193. `I-0517` (`M96-S1`) PRD-priority closeout tranche kickoff and downstream contract handoff
 194. `I-0518` (`M96-S1`) Developer execution of class coverage + replay gate artifacts
 195. `I-0519` (`M96-S1`) QA counterexample gate and promotion recommendation for `M96`
+196. `I-0520` (`M97`) planner tranche activation and downstream issue handoff
+197. `I-0521` (`M97-S1`) Developer execution of reorg recovery determinism evidence contracts
+198. `I-0522` (`M97-S2`) QA peer-isolation and replay-continuity counterexample gate
 
 ## Global Verification Contract
 Every implementation slice must pass:
