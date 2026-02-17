@@ -390,6 +390,36 @@ EOF
   echo "[ralph-manager] seeded continuous quality cycle ${cycle_id}: ${planner_issue_id} -> ${developer_issue_id} -> ${qa_issue_id}"
 }
 
+SPEC_ONLY_CYCLE_CHECK_COUNT="${RALPH_SPEC_ONLY_CYCLE_CHECK_COUNT:-3}"
+
+recent_cycles_produced_no_code() {
+  local check_count="${1:-${SPEC_ONLY_CYCLE_CHECK_COUNT}}"
+  local cycle_num code_found=0 count=0
+  cycle_num="$(awk 'NR==1{print $1+0; exit}' "${CYCLE_STATE_FILE}" 2>/dev/null || echo 0)"
+  while [ "${count}" -lt "${check_count}" ] && [ "${cycle_num}" -gt 0 ]; do
+    local cycle_id dev_key
+    cycle_id="$(printf 'C%04d' "${cycle_num}")"
+    dev_key="auto-quality-cycle-${cycle_id}-build"
+    for f in "${RALPH_ROOT}/done"/I-*.md; do
+      [ -f "${f}" ] || continue
+      if ! text_exists "automanager_key:[[:space:]]*${dev_key}" "${f}"; then
+        continue
+      fi
+      local commit_sha
+      commit_sha="$(awk -F': ' '$1 == "- commit" {print $2; exit}' "${f}" 2>/dev/null)"
+      if [ -n "${commit_sha}" ] && [ "${commit_sha}" != "none" ] && [ "${commit_sha}" != "" ]; then
+        if git diff --name-only "${commit_sha}~1" "${commit_sha}" 2>/dev/null \
+          | grep -qvE '\.(md)$|^specs/|^docs/|^\.ralph/|^\.agent/|^PROMPT_|^IMPLEMENTATION_PLAN'; then
+          code_found=1
+        fi
+      fi
+    done
+    cycle_num=$((cycle_num - 1))
+    count=$((count + 1))
+  done
+  [ "${code_found}" -eq 0 ]
+}
+
 main() {
   if ! issue_exists_with_key "auto-base-sepolia-runtime-gap" && base_sepolia_runtime_gap_detected; then
     create_base_runtime_issue
@@ -398,6 +428,11 @@ main() {
 
   if issue_exists_with_prefix_open "auto-quality-cycle-"; then
     echo "[ralph-manager] continuous quality cycle already open; skip"
+    return 0
+  fi
+
+  if recent_cycles_produced_no_code "${SPEC_ONLY_CYCLE_CHECK_COUNT}"; then
+    echo "[ralph-manager] last ${SPEC_ONLY_CYCLE_CHECK_COUNT} cycles produced no code changes; halting cycle creation"
     return 0
   fi
 

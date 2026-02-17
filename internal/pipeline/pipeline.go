@@ -8,6 +8,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/fetcher"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
@@ -160,6 +161,24 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	)
 
 	g, gCtx := errgroup.WithContext(ctx)
+
+	// Periodic channel depth sampling for PipelineChannelDepth gauge.
+	chainStr := p.cfg.Chain.String()
+	networkStr := p.cfg.Network.String()
+	g.Go(func() error {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-gCtx.Done():
+				return nil
+			case <-ticker.C:
+				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "fetch_job").Set(float64(len(jobCh)))
+				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "raw_batch").Set(float64(len(rawBatchCh)))
+				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "normalized").Set(float64(len(normalizedCh)))
+			}
+		}
+	})
 
 	g.Go(func() error {
 		return coord.Run(gCtx)

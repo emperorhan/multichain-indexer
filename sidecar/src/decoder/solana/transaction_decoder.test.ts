@@ -153,4 +153,114 @@ describe('decodeSolanaTransaction', () => {
     expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
     expect(transferEvents[0].contractAddress).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
   });
+
+  it('handles undefined innerInstructions (not empty array)', () => {
+    const txNoInner = {
+      ...solTransferTx,
+      meta: {
+        ...solTransferTx.meta,
+        innerInstructions: undefined,
+      },
+    };
+    const result = decodeSolanaTransaction(txNoInner, 'sigNoInner', watchedSet);
+    expect(result.status).toBe('SUCCESS');
+    // Should still detect the outer transfer
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+    expect(transferEvents).toHaveLength(1);
+  });
+
+  it('handles programIdIndex as instruction reference', () => {
+    const txWithProgramIdIndex = {
+      slot: 900,
+      blockTime: 1700008000,
+      transaction: {
+        message: {
+          accountKeys: [
+            { pubkey: WATCHED_ADDRESS },
+            { pubkey: OTHER_ADDRESS },
+            { pubkey: '11111111111111111111111111111111' },
+          ],
+          instructions: [
+            {
+              programIdIndex: 2,
+              parsed: {
+                type: 'transfer',
+                info: {
+                  source: WATCHED_ADDRESS,
+                  destination: OTHER_ADDRESS,
+                  lamports: 100000,
+                },
+              },
+            },
+          ],
+        },
+      },
+      meta: {
+        err: null,
+        fee: 5000,
+        preBalances: [2000000000, 500000000, 1],
+        postBalances: [1999895000, 500100000, 1],
+        innerInstructions: [],
+      },
+    };
+    const result = decodeSolanaTransaction(txWithProgramIdIndex, 'sigPII', watchedSet);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.feeAmount).toBe('5000');
+  });
+
+  it('handles deeply nested CPI (3 levels)', () => {
+    const deepCPITx = {
+      slot: 1000,
+      blockTime: 1700009000,
+      transaction: {
+        message: {
+          accountKeys: [
+            { pubkey: WATCHED_ADDRESS },
+            { pubkey: OTHER_ADDRESS },
+            { pubkey: '11111111111111111111111111111111' },
+          ],
+          instructions: [
+            {
+              programId: 'OuterProgram1111111111111111111111111',
+              parsed: null,
+            },
+          ],
+        },
+      },
+      meta: {
+        err: null,
+        fee: 5000,
+        preBalances: [2000000000, 500000000, 1],
+        postBalances: [1499995000, 1000000000, 1],
+        innerInstructions: [
+          {
+            index: 0,
+            instructions: [
+              {
+                programId: 'MiddleProgram111111111111111111111111',
+                parsed: null,
+              },
+              {
+                programId: '11111111111111111111111111111111',
+                parsed: {
+                  type: 'transfer',
+                  info: {
+                    source: WATCHED_ADDRESS,
+                    destination: OTHER_ADDRESS,
+                    lamports: 500000000,
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const result = decodeSolanaTransaction(deepCPITx, 'sigDeepCPI', watchedSet);
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].delta).toBe('-500000000');
+    expect(transferEvents[0].outerInstructionIndex).toBe(0);
+    expect(transferEvents[0].innerInstructionIndex).toBe(1);
+  });
 });

@@ -16,17 +16,24 @@ import (
 
 // Init sets up the global OpenTelemetry tracer provider.
 // If endpoint is empty, a no-op tracer is used (safe for dev/testing).
+// When insecure is true, the exporter uses plaintext gRPC (suitable for
+// local collectors). Set insecure to false for TLS-enabled collectors
+// (e.g. Grafana Cloud, Datadog).
 // Returns a shutdown function that should be called on application exit.
-func Init(ctx context.Context, serviceName, endpoint string) (func(context.Context) error, error) {
+func Init(ctx context.Context, serviceName, endpoint string, insecure bool) (func(context.Context) error, error) {
 	if endpoint == "" {
 		otel.SetTracerProvider(noop.NewTracerProvider())
 		return func(context.Context) error { return nil }, nil
 	}
 
-	exporter, err := otlptracegrpc.New(ctx,
+	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
+	}
+	if insecure {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	}
+
+	exporter, err := otlptracegrpc.New(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create OTLP exporter: %w", err)
 	}

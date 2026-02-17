@@ -115,6 +115,7 @@ type LogConfig struct {
 type TracingConfig struct {
 	Enabled  bool
 	Endpoint string // OTLP gRPC endpoint (e.g. "localhost:4317")
+	Insecure bool   // Use plaintext gRPC (true for local, false for TLS-enabled collectors)
 }
 
 func Load() (*Config, error) {
@@ -188,6 +189,7 @@ func Load() (*Config, error) {
 		Tracing: TracingConfig{
 			Enabled:  getEnvBool("OTEL_TRACING_ENABLED", false),
 			Endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+			Insecure: getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", true),
 		},
 	}
 

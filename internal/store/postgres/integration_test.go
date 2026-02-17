@@ -5,7 +5,10 @@ package postgres_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -338,3 +341,297 @@ func TestBalanceEventRepo_RequiresEventID(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// ---------- Extended Integration Tests ----------
+
+func TestBalanceEventRepo_ConcurrentUpsertSameEventID(t *testing.T) {
+	db := testDB(t)
+	txRepo := postgres.NewTransactionRepo(db)
+	tokenRepo := postgres.NewTokenRepo(db)
+	beRepo := postgres.NewBalanceEventRepo(db)
+	ctx := context.Background()
+	txHash := "test-concurrent-be-tx-" + uuid.NewString()[:8]
+	contract := "test-concurrent-be-token-" + uuid.NewString()[:8]
+	eventID := "concurrent-evt-" + uuid.NewString()[:8]
+	watchedAddr := "test-concurrent-be-" + uuid.NewString()[:8]
+
+	// Setup: create transaction and token.
+	setupTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	txID, err := txRepo.UpsertTx(ctx, setupTx, &model.Transaction{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		TxHash: txHash, FeeAmount: "5000", FeePayer: "payer1",
+		Status: model.TxStatusSuccess, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+	tokenID, err := tokenRepo.UpsertTx(ctx, setupTx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contract, Symbol: "SOL", Name: "Solana",
+		Decimals: 9, TokenType: model.TokenTypeNative, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, setupTx.Commit())
+
+	// Concurrently upsert the same event_id from 10 goroutines.
+	const goroutines = 10
+	var wg sync.WaitGroup
+	insertedCount := int32(0)
+	errCount := int32(0)
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			gTx, gErr := db.BeginTx(ctx, nil)
+			if gErr != nil {
+				atomic.AddInt32(&errCount, 1)
+				return
+			}
+			be := &model.BalanceEvent{
+				Chain: model.ChainSolana, Network: model.NetworkDevnet,
+				TransactionID: txID, TxHash: txHash, TokenID: tokenID,
+				EventCategory: "transfer", EventAction: "deposit",
+				Address: watchedAddr, Delta: "1000000",
+				WatchedAddress: &watchedAddr, BlockCursor: 100,
+				ChainData: json.RawMessage("{}"), EventID: eventID,
+				FinalityState: "confirmed", BalanceBefore: strPtr("0"),
+				BalanceAfter: strPtr("1000000"), DecoderVersion: "v1", SchemaVersion: "v1",
+			}
+			inserted, uErr := beRepo.UpsertTx(ctx, gTx, be)
+			if uErr != nil {
+				_ = gTx.Rollback()
+				atomic.AddInt32(&errCount, 1)
+				return
+			}
+			if inserted {
+				atomic.AddInt32(&insertedCount, 1)
+			}
+			_ = gTx.Commit()
+		}()
+	}
+	wg.Wait()
+
+	// Verify: only 1 row should exist for this event_id.
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE event_id = $1", eventID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "exactly 1 row should exist for the event_id")
+}
+
+func TestBalanceEventRepo_FinalityUpgradePath(t *testing.T) {
+	db := testDB(t)
+	txRepo := postgres.NewTransactionRepo(db)
+	tokenRepo := postgres.NewTokenRepo(db)
+	beRepo := postgres.NewBalanceEventRepo(db)
+	ctx := context.Background()
+	txHash := "test-finality-tx-" + uuid.NewString()[:8]
+	contract := "test-finality-token-" + uuid.NewString()[:8]
+	eventID := "finality-evt-" + uuid.NewString()[:8]
+	watchedAddr := "test-finality-" + uuid.NewString()[:8]
+
+	setupTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	txID, err := txRepo.UpsertTx(ctx, setupTx, &model.Transaction{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		TxHash: txHash, FeeAmount: "5000", FeePayer: "payer1",
+		Status: model.TxStatusSuccess, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+	tokenID, err := tokenRepo.UpsertTx(ctx, setupTx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contract, Symbol: "SOL", Name: "Solana",
+		Decimals: 9, TokenType: model.TokenTypeNative, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, setupTx.Commit())
+
+	baseBE := &model.BalanceEvent{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		TransactionID: txID, TxHash: txHash, TokenID: tokenID,
+		EventCategory: "transfer", EventAction: "deposit",
+		Address: watchedAddr, Delta: "1000000",
+		WatchedAddress: &watchedAddr, BlockCursor: 100,
+		ChainData: json.RawMessage("{}"), EventID: eventID,
+		BalanceBefore: strPtr("0"), BalanceAfter: strPtr("1000000"),
+		DecoderVersion: "v1", SchemaVersion: "v1",
+	}
+
+	// processed → confirmed → finalized
+	finalityStates := []string{"processed", "confirmed", "finalized"}
+	for _, fs := range finalityStates {
+		tx, tErr := db.BeginTx(ctx, nil)
+		require.NoError(t, tErr)
+		baseBE.FinalityState = fs
+		_, uErr := beRepo.UpsertTx(ctx, tx, baseBE)
+		require.NoError(t, uErr)
+		require.NoError(t, tx.Commit())
+	}
+
+	// Verify final state is finalized.
+	var finalState string
+	err = db.QueryRow("SELECT finality_state FROM balance_events WHERE event_id = $1", eventID).Scan(&finalState)
+	require.NoError(t, err)
+	assert.Equal(t, "finalized", finalState)
+}
+
+func TestBalanceEventRepo_RollbackDeleteByCursor(t *testing.T) {
+	db := testDB(t)
+	txRepo := postgres.NewTransactionRepo(db)
+	tokenRepo := postgres.NewTokenRepo(db)
+	beRepo := postgres.NewBalanceEventRepo(db)
+	ctx := context.Background()
+
+	watchedAddr := "test-rollback-" + uuid.NewString()[:8]
+	contract := "test-rollback-token-" + uuid.NewString()[:8]
+
+	setupTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	tokenID, err := tokenRepo.UpsertTx(ctx, setupTx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contract, Symbol: "SOL", Name: "Solana",
+		Decimals: 9, TokenType: model.TokenTypeNative, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+
+	// Insert events at different cursors.
+	for cursor := int64(10); cursor <= 15; cursor++ {
+		txHash := fmt.Sprintf("rollback-tx-%d-%s", cursor, uuid.NewString()[:8])
+		txID, tErr := txRepo.UpsertTx(ctx, setupTx, &model.Transaction{
+			Chain: model.ChainSolana, Network: model.NetworkDevnet,
+			TxHash: txHash, FeeAmount: "5000", FeePayer: "payer1",
+			Status: model.TxStatusSuccess, ChainData: json.RawMessage("{}"),
+			BlockCursor: cursor,
+		})
+		require.NoError(t, tErr)
+		_, uErr := beRepo.UpsertTx(ctx, setupTx, &model.BalanceEvent{
+			Chain: model.ChainSolana, Network: model.NetworkDevnet,
+			TransactionID: txID, TxHash: txHash, TokenID: tokenID,
+			EventCategory: "transfer", EventAction: "deposit",
+			Address: watchedAddr, Delta: "100000",
+			WatchedAddress: &watchedAddr, BlockCursor: cursor,
+			ChainData: json.RawMessage("{}"),
+			EventID:       fmt.Sprintf("rollback-evt-%d-%s", cursor, uuid.NewString()[:8]),
+			FinalityState: "confirmed", BalanceBefore: strPtr("0"),
+			BalanceAfter: strPtr("100000"), DecoderVersion: "v1", SchemaVersion: "v1",
+		})
+		require.NoError(t, uErr)
+	}
+	require.NoError(t, setupTx.Commit())
+
+	// Delete events where block_cursor >= 13.
+	deleteTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = deleteTx.ExecContext(ctx,
+		"DELETE FROM balance_events WHERE chain = $1 AND network = $2 AND watched_address = $3 AND block_cursor >= $4",
+		model.ChainSolana, model.NetworkDevnet, watchedAddr, 13,
+	)
+	require.NoError(t, err)
+	require.NoError(t, deleteTx.Commit())
+
+	// Count remaining events.
+	var remaining int
+	err = db.QueryRow(
+		"SELECT COUNT(*) FROM balance_events WHERE chain = $1 AND network = $2 AND watched_address = $3",
+		model.ChainSolana, model.NetworkDevnet, watchedAddr,
+	).Scan(&remaining)
+	require.NoError(t, err)
+	assert.Equal(t, 3, remaining, "events at cursor 10, 11, 12 should remain")
+}
+
+func TestBalanceRepo_ConcurrentAdjustBalance(t *testing.T) {
+	db := testDB(t)
+	tokenRepo := postgres.NewTokenRepo(db)
+	balanceRepo := postgres.NewBalanceRepo(db)
+	ctx := context.Background()
+	addr := "test-concurrent-balance-" + uuid.NewString()[:8]
+	contract := "test-concurrent-bal-token-" + uuid.NewString()[:8]
+
+	setupTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	tokenID, err := tokenRepo.UpsertTx(ctx, setupTx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contract, Symbol: "SOL", Name: "Solana",
+		Decimals: 9, TokenType: model.TokenTypeNative, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+	// Seed balance with 1_000_000_000.
+	walletID := "wallet-1"
+	orgID := "org-1"
+	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, setupTx,
+		model.ChainSolana, model.NetworkDevnet, addr,
+		tokenID, &walletID, &orgID, "1000000000", 1, "tx-seed"))
+	require.NoError(t, setupTx.Commit())
+
+	// 10 goroutines each adjust by +100.
+	const goroutines = 10
+	const deltaPerGoroutine = "100"
+	var wg sync.WaitGroup
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			gTx, gErr := db.BeginTx(ctx, nil)
+			if gErr != nil {
+				return
+			}
+			_ = balanceRepo.AdjustBalanceTx(ctx, gTx,
+				model.ChainSolana, model.NetworkDevnet, addr,
+				tokenID, &walletID, &orgID, deltaPerGoroutine, int64(10+idx), fmt.Sprintf("tx-concurrent-%d", idx))
+			_ = gTx.Commit()
+		}(i)
+	}
+	wg.Wait()
+
+	// Final balance should be 1_000_000_000 + (10 * 100) = 1_000_001_000.
+	readTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	amount, err := balanceRepo.GetAmountTx(ctx, readTx, model.ChainSolana, model.NetworkDevnet, addr, tokenID)
+	require.NoError(t, err)
+	require.NoError(t, readTx.Commit())
+	assert.Equal(t, "1000001000", amount)
+}
+
+func TestIndexerConfigRepo_WatermarkOnlyAdvances(t *testing.T) {
+	db := testDB(t)
+	configRepo := postgres.NewIndexerConfigRepo(db)
+	ctx := context.Background()
+
+	// Use a unique chain/network to avoid conflicts with other tests.
+	chain := model.ChainSolana
+	network := model.NetworkDevnet
+
+	// Set watermark to 100.
+	tx1, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, configRepo.UpdateWatermarkTx(ctx, tx1, chain, network, 100))
+	require.NoError(t, tx1.Commit())
+
+	// Try to regress watermark to 50. GREATEST() should keep it at 100.
+	tx2, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, configRepo.UpdateWatermarkTx(ctx, tx2, chain, network, 50))
+	require.NoError(t, tx2.Commit())
+
+	// Verify watermark is still >= 100 (GREATEST semantics).
+	var ingestedSeq int64
+	err = db.QueryRow(
+		"SELECT ingested_sequence FROM pipeline_watermarks WHERE chain = $1 AND network = $2",
+		chain, network,
+	).Scan(&ingestedSeq)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, ingestedSeq, int64(100), "watermark should not regress")
+
+	// Advance watermark to 200.
+	tx3, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, configRepo.UpdateWatermarkTx(ctx, tx3, chain, network, 200))
+	require.NoError(t, tx3.Commit())
+
+	err = db.QueryRow(
+		"SELECT ingested_sequence FROM pipeline_watermarks WHERE chain = $1 AND network = $2",
+		chain, network,
+	).Scan(&ingestedSeq)
+	require.NoError(t, err)
+	assert.Equal(t, int64(200), ingestedSeq)
+}

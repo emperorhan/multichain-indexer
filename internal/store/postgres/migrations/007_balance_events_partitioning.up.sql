@@ -37,7 +37,7 @@ CREATE TABLE balance_events_partitioned (
     asset_type              VARCHAR(64) NOT NULL DEFAULT '',
     asset_id                VARCHAR(256) NOT NULL DEFAULT '',
     finality_state          VARCHAR(32) NOT NULL DEFAULT '',
-    decoder_version         VARCHAR(32) NOT NULL DEFAULT '',
+    decoder_version         VARCHAR(64) NOT NULL DEFAULT '',
     schema_version          VARCHAR(32) NOT NULL DEFAULT '',
 
     -- Primary key includes block_time (partition key)
@@ -81,10 +81,46 @@ CREATE INDEX idx_bep_wallet ON balance_events_partitioned (wallet_id);
 CREATE INDEX idx_bep_token ON balance_events_partitioned (token_id);
 CREATE INDEX idx_bep_category ON balance_events_partitioned (event_category);
 
--- Step 5: Migrate existing data.
-INSERT INTO balance_events_partitioned
-    SELECT * FROM balance_events
-    ON CONFLICT DO NOTHING;
+-- Step 5: Migrate existing data with explicit column mapping.
+-- SELECT * is unsafe because column order differs between old and new tables
+-- (e.g. balance_before/balance_after are at positions 33-34 in old but 15-16
+-- in new). We also COALESCE nullable columns that became NOT NULL.
+INSERT INTO balance_events_partitioned (
+    id, chain, network, transaction_id, tx_hash,
+    outer_instruction_index, inner_instruction_index,
+    token_id, event_category, event_action, program_id,
+    address, counterparty_address, delta,
+    balance_before, balance_after,
+    watched_address, wallet_id, organization_id,
+    block_cursor, block_time, chain_data, created_at,
+    event_id, block_hash, tx_index,
+    event_path, event_path_type,
+    actor_address, asset_type, asset_id,
+    finality_state, decoder_version, schema_version
+)
+SELECT
+    id, chain, network, transaction_id, tx_hash,
+    outer_instruction_index, inner_instruction_index,
+    token_id, event_category, event_action, program_id,
+    address, counterparty_address, delta,
+    balance_before, balance_after,
+    watched_address, wallet_id, organization_id,
+    block_cursor,
+    COALESCE(block_time, now()),
+    chain_data, created_at,
+    COALESCE(event_id, ''),
+    COALESCE(block_hash, ''),
+    COALESCE(tx_index, 0)::INT,
+    COALESCE(event_path, ''),
+    COALESCE(event_path_type, ''),
+    COALESCE(actor_address, ''),
+    COALESCE(asset_type, ''),
+    COALESCE(asset_id, ''),
+    COALESCE(finality_state, ''),
+    COALESCE(decoder_version, ''),
+    COALESCE(schema_version, '')
+FROM balance_events
+ON CONFLICT DO NOTHING;
 
 -- Step 6: Swap tables.
 ALTER TABLE balance_events RENAME TO balance_events_old;
