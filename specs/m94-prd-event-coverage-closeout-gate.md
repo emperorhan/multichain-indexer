@@ -90,3 +90,40 @@ For each mandatory chain-family, the class-path matrix must be non-empty for eve
 
 ## Decision Hook
 - `DP-0105-M94`: required event-class matrix coverage is measured as `(chain, network, class, evidence_present, class_path)`; any missing non-`NA` cell fails the closeout gate.
+
+## C0105 (`I-0571`) tranche activation
+- Focus: PRD-priority event coverage revalidation and hard-stop refresh before optional refinements resume.
+- Focused unresolved PRD requirements:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark advancement is forbidden.
+  - `10`: deterministic replay + one-chain perturbation acceptance.
+- C0105 lock state: `C0105-PRD-EVENT-FEE-COVERAGE-REVALIDATION`.
+- C0105 queue adjacency: hard dependency `I-0570 -> I-0572 -> I-0573`.
+- Required PRD traceability updates in `I-0572`:
+  - `solana_fee_event_coverage` and `base_fee_split_coverage` remain mandatory hard-stop columns in the revalidation matrices.
+  - `chain_adapter_runtime_wired` remains part of required hard-stop evaluation.
+- Required artifacts for hard-stop evidence:
+  - `.ralph/reports/I-0572-m94-s1-event-coverage-matrix.md`
+  - `.ralph/reports/I-0572-m94-s2-dup-suppression-matrix.md`
+  - `.ralph/reports/I-0572-m94-s3-chain-isolation-matrix.md`
+
+### C0105 Matrix Contracts (`I-0572`)
+- `I-0572-m94-s1-event-coverage-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `evidence_present`, `outcome`, `failure_mode`
+  - hard-stop boolean fields: `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`
+- `I-0572-m94-s2-dup-suppression-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `outcome`, `failure_mode`
+  - hard-stop boolean fields: `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`
+- `I-0572-m94-s3-chain-isolation-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Required hard-stop evaluation for all `outcome=GO` rows in `I-0572`:
+  - `evidence_present=true`
+  - required booleans are `true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer columns are present
+  - `failure_mode` is empty
+- Any required `outcome=NO-GO` row must include a non-empty `failure_mode`.
+
+## C0105 Decision Hook
+- `DP-0131-C0105`: any required `I-0572` row missing, `outcome=NO-GO`, `evidence_present=false`, required booleans false, or required peer deltas non-zero is a hard NO-GO for C0105.

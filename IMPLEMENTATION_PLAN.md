@@ -18,7 +18,6 @@
   - replayed rows satisfy `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`.
   - no chain-pair control bleed in required counterexample rows (`peer_cursor_delta=0`, `peer_watermark_delta=0`).
 - No runtime implementation changes are executed in this planner slice.
-
 ## C0090 (`I-0517`) tranche activation
 - Focus: `M96-S1` (unresolved PRD-closeout: event-class coverage + replay determinism before optional refinements).
 - Slice execution order: `I-0517` -> `I-0518` -> `I-0519`.
@@ -4564,12 +4563,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0569` (`C0104-S1`) after `I-0568`
-2. `I-0570` (`C0104-S2`) after `I-0569`
+1. `I-0572` (`C0105-S1`) after `I-0570`
+2. `I-0573` (`C0105-S2`) after `I-0572`
 
 Planned next tranche queue:
-1. `I-0569` (`C0104-S1`) after `I-0568`
-2. `I-0570` (`C0104-S2`) after `I-0569`
+1. `I-0572` (`C0105-S1`) after `I-0570`
+2. `I-0573` (`C0105-S2`) after `I-0572`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
@@ -4676,3 +4675,29 @@ Superseded issues:
   - `I-0570` verifies all required rows report `outcome=GO`, `evidence_present=true`, required invariant columns `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `reorg_recovery_deterministic_ok`, and zero peer-chain deltas where applicable.
   - `I-0570` emits a hard recommendation and blocks C0104 on any required missing evidence, `NO-GO`, `evidence_present=false`, or required peer delta non-zero.
 - No runtime implementation changes are executed in this planner slice.
+
+## C0105 (`I-0571`) tranche activation
+- Focus: PRD-priority event/fee closeout revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark advancement is forbidden.
+  - `10`: deterministic replay and one-chain perturbation acceptance.
+- C0105 lock state: `C0105-PRD-EVENT-FEE-COVERAGE-REVALIDATION`.
+- C0105 queue adjacency: hard dependency `I-0570 -> I-0572 -> I-0573`.
+- Downstream execution pair:
+  - `I-0572` (developer) — PRD handoff contract for closeout coverage and hard-stop row contracts.
+  - `I-0573` (qa) — PRD-focused counterexample gate and recommendation on one-chain isolation and evidence readiness.
+- Slice gates for this tranche:
+  - `I-0571` updates this plan with explicit `C0105` lock state and queue order `I-0570 -> I-0572 -> I-0573`.
+  - `I-0572` updates `specs/m94-prd-event-coverage-closeout-gate.md` with a `C0105` addendum for `R1`, `R2`, `R3`, `8.5`, and `10`, including explicit hard-stop artifacts:
+    - `.ralph/reports/I-0572-m94-s1-event-coverage-matrix.md`
+    - `.ralph/reports/I-0572-m94-s2-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0572-m94-s3-chain-isolation-matrix.md`
+  - `I-0572` must define hard-stop schema constraints for required classes and peer-isolation rows in those artifacts:
+    - mandatory chain coverage rows for `solana-devnet`, `base-sepolia`, and `btc-testnet`.
+    - for `GO`, all required boolean columns (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`) are true.
+    - for `GO`, `evidence_present=true`, `peer_cursor_delta=0`, `peer_watermark_delta=0` where peer fields are required.
+  - `I-0573` verifies all required `I-0572` artifact rows for mandatory chains, requires `outcome=GO`, `evidence_present=true`, and hard-stop booleans in required rows, and blocks `C0105` on any required violation.
+  - No runtime implementation changes are executed in this planner slice.
