@@ -4942,7 +4942,7 @@ Superseded issues:
     - `evidence_present=false`
     - required hard-stop booleans false (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`)
     - required peer deltas not equal to zero in `I-0602-m98-s3-backup-restart-isolation-matrix.md`.
-  - No runtime implementation changes are executed in this planner tranche; work remains contract/spec/queue planning only.
+  - Runtime changes remain in the handoff issue (`I-0605`); this planner tranche remains contract/spec/queue planning only.
 
 ## C0114 (`I-0604`) tranche activation
 - Focus: PRD-priority implementation tranche to close remaining mandatory-chain asset-volatility event-completeness and duplicate-suppression gaps in the required runtime path.
