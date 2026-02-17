@@ -142,6 +142,27 @@
   - Any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks C0097 promotion.
   - no runtime implementation changes are executed in this planner slice.
 
+## C0098 (`I-0545`) tranche activation
+- Focus: PRD-priority residual replay/recovery continuity revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R4`: deterministic replay.
+  - `R8`: fail-fast correctness-impacting abort semantics.
+  - `8.4`: failed-path restart continuity from safe boundaries.
+  - `8.5`: no cursor/watermark progression on failed-path error paths.
+  - `10`: deterministic replay + peer-isolation acceptance.
+- Slice execution order: `I-0545` -> `I-0546`.
+- Downstream execution pair:
+  - `I-0545` (developer) — C0098 revalidation handoff contract and recovery/permutation evidence refresh.
+  - `I-0546` (qa) — counterexample gate for mandatory-chain replay-recovery isolation and peer bleed blockers.
+- Slice gates for this tranche:
+  - `I-0545` updates this plan with C0098 lock state, PRD traceability, and explicit `I-0545 -> I-0546` queue order.
+  - `I-0545` updates `specs/m97-prd-reorg-recovery-determinism-gate.md` and `specs/m98-prd-normalized-backup-replay-determinism-gate.md` with C0098 matrix artifacts/row constraints.
+  - `I-0545` publishes explicit evidence pack entries for peer-isolation and restart-recovery permutations under mandatory chains.
+  - `I-0546` requires required evidence rows with `GO`, `evidence_present=true`, and explicit invariants true for all mandatory chains.
+  - `I-0546` requires all required peer-chain bleed rows to report `peer_cursor_delta=0` and `peer_watermark_delta=0`.
+  - Any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks C0098 promotion.
+  - no runtime implementation changes are executed in this planner slice.
+
 `M1 -> (M2 || M3) -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11 -> M12 -> M13 -> M14 -> M15 -> M16 -> M17 -> M18 -> M19 -> M20 -> M21 -> M22 -> M23 -> M24 -> M25 -> M26 -> M27 -> M28 -> M29 -> M30 -> M31 -> M32 -> M33 -> M34 -> M35 -> M36 -> M37 -> M38 -> M39 -> M40 -> M41 -> M42 -> M43 -> M44 -> M45 -> M46 -> M47 -> M48 -> M49 -> M50 -> M51 -> M52 -> M53 -> M54 -> M55 -> M56 -> M57 -> M58 -> M59 -> M60 -> M61 -> M62 -> M63 -> M64 -> M65 -> M66 -> M67 -> M68 -> M69 -> M70 -> M71 -> M72 -> M73 -> M74 -> M75 -> M76 -> M77 -> M78 -> M79 -> M80 -> M81 -> M82 -> M83 -> M84 -> M85 -> M86 -> M87 -> M88 -> M89 -> M90 -> M91 -> M92 -> M93 -> M94 -> M95 -> M97 -> M98`
 
 Execution queue (dependency-ordered):
@@ -4408,14 +4429,16 @@ Completed milestones/slices:
 191. `I-0540` (`C0096-S2`) after `I-0539`
 192. `I-0542` (`C0097`) after `I-0540`
 193. `I-0543` (`C0097-S1`) after `I-0542`
+194. `I-0545` (`C0098`) after `I-0543`
+195. `I-0546` (`C0098-S1`) after `I-0545`
 
 Active downstream queue from this plan:
-1. `I-0542` (`C0097`) after `I-0540`
-2. `I-0543` (`C0097-S1`) after `I-0542`
+1. `I-0545` (`C0098`) after `I-0543`
+2. `I-0546` (`C0098-S1`) after `I-0545`
 
 Planned next tranche queue:
-1. `I-0542` (`C0097`) after `I-0540`
-2. `I-0543` (`C0097-S1`) after `I-0542`
+1. `I-0545` (`C0098`) after `I-0543`
+2. `I-0546` (`C0098-S1`) after `I-0545`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
