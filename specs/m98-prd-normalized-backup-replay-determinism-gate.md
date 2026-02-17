@@ -109,3 +109,44 @@ Required enum/value constraints:
 - `DP-0110-M98`: any required `(chain, network, class_path)` missing evidence, any required row with `outcome=NO-GO`, any required row with `evidence_present=false`, or any required peer-delta row with non-zero movement is a hard NO-GO for `M98` promotion.
 - `DP-0111-C0093`: any required `M96`/`M97`/`M98` closeout row missing, `evidence_present=false`, `outcome=NO-GO`, or required peer-delta row with non-zero movement is a hard NO-GO for optional refinement progression.
 - `DP-0114-C0098`: any required `I-0545`/`I-0546` row missing, with `outcome=NO-GO`, `evidence_present=false`, non-empty `failure_mode` missing on `NO-GO`, or non-zero required peer deltas is a hard NO-GO for C0098 and optional refinement continuation.
+
+## C0113 (`I-0602`) revalidation addendum
+- C0113 lock state: `C0113-PRD-BACKUP-RESTART-CONTINUITY-COUNTEREXAMPLE`.
+- C0113 focused PRD traceability:
+  - `R4`: deterministic replay.
+  - `8.4`: rollback/restart replay determinism from committed boundaries.
+  - `8.5`: failed-path cursor/watermark is prohibited from advancing on correctness-impacting path.
+  - `10`: one-chain perturbation isolation + deterministic replay acceptance.
+  - `reorg_recovery_deterministic`: persisted checkpoint replay remains deterministic under fork/recovery permutations.
+  - `chain_adapter_runtime_wired`: adapter/runtime invariance under persisted-backup perturbation.
+- C0113 downstream handoff (`I-0599 -> I-0602 -> I-0603`) requires three C0113 artifacts:
+  - `.ralph/reports/I-0602-m98-s1-backup-replay-continuity-matrix.md`
+  - `.ralph/reports/I-0602-m98-s2-backup-class-coverage-matrix.md`
+  - `.ralph/reports/I-0602-m98-s3-backup-restart-isolation-matrix.md`
+
+### C0113 Matrix Contracts (`I-0602`)
+- `I-0602-m98-s1-backup-replay-continuity-matrix.md` required columns:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `replay_source`, `permutation`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0602-m98-s2-backup-class-coverage-matrix.md` required columns:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0602-m98-s3-backup-restart-isolation-matrix.md` required columns:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
+- Required `C0113` perturbation families for C0113 replay continuity rows:
+  - `persisted_checkpoint_restart`
+  - `persisted_checkpoint_restart_with_cross_chain_stress`
+  - `backup_replay_reproducibility_seeded`
+- `C0113` hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - all booleans in required columns are `true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` in `I-0602-m98-s3-backup-restart-isolation-matrix.md`
+  - `failure_mode` is empty
+- Any required `NO-GO` row in any required C0113 artifact must include non-empty `failure_mode`.
+
+#### C0113 Decision Hook
+- `DP-0146-C0113`: C0113 remains blocked unless all required `I-0602` rows for `solana-devnet`, `base-sepolia`, and `btc-testnet` in the three C0113 artifacts are present and satisfy:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - required hard-stop booleans (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`) are true where columns are present
+  - required peer deltas are zero where present
+  - required `NO-GO` rows include non-empty `failure_mode`.

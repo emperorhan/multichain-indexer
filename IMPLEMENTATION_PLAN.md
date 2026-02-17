@@ -4912,5 +4912,34 @@ Superseded issues:
     - `evidence_present=false`
     - required hard-stop booleans false for `canonical_event_id_unique`, `replay_idempotent`, `cursor_monotonic`, `signed_delta_conservation`, `solana_fee_event_coverage`, `base_fee_split_coverage`, `chain_adapter_runtime_wired`
     - required peer deltas non-zero where those columns are present (`peer_cursor_delta!=0` or `peer_watermark_delta!=0`).
-  - Downstream validation context remains `make test`, `make test-sidecar`, and `make lint`.
-  - No runtime implementation changes are executed in this planner tranche; only contract/spec/queue planning is executed.
+- Downstream validation context remains `make test`, `make test-sidecar`, and `make lint`.
+- No runtime implementation changes are executed in this planner tranche; only contract/spec/queue planning is executed.
+
+## C0113 (`I-0599`) tranche activation
+- Focus: PRD-priority deterministic restart continuity and failed-path replay closure revalidation before optional reliability refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R4`: deterministic replay.
+  - `8.4`: replay from committed rollback/restart boundaries remains deterministic.
+  - `8.5`: correctness-impacting failures must abort (`panic`) and may not progress failed-path cursor/watermark.
+  - `10`: deterministic replay acceptance and peer-isolation acceptance under one-chain perturbation.
+  - `reorg_recovery_deterministic`: fork/recovery replay remains deterministic under persisted-backup permutations.
+  - `chain_adapter_runtime_wired`: chain adapter/runtime invariants remain stable under restart perturbation.
+- C0113 lock state: `C0113-PRD-BACKUP-RESTART-CONTINUITY-COUNTEREXAMPLE`.
+- C0113 queue adjacency: hard dependency `I-0599 -> I-0602 -> I-0603`.
+- Downstream execution pair:
+  - `I-0602` (developer) — PRD handoff for persisted-backup replay continuity and one-chain restart-isolation counterexample matrix contracts.
+  - `I-0603` (qa) — PRD counterexample gate for required C0113 artifacts and explicit recommendation.
+- Slice gates for this tranche:
+  - `I-0599` updates this plan with explicit `C0113` lock state and queue order `I-0599 -> I-0602 -> I-0603`.
+  - `I-0602` updates `specs/m98-prd-normalized-backup-replay-determinism-gate.md` with a `C0113` addendum that binds deterministic restart continuity and one-chain isolation evidence to `R4`, `8.4`, `8.5`, `10`, `reorg_recovery_deterministic`, and `chain_adapter_runtime_wired`.
+  - `I-0602` defines C0113 artifact contracts and required hard-stop schema for:
+    - `.ralph/reports/I-0602-m98-s1-backup-replay-continuity-matrix.md`
+    - `.ralph/reports/I-0602-m98-s2-backup-class-coverage-matrix.md`
+    - `.ralph/reports/I-0602-m98-s3-backup-restart-isolation-matrix.md`
+  - `I-0603` verifies all required `I-0602` rows for mandatory chains and blocks C0113 on any required:
+    - missing artifact row
+    - `outcome=NO-GO`
+    - `evidence_present=false`
+    - required hard-stop booleans false (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`)
+    - required peer deltas not equal to zero in `I-0602-m98-s3-backup-restart-isolation-matrix.md`.
+  - No runtime implementation changes are executed in this planner tranche; work remains contract/spec/queue planning only.
