@@ -2392,6 +2392,698 @@ func TestProcessBatch_M94S3_MintBurnClassCoverage_AndReplayStability(t *testing.
 	}
 }
 
+func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *testing.T) {
+	parseDecimal := func(t *testing.T, value string) *big.Int {
+		t.Helper()
+		out, ok := new(big.Int).SetString(strings.TrimSpace(value), 10)
+		require.True(t, ok, "invalid decimal: %q", value)
+		return out
+	}
+
+	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+		seen := make(map[string]struct{})
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				require.NotEmpty(t, be.EventID)
+				_, exists := seen[be.EventID]
+				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
+				seen[be.EventID] = struct{}{}
+			}
+		}
+	}
+
+	countCategory := func(batch event.NormalizedBatch, category model.EventCategory) int {
+		count := 0
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				if be.EventCategory == category {
+					count++
+				}
+			}
+		}
+		return count
+	}
+
+	canonicalEventIDSet := func(batches ...event.NormalizedBatch) map[string]struct{} {
+		out := make(map[string]struct{})
+		for _, batch := range batches {
+			for _, tx := range batch.Transactions {
+				for _, be := range tx.BalanceEvents {
+					out[be.EventID] = struct{}{}
+				}
+			}
+		}
+		return out
+	}
+
+	sumSignedDeltas := func(batch event.NormalizedBatch) *big.Int {
+		sum := big.NewInt(0)
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				sum.Add(sum, parseDecimal(t, be.Delta))
+			}
+		}
+		return sum
+	}
+
+	run := func(t *testing.T, batch event.RawBatch, responses []*sidecarv1.TransactionResult) event.NormalizedBatch {
+		t.Helper()
+
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockChainDecoderClient(ctrl)
+		normalizedCh := make(chan event.NormalizedBatch, 1)
+		n := &Normalizer{
+			sidecarTimeout: 30_000_000_000, // 30s
+			normalizedCh:   normalizedCh,
+			logger:         slog.Default(),
+		}
+
+		mockClient.EXPECT().
+			DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+				Results: responses,
+			}, nil)
+
+		require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+		return <-normalizedCh
+	}
+
+	assertBTCMinerFeeConservation := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+
+		for _, tx := range batch.Transactions {
+			in, out := big.NewInt(0), big.NewInt(0)
+			for _, be := range tx.BalanceEvents {
+				if be.EventCategory != model.EventCategoryTransfer {
+					continue
+				}
+				switch be.EventAction {
+				case "vin_spend":
+					in.Add(in, new(big.Int).Abs(parseDecimal(t, be.Delta)))
+				case "vout_receive":
+					out.Add(out, parseDecimal(t, be.Delta))
+				}
+			}
+			fee := parseDecimal(t, tx.FeeAmount)
+			if fee.Sign() == 0 {
+				continue
+			}
+			feeConserves := big.NewInt(0).Sub(in, out)
+			assert.Equal(t, fee, feeConserves)
+		}
+	}
+
+	t.Run("solana-devnet", func(t *testing.T) {
+		solanaAddress := "sol-m96-sd-owner"
+		solanaTxA := "sol-m96-sd-9001"
+		solanaTxB := "sol-m96-sd-9002"
+		txA := &sidecarv1.TransactionResult{
+			TxHash:      solanaTxA,
+			BlockCursor: 9001,
+			BlockTime:   1700009001,
+			Status:      "SUCCESS",
+			FeeAmount:   "5000",
+			FeePayer:    solanaAddress,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "system_transfer",
+					ProgramId:             "11111111111111111111111111111111",
+					Address:               solanaAddress,
+					ContractAddress:       "11111111111111111111111111111111",
+					Delta:                 "-1500000000",
+					TokenSymbol:           "SOL",
+					TokenName:             "Solana",
+					TokenDecimals:         9,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata:              map[string]string{"event_path": "log:1"},
+				},
+			},
+		}
+		txB := &sidecarv1.TransactionResult{
+			TxHash:      solanaTxB,
+			BlockCursor: 9002,
+			BlockTime:   1700009002,
+			Status:      "SUCCESS",
+			FeeAmount:   "0",
+			FeePayer:    solanaAddress,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryMint),
+					EventAction:           "mint",
+					ProgramId:             "11111111111111111111111111111111",
+					Address:               solanaAddress,
+					ContractAddress:       "So11111111111111111111111111111111111111112",
+					Delta:                 "1500000000",
+					TokenSymbol:           "SOL",
+					TokenName:             "Solana",
+					TokenDecimals:         9,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata:              map[string]string{"event_path": "log:2"},
+				},
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryBurn),
+					EventAction:           "burn",
+					ProgramId:             "11111111111111111111111111111111",
+					Address:               solanaAddress,
+					ContractAddress:       "So11111111111111111111111111111111111111112",
+					Delta:                 "-250000000",
+					TokenSymbol:           "SOL",
+					TokenName:             "Solana",
+					TokenDecimals:         9,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata:              map[string]string{"event_path": "log:3"},
+				},
+			},
+		}
+
+		canonicalBatch := event.RawBatch{
+			Chain:                  model.ChainSolana,
+			Network:                model.NetworkDevnet,
+			Address:                solanaAddress,
+			PreviousCursorValue:    strPtr("sol-m96-sd-prev"),
+			PreviousCursorSequence: 9000,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"sol-m96-sd-a"}`),
+				json.RawMessage(`{"tx":"sol-m96-sd-b"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: solanaTxA, Sequence: 9001},
+				{Hash: solanaTxB, Sequence: 9002},
+			},
+			NewCursorValue:    strPtr(solanaTxB),
+			NewCursorSequence: 9002,
+		}
+		swapBatch := event.RawBatch{
+			Chain:                  model.ChainSolana,
+			Network:                model.NetworkDevnet,
+			Address:                solanaAddress,
+			PreviousCursorValue:    strPtr("sol-m96-sd-prev"),
+			PreviousCursorSequence: 9000,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"sol-m96-sd-b"}`),
+				json.RawMessage(`{"tx":"sol-m96-sd-a"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: solanaTxB, Sequence: 9002},
+				{Hash: solanaTxA, Sequence: 9001},
+			},
+			NewCursorValue:    strPtr(solanaTxB),
+			NewCursorSequence: 9002,
+		}
+		partialBatch := event.RawBatch{
+			Chain:                  model.ChainSolana,
+			Network:                model.NetworkDevnet,
+			Address:                solanaAddress,
+			PreviousCursorValue:    strPtr("sol-m96-sd-prev"),
+			PreviousCursorSequence: 9000,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"sol-m96-sd-a"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: solanaTxA, Sequence: 9001},
+			},
+			NewCursorValue:    strPtr(solanaTxA),
+			NewCursorSequence: 9001,
+		}
+
+		canonical := run(t, canonicalBatch, []*sidecarv1.TransactionResult{txA, txB})
+		replay := run(t, event.RawBatch{
+			Chain:                  canonicalBatch.Chain,
+			Network:                canonicalBatch.Network,
+			Address:                canonicalBatch.Address,
+			PreviousCursorValue:    canonical.NewCursorValue,
+			PreviousCursorSequence: canonical.NewCursorSequence,
+			RawTransactions:        canonicalBatch.RawTransactions,
+			Signatures:            canonicalBatch.Signatures,
+			NewCursorValue:         canonical.NewCursorValue,
+			NewCursorSequence:      canonical.NewCursorSequence,
+		}, []*sidecarv1.TransactionResult{txA, txB})
+
+		swap := run(t, swapBatch, []*sidecarv1.TransactionResult{txB, txA})
+
+		partial := run(t, partialBatch, []*sidecarv1.TransactionResult{txA})
+		recovered := run(t, event.RawBatch{
+			Chain:                  canonicalBatch.Chain,
+			Network:                canonicalBatch.Network,
+			Address:                canonicalBatch.Address,
+			PreviousCursorValue:    partial.NewCursorValue,
+			PreviousCursorSequence: partial.NewCursorSequence,
+			RawTransactions:        canonicalBatch.RawTransactions,
+			Signatures:            canonicalBatch.Signatures,
+			NewCursorValue:         canonical.NewCursorValue,
+			NewCursorSequence:      canonical.NewCursorSequence,
+		}, []*sidecarv1.TransactionResult{txA, txB})
+
+		assertNoDuplicateCanonicalIDs(t, canonical)
+		assertNoDuplicateCanonicalIDs(t, replay)
+		assertNoDuplicateCanonicalIDs(t, swap)
+		assertNoDuplicateCanonicalIDs(t, recovered)
+
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryTransfer))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryMint))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryBurn))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFee))
+
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(replay))
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(swap))
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(recovered))
+
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(replay))
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(swap))
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(recovered))
+
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(replay).String())
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(swap).String())
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(recovered).String())
+
+		require.NotNil(t, canonical.NewCursorValue)
+		require.NotNil(t, replay.NewCursorValue)
+		require.NotNil(t, swap.NewCursorValue)
+		require.NotNil(t, recovered.NewCursorValue)
+		assert.Equal(t, "sol-m96-sd-9002", *canonical.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *replay.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *swap.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *recovered.NewCursorValue)
+		assert.GreaterOrEqual(t, canonical.NewCursorSequence, canonical.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, replay.NewCursorSequence, replay.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, swap.NewCursorSequence, swap.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, partial.NewCursorSequence, partial.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, recovered.NewCursorSequence, recovered.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, recovered.NewCursorSequence, partial.NewCursorSequence)
+	})
+
+	t.Run("base-sepolia", func(t *testing.T) {
+		baseAddress := "0xBASEx00x00000000000000000000000000000000000"
+		baseTxA := "base-m96-bd-9101"
+		baseTxB := "base-m96-bd-9102"
+		txA := &sidecarv1.TransactionResult{
+			TxHash:      baseTxA,
+			BlockCursor: 9101,
+			BlockTime:   1700009101,
+			Status:      "SUCCESS",
+			FeeAmount:   "1000",
+			FeePayer:    baseAddress,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "transfer",
+					ProgramId:             "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+					Address:               baseAddress,
+					ContractAddress:       "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+					Delta:                 "-1000000000000000000",
+					TokenSymbol:           "TEST",
+					TokenName:             "TestToken",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeFungible),
+					Metadata: map[string]string{
+						"event_path":      "log:11",
+						"fee_execution_l2": "700",
+						"fee_data_l1":      "300",
+					},
+				},
+			},
+		}
+		txB := &sidecarv1.TransactionResult{
+			TxHash:      baseTxB,
+			BlockCursor: 9102,
+			BlockTime:   1700009102,
+			Status:      "SUCCESS",
+			FeeAmount:   "0",
+			FeePayer:    baseAddress,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryMint),
+					EventAction:           "mint",
+					ProgramId:             "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+					Address:               baseAddress,
+					ContractAddress:       "0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+					Delta:                 "500000000000000000",
+					TokenSymbol:           "TEST",
+					TokenName:             "TestToken",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeFungible),
+					Metadata:              map[string]string{"event_path": "log:12"},
+				},
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryBurn),
+					EventAction:           "burn",
+					ProgramId:             "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+					Address:               baseAddress,
+					ContractAddress:       "0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+					Delta:                 "-100000000000000000",
+					TokenSymbol:           "TEST",
+					TokenName:             "TestToken",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeFungible),
+					Metadata:              map[string]string{"event_path": "log:13"},
+				},
+			},
+		}
+
+		canonicalBatch := event.RawBatch{
+			Chain:                  model.ChainBase,
+			Network:                model.NetworkSepolia,
+			Address:                baseAddress,
+			PreviousCursorValue:    strPtr("base-m96-bd-prev"),
+			PreviousCursorSequence: 9100,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"base-m96-bd-a"}`),
+				json.RawMessage(`{"tx":"base-m96-bd-b"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: baseTxA, Sequence: 9101},
+				{Hash: baseTxB, Sequence: 9102},
+			},
+			NewCursorValue:    strPtr(baseTxB),
+			NewCursorSequence: 9102,
+		}
+		swapBatch := event.RawBatch{
+			Chain:                  model.ChainBase,
+			Network:                model.NetworkSepolia,
+			Address:                baseAddress,
+			PreviousCursorValue:    strPtr("base-m96-bd-prev"),
+			PreviousCursorSequence: 9100,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"base-m96-bd-b"}`),
+				json.RawMessage(`{"tx":"base-m96-bd-a"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: baseTxB, Sequence: 9102},
+				{Hash: baseTxA, Sequence: 9101},
+			},
+			NewCursorValue:    strPtr(baseTxB),
+			NewCursorSequence: 9102,
+		}
+		partialBatch := event.RawBatch{
+			Chain:                  model.ChainBase,
+			Network:                model.NetworkSepolia,
+			Address:                baseAddress,
+			PreviousCursorValue:    strPtr("base-m96-bd-prev"),
+			PreviousCursorSequence: 9100,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"base-m96-bd-a"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: baseTxA, Sequence: 9101},
+			},
+			NewCursorValue:    strPtr(baseTxA),
+			NewCursorSequence: 9101,
+		}
+
+		canonical := run(t, canonicalBatch, []*sidecarv1.TransactionResult{txA, txB})
+		replay := run(t, event.RawBatch{
+			Chain:                  canonicalBatch.Chain,
+			Network:                canonicalBatch.Network,
+			Address:                canonicalBatch.Address,
+			PreviousCursorValue:    canonical.NewCursorValue,
+			PreviousCursorSequence: canonical.NewCursorSequence,
+			RawTransactions:        canonicalBatch.RawTransactions,
+			Signatures:            canonicalBatch.Signatures,
+			NewCursorValue:         canonical.NewCursorValue,
+			NewCursorSequence:      canonical.NewCursorSequence,
+		}, []*sidecarv1.TransactionResult{txA, txB})
+
+		swap := run(t, swapBatch, []*sidecarv1.TransactionResult{txB, txA})
+		partial := run(t, partialBatch, []*sidecarv1.TransactionResult{txA})
+		recovered := run(t, event.RawBatch{
+			Chain:                  canonicalBatch.Chain,
+			Network:                canonicalBatch.Network,
+			Address:                canonicalBatch.Address,
+			PreviousCursorValue:    partial.NewCursorValue,
+			PreviousCursorSequence: partial.NewCursorSequence,
+			RawTransactions:        canonicalBatch.RawTransactions,
+			Signatures:            canonicalBatch.Signatures,
+			NewCursorValue:         canonical.NewCursorValue,
+			NewCursorSequence:      canonical.NewCursorSequence,
+		}, []*sidecarv1.TransactionResult{txA, txB})
+
+		assertNoDuplicateCanonicalIDs(t, canonical)
+		assertNoDuplicateCanonicalIDs(t, replay)
+		assertNoDuplicateCanonicalIDs(t, swap)
+		assertNoDuplicateCanonicalIDs(t, recovered)
+
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryTransfer))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryMint))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryBurn))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFeeExecutionL2))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFeeDataL1))
+
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(replay))
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(swap))
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(recovered))
+
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(replay))
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(swap))
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(recovered))
+
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(replay).String())
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(swap).String())
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(recovered).String())
+
+		require.NotNil(t, canonical.NewCursorValue)
+		require.NotNil(t, replay.NewCursorValue)
+		require.NotNil(t, swap.NewCursorValue)
+		require.NotNil(t, recovered.NewCursorValue)
+		assert.Equal(t, "base-m96-bd-9102", *canonical.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *replay.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *swap.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *recovered.NewCursorValue)
+		assert.GreaterOrEqual(t, canonical.NewCursorSequence, canonical.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, replay.NewCursorSequence, replay.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, swap.NewCursorSequence, swap.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, partial.NewCursorSequence, partial.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, recovered.NewCursorSequence, recovered.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, recovered.NewCursorSequence, partial.NewCursorSequence)
+	})
+
+	t.Run("btc-testnet", func(t *testing.T) {
+		btcAddress := "tb1-m96-owner"
+		btcTxA := "ABCD9601"
+		btcTxB := "ABCD9602"
+		txA := &sidecarv1.TransactionResult{
+			TxHash:      btcTxA,
+			BlockCursor: 9601,
+			BlockTime:   1700009601,
+			FeeAmount:   "300",
+			FeePayer:    btcAddress,
+			Status:      "SUCCESS",
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "vin_spend",
+					ProgramId:             "btc",
+					Address:               btcAddress,
+					ContractAddress:       "BTC",
+					Delta:                 "-1200",
+					TokenSymbol:           "BTC",
+					TokenName:             "Bitcoin",
+					TokenDecimals:         8,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":     "vin:0",
+						"finality_state": "confirmed",
+					},
+				},
+				{
+					OuterInstructionIndex: 1,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "vout_receive",
+					ProgramId:             "btc",
+					Address:               btcAddress,
+					ContractAddress:       "BTC",
+					Delta:                 "900",
+					TokenSymbol:           "BTC",
+					TokenName:             "Bitcoin",
+					TokenDecimals:         8,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":     "vout:0",
+						"finality_state": "confirmed",
+					},
+				},
+			},
+		}
+		txB := &sidecarv1.TransactionResult{
+			TxHash:      btcTxB,
+			BlockCursor: 9602,
+			BlockTime:   1700009602,
+			FeeAmount:   "0",
+			FeePayer:    btcAddress,
+			Status:      "SUCCESS",
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "vin_spend",
+					ProgramId:             "btc",
+					Address:               btcAddress,
+					ContractAddress:       "BTC",
+					Delta:                 "-700",
+					TokenSymbol:           "BTC",
+					TokenName:             "Bitcoin",
+					TokenDecimals:         8,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":     "vin:1",
+						"finality_state": "confirmed",
+					},
+				},
+				{
+					OuterInstructionIndex: 1,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "vout_receive",
+					ProgramId:             "btc",
+					Address:               btcAddress,
+					ContractAddress:       "BTC",
+					Delta:                 "700",
+					TokenSymbol:           "BTC",
+					TokenName:             "Bitcoin",
+					TokenDecimals:         8,
+					TokenType:             string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":     "vout:1",
+						"finality_state": "confirmed",
+					},
+				},
+			},
+		}
+
+		canonicalBatch := event.RawBatch{
+			Chain:                  model.ChainBTC,
+			Network:                model.NetworkTestnet,
+			Address:                btcAddress,
+			PreviousCursorValue:    strPtr("bcdd-m96-bd-prev"),
+			PreviousCursorSequence: 9600,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"btc-m96-bd-a"}`),
+				json.RawMessage(`{"tx":"btc-m96-bd-b"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: btcTxA, Sequence: 9601},
+				{Hash: btcTxB, Sequence: 9602},
+			},
+			NewCursorValue:    strPtr(btcTxB),
+			NewCursorSequence: 9602,
+		}
+		swapBatch := event.RawBatch{
+			Chain:                  model.ChainBTC,
+			Network:                model.NetworkTestnet,
+			Address:                btcAddress,
+			PreviousCursorValue:    strPtr("bcdd-m96-bd-prev"),
+			PreviousCursorSequence: 9600,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"btc-m96-bd-b"}`),
+				json.RawMessage(`{"tx":"btc-m96-bd-a"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: btcTxB, Sequence: 9602},
+				{Hash: btcTxA, Sequence: 9601},
+			},
+			NewCursorValue:    strPtr(btcTxB),
+			NewCursorSequence: 9602,
+		}
+		partialBatch := event.RawBatch{
+			Chain:                  model.ChainBTC,
+			Network:                model.NetworkTestnet,
+			Address:                btcAddress,
+			PreviousCursorValue:    strPtr("bcdd-m96-bd-prev"),
+			PreviousCursorSequence: 9600,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"btc-m96-bd-a"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: btcTxA, Sequence: 9601},
+			},
+			NewCursorValue:    strPtr(btcTxA),
+			NewCursorSequence: 9601,
+		}
+
+		canonical := run(t, canonicalBatch, []*sidecarv1.TransactionResult{txA, txB})
+		replay := run(t, event.RawBatch{
+			Chain:                  canonicalBatch.Chain,
+			Network:                canonicalBatch.Network,
+			Address:                canonicalBatch.Address,
+			PreviousCursorValue:    canonical.NewCursorValue,
+			PreviousCursorSequence: canonical.NewCursorSequence,
+			RawTransactions:        canonicalBatch.RawTransactions,
+			Signatures:            canonicalBatch.Signatures,
+			NewCursorValue:         canonical.NewCursorValue,
+			NewCursorSequence:      canonical.NewCursorSequence,
+		}, []*sidecarv1.TransactionResult{txA, txB})
+
+		swap := run(t, swapBatch, []*sidecarv1.TransactionResult{txB, txA})
+		partial := run(t, partialBatch, []*sidecarv1.TransactionResult{txA})
+		recovered := run(t, event.RawBatch{
+			Chain:                  canonicalBatch.Chain,
+			Network:                canonicalBatch.Network,
+			Address:                canonicalBatch.Address,
+			PreviousCursorValue:    partial.NewCursorValue,
+			PreviousCursorSequence: partial.NewCursorSequence,
+			RawTransactions:        canonicalBatch.RawTransactions,
+			Signatures:            canonicalBatch.Signatures,
+			NewCursorValue:         canonical.NewCursorValue,
+			NewCursorSequence:      canonical.NewCursorSequence,
+		}, []*sidecarv1.TransactionResult{txA, txB})
+
+		assertNoDuplicateCanonicalIDs(t, canonical)
+		assertNoDuplicateCanonicalIDs(t, replay)
+		assertNoDuplicateCanonicalIDs(t, swap)
+		assertNoDuplicateCanonicalIDs(t, recovered)
+
+		assert.Equal(t, 4, countCategory(canonical, model.EventCategoryTransfer))
+		assertBTCMinerFeeConservation(t, canonical)
+		assertBTCMinerFeeConservation(t, replay)
+		assertBTCMinerFeeConservation(t, swap)
+		assertBTCMinerFeeConservation(t, recovered)
+
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(replay))
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(swap))
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(recovered))
+
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(replay))
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(swap))
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(recovered))
+
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(replay).String())
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(swap).String())
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(recovered).String())
+
+		require.NotNil(t, canonical.NewCursorValue)
+		require.NotNil(t, replay.NewCursorValue)
+		require.NotNil(t, swap.NewCursorValue)
+		require.NotNil(t, recovered.NewCursorValue)
+		assert.Equal(t, "abcd9602", *canonical.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *replay.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *swap.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *recovered.NewCursorValue)
+		assert.GreaterOrEqual(t, canonical.NewCursorSequence, canonical.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, replay.NewCursorSequence, replay.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, swap.NewCursorSequence, swap.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, partial.NewCursorSequence, partial.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, recovered.NewCursorSequence, recovered.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, recovered.NewCursorSequence, partial.NewCursorSequence)
+	})
+}
+
 func TestProcessBatch_DualChainReplaySmoke_MixedSuccessFailed_NoDuplicateCanonicalIDsAndCursorMonotonic(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockChainDecoderClient(ctrl)
