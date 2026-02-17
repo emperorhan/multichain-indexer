@@ -85,6 +85,24 @@ Required enum/value constraints:
 - `signed_delta_conservation`
 - `chain_adapter_runtime_wired`
 
+### C0102 hard-stop execution addendum
+- C0102 artifacts are required for planner handoff and must remain the only accepted proof of revalidation completion before optional refinement work resumes.
+- Required hard-stop row fields and booleans:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `peer_cursor_delta=0`
+  - `peer_watermark_delta=0`
+  - `failure_mode` must be empty for `GO` and non-empty for `NO-GO`.
+- Required row contracts for C0102 artifacts:
+  - `.ralph/reports/I-0560-m96-s1-class-coverage-revalidation-matrix.md`
+  - `.ralph/reports/I-0560-m96-s1-chain-isolation-revalidation-matrix.md`
+  - `.ralph/reports/I-0560-m96-s1-replay-continuity-revalidation-matrix.md`
+- `DP-0118-C0102` stays blocked until all required rows in all three artifacts meet the hard-stop contract above and reference the explicit artifact paths.
+
 ## Decision Hook
 - `DP-0109-M96`: Any required class-path cell missing evidence, or any required row with `outcome=NO-GO`/invalid fail-mode semantics, is a hard NO-GO for milestone promotion.
 - `DP-0119-C0097`: Any required row with `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks promotion into optional post-PRD continuation.
