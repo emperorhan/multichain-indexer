@@ -14,6 +14,7 @@ RALPH_ROOT="${RALPH_ROOT:-.ralph}"
 IN_PROGRESS_DIR="${RALPH_ROOT}/in-progress"
 QUEUE_DIR="${RALPH_ROOT}/issues"
 PID_FILE="${RALPH_ROOT}/runner.pid"
+SUPERVISOR_SCRIPT="${RALPH_SUPERVISOR_SCRIPT:-${ROOT_DIR}/scripts/ralph_local_supervisor.sh}"
 
 read_issue_meta() {
   local file="$1"
@@ -42,6 +43,10 @@ is_pid_running() {
   ps -p "${pid}" >/dev/null 2>&1
 }
 
+detect_supervisor_pid() {
+  pgrep -f "${SUPERVISOR_SCRIPT}" | head -n1 || true
+}
+
 daemon="stopped"
 active_state="unknown"
 sub_state="unknown"
@@ -68,6 +73,15 @@ if [ "${daemon}" != "running" ]; then
     active_state="active"
     sub_state="running(local)"
     control_mode="local-pid"
+  else
+    supervisor_pid="$(detect_supervisor_pid)"
+    if is_pid_running "${supervisor_pid}"; then
+      daemon="running"
+      main_pid="${supervisor_pid}"
+      active_state="active"
+      sub_state="running(process)"
+      control_mode="process-fallback"
+    fi
   fi
 fi
 

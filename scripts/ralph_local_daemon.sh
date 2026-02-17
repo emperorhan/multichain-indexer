@@ -257,16 +257,16 @@ stop_daemon() {
 }
 
 show_status() {
-  if use_systemd_control; then
-    if systemctl --user cat "${SERVICE_NAME}" >/dev/null 2>&1; then
-      "${RUNTIME_STATUS_SCRIPT}"
-      if is_running_systemd; then
-        echo "- control_mode: systemd (${SERVICE_NAME})"
-      else
-        echo "- control_mode: systemd (${SERVICE_NAME}, inactive)"
-      fi
-      return 0
+  if command -v systemctl >/dev/null 2>&1; then
+    "${RUNTIME_STATUS_SCRIPT}"
+    if is_running_systemd; then
+      echo "- control_mode: systemd (${SERVICE_NAME})"
+    elif [ -n "$(current_supervisor_pid)" ]; then
+      echo "- control_mode: systemd (${SERVICE_NAME}, process-active fallback)"
+    else
+      echo "- control_mode: systemd (${SERVICE_NAME}, inactive)"
     fi
+    return 0
   fi
 
   "${LOCAL_STATUS_SCRIPT}"
