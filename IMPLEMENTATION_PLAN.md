@@ -4971,3 +4971,27 @@ Superseded issues:
     - required hard-stop booleans false (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`)
     - required peer deltas not equal to zero in peer-isolation rows.
   - No runtime implementation changes are executed in this planner tranche; work remains contract/spec/queue planning only.
+
+## C0115 (`I-0608`) tranche activation
+- Focus: PRD-priority hard-stop revalidation before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `10`: deterministic replay acceptance under one-chain perturbation.
+  - `chain_adapter_runtime_wired`: runtime wiring invariance on required counterexamples.
+- C0115 lock state: `C0115-PRD-ASSET-VOLATILITY-HARD-STOP-REVALIDATION`.
+- C0115 queue adjacency: hard dependency `I-0608 -> I-0611 -> I-0612`.
+- Downstream execution pair:
+  - `I-0611` (developer) — PRD handoff and artifact production for corrected hard-stop evidence contracts.
+  - `I-0612` (qa) — PRD counterexample gate and recommendation closure for `C0115`.
+- Slice gates for this tranche:
+  - `I-0611` updates this plan with explicit C0115 lock state and queue order `I-0608 -> I-0611 -> I-0612`.
+  - `I-0611` updates `specs/m96-prd-asset-volatility-closeout.md` with a `C0115` addendum that binds `R1`, `R2`, `R3`, `8.5`, `10`, `solana_fee_event_coverage`, `base_fee_split_coverage`, and `chain_adapter_runtime_wired` to required artifacts.
+  - `I-0611` defines and produces required artifacts:
+    - `.ralph/reports/I-0611-m96-s1-coverage-class-hardening-matrix.md`
+    - `.ralph/reports/I-0611-m96-s2-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0611-m96-s3-replay-continuity-matrix.md`
+  - `I-0612` verifies all required `I-0611` rows for mandatory chains and blocks `C0115` on any required `outcome=NO-GO`, `evidence_present=false`, hard-stop invariant false, or non-zero required peer deltas.
+  - No runtime implementation changes are executed in this planner tranche; planning/spec handoff updates only.
