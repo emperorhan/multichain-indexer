@@ -5129,6 +5129,11 @@ Superseded issues:
   - `I-0627` requires these artifacts:
     - `.ralph/reports/I-0627-m93-s1-fail-fast-continuity-matrix.md`
     - `.ralph/reports/I-0627-m93-s2-one-chain-isolation-matrix.md`
+  - Required row-key contracts for C0119 artifact handoff:
+    - `I-0627-m93-s1-fail-fast-continuity-matrix.md`
+      - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+    - `I-0627-m93-s2-one-chain-isolation-matrix.md`
+      - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
   - Required hard-stop checks for all required `I-0627` rows:
     - `outcome=GO`
     - `evidence_present=true`

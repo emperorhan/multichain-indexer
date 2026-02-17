@@ -144,6 +144,7 @@ The PRD `R5/R8` controls are still not closed with an explicit, testable gate. C
   - `8.4`: failed-path replay continuity with cursor/watermark rollback safety.
   - `8.5`: correctness-impacting path abort semantics remain fail-fast.
   - `10`: deterministic replay and peer-isolation acceptance under one-chain perturbation.
+- C0119 lock state: `C0119-PRD-FAILFAST-RESTART-ISOLATION-HARDENING`.
 - C0119 queue adjacency: hard dependency `I-0624 -> I-0627 -> I-0628`.
 - Required artifacts:
   - `.ralph/reports/I-0627-m93-s1-fail-fast-continuity-matrix.md`
