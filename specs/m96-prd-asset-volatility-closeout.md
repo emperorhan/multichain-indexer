@@ -287,12 +287,24 @@ Required PRD hard-stop decision hook:
   - `R3`: chain-family fee completeness.
   - `8.5`: failed-path cursor/watermark progression is prohibited.
   - `10`: deterministic replay acceptance under perturbation.
+  - `solana_fee_event_coverage`: explicit Solana fee debit class row.
+  - `base_fee_split_coverage`: explicit Base execution-vs-data fee class rows.
   - `chain_adapter_runtime_wired`: adapter/runtime wiring invariance under required counterexamples.
 - C0115 queue adjacency: hard dependency `I-0608 -> I-0611 -> I-0612`.
 - C0115 artifacts are required for the same mandatory class-paths as C0114 and include explicit counterexample columns:
   - `.ralph/reports/I-0611-m96-s1-coverage-class-hardening-matrix.md`
   - `.ralph/reports/I-0611-m96-s2-dup-suppression-matrix.md`
   - `.ralph/reports/I-0611-m96-s3-replay-continuity-matrix.md`
+
+#### C0115 mandatory coverage contract
+- Mandatory class-path cells:
+  - `solana` + `solana-devnet` -> `TRANSFER`, `MINT`, `BURN`, `FEE`
+  - `base` + `base-sepolia` -> `TRANSFER`, `MINT`, `BURN`, `fee_execution_l2`, `fee_data_l1`
+  - `btc` + `btc-testnet` -> `TRANSFER:vin`, `TRANSFER:vout`, `miner_fee`
+- Mandatory replay perturbations:
+  - `canonical_range_replay`
+  - `replay_order_swap`
+  - `one_chain_restart_perturbation`
 
 #### C0115 Machine-Checkable Matrix Contracts (`I-0611`)
   - `I-0611-m96-s1-coverage-class-hardening-matrix.md` required row keys:

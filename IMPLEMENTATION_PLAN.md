@@ -4993,5 +4993,12 @@ Superseded issues:
     - `.ralph/reports/I-0611-m96-s1-coverage-class-hardening-matrix.md`
     - `.ralph/reports/I-0611-m96-s2-dup-suppression-matrix.md`
     - `.ralph/reports/I-0611-m96-s3-replay-continuity-matrix.md`
+  - `I-0611` enforces explicit C0115 row-key contracts:
+    - `I-0611-m96-s1-coverage-class-hardening-matrix.md` required row keys:
+      - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+    - `I-0611-m96-s2-dup-suppression-matrix.md` required row keys:
+      - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+    - `I-0611-m96-s3-replay-continuity-matrix.md` required row keys:
+      - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
   - `I-0612` verifies all required `I-0611` rows for mandatory chains and blocks `C0115` on any required `outcome=NO-GO`, `evidence_present=false`, hard-stop invariant false, or non-zero required peer deltas.
   - No runtime implementation changes are executed in this planner tranche; planning/spec handoff updates only.
