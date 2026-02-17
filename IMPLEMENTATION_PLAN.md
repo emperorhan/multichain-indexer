@@ -130,7 +130,7 @@
   - `R2`: full in-scope asset-volatility event coverage.
   - `R3`: fee delta completeness for family-specific fee models.
   - `8.4`/`8.5`: failed-path continuity and fail-fast cursor/watermark safety.
-- Slice execution order: `I-0542` -> `I-0543`.
+- Slice execution order: `I-0541` -> `I-0542` -> `I-0543`.
 - Downstream execution pair:
   - `I-0542` (developer) — PRD-priority increment implementation plus evidence refresh under explicit `R1/R2/R3`.
   - `I-0543` (qa) — PRD-priority closeout QA with invariant and perturbation checks.
@@ -138,6 +138,7 @@
   - `I-0542` updates `IMPLEMENTATION_PLAN.md` with C0097 lock state, active queue adjacency, and PRD traceability to `C0097`.
   - `I-0542` refreshes scope in `specs/m94-prd-event-coverage-closeout-gate.md` and `specs/m96-prd-asset-volatility-closeout.md` with `I-0542` evidence contracts.
   - `I-0543` requires mandatory-chain class-path/evidence completeness and peer-isolation `0`-delta checks before marking `I-0543` complete.
+  - `I-0542` publishes `.ralph/reports/I-0542-evidence.md` and treats `DP-0119-C0097` hard blockers as promotion requirements.
   - Any required `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks C0097 promotion.
   - no runtime implementation changes are executed in this planner slice.
 

@@ -9,7 +9,7 @@
 - `R1`: no-duplicate indexing.
 - `R2`: full asset-volatility coverage.
 - `R3`: chain-family fee completeness.
-- `8`: replay and recovery continuity expectations.
+- `8.4`/`8.5`: failed-path continuity and fail-fast cursor/watermark safety.
 - `9.4`: topology parity and continuity principles.
 - `10`: deterministic replay acceptance behavior.
 
@@ -48,11 +48,12 @@ Mandatory rows:
   - `cursor_monotonic_ok=true`
   - `signed_delta_conservation_ok=true`
 
-## Evidence Artifacts (to be produced by downstream `I-0518`/`I-0519`)
+## Evidence Artifacts (to be produced by downstream `I-0542`/`I-0543`)
 - `.ralph/reports/I-0518-m96-s1-class-coverage-matrix.md`
 - `.ralph/reports/I-0518-m96-s1-dup-suppression-matrix.md`
 - `.ralph/reports/I-0519-m96-s1-replay-continuity-matrix.md`
 - `.ralph/reports/I-0519-m96-s1-chain-isolation-matrix.md`
+- `.ralph/reports/I-0542-evidence.md`
 
 ## Machine-Checkable Evidence Schema
 - Class-coverage matrix rows:
@@ -86,3 +87,4 @@ Required enum/value constraints:
 
 ## Decision Hook
 - `DP-0109-M96`: Any required class-path cell missing evidence, or any required row with `outcome=NO-GO`/invalid fail-mode semantics, is a hard NO-GO for milestone promotion.
+- `DP-0119-C0097`: Any required row with `outcome=NO-GO`, `evidence_present=false`, `peer_cursor_delta!=0`, or `peer_watermark_delta!=0` blocks promotion into optional post-PRD continuation.
