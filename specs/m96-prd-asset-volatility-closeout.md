@@ -16,35 +16,37 @@
 ## Problem Statement
 `I-0512` must close the remaining PRD class-coverage/replay gap by defining explicit, machine-checkable gates for mandatory-chain class completeness **before** optional reliability work.
 
-## Required Coverage Matrix (Mandatory-Chain Class Cells)
-Required cells must be present with `evidence_present=true` in the `M96` coverage artifacts.
+## Coverage Matrix Contract (Mandatory-Chain Class Cells)
+All required matrix rows must be present and set `evidence_present=true` in the required `M96` artifacts.
 
-1. `solana-devnet`:
-- `TRANSFER`
-- `MINT`
-- `BURN`
-- `FEE`
-2. `base-sepolia`:
-- `TRANSFER`
-- `MINT`
-- `BURN`
-- `fee_execution_l2`
-- `fee_data_l1`
-3. `btc-testnet`:
-- `TRANSFER` (`vin` and `vout` paths are represented explicitly)
-- `miner_fee` (or deterministic miner-fee conservation delta where transfer-path encoding is the canonical owner)
+Mandatory rows:
+- `solana-devnet`:
+  - `TRANSFER`
+  - `MINT`
+  - `BURN`
+  - `FEE`
+- `base-sepolia`:
+  - `TRANSFER`
+  - `MINT`
+  - `BURN`
+  - `fee_execution_l2`
+  - `fee_data_l1`
+- `btc-testnet`:
+  - `TRANSFER:vin`
+  - `TRANSFER:vout`
+  - `miner_fee` (canonical BTC miner-fee conservation row)
 
-## Deterministic Duplicate-Risk Gates
+## Deterministic Replay and Duplicate-Risk Gates
 - `event_id` generation and tuple ordering for all required class-path cells must be deterministic for replayed fixture permutations.
-- Required replay permutations:
-  - canonical range replay
-  - replay-order swap
-  - one-chain restart perturbation
-- All three permutations must report:
-  - `canonical_event_id_unique=true`
-  - `replay_idempotent=true`
-  - `cursor_monotonic=true`
-  - `signed_delta_conservation=true`
+- Required permutation axis (exact enum):
+  - `canonical_range_replay`
+  - `replay_order_swap`
+  - `one_chain_restart_perturbation`
+- Every required row in the replay/duplication families must report:
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
 
 ## Evidence Artifacts (to be produced by downstream `I-0515`/`I-0516`)
 - `.ralph/reports/I-0515-m96-s1-class-coverage-matrix.md`
@@ -52,26 +54,21 @@ Required cells must be present with `evidence_present=true` in the `M96` coverag
 - `.ralph/reports/I-0516-m96-s1-replay-continuity-matrix.md`
 - `.ralph/reports/I-0516-m96-s1-chain-isolation-matrix.md`
 
-## Required Evidence Fields
-Minimum keys per matrix row:
-- `fixture_id`
-- `fixture_seed`
-- `run_id`
-- `chain`
-- `network`
-- `class_path`
-- `peer_chain`
-- `evidence_present`
-- `canonical_event_id_unique_ok`
-- `replay_idempotent_ok`
-- `cursor_monotonic_ok`
-- `signed_delta_conservation_ok`
-- `peer_cursor_delta`
-- `peer_watermark_delta`
-- `outcome`
-- `failure_mode`
+## Machine-Checkable Evidence Schema
+- Class-coverage matrix rows:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `outcome`, `failure_mode`, `notes`
+- Duplicate-suppression matrix rows:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `canonical_id_count`, `evidence_present`, `outcome`, `failure_mode`
+- Replay-continuity matrix rows:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Chain-isolation matrix rows:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `outcome`, `failure_mode`
 
-`outcome=GO` requires all required gates above to be true and both peer deltas equal `0`.
+Required enum/value constraints:
+- `outcome` must be `GO` or `NO-GO`.
+- `evidence_present=true` is required for all `GO` rows.
+- For `outcome=NO-GO`, `failure_mode` must be non-empty.
+- `outcome=GO` requires all required gates true for that matrix row and `peer_cursor_delta=0`, `peer_watermark_delta=0` where those fields exist.
 
 ## Measurable Exit Gates
 1. `0` missing required matrix cells for non-`NA` class-paths in `solana-devnet`, `base-sepolia`, and `btc-testnet`.

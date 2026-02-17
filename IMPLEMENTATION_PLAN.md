@@ -9,6 +9,7 @@
 
 ## C0089 (`I-0512`) tranche activation
 - Focus: `M96-S1` (PRD R1/R2 mandatory-chain asset-volatility closeout).
+- Slice execution order: `I-0512` -> `I-0515` -> `I-0516`.
 - Downstream execution pair:
   - `I-0515` (developer) — planning/spec/contract slice handoff.
   - `I-0516` (qa) — counterexample gate and matrix validation.
