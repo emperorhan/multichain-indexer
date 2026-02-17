@@ -4803,6 +4803,9 @@ Superseded issues:
   - `10`: deterministic replay and one-chain perturbation acceptance.
 - C0108 lock state: `C0108-PRD-CONTROL-COUPLING-COUNTEREXAMPLE-REVALIDATION`.
 - C0108 queue adjacency: hard dependency `I-0579 -> I-0580 -> I-0581 -> I-0582`.
+- C0108 queue handoff trace:
+  - `I-0580` publishes lock-state evidence and handoff metadata for `I-0581`.
+  - `I-0581` publishes C0108 matrix contracts for `I-0582`.
 - Downstream execution pair:
   - `I-0581` (developer) — PRD handoff to define C0108 control-coupling evidence contracts and required counterexample row schemas.
   - `I-0582` (qa) — PRD counterexample gate on required artifacts for chain-scoped control coupling and reproducibility.
