@@ -32,6 +32,7 @@ import (
 )
 
 const deterministicInterleaveMaxSkew = 250 * time.Millisecond
+const defaultStreamSessionID = "default"
 
 var (
 	newStreamFactory         = func(redisURL string) (redispkg.MessageTransport, error) { return redispkg.NewStream(redisURL) }
@@ -150,6 +151,14 @@ func resolveStreamBackend(cfg *config.Config, streamSessionID string, logger *sl
 	)
 
 	return redisStream, true, nil
+}
+
+func resolveStreamSessionID(rawSessionID string) string {
+	sessionID := strings.TrimSpace(rawSessionID)
+	if sessionID == "" {
+		return defaultStreamSessionID
+	}
+	return sessionID
 }
 
 func startDBPoolStatsPump(ctx context.Context, db dbStatsProvider, targets []runtimeTarget, intervalMS int, logger *slog.Logger) {
@@ -310,18 +319,12 @@ func main() {
 	defer db.Close()
 	logger.Info("connected to database")
 
-	streamSessionID := strings.TrimSpace(cfg.Pipeline.StreamSessionID)
-	if streamSessionID == "" {
-		streamSessionID = time.Now().Format("20060102T150405.000000000")
-	}
+	streamSessionID := resolveStreamSessionID(cfg.Pipeline.StreamSessionID)
 
 	streamBackend, streamTransportEnabled, err := resolveStreamBackend(cfg, streamSessionID, logger)
 	if err != nil {
 		logger.Error("failed to initialize stream transport", "error", err, "redis_url", cfg.Redis.URL)
 		os.Exit(1)
-	}
-	if !streamTransportEnabled {
-		streamSessionID = "memory-fallback"
 	}
 
 	if streamBackend != nil {

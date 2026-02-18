@@ -168,6 +168,67 @@ func TestResolveStreamBackend_UsesRedisStreamWhenEnabled(t *testing.T) {
 	assert.NoError(t, streamBackend.Close())
 }
 
+func TestResolveStreamSessionID_DefaultsToDefault(t *testing.T) {
+	assert.Equal(t, "default", resolveStreamSessionID(""))
+	assert.Equal(t, "default", resolveStreamSessionID("   "))
+	assert.Equal(t, "explicit-session", resolveStreamSessionID(" explicit-session "))
+}
+
+func TestResolveStreamSessionID_StartupRestart_StableDefaultCheckpointKeysForMandatoryChains(t *testing.T) {
+	sessionA := resolveStreamSessionID("")
+	sessionB := resolveStreamSessionID("   ")
+	assert.Equal(t, "default", sessionA)
+	assert.Equal(t, sessionA, sessionB)
+
+	testCases := []struct {
+		name     string
+		chain    model.Chain
+		network  model.Network
+		expected string
+	}{
+		{
+			name:     "solana-devnet",
+			chain:    model.ChainSolana,
+			network:  model.NetworkDevnet,
+			expected: "stream-checkpoint:chain=solana:network=devnet:session=default:boundary=fetcher-normalizer",
+		},
+		{
+			name:     "base-sepolia",
+			chain:    model.ChainBase,
+			network:  model.NetworkSepolia,
+			expected: "stream-checkpoint:chain=base:network=sepolia:session=default:boundary=fetcher-normalizer",
+		},
+		{
+			name:     "btc-testnet",
+			chain:    model.ChainBTC,
+			network:  model.NetworkTestnet,
+			expected: "stream-checkpoint:chain=btc:network=testnet:session=default:boundary=fetcher-normalizer",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			firstKey := startupBoundaryCheckpointKey(tc.chain, tc.network, sessionA)
+			secondKey := startupBoundaryCheckpointKey(tc.chain, tc.network, sessionB)
+
+			assert.Equal(t, tc.expected, firstKey)
+			assert.Equal(t, tc.expected, secondKey)
+			assert.Equal(t, firstKey, secondKey)
+		})
+	}
+}
+
+func startupBoundaryCheckpointKey(chain model.Chain, network model.Network, sessionID string) string {
+	normalizedSessionID := resolveStreamSessionID(sessionID)
+	return fmt.Sprintf(
+		"stream-checkpoint:chain=%s:network=%s:session=%s:boundary=%s",
+		chain,
+		network,
+		normalizedSessionID,
+		"fetcher-normalizer",
+	)
+}
+
 func TestBuildRuntimeTargets_IncludesMandatoryChainsDeterministically(t *testing.T) {
 	cfg := &config.Config{
 		Solana: config.SolanaConfig{
