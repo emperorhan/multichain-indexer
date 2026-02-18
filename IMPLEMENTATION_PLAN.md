@@ -721,27 +721,27 @@ Slice gates for this tranche:
 #### C0152 decision hook
 - `DP-0200-C0152`: `C0152` remains blocked until `.ralph/reports/I-0740-m99-s1-sidecar-btc-class-coverage-matrix.md` has required rows for mandatory chains/class paths with all required hard-stop booleans true and `failure_mode` empty for `GO` rows.
 
-### C0153 (`I-0742`) implementation handoff addendum
+### C0154 (`I-0748`) implementation handoff addendum
 - Focused unresolved PRD-priority implementation requirement from production code scan:
   - `R1`: no-duplicate indexing for canonical balance events.
   - `R4`: deterministic replay under restart and perturbation.
   - `8.5`: failed-path cursor/watermark progression is prohibited.
   - `chain_adapter_runtime_wired`: adapter/normalizer wiring remains deterministic under replay and reorg recovery.
-- `C0153` lock state: `C0153-PRD-PARTITION-DEDUPE-STABILITY-CONTINUITY`.
-- `C0153` depends on `I-0742` and has downstream adjacency `I-0742 -> I-0745 -> I-0746`.
+- `C0154` lock state: `C0154-PRD-PARTITION-DEDUPE-STABILITY-CONTINUITY`.
+- `C0154` has downstream adjacency `I-0749 -> I-0750`.
 - Downstream execution pair:
-  - `I-0745` (developer) — make persisted balance-event upsert deterministic on canonical identity across mutable `block_time` and partitioned storage.
-  - `I-0746` (qa) — validate evidence rows for deterministic replay and block `C0153` on hard-stop violations.
+  - `I-0749` (developer) — make persisted balance-event upsert deterministic on canonical identity across mutable `block_time` and partitioned storage.
+  - `I-0750` (qa) — validate evidence rows for deterministic replay and block `C0154` on hard-stop violations.
 - Slice gates for this tranche:
-  - `I-0745` updates `internal/store/postgres/balance_event_repo.go` so upsert conflict behavior is deterministic under canonical identity across mutable block_time and restart perturbation boundaries.
-  - `I-0745` adds/extends replay-perturbation tests in `internal/store/postgres/integration_test.go` covering duplicate canonical IDs with block-time-shifted reingest.
-  - `I-0745` publishes required artifact:
-    - `.ralph/reports/I-0745-m99-s1-balance-event-id-dedupe-cross-blocktime-matrix.md`
-  - `I-0746` validates required rows for mandatory chains and blocks `C0153` on any required hard-stop violation.
+  - `I-0749` updates `internal/store/postgres/balance_event_repo.go` so upsert conflict behavior is deterministic under canonical identity across mutable `block_time` and restart perturbation boundaries.
+  - `I-0749` adds/extends replay-perturbation tests in `internal/store/postgres/integration_test.go` covering duplicate canonical IDs with block-time-shifted reingest.
+  - `I-0749` publishes required artifact:
+    - `.ralph/reports/I-0749-m99-s1-balance-event-id-dedupe-cross-blocktime-matrix.md`
+  - `I-0750` validates required rows for mandatory chains and blocks `C0154` on any required hard-stop violation.
   - Validation remains `make test`, `make test-sidecar`, `make lint`.
-- `I-0745` required artifact row fields:
+- `I-0749` required artifact row fields:
   - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `event_id`, `replay_mode`, `block_time_shift_ms`, `upsert_count_before`, `upsert_count_after`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
-- `I-0745` required mandatory rows:
+- `I-0749` required mandatory rows:
   - `chain=solana`, `network=devnet`, `replay_mode=deterministic_replay`
   - `chain=base`, `network=sepolia`, `replay_mode=deterministic_replay`
   - `chain=btc`, `network=testnet`, `replay_mode=deterministic_replay`
@@ -756,8 +756,8 @@ Slice gates for this tranche:
   - `chain_adapter_runtime_wired_ok=true`
   - `failure_mode` is empty for required `GO` rows and non-empty for required `NO-GO` rows.
 
-#### C0153 decision hook
-- `DP-0201-C0153`: `C0153` remains blocked until required rows in `.ralph/reports/I-0745-m99-s1-balance-event-id-dedupe-cross-blocktime-matrix.md` are present for `chain=solana`, `base`, and `btc` with:
+#### C0154 decision hook
+- `DP-0202-C0154`: `C0154` remains blocked until required rows in `.ralph/reports/I-0749-m99-s1-balance-event-id-dedupe-cross-blocktime-matrix.md` are present for `chain=solana`, `base`, and `btc` with:
   - `outcome=GO`
   - `evidence_present=true`
   - `upsert_count_after=1`
