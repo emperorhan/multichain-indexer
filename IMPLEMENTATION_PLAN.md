@@ -22,6 +22,7 @@ or hardening work. Planner MUST select from this list first:
 5. **Connection Pool Monitoring** — No metrics for PostgreSQL pool utilization.
   - selected for **C0135** implementation in `I-0682`/`I-0683`.
 6. **Query Timeout Configuration** — No statement-level timeout support.
+7. **Stream Restart Checkpoint Resume** — stream-mode consumer restarts still lack durable checkpoint restore for boundary replay.
 
 ## C0134 (`I-0678`) tranche activation
 - Focus: post-PRD reliability hardening for production DB call-time boundedness before optional refinements resume.
@@ -107,6 +108,36 @@ or hardening work. Planner MUST select from this list first:
   - Validation remains `make test`, `make test-sidecar`, `make lint`.
 - `C0136` decision hooks:
   - `DP-0185-C0136`: `C0136` remains blocked until required rows in `.ralph/reports/I-0687-m96-s1-stream-failfast-matrix.md` for `chain=solana`, `base`, and `btc` are present with `outcome=GO`, `evidence_present=true`, required hard-stop booleans (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`) true, `failure_mode` empty for GO rows, and `fallback_used=false` for stream-enabled required rows.
+
+## C0137 (`I-0689`) tranche activation
+- Focus: PRD-priority deterministic stream checkpoint continuity before optional refinements continue.
+- Focused implementation requirement from production code scan:
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: restart replay must preserve stream boundary order.
+  - `chain_adapter_runtime_wired`: stream boundaries must remain deterministic across process restarts.
+- Current gap: stream-mode consumer initialization still starts from hardcoded `lastID := "0"` and does not restore durable checkpoint state.
+- C0137 lock state: `C0137-PRD-STREAM-RESTART-CHECKPOINT`.
+- C0137 queue adjacency: hard dependency `I-0689 -> I-0690 -> I-0691`.
+- Downstream execution pair:
+  - `I-0690` (developer) — implement durable stream checkpoint persistence and resume semantics in `internal/pipeline/pipeline.go` and `internal/store/redis/stream.go`.
+  - `I-0691` (qa) — validate `I-0690` evidence and block `C0137` on any hard-stop failure.
+- Slice gates for this tranche:
+  - `I-0690` updates stream backend to store/load checkpoint IDs keyed by chain/network/session/boundary and persist progress after successful batch replay.
+  - `I-0690` adds recovery tests for restart replay and checkpoint corruption/missing states.
+  - `I-0690` publishes required evidence artifact:
+    - `.ralph/reports/I-0690-m96-s1-stream-restart-checkpoint-matrix.md`
+  - `I-0691` validates required `I-0690` rows for `solana`, `base`, and `btc`, including checkpoint/continuity and hard-stop booleans.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+## C0137 decision hooks
+- `DP-0186-C0137`: `C0137` remains blocked until required rows in `.ralph/reports/I-0690-m96-s1-stream-restart-checkpoint-matrix.md` for `chain=solana`, `base`, and `btc` are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - required hard-stop booleans (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`) true
+  - `failure_mode` is empty
+  - `checkpoint_persisted=true` and `checkpoint_loaded=true`
+  - `stream_restart=true` for required restart rows
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
 
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
