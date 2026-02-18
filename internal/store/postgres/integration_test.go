@@ -393,8 +393,8 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 			require.NoError(t, err)
 			require.NoError(t, setupTx.Commit())
 
-			// First replay write.
-			blockTimeBefore := time.Date(2026, 2, 18, 11, 0, 0, 0, time.UTC)
+			// First replay write on the month boundary to exercise partition drift.
+			blockTimeBefore := time.Date(2026, 1, 31, 23, 55, 0, 0, time.UTC)
 			event := &model.BalanceEvent{
 				Chain:         tc.chain,
 				Network:       tc.network,
@@ -429,8 +429,8 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 			require.NoError(t, err)
 			assert.Equal(t, 1, upsertCountBefore)
 
-			// Replay the same canonical event_id with a shifted block_time and higher finality.
-			blockTimeAfter := time.Date(2026, 2, 19, 11, 0, 0, 0, time.UTC)
+			// Replay the same canonical event_id with shifted block_time, higher finality, and restart-safe boundary jump.
+			blockTimeAfter := time.Date(2026, 2, 1, 0, 5, 0, 0, time.UTC)
 			event.BlockTime = &blockTimeAfter
 			event.FinalityState = "finalized"
 			event.BlockCursor = 101
@@ -448,9 +448,18 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 			assert.Equal(t, 1, upsertCountAfter)
 
 			var storedState string
-			err = db.QueryRow("SELECT finality_state FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3", tc.chain, tc.network, eventID).Scan(&storedState)
+			var storedCursor int64
+			var storedBlockTime time.Time
+			err = db.QueryRow(
+				"SELECT finality_state, block_cursor, block_time FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3",
+				tc.chain,
+				tc.network,
+				eventID,
+			).Scan(&storedState, &storedCursor, &storedBlockTime)
 			require.NoError(t, err)
 			assert.Equal(t, "finalized", storedState)
+			assert.Equal(t, int64(101), storedCursor)
+			assert.True(t, !storedBlockTime.Before(blockTimeAfter))
 		})
 	}
 }

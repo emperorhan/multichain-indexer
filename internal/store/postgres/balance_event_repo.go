@@ -97,7 +97,8 @@ func (r *BalanceEventRepo) updateExistingByCanonicalID(ctx context.Context, tx *
 				ELSE balance_events.tx_index
 			END,
 			block_cursor = GREATEST(balance_events.block_cursor, $7),
-			block_time = COALESCE($8, balance_events.block_time),
+			-- Avoid moving canonical rows backward across partition boundaries under block-time perturbation.
+			block_time = GREATEST(balance_events.block_time, COALESCE($8, balance_events.block_time)),
 			chain_data = COALESCE($9, balance_events.chain_data),
 			decoder_version = COALESCE(NULLIF($10, ''), balance_events.decoder_version),
 			schema_version = COALESCE(NULLIF($11, ''), balance_events.schema_version)
@@ -189,10 +190,11 @@ func (r *BalanceEventRepo) insertByCanonicalID(ctx context.Context, tx *sql.Tx, 
 			block_hash = COALESCE(NULLIF(EXCLUDED.block_hash, ''), balance_events.block_hash),
 			tx_index = CASE
 				WHEN EXCLUDED.tx_index <> 0 THEN EXCLUDED.tx_index
-				ELSE balance_events.tx_index
+			ELSE balance_events.tx_index
 			END,
 			block_cursor = GREATEST(balance_events.block_cursor, EXCLUDED.block_cursor),
-			block_time = COALESCE(EXCLUDED.block_time, balance_events.block_time),
+			-- Keep deterministic partition targeting by monotonic block-time progression per canonical identity.
+			block_time = GREATEST(balance_events.block_time, COALESCE(EXCLUDED.block_time, balance_events.block_time)),
 			chain_data = COALESCE(EXCLUDED.chain_data, balance_events.chain_data),
 			decoder_version = COALESCE(NULLIF(EXCLUDED.decoder_version, ''), balance_events.decoder_version),
 			schema_version = COALESCE(NULLIF(EXCLUDED.schema_version, ''), balance_events.schema_version)
