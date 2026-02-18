@@ -3536,6 +3536,38 @@ func TestBuildCanonicalEventID_Stable(t *testing.T) {
 	assert.Equal(t, btcIdWithPrefix, btcIdWithoutPrefix)
 }
 
+func TestShouldReplaceCanonicalDeltaComparison_IsNumericAndSignAware(t *testing.T) {
+	existing := event.NormalizedBalanceEvent{
+		FinalityState:       "finalized",
+		EventCategory:       model.EventCategoryTransfer,
+		EventAction:         "xfer",
+		ContractAddress:     "contract",
+		CounterpartyAddress: "peer",
+		Delta:               "-100",
+	}
+	incoming := event.NormalizedBalanceEvent{
+		FinalityState:       "finalized",
+		EventCategory:       model.EventCategoryTransfer,
+		EventAction:         "xfer",
+		ContractAddress:     "contract",
+		CounterpartyAddress: "peer",
+		Delta:               "-2",
+	}
+
+	assert.False(t, shouldReplaceCanonicalBaseEvent(existing, incoming))
+	assert.False(t, shouldReplaceCanonicalBTCEvent(existing, incoming))
+	assert.False(t, shouldReplaceCanonicalSolanaEvent(existing, incoming, solanaCanonicalSelection{}, solanaCanonicalSelection{}))
+
+	existingPositive := existing
+	existingPositive.Delta = "10"
+	incomingPositive := incoming
+	incomingPositive.Delta = "2"
+
+	assert.True(t, shouldReplaceCanonicalBaseEvent(existingPositive, incomingPositive))
+	assert.True(t, shouldReplaceCanonicalBTCEvent(existingPositive, incomingPositive))
+	assert.True(t, shouldReplaceCanonicalSolanaEvent(existingPositive, incomingPositive, solanaCanonicalSelection{}, solanaCanonicalSelection{}))
+}
+
 func TestProcessBatch_SolInstructionOwnershipDedup(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockChainDecoderClient(ctrl)

@@ -501,6 +501,27 @@ func parseBigInt(value string) (*big.Int, bool) {
 	return parsed, true
 }
 
+func parseSignedBigInt(value string) (*big.Int, bool) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return nil, false
+	}
+	parsed := new(big.Int)
+	if _, ok := parsed.SetString(raw, 10); !ok {
+		return nil, false
+	}
+	return parsed, true
+}
+
+func compareCanonicalDeltas(left, right string) int {
+	leftValue, leftOK := parseSignedBigInt(left)
+	rightValue, rightOK := parseSignedBigInt(right)
+	if !leftOK || !rightOK {
+		return strings.Compare(strings.TrimSpace(left), strings.TrimSpace(right))
+	}
+	return leftValue.Cmp(rightValue)
+}
+
 func mergeMetadataJSON(original json.RawMessage, additions map[string]string) json.RawMessage {
 	base := map[string]string{}
 	if len(original) > 0 && string(original) != "null" {
@@ -677,7 +698,7 @@ func shouldReplaceCanonicalBTCEvent(existing, incoming event.NormalizedBalanceEv
 	if existing.CounterpartyAddress != incoming.CounterpartyAddress {
 		return incoming.CounterpartyAddress < existing.CounterpartyAddress
 	}
-	return existing.Delta > incoming.Delta
+	return compareCanonicalDeltas(existing.Delta, incoming.Delta) > 0
 }
 
 func canonicalizeBTCAssetID(value string) string {
@@ -1004,7 +1025,7 @@ func shouldReplaceCanonicalSolanaEvent(
 		if existing.EventAction != incoming.EventAction {
 			return incoming.EventAction < existing.EventAction
 		}
-		return existing.Delta > incoming.Delta
+		return compareCanonicalDeltas(existing.Delta, incoming.Delta) > 0
 	}
 	if existingSelection.FromOuterInstruction != incomingSelection.FromOuterInstruction {
 		return incomingSelection.FromOuterInstruction
@@ -1018,7 +1039,7 @@ func shouldReplaceCanonicalSolanaEvent(
 	if existing.ContractAddress != incoming.ContractAddress {
 		return incoming.ContractAddress < existing.ContractAddress
 	}
-	return existing.Delta > incoming.Delta
+	return compareCanonicalDeltas(existing.Delta, incoming.Delta) > 0
 }
 
 func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, category model.EventCategory) string {

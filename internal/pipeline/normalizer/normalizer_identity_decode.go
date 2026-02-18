@@ -862,5 +862,5 @@ func shouldReplaceCanonicalBaseEvent(existing, incoming event.NormalizedBalanceE
 	if existing.CounterpartyAddress != incoming.CounterpartyAddress {
 		return incoming.CounterpartyAddress < existing.CounterpartyAddress
 	}
-	return existing.Delta > incoming.Delta
+	return compareCanonicalDeltas(existing.Delta, incoming.Delta) > 0
 }
