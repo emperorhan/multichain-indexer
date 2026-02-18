@@ -87,6 +87,27 @@ or hardening work. Planner MUST select from this list first:
   - non-negative `db_pool_open`, `db_pool_in_use`, `db_pool_idle`, `db_pool_wait_count`, and `db_pool_wait_duration_seconds` gauge values
   - required `NO-GO` rows contain non-empty `failure_mode`.
 
+## C0136 (`I-0684`) tranche activation
+- Focus: PRD-priority transport fail-fast hard-stop for stream mode before optional refinements continue.
+- Focused implementation requirement from production code scan:
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: runtime startup transport mode must not silently diverge from operator intent.
+- Current gap: when `PIPELINE_STREAM_TRANSPORT_ENABLED=true` and Redis initialization fails, startup currently falls back to in-memory transport in `cmd/indexer/main.go`.
+- C0136 lock state: `C0136-PRD-STREAM-TRANSPORT-FAILFAST`.
+- C0136 queue adjacency: hard dependency `I-0684 -> I-0687 -> I-0688`.
+- Downstream execution pair:
+  - `I-0687` (developer) — remove stream-mode fallback-to-memory, enforce hard fail on Redis transport initialization failure, and provide evidence.
+  - `I-0688` (qa) — validate `I-0687` evidence and block `C0136` on hard-stop failures.
+- Slice gates for this tranche:
+  - `I-0687` updates `cmd/indexer/main.go` so in-memory transport is used only when `streamTransportEnabled` is false.
+  - `I-0687` keeps stream-mode behavior fail-fast for all `PIPELINE_STREAM_TRANSPORT_ENABLED=true` initialization failures before any pipeline run state is advanced.
+  - `I-0687` adds/extends tests in `cmd/indexer/main_test.go` for the Redis failure branch and default memory-transport branch.
+  - `I-0687` publishes required evidence artifact `.ralph/reports/I-0687-m96-s1-stream-failfast-matrix.md`.
+  - `I-0688` validates required rows for `chain=solana`, `base`, and `btc` with `fallback_used=false` for stream-enabled modes and non-empty `failure_mode` where `outcome=NO-GO`.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+- `C0136` decision hooks:
+  - `DP-0185-C0136`: `C0136` remains blocked until required rows in `.ralph/reports/I-0687-m96-s1-stream-failfast-matrix.md` for `chain=solana`, `base`, and `btc` are present with `outcome=GO`, `evidence_present=true`, required hard-stop booleans (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`) true, `failure_mode` empty for GO rows, and `fallback_used=false` for stream-enabled required rows.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:

@@ -757,6 +757,40 @@ Required machine-checkable constraints:
   - required peer deltas equal zero where present (`peer_cursor_delta=0`, `peer_watermark_delta=0`)
   - and non-empty `failure_mode` for any required `NO-GO` row.
 
+### C0136 (`I-0684`) implementation handoff addendum
+- Focused PRD traceability:
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain adapter/runtime wiring should remain deterministic and replay-safe under transport initialization outcomes.
+- C0136 lock state: `C0136-PRD-STREAM-TRANSPORT-FAILFAST`.
+- `C0136` queue adjacency: hard dependency `I-0684 -> I-0687 -> I-0688`.
+
+#### Required evidence artifact for `I-0687`
+- `.ralph/reports/I-0687-m96-s1-stream-failfast-matrix.md`
+
+#### C0136 transport fail-fast contracts (`I-0687`)
+- Required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `stream_transport_enabled`, `redis_url`, `stream_backend_mode`, `fallback_used`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`, `stream_transport_enabled=true`
+  - `chain=base`, `network=sepolia`, `stream_transport_enabled=true`
+  - `chain=btc`, `network=testnet`, `stream_transport_enabled=true`
+  - `stream_transport_enabled=false` baseline rows may remain documented for operational continuity checks.
+
+#### C0136 hard-stop checks
+- `outcome=GO`
+- `evidence_present=true`
+- `canonical_event_id_unique_ok=true`
+- `replay_idempotent_ok=true`
+- `cursor_monotonic_ok=true`
+- `signed_delta_conservation_ok=true`
+- `chain_adapter_runtime_wired_ok=true`
+- `failure_mode` is empty.
+- For `stream_transport_enabled=true`, `fallback_used=false` and `stream_backend_mode=redis_required`.
+- For required `NO-GO` rows, `failure_mode` is non-empty.
+
+#### C0136 decision hook
+- `DP-0185-C0136` remains blocked until required rows in `.ralph/reports/I-0687-m96-s1-stream-failfast-matrix.md` for `chain=solana`, `base`, and `btc` are present with `outcome=GO`, `evidence_present=true`, required hard-stop booleans true, and `fallback_used=false` where stream mode is enabled.
+
 ### C0134 (`I-0678`) implementation handoff addendum
 - Focus: PRD-traceable DB statement-timeout governance before optional refinements continue.
 - Focused unresolved requirement traceability from `PRD.md`:
