@@ -7,6 +7,42 @@
 
 ## Program Graph
 
+## C0128 (`I-0657`) tranche activation
+- Focus: PRD-priority mandatory-chain asset-volatility hard-stop implementation slice before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing via deterministic canonical ownership.
+  - `R2`: full in-scope asset-volatility event coverage, including mandatory fee-class rows.
+  - `R3`: chain-family fee completeness (`solana_fee_event_coverage`, `base_fee_split_coverage`).
+  - `8.4`/`8.5`: failed-path replay continuity and fail-fast cursor/watermark freeze.
+  - `reorg_recovery_deterministic`: recovery/replay determinism under one-chain perturbation.
+  - `chain_adapter_runtime_wired`: chain-scoped runtime adapter invariance under perturbation families.
+- Lock state: `C0128-PRD-ASSET-VOLATILITY-IMPLEMENTATION`.
+- C0128 queue adjacency: hard dependency `I-0657 -> I-0658 -> I-0659`.
+- Downstream execution pair:
+  - `I-0658` (developer) — PRD-priority production implementation slice for residual mandatory-chain coverage + replay/recovery hardening.
+  - `I-0659` (qa) — PRD-focused counterexample gate over required `I-0658` artifacts.
+- Slice gates for this tranche:
+  - `I-0658` publishes these required evidence artifacts:
+    - `.ralph/reports/I-0658-m96-s1-coverage-class-implementation-matrix.md`
+    - `.ralph/reports/I-0658-m96-s2-dup-suppression-implementation-matrix.md`
+    - `.ralph/reports/I-0658-m96-s3-one-chain-isolation-implementation-matrix.md`
+  - Required hard-stop checks for all required `GO` rows in required families:
+    - `outcome=GO`
+    - `evidence_present=true`
+    - `canonical_event_id_unique_ok=true`
+    - `replay_idempotent_ok=true`
+    - `cursor_monotonic_ok=true`
+    - `signed_delta_conservation_ok=true`
+    - `solana_fee_event_coverage_ok=true`
+    - `base_fee_split_coverage_ok=true`
+    - `reorg_recovery_deterministic_ok=true`
+    - `chain_adapter_runtime_wired_ok=true`
+    - `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer columns are present.
+    - `failure_mode` is empty.
+  - `I-0659` validates all required `I-0658` rows for `solana-devnet`, `base-sepolia`, and `btc-testnet`, and blocks `C0128` on any required `NO-GO`, missing evidence, false hard-stop booleans, non-zero peer deltas, or missing `failure_mode` on `NO-GO`.
+  - Validation target remains `make test`, `make test-sidecar`, `make lint` in all required handoff and QA gate stages.
+  - No runtime implementation changes are executed in this planner tranche; planning/spec-doc handoff only.
+
 ## C0127 (`I-0654`) tranche activation
 - Focus: PRD-priority closure for remaining mandatory-chain asset-volatility normalization gaps before optional reliability refinements resume.
 - Focused unresolved PRD requirements from `PRD.md`:
