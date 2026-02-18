@@ -115,7 +115,7 @@ func (r *BalanceEventRepo) updateExistingByCanonicalID(ctx context.Context, tx *
 				WHEN 'pending' THEN 1
 				WHEN 'unsafe' THEN 1
 				ELSE 0
-			END >
+			END >=
 			CASE LOWER(COALESCE(TRIM(balance_events.finality_state), ''))
 				WHEN 'finalized' THEN 4
 				WHEN 'safe' THEN 3
