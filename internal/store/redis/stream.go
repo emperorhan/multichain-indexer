@@ -88,6 +88,37 @@ func (s *Stream) ReadJSON(ctx context.Context, streamName, lastID string, dst an
 	return msg.ID, nil
 }
 
+func (s *Stream) LoadStreamCheckpoint(ctx context.Context, checkpointKey string) (string, error) {
+	trimmed := strings.TrimSpace(checkpointKey)
+	if trimmed == "" {
+		return "", nil
+	}
+
+	value, err := s.client.Get(ctx, trimmed).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return "", nil
+		}
+		return "", fmt.Errorf("load stream checkpoint %q: %w", trimmed, err)
+	}
+
+	return value, nil
+}
+
+func (s *Stream) PersistStreamCheckpoint(ctx context.Context, checkpointKey, streamID string) error {
+	trimmedKey := strings.TrimSpace(checkpointKey)
+	trimmedID := strings.TrimSpace(streamID)
+	if trimmedKey == "" {
+		return nil
+	}
+
+	if err := s.client.Set(ctx, trimmedKey, trimmedID, 0).Err(); err != nil {
+		return fmt.Errorf("persist stream checkpoint %q: %w", trimmedKey, err)
+	}
+
+	return nil
+}
+
 func streamPayload(raw any) ([]byte, error) {
 	switch value := raw.(type) {
 	case string:
@@ -107,8 +138,9 @@ func (s *Stream) Client() *redis.Client {
 
 // InMemoryStream is a deterministic fallback transport used when Redis is unavailable.
 type InMemoryStream struct {
-	mu      sync.Mutex
-	streams map[string]*inMemoryStreamState
+	mu          sync.Mutex
+	streams     map[string]*inMemoryStreamState
+	checkpoints map[string]string
 }
 
 type inMemoryStreamState struct {
@@ -120,7 +152,10 @@ type inMemoryStreamState struct {
 var _ MessageTransport = (*InMemoryStream)(nil)
 
 func NewInMemoryStream() *InMemoryStream {
-	return &InMemoryStream{streams: map[string]*inMemoryStreamState{}}
+	return &InMemoryStream{
+		streams:     map[string]*inMemoryStreamState{},
+		checkpoints: map[string]string{},
+	}
 }
 
 func (s *InMemoryStream) Close() error {
@@ -128,6 +163,7 @@ func (s *InMemoryStream) Close() error {
 	defer s.mu.Unlock()
 
 	s.streams = map[string]*inMemoryStreamState{}
+	s.checkpoints = map[string]string{}
 	return nil
 
 }
@@ -184,10 +220,10 @@ func (s *InMemoryStream) ReadJSON(ctx context.Context, streamName, lastID string
 				return "", fmt.Errorf("stream payload unmarshal: %w", err)
 			}
 			return strconv.FormatInt(nextID, 10), nil
-	}
+		}
 
-	notifyCh := state.notifyCh
-	s.mu.Unlock()
+		notifyCh := state.notifyCh
+		s.mu.Unlock()
 
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -233,4 +269,38 @@ func parseStreamOffset(lastID string) (int64, error) {
 	}
 
 	return parsed, nil
+}
+
+func (s *InMemoryStream) LoadStreamCheckpoint(ctx context.Context, checkpointKey string) (string, error) {
+	_ = ctx
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	checkpoint := strings.TrimSpace(checkpointKey)
+	if checkpoint == "" {
+		return "", nil
+	}
+
+	value, ok := s.checkpoints[checkpoint]
+	if !ok {
+		return "", nil
+	}
+
+	return value, nil
+}
+
+func (s *InMemoryStream) PersistStreamCheckpoint(ctx context.Context, checkpointKey, streamID string) error {
+	_ = ctx
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	checkpoint := strings.TrimSpace(checkpointKey)
+	if checkpoint == "" {
+		return nil
+	}
+
+	s.checkpoints[checkpoint] = strings.TrimSpace(streamID)
+	return nil
 }

@@ -1,10 +1,11 @@
 package pipeline
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,11 @@ type Pipeline struct {
 	db      store.TxBeginner
 	repos   *Repos
 	logger  *slog.Logger
+}
+
+type streamCheckpointManager interface {
+	LoadStreamCheckpoint(ctx context.Context, checkpointKey string) (string, error)
+	PersistStreamCheckpoint(ctx context.Context, checkpointKey, streamID string) error
 }
 
 type Repos struct {
@@ -238,6 +244,10 @@ func (p *Pipeline) streamBoundaryName(boundary string) string {
 	return fmt.Sprintf("%s:chain=%s:network=%s:session=%s:boundary=%s", namespace, p.cfg.Chain, p.cfg.Network, sessionID, boundary)
 }
 
+func (p *Pipeline) streamBoundaryCheckpointKey(boundary string) string {
+	return fmt.Sprintf("stream-checkpoint:chain=%s:network=%s:boundary=%s", p.cfg.Chain, p.cfg.Network, boundary)
+}
+
 func (p *Pipeline) runRawBatchStreamProducer(ctx context.Context, in <-chan event.RawBatch, stream redisstream.MessageTransport, streamName string) error {
 	for {
 		select {
@@ -255,7 +265,11 @@ func (p *Pipeline) runRawBatchStreamProducer(ctx context.Context, in <-chan even
 }
 
 func (p *Pipeline) runRawBatchStreamConsumer(ctx context.Context, out chan<- event.RawBatch, stream redisstream.MessageTransport, streamName string) error {
-	lastID := "0"
+	lastID, err := p.loadStreamCheckpoint(ctx, stream, streamBoundaryFetchToNormal)
+	if err != nil {
+		return err
+	}
+
 	for {
 		var batch event.RawBatch
 		nextID, err := stream.ReadJSON(ctx, streamName, lastID, &batch)
@@ -271,6 +285,77 @@ func (p *Pipeline) runRawBatchStreamConsumer(ctx context.Context, out chan<- eve
 			return ctx.Err()
 		case out <- batch:
 			lastID = nextID
+			if err := p.storeStreamCheckpoint(ctx, stream, streamBoundaryFetchToNormal, nextID); err != nil {
+				return err
+			}
 		}
 	}
+}
+
+func (p *Pipeline) loadStreamCheckpoint(ctx context.Context, stream redisstream.MessageTransport, boundary string) (string, error) {
+	checkpointManager, ok := stream.(streamCheckpointManager)
+	if !ok {
+		return "0", nil
+	}
+
+	checkpointKey := p.streamBoundaryCheckpointKey(boundary)
+	raw, err := checkpointManager.LoadStreamCheckpoint(ctx, checkpointKey)
+	if err != nil {
+		p.logger.Warn("stream checkpoint load failed; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", checkpointKey, "error", err)
+		return "0", nil
+	}
+
+	if err := validateStreamOffset(raw); err != nil {
+		p.logger.Warn("stream checkpoint invalid; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", checkpointKey, "checkpoint", raw, "error", err)
+		return "0", nil
+	}
+
+	if strings.TrimSpace(raw) == "" {
+		return "0", nil
+	}
+
+	return raw, nil
+}
+
+func (p *Pipeline) storeStreamCheckpoint(ctx context.Context, stream redisstream.MessageTransport, boundary string, streamID string) error {
+	checkpointManager, ok := stream.(streamCheckpointManager)
+	if !ok {
+		return nil
+	}
+
+	checkpointKey := p.streamBoundaryCheckpointKey(boundary)
+	if err := checkpointManager.PersistStreamCheckpoint(ctx, checkpointKey, streamID); err != nil {
+		return fmt.Errorf("stream checkpoint persist failed: %w", err)
+	}
+
+	return nil
+}
+
+func validateStreamOffset(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "0" {
+		return nil
+	}
+
+	parts := strings.SplitN(trimmed, "-", 2)
+	if len(parts) == 2 {
+		if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return fmt.Errorf("invalid stream offset %q: missing components", raw)
+		}
+		msg, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+		if err != nil || msg < 0 {
+			return fmt.Errorf("invalid stream offset %q: malformed id", raw)
+		}
+		seq, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		if err != nil || seq < 0 {
+			return fmt.Errorf("invalid stream offset %q: malformed id", raw)
+		}
+		return nil
+	}
+
+	msg, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || msg < 0 {
+		return fmt.Errorf("invalid stream offset %q: malformed id", raw)
+	}
+	return nil
 }

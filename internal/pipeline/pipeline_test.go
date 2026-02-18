@@ -1,17 +1,18 @@
 package pipeline
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	chainmocks "github.com/emperorhan/multichain-indexer/internal/chain/mocks"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
-	redispkg "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
+	redispkg "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -173,35 +174,35 @@ func TestPipeline_Run_RawBatchTransportParity_MandatoryChains_StreamVsInMemory(t
 	btcWallet := "wallet-btc"
 	rawBatches := []event.RawBatch{
 		{
-			Chain: model.ChainSolana,
-			Network: model.NetworkDevnet,
-			Address: "SolanaAddr",
+			Chain:    model.ChainSolana,
+			Network:  model.NetworkDevnet,
+			Address:  "SolanaAddr",
 			WalletID: &solanaWallet,
 		},
 		{
-			Chain: model.ChainBase,
-			Network: model.NetworkSepolia,
-			Address: "BaseAddr",
+			Chain:    model.ChainBase,
+			Network:  model.NetworkSepolia,
+			Address:  "BaseAddr",
 			WalletID: &baseWallet,
 		},
 		{
-			Chain: model.ChainBTC,
-			Network: model.NetworkTestnet,
-			Address: "BtcAddr",
+			Chain:    model.ChainBTC,
+			Network:  model.NetworkTestnet,
+			Address:  "BtcAddr",
 			WalletID: &btcWallet,
 		},
 	}
 
 	stream := redispkg.NewInMemoryStream()
 	cfg := Config{
-		Chain:                model.ChainSolana,
-		Network:              model.NetworkDevnet,
-		FetchWorkers:         1,
-		NormalizerWorkers:    1,
-		ChannelBufferSize:    len(rawBatches),
-		StreamBackend:        stream,
-		StreamNamespace:      "pipeline",
-		StreamSessionID:      "parity-session",
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		FetchWorkers:           1,
+		NormalizerWorkers:      1,
+		ChannelBufferSize:      len(rawBatches),
+		StreamBackend:          stream,
+		StreamNamespace:        "pipeline",
+		StreamSessionID:        "parity-session",
 		StreamTransportEnabled: true,
 	}
 	streamPipeline := New(cfg, mockAdapter, mockDB, repos, slog.Default())
@@ -279,6 +280,234 @@ func collectRawBatchesThroughMemoryBoundary(t *testing.T, p *Pipeline, rawBatche
 	for i := 0; i < len(rawBatches); i++ {
 		got = append(got, <-normalizerInCh)
 	}
+
+	return got
+}
+
+func TestPipeline_Run_RawBatchStreamConsumer_ResumeFromPersistedCheckpoint(t *testing.T) {
+	testCases := []struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+	}{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			checkpointStream := newCheckpointInMemoryStream()
+
+			cfg := Config{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				FetchWorkers:           1,
+				NormalizerWorkers:      1,
+				ChannelBufferSize:      2,
+				StreamBackend:          checkpointStream,
+				StreamNamespace:        "pipeline",
+				StreamSessionID:        "checkpoint-session",
+				StreamTransportEnabled: true,
+			}
+			p := New(cfg, nil, nil, &Repos{}, slog.Default())
+
+			streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
+			firstID, err := checkpointStream.PublishJSON(context.Background(), streamName, event.RawBatch{Chain: tc.chain, Network: tc.network, Address: "A"})
+			require.NoError(t, err)
+			secondID, err := checkpointStream.PublishJSON(context.Background(), streamName, event.RawBatch{Chain: tc.chain, Network: tc.network, Address: "B"})
+			require.NoError(t, err)
+
+			checkpointKey := p.streamBoundaryCheckpointKey(streamBoundaryFetchToNormal)
+			require.NoError(t, checkpointStream.PersistStreamCheckpoint(context.Background(), checkpointKey, firstID))
+
+			got := collectRawBatchesThroughStreamBoundary(t, p, checkpointStream, 1)
+			require.Equal(t, []event.RawBatch{{Chain: tc.chain, Network: tc.network, Address: "B"}}, got)
+
+			storedCheckpoint, err := checkpointStream.LoadStreamCheckpoint(context.Background(), checkpointKey)
+			require.NoError(t, err)
+			assert.Equal(t, secondID, storedCheckpoint)
+		})
+	}
+}
+
+func TestPipeline_Run_RawBatchStreamConsumer_MissingCheckpointBootstrapsFromStart(t *testing.T) {
+	testCases := []struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+	}{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			checkpointStream := newCheckpointInMemoryStream()
+			cfg := Config{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				FetchWorkers:           1,
+				NormalizerWorkers:      1,
+				ChannelBufferSize:      2,
+				StreamBackend:          checkpointStream,
+				StreamNamespace:        "pipeline",
+				StreamSessionID:        "checkpoint-session",
+				StreamTransportEnabled: true,
+			}
+			p := New(cfg, nil, nil, &Repos{}, slog.Default())
+			streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
+
+			rawBatches := []event.RawBatch{
+				{Chain: tc.chain, Network: tc.network, Address: "A"},
+				{Chain: tc.chain, Network: tc.network, Address: "B"},
+			}
+			for _, batch := range rawBatches {
+				_, err := checkpointStream.PublishJSON(context.Background(), streamName, batch)
+				require.NoError(t, err)
+			}
+
+			output := collectRawBatchesThroughStreamBoundary(t, p, checkpointStream, len(rawBatches))
+			assert.Equal(t, rawBatches, output)
+		})
+	}
+}
+
+func TestPipeline_Run_RawBatchStreamConsumer_InvalidCheckpointFallsBackToBootstrap(t *testing.T) {
+	testCases := []struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+	}{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			checkpointStream := newCheckpointInMemoryStream()
+			cfg := Config{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				FetchWorkers:           1,
+				NormalizerWorkers:      1,
+				ChannelBufferSize:      2,
+				StreamBackend:          checkpointStream,
+				StreamNamespace:        "pipeline",
+				StreamSessionID:        "checkpoint-session",
+				StreamTransportEnabled: true,
+			}
+
+			p := New(cfg, nil, nil, &Repos{}, slog.Default())
+			streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
+			rawBatches := []event.RawBatch{
+				{Chain: tc.chain, Network: tc.network, Address: "A"},
+				{Chain: tc.chain, Network: tc.network, Address: "B"},
+			}
+
+			checkpointKey := p.streamBoundaryCheckpointKey(streamBoundaryFetchToNormal)
+			require.NoError(t, checkpointStream.PersistStreamCheckpoint(context.Background(), checkpointKey, "invalid-checkpoint"))
+
+			for _, batch := range rawBatches {
+				_, err := checkpointStream.PublishJSON(context.Background(), streamName, batch)
+				require.NoError(t, err)
+			}
+
+			output := collectRawBatchesThroughStreamBoundary(t, p, checkpointStream, len(rawBatches))
+			assert.Equal(t, rawBatches, output)
+		})
+	}
+}
+
+type checkpointInMemoryStream struct {
+	*redispkg.InMemoryStream
+	checkpoints map[string]string
+	mu          sync.Mutex
+}
+
+func newCheckpointInMemoryStream() *checkpointInMemoryStream {
+	return &checkpointInMemoryStream{
+		InMemoryStream: redispkg.NewInMemoryStream(),
+		checkpoints:    map[string]string{},
+	}
+}
+
+func (s *checkpointInMemoryStream) LoadStreamCheckpoint(_ context.Context, key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.checkpoints[key], nil
+}
+
+func (s *checkpointInMemoryStream) PersistStreamCheckpoint(_ context.Context, key string, streamID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.checkpoints[key] = streamID
+	return nil
+}
+
+func collectRawBatchesThroughStreamBoundary(t *testing.T, p *Pipeline, stream redispkg.MessageTransport, expectedCount int) []event.RawBatch {
+	t.Helper()
+
+	streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
+	normalizerInCh := make(chan event.RawBatch, expectedCount)
+
+	runErr := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		runErr <- p.runRawBatchStreamConsumer(ctx, normalizerInCh, stream, streamName)
+	}()
+
+	got := make([]event.RawBatch, 0, expectedCount)
+	for i := 0; i < expectedCount; i++ {
+		got = append(got, <-normalizerInCh)
+	}
+	cancel()
+
+	err := <-runErr
+	assert.True(t, errors.Is(err, context.Canceled))
 
 	return got
 }
