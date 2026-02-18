@@ -7,6 +7,44 @@
 
 ## Program Graph
 
+## C0125 (`I-0647`) tranche activation
+- Focus: PRD-priority asset-volatility counterexample hardening and chain-safety evidence refresh before optional refinements resume.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing via deterministic canonical ownership.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness (`solana_fee_event_coverage`, `base_fee_split_coverage`).
+  - `8.4`/`8.5`: deterministic replay continuity and fail-fast cursor/watermark freeze on failed path.
+  - `reorg_recovery_deterministic`: replay/recovery determinism under one-chain perturbation.
+  - `chain_adapter_runtime_wired`: chain-scoped runtime adapters remain invariant under required perturbation families.
+- Lock state: `C0125-PRD-ASSET-VOLATILITY-COUNTEREXAMPLE-HARDENING`.
+- C0125 queue adjacency: hard dependency `I-0647 -> I-0648 -> I-0649`.
+- Downstream execution pair:
+  - `I-0648` (developer) — production implementation slice for mandatory-chain event coverage, fee split, replay continuity, and chain-adapter stability.
+  - `I-0649` (qa) — PRD-focused counterexample gate over required evidence artifacts.
+- Slice gates for this tranche:
+  - `I-0648` updates this plan with explicit `C0125` lock state and queue order `I-0647 -> I-0648 -> I-0649`.
+  - `I-0648` updates `specs/m96-prd-asset-volatility-closeout.md` with a `C0125` addendum for mandatory-chain coverage/replay/isolation hard-stop evidence.
+  - `I-0648` publishes these required evidence artifacts:
+    - `.ralph/reports/I-0648-m96-s1-asset-volatility-coverage-matrix.md`
+    - `.ralph/reports/I-0648-m96-s2-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0648-m96-s3-one-chain-isolation-matrix.md`
+  - Required hard-stop checks for all required `GO` rows in those artifacts:
+    - `outcome=GO`
+    - `evidence_present=true`
+    - `canonical_event_id_unique_ok=true`
+    - `replay_idempotent_ok=true`
+    - `cursor_monotonic_ok=true`
+    - `signed_delta_conservation_ok=true`
+    - `solana_fee_event_coverage_ok=true`
+    - `base_fee_split_coverage_ok=true`
+    - `reorg_recovery_deterministic_ok=true`
+    - `chain_adapter_runtime_wired_ok=true`
+    - `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer columns are present.
+    - `failure_mode` is empty.
+  - `I-0649` verifies all required `I-0648` rows for `solana-devnet`, `base-sepolia`, and `btc-testnet`, and blocks `C0125` on any required `NO-GO`, missing evidence, false hard-stop booleans, non-zero peer deltas, or missing `failure_mode` on `NO-GO`.
+  - Validation target remains `make test`, `make test-sidecar`, `make lint` in all required handoff and QA gate stages.
+  - No runtime implementation changes are executed in this planner tranche; planning/spec handoff only.
+
 ## C0124 (`I-0644`) tranche activation
 - Focus: PRD-priority implementation hardening slice before optional reliability refinements resume.
 - Focused unresolved PRD requirements from `PRD.md`:

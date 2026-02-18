@@ -406,6 +406,35 @@ spec_only_cycle_guard_enabled() {
   return 0
 }
 
+issue_matches_cycle_build_key() {
+  local file="$1"
+  local cycle_id="$2"
+  text_exists "automanager_key:[[:space:]]*auto-quality-cycle-${cycle_id}-build([[:space:]]|$|-)" "${file}" && return 0
+  text_exists "automanager_key:[[:space:]]*auto-build-cycle-${cycle_id}-build([[:space:]]|$|-)" "${file}"
+}
+
+extract_last_nonempty_commit_sha() {
+  local file="$1"
+  awk -F': ' '
+    $1 == "- commit" {
+      commit=$2
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", commit)
+      if (commit != "" && commit != "none" && commit != "uncommitted") {
+        last=commit
+      }
+    }
+    END { print last }
+  ' "${file}" 2>/dev/null || true
+}
+
+commit_has_code_changes() {
+  local commit_sha="$1"
+  [ -n "${commit_sha}" ] || return 1
+  git rev-parse -q --verify "${commit_sha}^{commit}" >/dev/null 2>&1 || return 1
+  git diff --name-only "${commit_sha}~1" "${commit_sha}" 2>/dev/null \
+    | grep -qvE '\.(md)$|^specs/|^docs/|^\.ralph/|^\.agent/|^PROMPT_|^IMPLEMENTATION_PLAN'
+}
+
 recent_cycles_produced_no_code() {
   local check_count="${1:-${SPEC_ONLY_CYCLE_CHECK_COUNT}}"
   local cycle_num code_found=0 count=0
@@ -417,23 +446,18 @@ recent_cycles_produced_no_code() {
   fi
   cycle_num="$(awk 'NR==1{print $1+0; exit}' "${CYCLE_STATE_FILE}" 2>/dev/null || echo 0)"
   while [ "${count}" -lt "${check_count}" ] && [ "${cycle_num}" -gt 0 ]; do
-    local cycle_id dev_key
+    local cycle_id commit_sha f
     cycle_id="$(printf 'C%04d' "${cycle_num}")"
-    dev_key="auto-quality-cycle-${cycle_id}-build"
-    for f in "${RALPH_ROOT}/done"/I-*.md; do
+    for f in "${RALPH_ROOT}/done"/I-*.md "${RALPH_ROOT}/blocked"/I-*.md; do
       [ -f "${f}" ] || continue
-      if ! text_exists "automanager_key:[[:space:]]*${dev_key}" "${f}"; then
-        continue
-      fi
-      local commit_sha
-      commit_sha="$(awk -F': ' '$1 == "- commit" {print $2; exit}' "${f}" 2>/dev/null)"
-      if [ -n "${commit_sha}" ] && [ "${commit_sha}" != "none" ] && [ "${commit_sha}" != "" ]; then
-        if git diff --name-only "${commit_sha}~1" "${commit_sha}" 2>/dev/null \
-          | grep -qvE '\.(md)$|^specs/|^docs/|^\.ralph/|^\.agent/|^PROMPT_|^IMPLEMENTATION_PLAN'; then
-          code_found=1
-        fi
+      issue_matches_cycle_build_key "${f}" "${cycle_id}" || continue
+      commit_sha="$(extract_last_nonempty_commit_sha "${f}")"
+      if commit_has_code_changes "${commit_sha}"; then
+        code_found=1
+        break
       fi
     done
+    [ "${code_found}" -eq 1 ] && break
     cycle_num=$((cycle_num - 1))
     count=$((count + 1))
   done

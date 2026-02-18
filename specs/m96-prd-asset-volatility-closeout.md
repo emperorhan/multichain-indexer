@@ -511,3 +511,72 @@ Required PRD hard-stop decision hook:
 
 #### C0122 decision hook
 - `DP-0157-C0122`: C0122 remains blocked unless all required `I-0638` rows for mandatory chains in the three artifacts are present with required `GO` hard-stop fields true, `evidence_present=true`, required peer deltas zero, and non-empty `failure_mode` for required `NO-GO` rows.
+
+## C0125 (`I-0648`) implementation/continuity hardening handoff
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.4`/`8.5`: failed-path cursor/watermark freeze on restart and replay boundaries.
+  - `reorg_recovery_deterministic`: deterministic recovery/replay under one-chain perturbation.
+  - `chain_adapter_runtime_wired`: runtime-wiring invariance under chain-isolated perturbation.
+- C0125 lock state: `C0125-PRD-ASSET-VOLATILITY-COUNTEREXAMPLE-HARDENING`.
+- C0125 queue adjacency: hard dependency `I-0647 -> I-0648 -> I-0649`.
+- Required evidence artifacts:
+  - `.ralph/reports/I-0648-m96-s1-asset-volatility-coverage-matrix.md`
+  - `.ralph/reports/I-0648-m96-s2-dup-suppression-matrix.md`
+  - `.ralph/reports/I-0648-m96-s3-one-chain-isolation-matrix.md`
+
+#### C0125 Mandatory coverage class-path rows
+| chain | network | class_path |
+|---|---|---|
+| `solana` | `devnet` | `TRANSFER` |
+| `solana` | `devnet` | `MINT` |
+| `solana` | `devnet` | `BURN` |
+| `solana` | `devnet` | `FEE` |
+| `base` | `sepolia` | `TRANSFER` |
+| `base` | `sepolia` | `MINT` |
+| `base` | `sepolia` | `BURN` |
+| `base` | `sepolia` | `fee_execution_l2` |
+| `base` | `sepolia` | `fee_data_l1` |
+| `btc` | `testnet` | `TRANSFER:vin` |
+| `btc` | `testnet` | `TRANSFER:vout` |
+| `btc` | `testnet` | `miner_fee` |
+
+#### C0125 required perturbation families
+- `canonical_range_replay`
+- `replay_order_swap`
+- `one_chain_restart_perturbation`
+- `failed_path_restart_recovery`
+
+#### C0125 matrix contracts (`I-0648`)
+- `I-0648-m96-s1-asset-volatility-coverage-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0648-m96-s2-dup-suppression-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0648-m96-s3-one-chain-isolation-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+
+#### C0125 hard-stop checks for required `GO` rows
+- `outcome=GO`
+- `evidence_present=true`
+- `canonical_event_id_unique_ok=true`
+- `replay_idempotent_ok=true`
+- `cursor_monotonic_ok=true`
+- `signed_delta_conservation_ok=true`
+- `solana_fee_event_coverage_ok=true`
+- `base_fee_split_coverage_ok=true`
+- `reorg_recovery_deterministic_ok=true`
+- `chain_adapter_runtime_wired_ok=true`
+- `peer_cursor_delta=0`
+- `peer_watermark_delta=0` where applicable
+- `failure_mode` is empty
+
+Required machine-checkable constraints:
+- `outcome` is `GO` or `NO-GO`.
+- `evidence_present=true` is required for all required `GO` rows.
+- For required `NO-GO` rows, `failure_mode` must be non-empty.
+- Required `GO` rows in `I-0648-m96-s3-one-chain-isolation-matrix.md` must keep zero peer-chain deltas.
+
+#### C0125 decision gate
+- `DP-0160-C0125` blocks promotion unless all required `I-0648` rows for `solana-devnet`, `base-sepolia`, and `btc-testnet` in all three artifacts are present, `outcome=GO`, `evidence_present=true`, all required hard-stop booleans are true, and peer deltas are zero where required.
