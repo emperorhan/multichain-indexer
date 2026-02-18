@@ -22,6 +22,25 @@ or hardening work. Planner MUST select from this list first:
    Base/EVM logic. Implement dedicated Ethereum adapter if needed.
 5. **Connection Pool Monitoring** — No metrics for PostgreSQL pool utilization.
 6. **Query Timeout Configuration** — No statement-level timeout support.
+## C0129 (`I-0660`) tranche activation
+- Focus: PRD-priority feature-gap closure before optional refinements resume.
+- Focused unresolved implementation gap: pipeline transport is still in-process-only despite present Redis stream abstraction.
+- Focused requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing via deterministic canonical ownership.
+  - `R2`: full in-scope asset-volatility event coverage with replay-safe persistence.
+  - `R7`: strict chain isolation and topology-independent behavior.
+  - `7.4`: topology parity and continuity principles for topology migration.
+  - `10`: deterministic replay acceptance under one-chain perturbation.
+- C0129 lock state: `C0129-PRD-STREAM-PIPELINE-WIRED-FUNDAMENTALS`.
+- C0129 queue adjacency: hard dependency `I-0660 -> I-0663 -> I-0664`.
+- Downstream execution pair:
+  - `I-0663` (developer) — implement Redis stream producer/consumer transport for pipeline stage separation without changing normalized output semantics.
+  - `I-0664` (qa) — validate stream-backed versus in-memory parity plus PRD-mapped invariants.
+- Slice gates for this tranche:
+  - `I-0663` wires Redis-backed transport in production files (`cmd/indexer/main.go`, `internal/config/config.go`, `internal/pipeline/pipeline.go`, `internal/store/redis/stream.go`) with deterministic fallback semantics so mandatory-chain replay/cursor order remains unchanged.
+  - `I-0663` publishes stream-mode parity hard-stop evidence at `.ralph/reports/I-0663-m96-s1-stream-pipeline-parity-matrix.md` and `.ralph/reports/I-0663-m96-s2-stream-pipeline-hardening-matrix.md`.
+  - `I-0664` verifies all required `I-0663` rows for `solana-devnet`, `base-sepolia`, and `btc-testnet`, and blocks `C0129` on any required `NO-GO`, missing evidence, or peer delta violations (`peer_cursor_delta!=0` or `peer_watermark_delta!=0`).
+  - No runtime implementation changes are executed in this planner tranche; planning/spec-doc handoff only.
 
 ## C0128 (`I-0657`) tranche activation
 - Focus: PRD-priority mandatory-chain asset-volatility hard-stop implementation slice before optional refinements resume.
