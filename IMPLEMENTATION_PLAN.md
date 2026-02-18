@@ -566,6 +566,44 @@ Slice gates for this tranche:
   - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`)
   - `failure_mode` empty for GO rows and non-empty for required NO-GO rows.
 
+### C0149 (`I-0730`) implementation handoff
+- Focused unresolved PRD-priority implementation requirement identified from production scan:
+  - `R1`: no-duplicate indexing for mandatory-chain asset-volatility classes.
+  - `R2`: full in-scope asset-volatility coverage, including reorg-affected ranges.
+  - `R3`: chain-family fee completeness (`solana_fee_event_coverage`, `base_fee_split_coverage`).
+  - `8.5`: failed-path cursor/watermark progression must remain prohibited.
+  - `reorg_recovery_deterministic`: restart/recovery boundaries must preserve canonical replay and signed-delta conservation.
+  - `chain_adapter_runtime_wired`: adapter/wiring behavior must remain deterministic when recovery rewinds and replays.
+- `C0149` lock state: `C0149-PRD-REORG-ROLLBACK-REPLAY-DETERMINISM`.
+- `C0149` depends on `I-0726` and has downstream adjacency `I-0730 -> I-0731`.
+
+#### C0149 implementation contracts (`I-0730`)
+- Required artifact path:
+  - `.ralph/reports/I-0730-m96-s1-reorg-recovery-determinism-matrix.md`
+- Required row fields (`s1`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `fork_type`, `recovery_permutation`, `peer_chain`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required mandatory classes in `s1`:
+  - `solana-devnet`: `TRANSFER`, `MINT`, `BURN`, `FEE`
+  - `base-sepolia`: `TRANSFER`, `MINT`, `BURN`, `fee_execution_l2`, `fee_data_l1`
+  - `btc-testnet`: `TRANSFER:vin`, `TRANSFER:vout`, `miner_fee`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `reorg_recovery_deterministic_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+- Required `NO-GO` checks:
+  - `outcome=NO-GO`
+  - `evidence_present=true`
+  - `failure_mode` non-empty
+
+#### C0149 decision hook
+- `DP-0197-C0149`: `C0149` remains blocked until required rows in `.ralph/reports/I-0730-m96-s1-reorg-recovery-determinism-matrix.md` are present for mandatory chains with `outcome=GO`, `evidence_present=true`, hard-stop booleans above, and valid `fork_type` / `recovery_permutation` coverage.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:
@@ -5459,14 +5497,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0726` (`C0148`) planner handoff
-2. `I-0727` (`C0148` implementer) after `I-0726`
-3. `I-0728` (`C0148` qa gate) after `I-0727`
+1. `I-0730` (`C0149`) implementation
+2. `I-0731` (`C0149` qa gate) after `I-0730`
 
 Planned next tranche queue:
-1. `I-0726` (`C0148`) to scope and dispatch deterministic asset-volatility dedup and fee coverage implementation.
-2. `I-0727` (`C0148` implementer) to implement canonical path stabilization and signed-delta conservation at adapter/normalizer boundaries.
-3. `I-0728` (`C0148` qa gate) to validate required rows in `I-0727` evidence.
+1. `I-0730` (`C0149`) to implement reorg-recovery boundary determinism for mandatory asset-volatility classes.
+2. `I-0731` (`C0149` qa gate) to validate required rows in `I-0730` evidence.
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
