@@ -15,12 +15,45 @@ or hardening work. Planner MUST select from this list first:
 1. **Redis Stream Integration** — completed by `C0129` (pipeline stream wiring).
 2. **Sidecar Golden Dataset Tests** — No fixed test fixtures for decoders.
    Create golden input/output pairs for Solana/Base/BTC decoders.
-3. **BTC Adapter Test Coverage** — Only 7 tests vs Solana(15)/Base(12).
+3. **BTC Adapter Test Coverage** — currently under-indexed vs Solana(14)/Base(11).
    Expand UTXO resolution and fee calculation test cases.
 4. **Ethereum Mainnet Adapter** — Completed by `C0131`; runtime target wiring and
    selection now pass alias + deterministic startup tests.
 5. **Connection Pool Monitoring** — No metrics for PostgreSQL pool utilization.
 6. **Query Timeout Configuration** — No statement-level timeout support.
+## C0133 (`I-0675`) tranche activation
+- Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
+- Focused requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing via deterministic canonical ownership.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness (`solana_fee_event_coverage`, `base_fee_split_coverage`).
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain adapter/decoder ownership and runtime wiring remains deterministic and replay-safe.
+- C0133 lock state: `C0133-PRD-BTC-ADAPTER-COMPLETENESS`.
+- C0133 queue adjacency: hard dependency `I-0675 -> I-0676 -> I-0677`.
+- Downstream execution pair:
+  - `I-0676` (developer) — expand production BTC chain adapter coverage in `internal/chain/btc/adapter_test.go` and close deterministic adapter-boundary gaps in scan, cursor resume, and transaction envelope construction.
+  - `I-0677` (qa) — validate `I-0676` evidence matrices and block `C0133` on any hard-stop failure.
+- Slice gates for this tranche:
+  - `I-0676` adds deterministic adapter-test coverage for BTC signature scanning, cursor behavior, prevout resolution edge cases, and miner-fee metadata determinism under batch/replay perturbations.
+  - `I-0676` publishes required artifacts:
+    - `.ralph/reports/I-0676-m96-s1-btc-adapter-completeness-matrix.md`
+    - `.ralph/reports/I-0676-m96-s2-btc-adapter-replay-matrix.md`
+    - `.ralph/reports/I-0676-m96-s3-btc-adapter-isolation-matrix.md`
+  - `I-0677` validates required artifact rows for `btc` and `btc-testnet`, including deterministic outcomes for `scan_replay`, `scan_batching`, `envelope_fee_determinism`, and cursor safety/perimeter cases.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+## C0133 decision hooks
+- `DP-0182-C0133`: `C0133` remains blocked until required rows in
+  `.ralph/reports/I-0676-m96-s1-btc-adapter-completeness-matrix.md`,
+  `.ralph/reports/I-0676-m96-s2-btc-adapter-replay-matrix.md`, and
+  `.ralph/reports/I-0676-m96-s3-btc-adapter-isolation-matrix.md`
+  for `chain=btc`, `network=btc-testnet` are present with `outcome=GO`,
+  `evidence_present=true`, required hard-stop booleans (`canonical_event_id_unique_ok`,
+  `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`,
+  `chain_adapter_runtime_wired_ok`) true, required peer deltas equal zero
+  (`peer_cursor_delta=0`, `peer_watermark_delta=0` where defined), and non-empty
+  `failure_mode` for required `NO-GO` rows.
 ## C0132 (`I-0671`) tranche activation
 - Focus: PRD-priority sidecar decoder coverage closure via fixed golden fixtures and
   deterministic fixture-driven assertions before optional refinements continue.

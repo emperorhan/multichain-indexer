@@ -706,3 +706,53 @@ Required machine-checkable constraints:
 
 #### C0132 decision hook
 - `DP-0181-C0132` remains blocked unless required rows for `solana-devnet`, `base-sepolia`, and `btc-testnet` in all three artifacts are present and satisfy all required `GO` hard-stop checks.
+
+### C0133 (`I-0675`) implementation handoff addendum
+- Focused PRD traceability from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain-adapter/runtime wiring remains deterministic and replay-safe.
+- `C0133` lock state: `C0133-PRD-BTC-ADAPTER-COMPLETENESS`.
+- `C0133` queue adjacency: hard dependency `I-0675 -> I-0676 -> I-0677`.
+
+#### Required evidence artifacts for `I-0676`
+- `.ralph/reports/I-0676-m96-s1-btc-adapter-completeness-matrix.md`
+- `.ralph/reports/I-0676-m96-s2-btc-adapter-replay-matrix.md`
+- `.ralph/reports/I-0676-m96-s3-btc-adapter-isolation-matrix.md`
+
+#### C0133 mandatory BTC class-path contracts (`I-0676`)
+- `I-0676-m96-s1-btc-adapter-completeness-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0676-m96-s2-btc-adapter-replay-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0676-m96-s3-btc-adapter-isolation-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+
+#### C0133 mandatory class rows
+- `btc` + `btc-testnet`: `TRANSFER:vin`, `TRANSFER:vout`, `miner_fee`
+
+#### C0133 required perturbation families
+- `scan_replay`
+- `scan_batching`
+- `envelope_fee_determinism`
+- `replay_restart`
+
+#### C0133 hard-stop checks for required `GO` rows
+- `outcome=GO`
+- `evidence_present=true`
+- `canonical_event_id_unique_ok=true`
+- `replay_idempotent_ok=true`
+- `cursor_monotonic_ok=true`
+- `signed_delta_conservation_ok=true`
+- `chain_adapter_runtime_wired_ok=true`
+- required `peer_cursor_delta=0` and `peer_watermark_delta=0` where applicable
+- `failure_mode` is empty.
+
+#### C0133 decision hook
+- `DP-0182-C0133` remains blocked unless required rows for `chain=btc`, `network=btc-testnet` in all three artifacts are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
+  - required peer deltas equal zero where present (`peer_cursor_delta=0`, `peer_watermark_delta=0`)
+  - and non-empty `failure_mode` for any required `NO-GO` row.
