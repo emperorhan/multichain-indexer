@@ -17,11 +17,43 @@ or hardening work. Planner MUST select from this list first:
    Create golden input/output pairs for Solana/Base/BTC decoders.
 3. **BTC Adapter Test Coverage** — Only 7 tests vs Solana(15)/Base(12).
    Expand UTXO resolution and fee calculation test cases.
-4. **Ethereum Mainnet Adapter** — ChainEthereum defined but routes through
-   chain target wiring is incomplete (runtime target key is still unsupported). Enable
-   deterministic production target activation in the runtime selection path.
+4. **Ethereum Mainnet Adapter** — Completed by `C0131`; runtime target wiring and
+   selection now pass alias + deterministic startup tests.
 5. **Connection Pool Monitoring** — No metrics for PostgreSQL pool utilization.
 6. **Query Timeout Configuration** — No statement-level timeout support.
+## C0132 (`I-0671`) tranche activation
+- Focus: PRD-priority sidecar decoder coverage closure via fixed golden fixtures and
+  deterministic fixture-driven assertions before optional refinements continue.
+- Focused unresolved implementation requirement from `PRD.md`:
+  - `R1`: no-duplicate indexing via deterministic canonical ownership.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain adapter/decoder wiring remains deterministic and replay-safe.
+- C0132 lock state: `C0132-PRD-SIDECAR-GOLDEN-DECODER-PAIRING`.
+- C0132 queue adjacency: hard dependency `I-0671 -> I-0672 -> I-0673`.
+- Downstream execution pair:
+  - `I-0672` (developer) — add fixed sidecar golden input/output fixture pairs for
+    Solana/Base/BTC and wire fixture-driven assertions into decoder regression tests.
+  - `I-0673` (qa) — validate evidence and block `C0132` on any hard-stop failure.
+- Slice gates for this tranche:
+  - `I-0672` adds fixed golden fixture output snapshots under `sidecar/src/decoder/fixture_output/`.
+  - `I-0672` adds fixture-driven tests covering mandatory chain class paths (`TRANSFER`, `MINT`, `BURN`, `FEE`, `fee_execution_l2`, `fee_data_l1`, `TRANSFER:vin`, `TRANSFER:vout`, `miner_fee`) and replay permutations.
+  - `I-0672` publishes required artifacts:
+    - `.ralph/reports/I-0672-m96-s1-sidecar-golden-class-coverage-matrix.md`
+    - `.ralph/reports/I-0672-m96-s2-sidecar-golden-dup-suppression-matrix.md`
+    - `.ralph/reports/I-0672-m96-s3-sidecar-golden-one-chain-isolation-matrix.md`
+  - `I-0673` validates all required `I-0672` rows for mandatory chains and required class paths, and blocks `C0132` on `NO-GO`, `evidence_present=false`, hard-stop boolean false, or non-zero required peer deltas.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+## C0132 decision hooks
+- `DP-0181-C0132`: `C0132` remains blocked until required `I-0672` rows for
+  `solana-devnet`, `base-sepolia`, and `btc-testnet` are present in all three artifacts
+  with `outcome=GO`, `evidence_present=true`, required hard-stop booleans (`canonical_event_id_unique_ok`,
+  `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`,
+  `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`)
+  true, required peer deltas at zero (`peer_cursor_delta=0`, `peer_watermark_delta=0` where defined),
+  and non-empty `failure_mode` for required `NO-GO` rows.
 ## C0131 (`I-0668`) tranche activation
 - Focus: PRD-priority chain adapter runtime wiring gap closure for ethereum-mainnet before optional refinements continue.
 - Focused unresolved implementation requirement from `PRD.md`:

@@ -661,3 +661,48 @@ Required machine-checkable constraints:
 
 #### C0131 decision hook
 - `DP-0180-C0131` remains blocked unless required rows for `chain=ethereum`, `network=mainnet` are present in all three required artifacts and satisfy all C0131 hard-stop checks.
+
+### C0132 (`I-0671`) implementation handoff addendum
+- Focused PRD traceability from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain adapter and decoder integration remains deterministic.
+- C0132 lock state: `C0132-PRD-SIDECAR-GOLDEN-DECODER-PAIRING`.
+- `C0132` queue adjacency: hard dependency `I-0671 -> I-0672 -> I-0673`.
+
+#### Required evidence artifacts for `I-0672`
+- `.ralph/reports/I-0672-m96-s1-sidecar-golden-class-coverage-matrix.md`
+- `.ralph/reports/I-0672-m96-s2-sidecar-golden-dup-suppression-matrix.md`
+- `.ralph/reports/I-0672-m96-s3-sidecar-golden-one-chain-isolation-matrix.md`
+
+#### C0132 class-coverage contracts (`I-0672`)
+- `I-0672-m96-s1-sidecar-golden-class-coverage-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0672-m96-s2-sidecar-golden-dup-suppression-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0672-m96-s3-sidecar-golden-one-chain-isolation-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_id_count`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+
+#### C0132 mandatory class-path focus
+- `solana` + `solana-devnet`: `TRANSFER`, `MINT`, `BURN`, `FEE`
+- `base` + `base-sepolia`: `TRANSFER`, `MINT`, `BURN`, `fee_execution_l2`, `fee_data_l1`
+- `btc` + `btc-testnet`: `TRANSFER:vin`, `TRANSFER:vout`, `miner_fee`
+
+#### C0132 hard-stop checks for required `GO` rows
+- `outcome=GO`
+- `evidence_present=true`
+- `canonical_event_id_unique_ok=true`
+- `replay_idempotent_ok=true`
+- `cursor_monotonic_ok=true`
+- `signed_delta_conservation_ok=true`
+- `solana_fee_event_coverage_ok=true`
+- `base_fee_split_coverage_ok=true`
+- `chain_adapter_runtime_wired_ok=true`
+- `peer_cursor_delta=0` and `peer_watermark_delta=0` where applicable
+- `failure_mode` is empty.
+- `canonical_id_count` should remain `1` for deterministic fixture rows.
+
+#### C0132 decision hook
+- `DP-0181-C0132` remains blocked unless required rows for `solana-devnet`, `base-sepolia`, and `btc-testnet` in all three artifacts are present and satisfy all required `GO` hard-stop checks.
