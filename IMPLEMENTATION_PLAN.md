@@ -256,6 +256,47 @@ or hardening work. Planner MUST select from this list first:
   - `chain_adapter_runtime_wired_ok=true`
   - `failure_mode` is empty
 
+### C0141 (`I-0704`) implementation handoff addendum
+- Focused PRD traceability from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: stream replay restart must preserve boundary ordering.
+  - `chain_adapter_runtime_wired`: stream checkpoint wiring must stay deterministic across process restarts.
+- Current gap: stream checkpoint key derivation in `internal/pipeline/pipeline.go` does not include `STREAM_NAMESPACE`, so restarts under different namespaces can read/write the same checkpoint row for matching chain/network/session/boundary and break namespace-isolated recovery.
+- `C0141` lock state: `C0141-PRD-STREAM-NAMESPACE-CHECKPOINT-SCOPE`.
+- `C0141` queue adjacency: hard dependency `I-0704 -> I-0705 -> I-0706`.
+
+Downstream execution pair:
+  - `I-0705` (developer) — scope stream boundary checkpoint keys by namespace in runtime+store code paths and add regression tests.
+  - `I-0706` (qa) — validate `I-0705` evidence for namespace isolation and monotonic recovery invariants.
+
+Slice gates for this tranche:
+  - `I-0705` updates `internal/pipeline/pipeline.go` to include `streamNamespace` in `streamBoundaryCheckpointKey`.
+  - `I-0705` updates `internal/store/redis/stream.go` persistence and loading helpers so keying remains namespace scoped and no-op compatible across existing namespaces.
+  - `I-0705` extends checkpoint restart tests in `internal/pipeline/pipeline_test.go` and/or `internal/store/redis/stream_test.go` to prove namespace-different runs never share checkpoint lineage.
+  - `I-0705` publishes required evidence artifact:
+    - `.ralph/reports/I-0705-m96-s1-stream-namespace-checkpoint-key-matrix.md`
+  - `I-0706` validates all required `I-0705` rows for `chain=solana`, `base`, `btc` and blocks `C0141` on any required hard-stop violation.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+#### C0141 decision hook
+- `DP-0190-C0141`: `C0141` remains blocked until required rows in `.ralph/reports/I-0705-m96-s1-stream-namespace-checkpoint-key-matrix.md` for `chain=solana`, `base`, and `btc` are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `checkpoint_key_scope_includes_namespace=true`
+  - `checkpoint_key_scope_includes_session=true`
+  - `checkpoint_persisted=true`
+  - `checkpoint_loaded=true`
+  - `stream_restart=true`
+  - `legacy_compatibility_row_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where defined
+  - `failure_mode` is empty
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:

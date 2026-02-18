@@ -986,3 +986,48 @@ Required machine-checkable constraints:
   - `evidence_present=true`
   - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`)
   - `failure_mode` is empty
+
+### C0141 (`I-0705`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: stream checkpoint replay must preserve boundary ordering.
+  - `chain_adapter_runtime_wired`: checkpoint namespace scoping must be deterministic for restart behavior.
+- `C0141` lock state: `C0141-PRD-STREAM-NAMESPACE-CHECKPOINT-SCOPE`.
+- `C0141` queue adjacency: hard dependency `I-0704 -> I-0705 -> I-0706`.
+
+#### C0141 mandatory contracts (`I-0705`)
+- Required artifact path:
+  - `.ralph/reports/I-0705-m96-s1-stream-namespace-checkpoint-key-matrix.md`
+- Required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `stream_namespace`, `stream_session_id`, `stream_boundary`, `checkpoint_key`, `checkpoint_key_scope_includes_namespace`, `checkpoint_key_scope_includes_session`, `checkpoint_key_legacy_read`, `checkpoint_key_new_write`, `checkpoint_persisted`, `checkpoint_loaded`, `checkpoint_start_id`, `checkpoint_end_id`, `stream_restart`, `legacy_compatibility_row_present`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`, `stream_namespace=ns-a`, `stream_session_id=session-a`, `stream_restart=true`
+  - `chain=base`, `network=sepolia`, `stream_namespace=ns-a`, `stream_session_id=session-a`, `stream_restart=true`
+  - `chain=btc`, `network=testnet`, `stream_namespace=ns-a`, `stream_session_id=session-a`, `stream_restart=true`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `checkpoint_key_scope_includes_namespace=true`
+  - `checkpoint_key_scope_includes_session=true`
+  - `checkpoint_persisted=true`
+  - `checkpoint_loaded=true`
+  - `stream_restart=true`
+  - `legacy_compatibility_row_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required
+  - `failure_mode` is empty
+- `outcome=NO-GO` rows must keep a non-empty `failure_mode`.
+
+#### C0141 decision hook
+- `DP-0190-C0141`: `C0141` remains blocked until required rows in `.ralph/reports/I-0705-m96-s1-stream-namespace-checkpoint-key-matrix.md` for `chain=solana`, `base`, and `btc` are present with:
+  - `stream_namespace=ns-a`
+  - `outcome=GO`
+  - `evidence_present=true`
+  - required hard-stop booleans above (`checkpoint_key_scope_includes_namespace`, `checkpoint_key_scope_includes_session`, `checkpoint_persisted`, `checkpoint_loaded`, `stream_restart`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
+  - `failure_mode` is empty
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required
