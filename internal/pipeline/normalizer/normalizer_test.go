@@ -2645,7 +2645,7 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 			PreviousCursorValue:    canonical.NewCursorValue,
 			PreviousCursorSequence: canonical.NewCursorSequence,
 			RawTransactions:        canonicalBatch.RawTransactions,
-			Signatures:            canonicalBatch.Signatures,
+			Signatures:             canonicalBatch.Signatures,
 			NewCursorValue:         canonical.NewCursorValue,
 			NewCursorSequence:      canonical.NewCursorSequence,
 		}, []*sidecarv1.TransactionResult{txA, txB})
@@ -2660,7 +2660,7 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 			PreviousCursorValue:    partial.NewCursorValue,
 			PreviousCursorSequence: partial.NewCursorSequence,
 			RawTransactions:        canonicalBatch.RawTransactions,
-			Signatures:            canonicalBatch.Signatures,
+			Signatures:             canonicalBatch.Signatures,
 			NewCursorValue:         canonical.NewCursorValue,
 			NewCursorSequence:      canonical.NewCursorSequence,
 		}, []*sidecarv1.TransactionResult{txA, txB})
@@ -2729,7 +2729,7 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 					TokenDecimals:         18,
 					TokenType:             string(model.TokenTypeFungible),
 					Metadata: map[string]string{
-						"event_path":      "log:11",
+						"event_path":       "log:11",
 						"fee_execution_l2": "700",
 						"fee_data_l1":      "300",
 					},
@@ -2835,7 +2835,7 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 			PreviousCursorValue:    canonical.NewCursorValue,
 			PreviousCursorSequence: canonical.NewCursorSequence,
 			RawTransactions:        canonicalBatch.RawTransactions,
-			Signatures:            canonicalBatch.Signatures,
+			Signatures:             canonicalBatch.Signatures,
 			NewCursorValue:         canonical.NewCursorValue,
 			NewCursorSequence:      canonical.NewCursorSequence,
 		}, []*sidecarv1.TransactionResult{txA, txB})
@@ -2849,7 +2849,7 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 			PreviousCursorValue:    partial.NewCursorValue,
 			PreviousCursorSequence: partial.NewCursorSequence,
 			RawTransactions:        canonicalBatch.RawTransactions,
-			Signatures:            canonicalBatch.Signatures,
+			Signatures:             canonicalBatch.Signatures,
 			NewCursorValue:         canonical.NewCursorValue,
 			NewCursorSequence:      canonical.NewCursorSequence,
 		}, []*sidecarv1.TransactionResult{txA, txB})
@@ -3048,7 +3048,7 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 			PreviousCursorValue:    canonical.NewCursorValue,
 			PreviousCursorSequence: canonical.NewCursorSequence,
 			RawTransactions:        canonicalBatch.RawTransactions,
-			Signatures:            canonicalBatch.Signatures,
+			Signatures:             canonicalBatch.Signatures,
 			NewCursorValue:         canonical.NewCursorValue,
 			NewCursorSequence:      canonical.NewCursorSequence,
 		}, []*sidecarv1.TransactionResult{txA, txB})
@@ -3062,7 +3062,7 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 			PreviousCursorValue:    partial.NewCursorValue,
 			PreviousCursorSequence: partial.NewCursorSequence,
 			RawTransactions:        canonicalBatch.RawTransactions,
-			Signatures:            canonicalBatch.Signatures,
+			Signatures:             canonicalBatch.Signatures,
 			NewCursorValue:         canonical.NewCursorValue,
 			NewCursorSequence:      canonical.NewCursorSequence,
 		}, []*sidecarv1.TransactionResult{txA, txB})
@@ -3261,6 +3261,26 @@ func TestBuildCanonicalEventID_Stable(t *testing.T) {
 
 	assert.Equal(t, id1, id2)
 	assert.Len(t, id1, 64)
+
+	baseIdCanonical := buildCanonicalEventID(
+		model.ChainBase, model.NetworkSepolia,
+		"0xABCDEF0123456789", "log:10", "0xabc", "0xtoken", model.EventCategoryTransfer,
+	)
+	baseIdMixedCase := buildCanonicalEventID(
+		model.ChainBase, model.NetworkSepolia,
+		"abcdef0123456789", "log:10", "0xabc", "0xtoken", model.EventCategoryTransfer,
+	)
+	assert.Equal(t, baseIdCanonical, baseIdMixedCase)
+
+	btcIdWithPrefix := buildCanonicalEventID(
+		model.ChainBTC, model.NetworkTestnet,
+		"0xABCD1234", "vout:0", "tb1receiver", "BTC", model.EventCategoryFee,
+	)
+	btcIdWithoutPrefix := buildCanonicalEventID(
+		model.ChainBTC, model.NetworkTestnet,
+		"abcd1234", "vout:0", "tb1receiver", "BTC", model.EventCategoryFee,
+	)
+	assert.Equal(t, btcIdWithPrefix, btcIdWithoutPrefix)
 }
 
 func TestProcessBatch_SolInstructionOwnershipDedup(t *testing.T) {
@@ -3417,6 +3437,89 @@ func TestProcessBatch_SolInstructionOwnershipDedupByAddressAsset(t *testing.T) {
 	assert.Equal(t, model.EventCategoryFee, feeEvent.EventCategory)
 	assert.Equal(t, "outer:-1|inner:-1", feeEvent.EventPath)
 	assert.NotEmpty(t, feeEvent.EventID)
+}
+
+func TestProcessBatch_SolAddressCanonicalizationForDuplicateSuppression(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000, // 30s
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	fixtureAddress := "sol-address-dup-1"
+	batch := event.RawBatch{
+		Chain:   model.ChainSolana,
+		Network: model.NetworkDevnet,
+		Address: fixtureAddress,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"sol-address-canonicalization"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: "sig-sol-dupe-addr", Sequence: 1001},
+		},
+	}
+
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
+			Results: []*sidecarv1.TransactionResult{
+				{
+					TxHash:      "sig-sol-dupe-addr",
+					BlockCursor: 1001,
+					Status:      "SUCCESS",
+					FeeAmount:   "0",
+					FeePayer:    "",
+					BalanceEvents: []*sidecarv1.BalanceEventInfo{
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "dup_transfer",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               fixtureAddress + " ",
+							ContractAddress:       "11111111111111111111111111111111",
+							Delta:                 "-100",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata:              map[string]string{},
+						},
+						{
+							OuterInstructionIndex: 0,
+							InnerInstructionIndex: -1,
+							EventCategory:         string(model.EventCategoryTransfer),
+							EventAction:           "dup_transfer",
+							ProgramId:             "11111111111111111111111111111111",
+							Address:               " " + fixtureAddress,
+							ContractAddress:       "11111111111111111111111111111111",
+							Delta:                 "-100",
+							TokenSymbol:           "SOL",
+							TokenName:             "Solana",
+							TokenDecimals:         9,
+							TokenType:             string(model.TokenTypeNative),
+							Metadata:              map[string]string{},
+						},
+					},
+				},
+			},
+		}, nil)
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
+
+	result := <-normalizedCh
+	require.Len(t, result.Transactions, 1)
+	require.Len(t, result.Transactions[0].BalanceEvents, 1)
+
+	event := result.Transactions[0].BalanceEvents[0]
+	assert.Equal(t, model.EventCategoryTransfer, event.EventCategory)
+	assert.Equal(t, fixtureAddress, event.ActorAddress)
+	assert.Equal(t, "outer:0|inner:-1", event.EventPath)
+	assert.NotEmpty(t, event.EventID)
 }
 
 func TestProcessBatch_SolanaReplayTuplesStableForCPIDedupFixture(t *testing.T) {
@@ -7350,10 +7453,10 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 		expectedHead  string
 	}
 	type topologyRun struct {
-		tupleSetWithMode   map[string]struct{}
-		tupleSetLogical    map[string]struct{}
-		eventIDSet        map[string]struct{}
-		finalHead         string
+		tupleSetWithMode map[string]struct{}
+		tupleSetLogical  map[string]struct{}
+		eventIDSet       map[string]struct{}
+		finalHead        string
 	}
 
 	signatureForMode := func(mode string, fixture topologyFixture) string {
@@ -7808,8 +7911,8 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 		return topologyRun{
 			tupleSetWithMode: tupleSetWithMode,
 			tupleSetLogical:  tupleSetLogical,
-			eventIDSet:      eventIDs,
-			finalHead:       finalHead,
+			eventIDSet:       eventIDs,
+			finalHead:        finalHead,
 		}
 	}
 
@@ -7935,8 +8038,8 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMine
 	assert.Equal(t, 2, foundTransfers)
 	assert.Equal(t, 1, feeEvents)
 	assert.Equal(t, map[string]struct{}{
-		"vin:0":   {},
-		"vout:1": {},
+		"vin:0":     {},
+		"vout:1":    {},
 		"fee:miner": {},
 	}, seenPaths)
 

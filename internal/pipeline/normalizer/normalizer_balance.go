@@ -881,6 +881,13 @@ func canonicalizeSolanaBalanceEvents(
 	}
 
 	for idx := range normalizedEvents {
+		normalizedEvents[idx].Address = canonicalizeAddressIdentity(chain, normalizedEvents[idx].Address)
+		normalizedEvents[idx].CounterpartyAddress = canonicalizeAddressIdentity(chain, normalizedEvents[idx].CounterpartyAddress)
+		normalizedEvents[idx].ContractAddress = canonicalizeAddressIdentity(chain, normalizedEvents[idx].ContractAddress)
+		normalizedEvents[idx].AssetID = canonicalizeAddressIdentity(chain, normalizedEvents[idx].AssetID)
+		if normalizedEvents[idx].AssetID == "" {
+			normalizedEvents[idx].AssetID = normalizedEvents[idx].ContractAddress
+		}
 		if normalizedEvents[idx].EventCategory == model.EventCategoryFee {
 			continue
 		}
@@ -1015,7 +1022,12 @@ func shouldReplaceCanonicalSolanaEvent(
 }
 
 func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, category model.EventCategory) string {
-	canonical := fmt.Sprintf("chain=%s|network=%s|tx=%s|path=%s|actor=%s|asset=%s|category=%s", chain, network, txHash, eventPath, actorAddress, assetID, category)
+	canonicalTxHash := strings.TrimSpace(txHash)
+	canonicalTxHash = canonicalSignatureIdentity(chain, canonicalTxHash)
+	if canonicalTxHash == "" {
+		canonicalTxHash = strings.TrimSpace(txHash)
+	}
+	canonical := fmt.Sprintf("chain=%s|network=%s|tx=%s|path=%s|actor=%s|asset=%s|category=%s", chain, network, canonicalTxHash, eventPath, actorAddress, assetID, category)
 	sum := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(sum[:])
 }
