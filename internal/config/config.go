@@ -104,6 +104,7 @@ type PipelineConfig struct {
 	CoordinatorAutoTunePolicyActivationHoldTicks  int
 	StreamTransportEnabled                        bool
 	StreamNamespace                               string
+	StreamSessionID                               string
 }
 
 type ServerConfig struct {
@@ -183,6 +184,7 @@ func Load() (*Config, error) {
 			CoordinatorAutoTunePolicyActivationHoldTicks:  getEnvInt("COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS", 1),
 			StreamTransportEnabled:                        getEnvBool("PIPELINE_STREAM_TRANSPORT_ENABLED", false),
 			StreamNamespace:                               getEnv("PIPELINE_STREAM_NAMESPACE", "pipeline"),
+			StreamSessionID:                               getEnv("PIPELINE_STREAM_SESSION_ID", ""),
 		},
 		Server: ServerConfig{
 			HealthPort: getEnvInt("HEALTH_PORT", 8080),

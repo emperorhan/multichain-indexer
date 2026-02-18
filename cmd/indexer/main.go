@@ -135,18 +135,38 @@ func main() {
 	logger.Info("connected to database")
 
 	streamTransportEnabled := cfg.Pipeline.StreamTransportEnabled
-	var redisStream *redispkg.Stream
+	var streamBackend redispkg.MessageTransport
+	streamSessionID := strings.TrimSpace(cfg.Pipeline.StreamSessionID)
+	if streamSessionID == "" {
+		streamSessionID = time.Now().Format("20060102T150405.000000000")
+	}
+
 	if streamTransportEnabled {
-		redisStream, err = redispkg.NewStream(cfg.Redis.URL)
+		redisStream, err := redispkg.NewStream(cfg.Redis.URL)
 		if err != nil {
-			logger.Warn("failed to initialize redis stream transport; falling back to in-memory channels", "error", err, "redis_url", cfg.Redis.URL)
-			streamTransportEnabled = false
+			logger.Warn(
+				"failed to initialize redis stream transport; falling back to in-memory stream transport",
+				"error",
+				err,
+				"redis_url",
+				cfg.Redis.URL,
+			)
+			streamBackend = redispkg.NewInMemoryStream()
 		} else {
-			logger.Info("redis stream transport enabled", "redis_url", cfg.Redis.URL, "stream_namespace", cfg.Pipeline.StreamNamespace)
-			defer redisStream.Close()
+			logger.Info("redis stream transport enabled", "redis_url", cfg.Redis.URL, "stream_namespace", cfg.Pipeline.StreamNamespace, "stream_session_id", streamSessionID)
+			streamBackend = redisStream
 		}
 	}
-	streamSessionID := time.Now().Format("20060102T150405.000000000")
+	if streamTransportEnabled && streamBackend == nil {
+		streamTransportEnabled = false
+	}
+	if !streamTransportEnabled {
+		streamSessionID = "memory-fallback"
+	}
+
+	if streamBackend != nil {
+		defer streamBackend.Close()
+	}
 
 	// Create repositories
 	repos := &pipeline.Repos{
@@ -225,7 +245,7 @@ func main() {
 			SidecarTLSKey:          cfg.Sidecar.TLSKey,
 			SidecarTLSCA:           cfg.Sidecar.TLSCA,
 			StreamTransportEnabled: streamTransportEnabled,
-			StreamBackend:          redisStream,
+			StreamBackend:          streamBackend,
 			StreamNamespace:        cfg.Pipeline.StreamNamespace,
 			StreamSessionID:        streamSessionID,
 			CommitInterleaver:      commitInterleaver,

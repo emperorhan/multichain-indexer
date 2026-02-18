@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"context"
 	"fmt"
 	"log/slog"
@@ -36,7 +37,7 @@ type Config struct {
 	SidecarTLSKey          string
 	SidecarTLSCA           string
 	StreamTransportEnabled bool
-	StreamBackend          *redisstream.Stream
+	StreamBackend          redisstream.MessageTransport
 	StreamNamespace        string
 	StreamSessionID        string
 	CommitInterleaver      ingester.CommitInterleaver
@@ -237,7 +238,7 @@ func (p *Pipeline) streamBoundaryName(boundary string) string {
 	return fmt.Sprintf("%s:chain=%s:network=%s:session=%s:boundary=%s", namespace, p.cfg.Chain, p.cfg.Network, sessionID, boundary)
 }
 
-func (p *Pipeline) runRawBatchStreamProducer(ctx context.Context, in <-chan event.RawBatch, stream *redisstream.Stream, streamName string) error {
+func (p *Pipeline) runRawBatchStreamProducer(ctx context.Context, in <-chan event.RawBatch, stream redisstream.MessageTransport, streamName string) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -253,12 +254,15 @@ func (p *Pipeline) runRawBatchStreamProducer(ctx context.Context, in <-chan even
 	}
 }
 
-func (p *Pipeline) runRawBatchStreamConsumer(ctx context.Context, out chan<- event.RawBatch, stream *redisstream.Stream, streamName string) error {
+func (p *Pipeline) runRawBatchStreamConsumer(ctx context.Context, out chan<- event.RawBatch, stream redisstream.MessageTransport, streamName string) error {
 	lastID := "0"
 	for {
 		var batch event.RawBatch
 		nextID, err := stream.ReadJSON(ctx, streamName, lastID, &batch)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
 			return fmt.Errorf("stream consumer failed: %w", err)
 		}
 
