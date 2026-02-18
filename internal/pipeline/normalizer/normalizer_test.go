@@ -2893,6 +2893,198 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		assert.GreaterOrEqual(t, recovered.NewCursorSequence, partial.NewCursorSequence)
 	})
 
+	t.Run("ethereum-mainnet", func(t *testing.T) {
+		ethereumAddress := "0xabc0000000000000000000000000000000000000"
+		ethereumTxA := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0901"
+		ethereumTxB := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0902"
+		txA := &sidecarv1.TransactionResult{
+			TxHash:      ethereumTxA,
+			BlockCursor: 9101,
+			BlockTime:   1700009101,
+			Status:      "SUCCESS",
+			FeeAmount:   "1000",
+			FeePayer:    ethereumAddress,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryTransfer),
+					EventAction:           "transfer",
+					ProgramId:             "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+					Address:               ethereumAddress,
+					ContractAddress:       "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+					Delta:                 "-1000000000000000000",
+					TokenSymbol:           "ETH",
+					TokenName:             "Ether",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeFungible),
+					Metadata: map[string]string{
+						"event_path":       "log:21",
+						"fee_execution_l2":  "700",
+						"fee_data_l1":      "300",
+						"base_event_path":   "log:21",
+					},
+				},
+			},
+		}
+		txB := &sidecarv1.TransactionResult{
+			TxHash:      ethereumTxB,
+			BlockCursor: 9102,
+			BlockTime:   1700009102,
+			Status:      "SUCCESS",
+			FeeAmount:   "0",
+			FeePayer:    ethereumAddress,
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryMint),
+					EventAction:           "mint",
+					ProgramId:             "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+					Address:               ethereumAddress,
+					ContractAddress:       "0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+					Delta:                 "500000000000000000",
+					TokenSymbol:           "ETH",
+					TokenName:             "Ether",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeFungible),
+					Metadata:              map[string]string{"event_path": "log:22"},
+				},
+				{
+					OuterInstructionIndex: 0,
+					InnerInstructionIndex: -1,
+					EventCategory:         string(model.EventCategoryBurn),
+					EventAction:           "burn",
+					ProgramId:             "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+					Address:               ethereumAddress,
+					ContractAddress:       "0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+					Delta:                 "-100000000000000000",
+					TokenSymbol:           "ETH",
+					TokenName:             "Ether",
+					TokenDecimals:         18,
+					TokenType:             string(model.TokenTypeFungible),
+					Metadata:              map[string]string{"event_path": "log:23"},
+				},
+			},
+		}
+
+		canonicalBatch := event.RawBatch{
+			Chain:                  model.ChainEthereum,
+			Network:                model.NetworkMainnet,
+			Address:                ethereumAddress,
+			PreviousCursorValue:    strPtr("ethereum-m96-bd-prev"),
+			PreviousCursorSequence: 9100,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"base-eth-m96-bd-a"}`),
+				json.RawMessage(`{"tx":"base-eth-m96-bd-b"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: ethereumTxA, Sequence: 9101},
+				{Hash: ethereumTxB, Sequence: 9102},
+			},
+			NewCursorValue:    strPtr(ethereumTxB),
+			NewCursorSequence: 9102,
+		}
+		swapBatch := event.RawBatch{
+			Chain:                  model.ChainEthereum,
+			Network:                model.NetworkMainnet,
+			Address:                ethereumAddress,
+			PreviousCursorValue:    strPtr("ethereum-m96-bd-prev"),
+			PreviousCursorSequence: 9100,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"base-eth-m96-bd-b"}`),
+				json.RawMessage(`{"tx":"base-eth-m96-bd-a"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: ethereumTxB, Sequence: 9102},
+				{Hash: ethereumTxA, Sequence: 9101},
+			},
+			NewCursorValue:    strPtr(ethereumTxB),
+			NewCursorSequence: 9102,
+		}
+		partialBatch := event.RawBatch{
+			Chain:                  model.ChainEthereum,
+			Network:                model.NetworkMainnet,
+			Address:                ethereumAddress,
+			PreviousCursorValue:    strPtr("ethereum-m96-bd-prev"),
+			PreviousCursorSequence: 9100,
+			RawTransactions: []json.RawMessage{
+				json.RawMessage(`{"tx":"base-eth-m96-bd-a"}`),
+			},
+			Signatures: []event.SignatureInfo{
+				{Hash: ethereumTxA, Sequence: 9101},
+			},
+			NewCursorValue:    strPtr(ethereumTxA),
+			NewCursorSequence: 9101,
+		}
+
+		canonical := run(t, canonicalBatch, []*sidecarv1.TransactionResult{txA, txB})
+		replay := run(t, event.RawBatch{
+			Chain:                  canonicalBatch.Chain,
+			Network:                canonicalBatch.Network,
+			Address:                canonicalBatch.Address,
+			PreviousCursorValue:    canonical.NewCursorValue,
+			PreviousCursorSequence: canonical.NewCursorSequence,
+			RawTransactions:        canonicalBatch.RawTransactions,
+			Signatures:             canonicalBatch.Signatures,
+			NewCursorValue:         canonical.NewCursorValue,
+			NewCursorSequence:      canonical.NewCursorSequence,
+		}, []*sidecarv1.TransactionResult{txA, txB})
+
+		swap := run(t, swapBatch, []*sidecarv1.TransactionResult{txB, txA})
+		partial := run(t, partialBatch, []*sidecarv1.TransactionResult{txA})
+		recovered := run(t, event.RawBatch{
+			Chain:                  canonicalBatch.Chain,
+			Network:                canonicalBatch.Network,
+			Address:                canonicalBatch.Address,
+			PreviousCursorValue:    partial.NewCursorValue,
+			PreviousCursorSequence: partial.NewCursorSequence,
+			RawTransactions:        canonicalBatch.RawTransactions,
+			Signatures:             canonicalBatch.Signatures,
+			NewCursorValue:         canonical.NewCursorValue,
+			NewCursorSequence:      canonical.NewCursorSequence,
+		}, []*sidecarv1.TransactionResult{txA, txB})
+
+		assertNoDuplicateCanonicalIDs(t, canonical)
+		assertNoDuplicateCanonicalIDs(t, replay)
+		assertNoDuplicateCanonicalIDs(t, swap)
+		assertNoDuplicateCanonicalIDs(t, recovered)
+
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryTransfer))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryMint))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryBurn))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFeeExecutionL2))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFeeDataL1))
+		assert.Equal(t, 0, countCategory(canonical, model.EventCategoryFee))
+
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(replay))
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(swap))
+		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(recovered))
+
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(replay))
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(swap))
+		assert.Equal(t, canonicalEventIDSet(canonical), canonicalEventIDSet(recovered))
+
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(replay).String())
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(swap).String())
+		assert.Equal(t, sumSignedDeltas(canonical).String(), sumSignedDeltas(recovered).String())
+
+		require.NotNil(t, canonical.NewCursorValue)
+		require.NotNil(t, replay.NewCursorValue)
+		require.NotNil(t, swap.NewCursorValue)
+		require.NotNil(t, recovered.NewCursorValue)
+		assert.Equal(t, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0902", *canonical.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *replay.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *swap.NewCursorValue)
+		assert.Equal(t, *canonical.NewCursorValue, *recovered.NewCursorValue)
+		assert.GreaterOrEqual(t, canonical.NewCursorSequence, canonical.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, replay.NewCursorSequence, replay.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, swap.NewCursorSequence, swap.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, partial.NewCursorSequence, partial.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, recovered.NewCursorSequence, recovered.PreviousCursorSequence)
+		assert.GreaterOrEqual(t, recovered.NewCursorSequence, partial.NewCursorSequence)
+	})
+
 	t.Run("btc-testnet", func(t *testing.T) {
 		btcAddress := "tb1-m96-owner"
 		btcTxA := "ABCD9601"
