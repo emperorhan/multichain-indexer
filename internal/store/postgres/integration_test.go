@@ -340,6 +340,121 @@ func TestBalanceEventRepo_RequiresEventID(t *testing.T) {
 	assert.Contains(t, err.Error(), "event_id is required")
 }
 
+func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing.T) {
+	db := testDB(t)
+	txRepo := postgres.NewTransactionRepo(db)
+	tokenRepo := postgres.NewTokenRepo(db)
+	beRepo := postgres.NewBalanceEventRepo(db)
+	ctx := context.Background()
+
+	testCases := []struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+	}{
+		{name: "solana-devnet", chain: model.ChainSolana, network: model.NetworkDevnet},
+		{name: "base-sepolia", chain: model.ChainBase, network: model.NetworkSepolia},
+		{name: "btc-testnet", chain: model.ChainBTC, network: model.NetworkTestnet},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			contract := fmt.Sprintf("test-replay-token-%s-%s", tc.chain, tc.network) + "+" + uuid.NewString()[:8]
+			txHash := "test-replay-tx-" + tc.chain + "-" + tc.network + "-" + uuid.NewString()[:8]
+			eventID := "replay-event-" + tc.chain + "-" + tc.network + "-" + uuid.NewString()[:8]
+			watchedAddr := "test-replay-watched-" + tc.chain + "-" + tc.network + "-" + uuid.NewString()[:8]
+
+			// Setup shared tx and token.
+			setupTx, err := db.BeginTx(ctx, nil)
+			require.NoError(t, err)
+
+			txID, err := txRepo.UpsertTx(ctx, setupTx, &model.Transaction{
+				Chain:     tc.chain,
+				Network:   tc.network,
+				TxHash:    txHash,
+				FeeAmount: "5000",
+				FeePayer:  "payer1",
+				Status:    model.TxStatusSuccess,
+				ChainData: json.RawMessage("{}"),
+			})
+			require.NoError(t, err)
+
+			tokenID, err := tokenRepo.UpsertTx(ctx, setupTx, &model.Token{
+				Chain:           tc.chain,
+				Network:         tc.network,
+				ContractAddress: contract,
+				Symbol:          "X",
+				Name:            "Replay Token",
+				Decimals:        9,
+				TokenType:       model.TokenTypeNative,
+				ChainData:       json.RawMessage("{}"),
+			})
+			require.NoError(t, err)
+			require.NoError(t, setupTx.Commit())
+
+			// First replay write.
+			blockTimeBefore := time.Date(2026, 2, 18, 11, 0, 0, 0, time.UTC)
+			event := &model.BalanceEvent{
+				Chain:         tc.chain,
+				Network:       tc.network,
+				TransactionID: txID,
+				TxHash:        txHash,
+				TokenID:       tokenID,
+				EventCategory: model.EventCategoryTransfer,
+				EventAction:   "replay",
+				Address:       watchedAddr,
+				Delta:         "1000000",
+				WatchedAddress: &watchedAddr,
+				BlockCursor:   100,
+				BlockTime:     &blockTimeBefore,
+				ChainData:     json.RawMessage("{}"),
+				EventID:       eventID,
+				FinalityState: "confirmed",
+				BalanceBefore:  strPtr("0"),
+				BalanceAfter:   strPtr("1000000"),
+				DecoderVersion: "v1",
+				SchemaVersion:  "v1",
+			}
+
+			txA, err := db.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			insertedBefore, err := beRepo.UpsertTx(ctx, txA, event)
+			require.NoError(t, err)
+			require.NoError(t, txA.Commit())
+			assert.True(t, insertedBefore)
+
+			var upsertCountBefore int
+			err = db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3", tc.chain, tc.network, eventID).Scan(&upsertCountBefore)
+			require.NoError(t, err)
+			assert.Equal(t, 1, upsertCountBefore)
+
+			// Replay the same canonical event_id with a shifted block_time and higher finality.
+			blockTimeAfter := time.Date(2026, 2, 19, 11, 0, 0, 0, time.UTC)
+			event.BlockTime = &blockTimeAfter
+			event.FinalityState = "finalized"
+			event.BlockCursor = 101
+
+			txB, err := db.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			insertedAfter, err := beRepo.UpsertTx(ctx, txB, event)
+			require.NoError(t, err)
+			require.NoError(t, txB.Commit())
+			assert.False(t, insertedAfter)
+
+			var upsertCountAfter int
+			err = db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3", tc.chain, tc.network, eventID).Scan(&upsertCountAfter)
+			require.NoError(t, err)
+			assert.Equal(t, 1, upsertCountAfter)
+
+			var storedState string
+			err = db.QueryRow("SELECT finality_state FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3", tc.chain, tc.network, eventID).Scan(&storedState)
+			require.NoError(t, err)
+			assert.Equal(t, "finalized", storedState)
+		})
+	}
+}
+
 func strPtr(s string) *string { return &s }
 
 // ---------- Extended Integration Tests ----------
