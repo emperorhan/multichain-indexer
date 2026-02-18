@@ -320,7 +320,7 @@ func TestPipeline_Run_RawBatchStreamConsumer_ResumeFromPersistedCheckpoint(t *te
 				ChannelBufferSize:      2,
 				StreamBackend:          checkpointStream,
 				StreamNamespace:        "pipeline",
-				StreamSessionID:        "checkpoint-session",
+				StreamSessionID:        "session-a",
 				StreamTransportEnabled: true,
 			}
 			p := New(cfg, nil, nil, &Repos{}, slog.Default())
@@ -379,7 +379,7 @@ func TestPipeline_Run_RawBatchStreamConsumer_MissingCheckpointBootstrapsFromStar
 				ChannelBufferSize:      2,
 				StreamBackend:          checkpointStream,
 				StreamNamespace:        "pipeline",
-				StreamSessionID:        "checkpoint-session",
+				StreamSessionID:        "session-a",
 				StreamTransportEnabled: true,
 			}
 			p := New(cfg, nil, nil, &Repos{}, slog.Default())
@@ -435,7 +435,7 @@ func TestPipeline_Run_RawBatchStreamConsumer_InvalidCheckpointFallsBackToBootstr
 				ChannelBufferSize:      2,
 				StreamBackend:          checkpointStream,
 				StreamNamespace:        "pipeline",
-				StreamSessionID:        "checkpoint-session",
+				StreamSessionID:        "session-a",
 				StreamTransportEnabled: true,
 			}
 
@@ -460,12 +460,67 @@ func TestPipeline_Run_RawBatchStreamConsumer_InvalidCheckpointFallsBackToBootstr
 	}
 }
 
-func TestPipeline_Run_StreamBoundaryCheckpointKey_IncludesSession(t *testing.T) {
+func TestPipeline_Run_StreamBoundaryCheckpointKey_DeterministicAndScopedByChainNetworkSessionBoundary(t *testing.T) {
+	testCases := []struct {
+		name     string
+		chain    model.Chain
+		network  model.Network
+		session  string
+		boundary string
+		expected string
+	}{
+		{
+			name:     "solana-devnet-fetcher-normalizer-session-alpha",
+			chain:    model.ChainSolana,
+			network:  model.NetworkDevnet,
+			session:  "session-alpha",
+			boundary: streamBoundaryFetchToNormal,
+			expected: "stream-checkpoint:chain=solana:network=devnet:session=session-alpha:boundary=fetcher-normalizer",
+		},
+		{
+			name:     "base-sepolia-fetcher-normalizer-session-beta",
+			chain:    model.ChainBase,
+			network:  model.NetworkSepolia,
+			session:  "session-beta",
+			boundary: streamBoundaryFetchToNormal,
+			expected: "stream-checkpoint:chain=base:network=sepolia:session=session-beta:boundary=fetcher-normalizer",
+		},
+		{
+			name:     "btc-testnet-fetcher-normalizer-session-gamma",
+			chain:    model.ChainBTC,
+			network:  model.NetworkTestnet,
+			session:  "session-gamma",
+			boundary: streamBoundaryFetchToNormal,
+			expected: "stream-checkpoint:chain=btc:network=testnet:session=session-gamma:boundary=fetcher-normalizer",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			p := New(
+				Config{
+					Chain:           tc.chain,
+					Network:         tc.network,
+					StreamSessionID: tc.session,
+				},
+				nil,
+				nil,
+				nil,
+				slog.Default(),
+			)
+
+			got := p.streamBoundaryCheckpointKey(tc.boundary)
+			assert.Equal(t, tc.expected, got)
+		})
+	}
+}
+
+func TestPipeline_Run_StreamBoundaryCheckpointKey_DefaultSession(t *testing.T) {
 	p := New(
 		Config{
-			Chain:           model.ChainBase,
-			Network:         model.NetworkSepolia,
-			StreamSessionID: "session-a",
+			Chain:   model.ChainSolana,
+			Network: model.NetworkDevnet,
 		},
 		nil,
 		nil,
@@ -474,7 +529,7 @@ func TestPipeline_Run_StreamBoundaryCheckpointKey_IncludesSession(t *testing.T) 
 	)
 
 	got := p.streamBoundaryCheckpointKey(streamBoundaryFetchToNormal)
-	assert.Equal(t, "stream-checkpoint:chain=base:network=sepolia:session=session-a:boundary=fetcher-normalizer", got)
+	assert.Equal(t, "stream-checkpoint:chain=solana:network=devnet:session=default:boundary=fetcher-normalizer", got)
 }
 
 func TestPipeline_Run_RawBatchStreamConsumer_ResumeFromLegacyCheckpoint(t *testing.T) {
@@ -512,7 +567,7 @@ func TestPipeline_Run_RawBatchStreamConsumer_ResumeFromLegacyCheckpoint(t *testi
 				ChannelBufferSize:      2,
 				StreamBackend:          checkpointStream,
 				StreamNamespace:        "pipeline",
-				StreamSessionID:        "checkpoint-session",
+				StreamSessionID:        "session-a",
 				StreamTransportEnabled: true,
 			}
 			p := New(cfg, nil, nil, &Repos{}, slog.Default())
@@ -538,6 +593,72 @@ func TestPipeline_Run_RawBatchStreamConsumer_ResumeFromLegacyCheckpoint(t *testi
 			storedCheckpoint, err := checkpointStream.LoadStreamCheckpoint(context.Background(), checkpointKey)
 			require.NoError(t, err)
 			assert.Equal(t, "2", storedCheckpoint)
+		})
+	}
+}
+
+func TestPipeline_Run_RawBatchStreamConsumer_PrefersSessionCheckpointOverLegacy(t *testing.T) {
+	testCases := []struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+	}{
+		{
+			name:    "solana-devnet",
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+		},
+		{
+			name:    "base-sepolia",
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			checkpointStream := newCheckpointInMemoryStream()
+
+			cfg := Config{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				FetchWorkers:           1,
+				NormalizerWorkers:      1,
+				ChannelBufferSize:      2,
+				StreamBackend:          checkpointStream,
+				StreamNamespace:        "pipeline",
+				StreamSessionID:        "session-a",
+				StreamTransportEnabled: true,
+			}
+			p := New(cfg, nil, nil, &Repos{}, slog.Default())
+
+			streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
+			rawBatches := []event.RawBatch{
+				{Chain: tc.chain, Network: tc.network, Address: "A"},
+				{Chain: tc.chain, Network: tc.network, Address: "B"},
+			}
+			for _, batch := range rawBatches {
+				_, err := checkpointStream.PublishJSON(context.Background(), streamName, batch)
+				require.NoError(t, err)
+			}
+
+			sessionCheckpointKey := p.streamBoundaryCheckpointKey(streamBoundaryFetchToNormal)
+			legacyCheckpointKey := p.streamBoundaryLegacyCheckpointKey(streamBoundaryFetchToNormal)
+			require.NoError(t, checkpointStream.PersistStreamCheckpoint(context.Background(), sessionCheckpointKey, "1"))
+			require.NoError(t, checkpointStream.PersistStreamCheckpoint(context.Background(), legacyCheckpointKey, "0"))
+
+			loaded, err := p.loadStreamCheckpoint(context.Background(), checkpointStream, streamBoundaryFetchToNormal)
+			require.NoError(t, err)
+			assert.Equal(t, "1", loaded)
+
+			output := collectRawBatchesThroughStreamBoundary(t, p, checkpointStream, 1)
+			assert.Equal(t, rawBatches[1:], output)
 		})
 	}
 }

@@ -240,12 +240,16 @@ func (p *Pipeline) streamBoundaryName(boundary string) string {
 	return fmt.Sprintf("%s:chain=%s:network=%s:boundary=%s", namespace, p.cfg.Chain, p.cfg.Network, boundary)
 }
 
-func (p *Pipeline) streamBoundaryCheckpointKey(boundary string) string {
+func (p *Pipeline) streamBoundarySessionID() string {
 	sessionID := strings.TrimSpace(p.cfg.StreamSessionID)
 	if sessionID == "" {
 		sessionID = "default"
 	}
-	return fmt.Sprintf("stream-checkpoint:chain=%s:network=%s:session=%s:boundary=%s", p.cfg.Chain, p.cfg.Network, sessionID, boundary)
+	return sessionID
+}
+
+func (p *Pipeline) streamBoundaryCheckpointKey(boundary string) string {
+	return fmt.Sprintf("stream-checkpoint:chain=%s:network=%s:session=%s:boundary=%s", p.cfg.Chain, p.cfg.Network, p.streamBoundarySessionID(), boundary)
 }
 
 func (p *Pipeline) streamBoundaryLegacyCheckpointKey(boundary string) string {
