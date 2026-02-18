@@ -297,6 +297,52 @@ Slice gates for this tranche:
   - `peer_cursor_delta=0` and `peer_watermark_delta=0` where defined
   - `failure_mode` is empty
 
+### C0142 (`I-0707`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: replay ordering remains deterministic.
+  - `chain_adapter_runtime_wired`: chain adapter/decoder ownership remains deterministic under replay.
+- `C0142` lock state: `C0142-PRD-SOLANA-SYSTEM-INSTRUCTION-DECODE-COVERAGE`.
+- `C0142` queue adjacency: hard dependency `I-0707 -> I-0708 -> I-0709`.
+
+#### C0142 implementation contracts (`I-0708`)
+- Required artifact path:
+  - `.ralph/reports/I-0708-m96-s1-solana-system-instruction-coverage-matrix.md`
+  - `.ralph/reports/I-0708-m96-s2-solana-system-instruction-replay-matrix.md`
+  - `.ralph/reports/I-0708-m96-s3-solana-system-isolation-matrix.md`
+- Required row fields (`s1`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `outcome`, `failure_mode`, `notes`
+- Required row fields (`s2`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required row fields (`s3`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`, `class_path=TRANSFER`
+  - `chain=solana`, `network=devnet`, `class_path=MINT`
+  - `chain=solana`, `network=devnet`, `class_path=BURN`
+  - `chain=solana`, `network=devnet`, `class_path=FEE`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
+  - `failure_mode` is empty.
+- `outcome=NO-GO` rows must have non-empty `failure_mode`.
+
+#### C0142 decision hook
+- `DP-0191-C0142`: `C0142` remains blocked until required rows in the three `I-0708` artifacts are present for `solana` with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
+  - `failure_mode` is empty for `GO` rows and non-empty for `NO-GO` rows
+  - required peer deltas (`peer_cursor_delta=0`, `peer_watermark_delta=0`) where applicable
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:
@@ -5190,12 +5236,14 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0585` (`C0109-S1`) after `I-0584`
-2. `I-0587` (`C0109-S2`) after `I-0585`
+1. `I-0707` (`C0142` planner producer) after `I-0704`
+2. `I-0708` (`C0142` implementer) after `I-0707`
+3. `I-0709` (`C0142` qa gate) after `I-0708`
 
 Planned next tranche queue:
-1. `I-0585` (`C0109-S1`) after `I-0584`
-2. `I-0587` (`C0109-S2`) after `I-0585`
+1. `I-0707` (`C0142` planner producer) after `I-0704`
+2. `I-0708` (`C0142` implementer) after `I-0707`
+3. `I-0709` (`C0142` qa gate) after `I-0708`
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

@@ -1031,3 +1031,49 @@ Required machine-checkable constraints:
   - required hard-stop booleans above (`checkpoint_key_scope_includes_namespace`, `checkpoint_key_scope_includes_session`, `checkpoint_persisted`, `checkpoint_loaded`, `stream_restart`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
   - `failure_mode` is empty
   - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required
+
+### C0142 (`I-0708`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: replay ordering remains deterministic.
+  - `chain_adapter_runtime_wired`: sidecar/decoder wiring remains deterministic under replay.
+- `C0142` lock state: `C0142-PRD-SOLANA-SYSTEM-INSTRUCTION-DECODE-COVERAGE`.
+- `C0142` queue adjacency: hard dependency `I-0707 -> I-0708 -> I-0709`.
+
+#### C0142 implementation contracts (`I-0708`)
+- Required artifact path:
+  - `.ralph/reports/I-0708-m96-s1-solana-system-instruction-coverage-matrix.md`
+  - `.ralph/reports/I-0708-m96-s2-solana-system-instruction-replay-matrix.md`
+  - `.ralph/reports/I-0708-m96-s3-solana-system-isolation-matrix.md`
+- Required row fields (`s1`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `peer_chain`, `evidence_present`, `outcome`, `failure_mode`, `notes`
+- Required row fields (`s2`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required row fields (`s3`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`, `class_path=TRANSFER`
+  - `chain=solana`, `network=devnet`, `class_path=MINT`
+  - `chain=solana`, `network=devnet`, `class_path=BURN`
+  - `chain=solana`, `network=devnet`, `class_path=FEE`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required
+  - `failure_mode` is empty
+- `outcome=NO-GO` rows must keep a non-empty `failure_mode`.
+
+#### C0142 decision hook
+- `DP-0191-C0142`: `C0142` remains blocked until required rows in the three `I-0708` artifacts are present for all required `solana-devnet` rows with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
+  - `failure_mode` empty for `GO` rows and non-empty for `NO-GO` rows.
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
