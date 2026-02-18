@@ -1077,3 +1077,48 @@ Required machine-checkable constraints:
   - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
   - `failure_mode` empty for `GO` rows and non-empty for `NO-GO` rows.
   - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
+
+### C0144 (`I-0713`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R4`: replay/recovery determinism under restart.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: replay ordering remains deterministic.
+  - `chain_adapter_runtime_wired`: stream boundaries and runtime checkpoints remain deterministic.
+- `C0144` lock state: `C0144-PRD-STREAM-BOUNDARY-RESTART-ISOLATION`.
+- `C0144` queue adjacency: hard dependency `I-0713 -> I-0714 -> I-0715`.
+
+#### C0144 implementation contracts (`I-0714`)
+- Required artifact path:
+  - `.ralph/reports/I-0714-m96-s1-stream-boundary-isolation-coverage-matrix.md`
+  - `.ralph/reports/I-0714-m96-s2-stream-boundary-replay-isolation-matrix.md`
+  - `.ralph/reports/I-0714-m96-s3-stream-boundary-peer-isolation-matrix.md`
+- Required row fields (`s1`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `stream_transport_enabled`, `stream_namespace`, `stream_session_id`, `stream_boundary`, `peer_chain`, `evidence_present`, `outcome`, `failure_mode`, `notes`
+- Required row fields (`s2`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `stream_transport_enabled`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required row fields (`s3`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`, `peer_chain=base`, `stream_transport_enabled=true`, `stream_namespace=pipeline`, `stream_session_id=default`
+  - `chain=base`, `network=sepolia`, `peer_chain=btc`, `stream_transport_enabled=true`, `stream_namespace=pipeline`, `stream_session_id=default`
+  - `chain=btc`, `network=testnet`, `peer_chain=solana`, `stream_transport_enabled=true`, `stream_namespace=pipeline`, `stream_session_id=default`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where present
+  - `failure_mode` is empty
+- `outcome=NO-GO` rows must keep a non-empty `failure_mode`.
+
+#### C0144 decision hook
+- `DP-0192-C0144`: `C0144` remains blocked until required rows in the three `I-0714` artifacts are present with:
+  - required chains `solana`, `base`, and `btc`
+  - `evidence_present=true`
+  - hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where present
+  - `failure_mode` is empty for `GO` rows and non-empty for `NO-GO` rows.

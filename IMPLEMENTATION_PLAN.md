@@ -343,6 +343,54 @@ Slice gates for this tranche:
   - `failure_mode` is empty for `GO` rows and non-empty for `NO-GO` rows
   - required peer deltas (`peer_cursor_delta=0`, `peer_watermark_delta=0`) where applicable
 
+### C0144 (`I-0713`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R4`: replay/recovery determinism under restart perturbations.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: replay ordering remains deterministic.
+  - `chain_adapter_runtime_wired`: stream boundaries and runtime checkpoints remain deterministic under restart.
+- `C0144` lock state: `C0144-PRD-STREAM-BOUNDARY-RESTART-ISOLATION`.
+- `C0144` queue adjacency: hard dependency `I-0713 -> I-0714 -> I-0715`.
+- Downstream execution pair:
+  - `I-0714` (developer) — harden stream boundary checkpoint/read-path and chain-boundary isolation behavior in pipeline runtime.
+  - `I-0715` (qa) — validate stream restart-isolation evidence and hard-stop invariants before `C0144` promotion.
+
+#### C0144 implementation contracts (`I-0714`)
+- Required artifact path:
+  - `.ralph/reports/I-0714-m96-s1-stream-boundary-isolation-coverage-matrix.md`
+  - `.ralph/reports/I-0714-m96-s2-stream-boundary-replay-isolation-matrix.md`
+  - `.ralph/reports/I-0714-m96-s3-stream-boundary-peer-isolation-matrix.md`
+- Required row fields (`s1`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `stream_transport_enabled`, `stream_namespace`, `stream_session_id`, `stream_boundary`, `peer_chain`, `evidence_present`, `outcome`, `failure_mode`, `notes`
+- Required row fields (`s2`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `stream_transport_enabled`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required row fields (`s3`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`, `peer_chain=base`, `stream_transport_enabled=true`, `stream_namespace=pipeline`, `stream_session_id=default`
+  - `chain=base`, `network=sepolia`, `peer_chain=btc`, `stream_transport_enabled=true`, `stream_namespace=pipeline`, `stream_session_id=default`
+  - `chain=btc`, `network=testnet`, `peer_chain=solana`, `stream_transport_enabled=true`, `stream_namespace=pipeline`, `stream_session_id=default`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where provided
+  - `failure_mode` is empty
+- `outcome=NO-GO` rows must keep a non-empty `failure_mode`.
+
+#### C0144 decision hook
+- `DP-0192-C0144`: `C0144` remains blocked until required rows in the three `I-0714` artifacts are present with:
+  - required chains `solana`, `base`, and `btc`
+  - `evidence_present=true`
+  - hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where present
+  - `failure_mode` is empty for `GO` rows and non-empty for `NO-GO` rows.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:
@@ -5236,14 +5284,14 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0710` (`C0143`) planner handoff
-2. `I-0711` (`C0143` implementer) after `I-0710`
-3. `I-0712` (`C0143` qa gate) after `I-0711`
+1. `I-0713` (`C0144`) planner handoff
+2. `I-0714` (`C0144` implementer) after `I-0713`
+3. `I-0715` (`C0144` qa gate) after `I-0714`
 
 Planned next tranche queue:
-1. `I-0710` (`C0143`) to scope and dispatch the next production feature slice.
-2. `I-0711` (`C0143` implementer) to address Solana system-instruction transfer-path coverage.
-3. `I-0712` (`C0143` qa gate) to enforce hard-stop evidence and invariant gates.
+1. `I-0713` (`C0144`) to scope and dispatch the next production feature slice.
+2. `I-0714` (`C0144` implementer) to harden stream boundary restart-isolation runtime semantics and evidence.
+3. `I-0715` (`C0144` qa gate) to enforce hard-stop stream-restart isolation evidence and invariant gates.
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
