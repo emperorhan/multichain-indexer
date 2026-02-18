@@ -573,6 +573,50 @@ func TestDeterministicMandatoryChainInterleaver_NoOpClosureDoesNotAdvanceCheckpo
 	assert.Equal(t, 1, nextAfterMaterialCommit, "material commit should advance checkpoint")
 }
 
+func TestDeterministicMandatoryChainInterleaver_ReleaseFuncIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+
+	interleaver, ok := NewDeterministicMandatoryChainInterleaver(10 * time.Millisecond).(*deterministicMandatoryChainInterleaver)
+	require.True(t, ok)
+
+	releaseSol, err := interleaver.Acquire(ctx, model.ChainSolana, model.NetworkDevnet)
+	require.NoError(t, err)
+
+	interleaver.mu.Lock()
+	activeBeforeRelease := interleaver.active
+	nextBeforeRelease := interleaver.next
+	interleaver.mu.Unlock()
+
+	assert.Equal(t, model.ChainSolana.String()+"-"+model.NetworkDevnet.String(), activeBeforeRelease)
+	assert.Equal(t, 0, nextBeforeRelease)
+
+	releaseSol(true)
+	releaseSol(true)
+	releaseSol(true)
+
+	interleaver.mu.Lock()
+	activeAfterRelease := interleaver.active
+	nextAfterRelease := interleaver.next
+	waitingAfterRelease := interleaver.waiting[commitInterleaveKey(model.ChainSolana, model.NetworkDevnet)]
+	interleaver.mu.Unlock()
+
+	assert.Equal(t, "", activeAfterRelease)
+	assert.Equal(t, 1, nextAfterRelease)
+	assert.Equal(t, 0, waitingAfterRelease)
+
+	releaseBase, err := interleaver.Acquire(ctx, model.ChainBase, model.NetworkSepolia)
+	require.NoError(t, err)
+
+	releaseBase(false)
+	releaseBase(false)
+
+	interleaver.mu.Lock()
+	nextAfterBaseRelease := interleaver.next
+	interleaver.mu.Unlock()
+
+	assert.Equal(t, 1, nextAfterBaseRelease)
+}
+
 func newTriChainIngesters(t *testing.T, state *interleaveState, maxSkew time.Duration) triChainIngesters {
 	t.Helper()
 

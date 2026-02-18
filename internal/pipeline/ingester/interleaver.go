@@ -150,9 +150,15 @@ func (d *deterministicMandatoryChainInterleaver) cancelWaiter(key string) {
 }
 
 func (d *deterministicMandatoryChainInterleaver) releaseFunc(key string, index int) func(committed bool) {
+	released := false
 	return func(committed bool) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if released {
+			return
+		}
+		released = true
+
 		if d.active == key {
 			d.active = ""
 		}
