@@ -221,6 +221,60 @@ func Test_isCanonicalityDrift(t *testing.T) {
 	}))
 }
 
+func TestResolveRewindCursorBoundary(t *testing.T) {
+	found := "found_rewind_cursor"
+	committed := "committed_rewind_cursor"
+	fallback := "fallback_rewind_cursor"
+
+	t.Run("prefers_found_event_cursor", func(t *testing.T) {
+		rewindValue, rewindSequence := resolveRewindCursorBoundary(
+			model.ChainSolana,
+			120,
+			&found,
+			120,
+			&committed,
+			90,
+			&fallback,
+			120,
+		)
+		require.NotNil(t, rewindValue)
+		assert.Equal(t, found, *rewindValue)
+		assert.Equal(t, int64(120), rewindSequence)
+	})
+
+	t.Run("uses_committed_cursor_if_falls_before_fork", func(t *testing.T) {
+		rewindValue, rewindSequence := resolveRewindCursorBoundary(
+			model.ChainSolana,
+			120,
+			nil,
+			0,
+			&committed,
+			90,
+			&fallback,
+			120,
+		)
+		require.NotNil(t, rewindValue)
+		assert.Equal(t, committed, *rewindValue)
+		assert.Equal(t, int64(90), rewindSequence)
+	})
+
+	t.Run("falls_back_to_batch_boundary_when_no_commit_anchor", func(t *testing.T) {
+		rewindValue, rewindSequence := resolveRewindCursorBoundary(
+			model.ChainSolana,
+			100,
+			nil,
+			0,
+			&committed,
+			200,
+			&fallback,
+			100,
+		)
+		require.NotNil(t, rewindValue)
+		assert.Equal(t, fallback, *rewindValue)
+		assert.Equal(t, int64(100), rewindSequence)
+	})
+}
+
 func TestRollbackForkCursorSequence_BTCEarliestCompetingWindow(t *testing.T) {
 	t.Run("non-btc-keeps-new-cursor-sequence", func(t *testing.T) {
 		batch := event.NormalizedBatch{

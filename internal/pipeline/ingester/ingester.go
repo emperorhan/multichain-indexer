@@ -666,6 +666,7 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 
 	rewindCursorValue, rewindCursorSequence, err := ing.findRewindCursor(
 		ctx, dbTx, batch.Chain, batch.Network, batch.Address, forkCursor,
+		batch.NewCursorValue, batch.NewCursorSequence,
 	)
 	if err != nil {
 		return fmt.Errorf("find rewind cursor: %w", err)
@@ -748,6 +749,8 @@ func (ing *Ingester) findRewindCursor(
 	network model.Network,
 	address string,
 	forkCursor int64,
+	fallbackCursorValue *string,
+	fallbackCursorSequence int64,
 ) (*string, int64, error) {
 	const rewindCursorSQL = `
 		SELECT t.tx_hash, be.block_cursor
@@ -763,12 +766,75 @@ func (ing *Ingester) findRewindCursor(
 	var cursorSequence int64
 	if err := tx.QueryRowContext(ctx, rewindCursorSQL, chain, network, address, forkCursor).Scan(&cursorValue, &cursorSequence); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, 0, nil
+			// Fall back to deterministic boundary synthesis below.
+		} else {
+			return nil, 0, fmt.Errorf("query rewind cursor: %w", err)
 		}
-		return nil, 0, fmt.Errorf("query rewind cursor: %w", err)
+	} else {
+		return &cursorValue, cursorSequence, nil
 	}
 
-	return &cursorValue, cursorSequence, nil
+	const rollbackCommittedCursorSQL = `
+	SELECT cursor_value, cursor_sequence
+	FROM address_cursors
+	WHERE chain = $1 AND network = $2 AND address = $3
+`
+
+	var committedCursorRaw sql.NullString
+	var committedCursorSequence int64
+	var committedCursorValue *string
+	if err := tx.QueryRowContext(ctx, rollbackCommittedCursorSQL, chain, network, address).Scan(&committedCursorRaw, &committedCursorSequence); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, 0, fmt.Errorf("query committed cursor: %w", err)
+		}
+	} else if committedCursorRaw.Valid {
+		value := committedCursorRaw.String
+		committedCursorValue = &value
+	}
+
+	resolvedValue, resolvedSequence := resolveRewindCursorBoundary(
+		chain,
+		forkCursor,
+		nil,
+		0,
+		committedCursorValue,
+		committedCursorSequence,
+		fallbackCursorValue,
+		fallbackCursorSequence,
+	)
+
+	return resolvedValue, resolvedSequence, nil
+}
+
+func resolveRewindCursorBoundary(
+	chain model.Chain,
+	forkCursor int64,
+	foundCursorValue *string,
+	foundCursorSequence int64,
+	committedCursorValue *string,
+	committedCursorSequence int64,
+	fallbackCursorValue *string,
+	fallbackCursorSequence int64,
+) (*string, int64) {
+	if foundCursorValue != nil {
+		return foundCursorValue, foundCursorSequence
+	}
+
+	if committedCursorValue != nil && committedCursorSequence > 0 && committedCursorSequence <= forkCursor {
+		if canonicalCommitted := canonicalizeCursorValue(chain, committedCursorValue); canonicalCommitted != nil {
+			return canonicalCommitted, committedCursorSequence
+		}
+	}
+
+	resolvedCursor := canonicalizeCursorValue(chain, fallbackCursorValue)
+	resolvedSequence := fallbackCursorSequence
+	if resolvedSequence <= 0 {
+		return resolvedCursor, forkCursor
+	}
+	if resolvedSequence > forkCursor {
+		return resolvedCursor, forkCursor
+	}
+	return resolvedCursor, resolvedSequence
 }
 
 func negateDecimalString(value string) (string, error) {
