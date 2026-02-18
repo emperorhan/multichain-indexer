@@ -910,6 +910,84 @@ func TestPipeline_Run_RawBatchStreamConsumer_DoesNotReuseSessionAgnosticCheckpoi
 	}
 }
 
+func TestPipeline_Run_RawBatchStreamConsumer_ReopenOwnershipOnChainBoundaryBoundaryPerturbation(t *testing.T) {
+	chains := []struct {
+		name    string
+		chain   model.Chain
+		network model.Network
+	}{
+		{name: "solana-devnet", chain: model.ChainSolana, network: model.NetworkDevnet},
+		{name: "base-sepolia", chain: model.ChainBase, network: model.NetworkSepolia},
+		{name: "btc-testnet", chain: model.ChainBTC, network: model.NetworkTestnet},
+	}
+
+	for _, activeChain := range chains {
+		for _, peerChain := range chains {
+			if activeChain.chain == peerChain.chain {
+				continue
+			}
+
+			active := activeChain
+			peer := peerChain
+			testName := active.name + ":contaminated-by:" + peer.name
+			t.Run(testName, func(t *testing.T) {
+				checkpointStream := newCheckpointInMemoryStream()
+				ctx := context.Background()
+
+				sessionID := "boundary-restart-session"
+				namespace := "pipeline"
+
+				peerCfg := Config{
+					Chain:                  peer.chain,
+					Network:                peer.network,
+					FetchWorkers:           1,
+					NormalizerWorkers:      1,
+					ChannelBufferSize:      2,
+					StreamBackend:          checkpointStream,
+					StreamNamespace:        namespace,
+					StreamSessionID:        sessionID,
+					StreamTransportEnabled: true,
+				}
+				peerPipeline := New(peerCfg, nil, nil, &Repos{}, slog.Default())
+				peerStreamName := peerPipeline.streamBoundaryName(streamBoundaryFetchToNormal)
+				peerCheckpointID, err := checkpointStream.PublishJSON(ctx, peerStreamName, event.RawBatch{Chain: peer.chain, Network: peer.network, Address: "peer"})
+				require.NoError(t, err)
+				peerCheckpointKey := peerPipeline.streamBoundaryCheckpointKey(streamBoundaryFetchToNormal)
+				require.NoError(t, checkpointStream.PersistStreamCheckpoint(ctx, peerCheckpointKey, peerCheckpointID))
+
+				activeCfg := Config{
+					Chain:                  active.chain,
+					Network:                active.network,
+					FetchWorkers:           1,
+					NormalizerWorkers:      1,
+					ChannelBufferSize:      2,
+					StreamBackend:          checkpointStream,
+					StreamNamespace:        namespace,
+					StreamSessionID:        sessionID,
+					StreamTransportEnabled: true,
+				}
+				activePipeline := New(activeCfg, nil, nil, &Repos{}, slog.Default())
+
+				activeStreamName := activePipeline.streamBoundaryName(streamBoundaryFetchToNormal)
+				_, err = checkpointStream.PublishJSON(ctx, activeStreamName, event.RawBatch{Chain: active.chain, Network: active.network, Address: "active-a"})
+				require.NoError(t, err)
+				_, err = checkpointStream.PublishJSON(ctx, activeStreamName, event.RawBatch{Chain: active.chain, Network: active.network, Address: "active-b"})
+				require.NoError(t, err)
+
+				loadedFromCheckpoint, err := activePipeline.loadStreamCheckpoint(ctx, checkpointStream, streamBoundaryFetchToNormal)
+				require.NoError(t, err)
+				assert.Equal(t, "0", loadedFromCheckpoint)
+
+				got := collectRawBatchesThroughStreamBoundary(t, activePipeline, checkpointStream, 2)
+				assert.Equal(t, []event.RawBatch{
+					{Chain: active.chain, Network: active.network, Address: "active-a"},
+					{Chain: active.chain, Network: active.network, Address: "active-b"},
+				}, got)
+			})
+		}
+	}
+}
+
 type checkpointInMemoryStream struct {
 	*redispkg.InMemoryStream
 	checkpoints map[string]string

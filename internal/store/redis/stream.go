@@ -102,6 +102,12 @@ func (s *Stream) LoadStreamCheckpoint(ctx context.Context, checkpointKey string)
 		return "", fmt.Errorf("load stream checkpoint %q: %w", trimmed, err)
 	}
 
+	if trimmedValue := strings.TrimSpace(value); trimmedValue != "" {
+		if err := validateStreamOffset(trimmedValue); err != nil {
+			return "", fmt.Errorf("load stream checkpoint %q: %w", trimmed, err)
+		}
+	}
+
 	return value, nil
 }
 
@@ -110,6 +116,11 @@ func (s *Stream) PersistStreamCheckpoint(ctx context.Context, checkpointKey, str
 	trimmedID := strings.TrimSpace(streamID)
 	if trimmedKey == "" {
 		return nil
+	}
+	if trimmedID != "" {
+		if err := validateStreamOffset(trimmedID); err != nil {
+			return fmt.Errorf("persist stream checkpoint %q: %w", trimmedKey, err)
+		}
 	}
 
 	if err := s.client.Set(ctx, trimmedKey, trimmedID, 0).Err(); err != nil {
@@ -271,6 +282,35 @@ func parseStreamOffset(lastID string) (int64, error) {
 	return parsed, nil
 }
 
+func validateStreamOffset(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "0" {
+		return nil
+	}
+
+	parts := strings.SplitN(trimmed, "-", 2)
+	if len(parts) == 2 {
+		if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return fmt.Errorf("invalid stream offset %q: missing components", raw)
+		}
+		msg, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+		if err != nil || msg < 0 {
+			return fmt.Errorf("invalid stream offset %q: malformed id", raw)
+		}
+		seq, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		if err != nil || seq < 0 {
+			return fmt.Errorf("invalid stream offset %q: malformed id", raw)
+		}
+		return nil
+	}
+
+	msg, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || msg < 0 {
+		return fmt.Errorf("invalid stream offset %q: malformed id", raw)
+	}
+	return nil
+}
+
 func (s *InMemoryStream) LoadStreamCheckpoint(ctx context.Context, checkpointKey string) (string, error) {
 	_ = ctx
 
@@ -287,6 +327,12 @@ func (s *InMemoryStream) LoadStreamCheckpoint(ctx context.Context, checkpointKey
 		return "", nil
 	}
 
+	if trimmedValue := strings.TrimSpace(value); trimmedValue != "" {
+		if err := validateStreamOffset(trimmedValue); err != nil {
+			return "", err
+		}
+	}
+
 	return value, nil
 }
 
@@ -299,6 +345,11 @@ func (s *InMemoryStream) PersistStreamCheckpoint(ctx context.Context, checkpoint
 	checkpoint := strings.TrimSpace(checkpointKey)
 	if checkpoint == "" {
 		return nil
+	}
+	if streamID = strings.TrimSpace(streamID); streamID != "" {
+		if err := validateStreamOffset(streamID); err != nil {
+			return err
+		}
 	}
 
 	s.checkpoints[checkpoint] = strings.TrimSpace(streamID)
