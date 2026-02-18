@@ -753,15 +753,16 @@ func TestProcessBatch_AliasOverlapDuplicatesSuppressedAcrossMandatoryChains(t *t
 
 func TestProcessBatch_MixedFinalityOverlapConvergesAcrossMandatoryChains(t *testing.T) {
 	type testCase struct {
-		name           string
-		chain          model.Chain
-		network        model.Network
-		address        string
-		signatures     []event.SignatureInfo
-		expectedTxs    []string
-		expectedCursor string
-		responseA      []*sidecarv1.TransactionResult
-		responseB      []*sidecarv1.TransactionResult
+		name             string
+		chain            model.Chain
+		network          model.Network
+		address          string
+		signatures       []event.SignatureInfo
+		expectedTxs      []string
+		expectedCursor   string
+		expectedFinality string
+		responseA        []*sidecarv1.TransactionResult
+		responseB        []*sidecarv1.TransactionResult
 	}
 
 	buildTransfer := func(txHash string, cursor int64, address string, contract string, metadata map[string]string) *sidecarv1.TransactionResult {
@@ -803,8 +804,9 @@ func TestProcessBatch_MixedFinalityOverlapConvergesAcrossMandatoryChains(t *test
 				{Hash: "sol-finality-2", Sequence: 51},
 				{Hash: "sol-finality-2", Sequence: 51},
 			},
-			expectedTxs:    []string{"sol-finality-1", "sol-finality-2"},
-			expectedCursor: "sol-finality-2",
+			expectedTxs:      []string{"sol-finality-1", "sol-finality-2"},
+			expectedCursor:   "sol-finality-2",
+			expectedFinality: "finalized",
 			responseA: []*sidecarv1.TransactionResult{
 				buildTransfer("sol-finality-1", 50, "sol-finality-addr", "SOL", map[string]string{"commitment": "confirmed"}),
 				buildTransfer("sol-finality-1", 50, "sol-finality-addr", "SOL", map[string]string{"commitment": "finalized"}),
@@ -829,8 +831,9 @@ func TestProcessBatch_MixedFinalityOverlapConvergesAcrossMandatoryChains(t *test
 				{Hash: "0xBEEF", Sequence: 61},
 				{Hash: "beef", Sequence: 61},
 			},
-			expectedTxs:    []string{"0xabcdef", "0xbeef"},
-			expectedCursor: "0xbeef",
+			expectedTxs:      []string{"0xabcdef", "0xbeef"},
+			expectedCursor:   "0xbeef",
+			expectedFinality: "finalized",
 			responseA: []*sidecarv1.TransactionResult{
 				buildTransfer("ABCDEF", 60, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "safe"}),
 				buildTransfer("0xabcdef", 60, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "finalized"}),
@@ -842,6 +845,30 @@ func TestProcessBatch_MixedFinalityOverlapConvergesAcrossMandatoryChains(t *test
 				buildTransfer("ABCDEF", 60, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "safe"}),
 				buildTransfer("beef", 61, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "finalized"}),
 				buildTransfer("0xBEEF", 61, "0x1111111111111111111111111111111111111111", "ETH", map[string]string{"finality_state": "safe"}),
+			},
+		},
+		{
+			name:    "btc-testnet-fallback-default",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			address: "btc-finality-addr",
+			signatures: []event.SignatureInfo{
+				{Hash: " btc-finality-1 ", Sequence: 70},
+				{Hash: "btc-finality-2", Sequence: 71},
+				{Hash: "btc-finality-1", Sequence: 70},
+			},
+			expectedTxs:      []string{"btc-finality-1", "btc-finality-2"},
+			expectedCursor:   "btc-finality-2",
+			expectedFinality: defaultFinalityState(model.ChainBTC),
+			responseA: []*sidecarv1.TransactionResult{
+				buildTransfer("btc-finality-1", 70, "btc-finality-addr", "BTC", nil),
+				buildTransfer("btc-finality-2", 71, "btc-finality-addr", "BTC", nil),
+				buildTransfer("btc-finality-1", 70, "btc-finality-addr", "BTC", nil),
+			},
+			responseB: []*sidecarv1.TransactionResult{
+				buildTransfer("btc-finality-2", 71, "btc-finality-addr", "BTC", nil),
+				buildTransfer("btc-finality-1", 70, "btc-finality-addr", "BTC", nil),
+				buildTransfer("btc-finality-1", 70, "btc-finality-addr", "BTC", nil),
 			},
 		},
 	}
@@ -867,11 +894,11 @@ func TestProcessBatch_MixedFinalityOverlapConvergesAcrossMandatoryChains(t *test
 		}
 	}
 
-	assertAllFinalized := func(t *testing.T, batch event.NormalizedBatch) {
+	assertAllExpectedFinality := func(t *testing.T, batch event.NormalizedBatch, expectedFinality string) {
 		t.Helper()
 		for _, tx := range batch.Transactions {
 			for _, be := range tx.BalanceEvents {
-				assert.Equal(t, "finalized", be.FinalityState)
+				assert.Equal(t, expectedFinality, be.FinalityState)
 			}
 		}
 	}
@@ -923,8 +950,8 @@ func TestProcessBatch_MixedFinalityOverlapConvergesAcrossMandatoryChains(t *test
 			assert.Equal(t, orderedCanonicalTuples(first), orderedCanonicalTuples(second))
 			assertNoDuplicateCanonicalIDs(t, first)
 			assertNoDuplicateCanonicalIDs(t, second)
-			assertAllFinalized(t, first)
-			assertAllFinalized(t, second)
+			assertAllExpectedFinality(t, first, tc.expectedFinality)
+			assertAllExpectedFinality(t, second, tc.expectedFinality)
 
 			require.NotNil(t, first.NewCursorValue)
 			require.NotNil(t, second.NewCursorValue)
@@ -932,6 +959,40 @@ func TestProcessBatch_MixedFinalityOverlapConvergesAcrossMandatoryChains(t *test
 			assert.Equal(t, tc.expectedCursor, *second.NewCursorValue)
 		})
 	}
+}
+
+func TestResolveResultFinalityState_ChainFamilyDefaultsAndMetadataPrecedence(t *testing.T) {
+	buildResult := func(_ model.Chain, metadataRows ...map[string]string) *sidecarv1.TransactionResult {
+		balanceEvents := make([]*sidecarv1.BalanceEventInfo, 0, len(metadataRows))
+		for i, metadata := range metadataRows {
+			balanceEvents = append(balanceEvents, &sidecarv1.BalanceEventInfo{
+				EventCategory:         string(model.EventCategoryTransfer),
+				OuterInstructionIndex: int32(i),
+				InnerInstructionIndex: -1,
+				Metadata:              metadata,
+			})
+		}
+		return &sidecarv1.TransactionResult{
+			BalanceEvents: balanceEvents,
+			Status:        "SUCCESS",
+			TxHash:        "tx-test",
+		}
+	}
+
+	t.Run("solana-metadata-precedence", func(t *testing.T) {
+		result := buildResult(model.ChainSolana, map[string]string{"commitment": "finalized"}, map[string]string{"finality_state": "processed"})
+		assert.Equal(t, "finalized", resolveResultFinalityState(model.ChainSolana, result))
+	})
+
+	t.Run("base-metadata-precedence", func(t *testing.T) {
+		result := buildResult(model.ChainBase, map[string]string{"finality": "safe"}, map[string]string{"commitment": "processed"})
+		assert.Equal(t, "safe", resolveResultFinalityState(model.ChainBase, result))
+	})
+
+	t.Run("btc-fallback-default", func(t *testing.T) {
+		result := buildResult(model.ChainBTC, map[string]string{}, map[string]string{})
+		assert.Equal(t, defaultFinalityState(model.ChainBTC), resolveResultFinalityState(model.ChainBTC, result))
+	})
 }
 
 func TestProcessBatch_PersistedArtifactsReplayHasZeroCanonicalTupleDiff(t *testing.T) {
@@ -2920,9 +2981,9 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 					TokenType:             string(model.TokenTypeFungible),
 					Metadata: map[string]string{
 						"event_path":       "log:21",
-						"fee_execution_l2":  "700",
+						"fee_execution_l2": "700",
 						"fee_data_l1":      "300",
-						"base_event_path":   "log:21",
+						"base_event_path":  "log:21",
 					},
 				},
 			},

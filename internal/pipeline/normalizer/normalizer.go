@@ -494,20 +494,25 @@ func resolveResultFinalityState(chainID model.Chain, result *sidecarv1.Transacti
 	if result == nil {
 		return defaultFinalityState(chainID)
 	}
-	keys := [...]string{"finality_state", "finality", "commitment", "confirmation_status"}
+	metadataKeys := finalityMetadataKeys(chainID)
 
 	best := ""
+	bestRank := 0
+	bestKeyOrder := len(metadataKeys)
 	for _, be := range result.BalanceEvents {
 		if be == nil {
 			continue
 		}
-		for _, key := range keys {
+		for keyOrder, key := range metadataKeys {
 			candidate := canonicalizeFinalityState(be.Metadata[key])
 			if candidate == "" {
 				continue
 			}
-			if best == "" || compareFinalityStateStrength(best, candidate) < 0 {
+			candidateRank := finalityStateRank(candidate)
+			if candidateRank > bestRank || (candidateRank == bestRank && keyOrder < bestKeyOrder) {
 				best = candidate
+				bestRank = candidateRank
+				bestKeyOrder = keyOrder
 			}
 		}
 	}
@@ -515,6 +520,19 @@ func resolveResultFinalityState(chainID model.Chain, result *sidecarv1.Transacti
 		return best
 	}
 	return defaultFinalityState(chainID)
+}
+
+func finalityMetadataKeys(chainID model.Chain) []string {
+	if chainID == model.ChainSolana {
+		return []string{"commitment", "confirmation_status", "finality_state", "finality"}
+	}
+	if chainID == model.ChainBTC {
+		return []string{"finality_state", "finality", "confirmation_status", "commitment"}
+	}
+	if isEVMChain(chainID) {
+		return []string{"finality_state", "finality", "confirmation_status", "commitment"}
+	}
+	return []string{"finality_state", "finality", "confirmation_status", "commitment"}
 }
 
 func normalizeFinalityStateOrDefault(chainID model.Chain, state string) string {
