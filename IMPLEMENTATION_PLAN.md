@@ -27,6 +27,7 @@ or hardening work. Planner MUST select from this list first:
 9. **Ethereum-mainnet Normalizer Family Gap** — `chain=ethereum` with `network=mainnet` is selected and wired at runtime, but normalization still takes the Solana canonicalization branch (`normalizedTxFromResult`) for that chain, causing EVM/fee-path incompatibility and incomplete adapter-runtime closure.
 10. **Chain-scoped auto-tune telemetry/input completeness** — R9 requires adaptive control to remain chain-local using chain-only signals (`rpc error budget`, `DB commit latency`) while preserving fail-fast behavior; current tuning inputs are narrower than PRD intent.
 11. **Partitioned storage canonical dedupe stability** — `balance_events` conflict target is currently `(event_id, block_time)`, which can allow duplicate canonical ids during replay/reorg when block_time changes while event identity does not.
+12. **Watched-address fan-in deterministic dedupe contract** — overlap-aware alias/canonical identity paths are handled via best-effort grouping, but `C0155` has not yet added explicit fan-in collision hardening with replay/sequence-carryover evidence.
 
 ## C0134 (`I-0678`) tranche activation
 - Focus: post-PRD reliability hardening for production DB call-time boundedness before optional refinements resume.
@@ -763,6 +764,58 @@ Slice gates for this tranche:
   - `upsert_count_after=1`
   - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
   - required `NO-GO` semantics for `failure_mode`.
+
+### C0155 (`I-0752`) implementation handoff addendum
+- Focused unresolved PRD-priority implementation requirement from production code scan:
+  - `R1`: no-duplicate indexing under overlapping fan-in ownership.
+  - `R4`: deterministic replay.
+  - `cursor_monotonic`: replay continuity when overlap candidates are pruned/retained across restart.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring remains deterministic when watched-address overlap is exercised by topology/restart permutations.
+- Current gap: overlapping watched-address identity pathways do not emit explicit, testable fan-in collision contracts that prove equivalent input permutations converge to one deterministic fetch/normalize ingest tuple set.
+- `C0155` lock state: `C0155-PRD-WATCHED-ADDRESS-FANIN-DUPE-HARDENING`.
+- `C0155` queue adjacency: hard dependency `I-0752 -> I-0753`.
+- Downstream execution pair:
+  - `I-0752` (developer) — harden fan-in deterministic representative selection and overlap suppression in coordinator/fetcher paths, then publish canonical fan-in proof evidence.
+  - `I-0753` (qa) — validate required fan-in evidence rows for `I-0752` and block `C0155` on invariant failures.
+- Slice gates for this tranche:
+  - `I-0752` updates `internal/pipeline/coordinator/coordinator.go` so fan-in group identity selection is stable under alias churn and sequence-carryover ties (chain/network scoped deterministic ordering, deterministic representative selection, explicit collision diagnostics).
+  - `I-0752` updates `internal/pipeline/fetcher/fetcher.go` so overlap suppression semantics are deterministic across representative switches and canonical cursor boundary transitions.
+  - `I-0752` adds/extends tests in `internal/pipeline/coordinator/coordinator_test.go` and `internal/pipeline/fetcher/fetcher_test.go` for alias-equivalent fan-in, restart replay, and overlap carryover permutations.
+  - `I-0752` publishes required artifact:
+    - `.ralph/reports/I-0752-m99-s1-watched-address-fanin-dedupe-matrix.md`
+  - `I-0753` validates required rows for `solana`, `base`, and `btc` and blocks `C0155` on any required hard-stop violation.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+- `I-0752` required artifact row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fan_in_profile`, `watch_group_identity`, `canonical_representative`, `canonical_event_id_count`, `missing_logical_events`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0752` required mandatory rows:
+  - `chain=solana`, `network=devnet`, `fan_in_profile=alias_overlap`
+  - `chain=base`, `network=sepolia`, `fan_in_profile=alias_overlap`
+  - `chain=btc`, `network=testnet`, `fan_in_profile=alias_overlap`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_count=1`
+  - `missing_logical_events=0`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty for `GO` rows.
+
+#### C0155 decision hook
+- `DP-0203-C0155`: `C0155` remains blocked until required rows in `.ralph/reports/I-0752-m99-s1-watched-address-fanin-dedupe-matrix.md` are present for `chain=solana`, `base`, and `btc` with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `fan_in_profile=alias_overlap`
+  - `canonical_event_id_count=1`
+  - `missing_logical_events=0`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - required `NO-GO` semantics for non-empty `failure_mode`.
 
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
