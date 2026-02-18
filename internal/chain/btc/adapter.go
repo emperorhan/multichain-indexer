@@ -18,6 +18,7 @@ import (
 const (
 	maxInitialLookbackBlocks = 200
 	blockVerbosityTxObjects  = 2
+	btcChainName            = "btc"
 	satoshiPerBTC            = 100_000_000
 )
 
@@ -80,7 +81,7 @@ func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
 }
 
 func (a *Adapter) Chain() string {
-	return "btc"
+	return btcChainName
 }
 
 func (a *Adapter) GetHeadSequence(ctx context.Context) (int64, error) {
@@ -256,7 +257,7 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 		}
 
 		blockHeight := int64(0)
-		blockHash := strings.TrimSpace(tx.Blockhash)
+		blockHash := canonicalTxID(tx.Blockhash)
 		if blockHash != "" {
 			block := blockCache[blockHash]
 			if block == nil {
@@ -296,12 +297,12 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 				return nil, fmt.Errorf("resolve input prevout tx=%s vin=%d: %w", txid, vinIndex, err)
 			}
 			if ok {
-				in.Address = prevout.address
+				in.Address = normalizeAddressIdentity(prevout.address)
+				if in.Address != "" {
+					inputAddresses = append(inputAddresses, in.Address)
+				}
 				in.ValueSat = strconv.FormatInt(prevout.valueSat, 10)
 				totalIn += prevout.valueSat
-				if prevout.address != "" {
-					inputAddresses = append(inputAddresses, prevout.address)
-				}
 			}
 			vins = append(vins, in)
 		}
@@ -322,6 +323,12 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 				ValueSat: strconv.FormatInt(valueSat, 10),
 			})
 		}
+		sort.SliceStable(vouts, func(i, j int) bool {
+			if vouts[i].Index != vouts[j].Index {
+				return vouts[i].Index < vouts[j].Index
+			}
+			return vouts[i].Address < vouts[j].Address
+		})
 
 		feeSat := int64(0)
 		if totalIn > 0 && totalIn >= totalOut {
@@ -390,6 +397,10 @@ func (a *Adapter) resolveCursorPosition(ctx context.Context, cursorHash string) 
 			cursorTxIndex = idx
 			break
 		}
+	}
+	if cursorTxIndex < 0 && len(block.Tx) > 0 {
+		// If the cursor tx cannot be resolved to a tx index, resume from the next tx slot deterministically.
+		cursorTxIndex = int(^uint(0) >> 1)
 	}
 	return cursorBlock, cursorTxIndex, nil
 }
@@ -464,7 +475,7 @@ func (a *Adapter) resolveInputPrevout(
 		}
 		valueSat, err := parseBTCValueToSatoshi(prevVout.Value)
 		if err != nil {
-			return resolvedPrevout{}, false, err
+			valueSat = 0
 		}
 		resolved := resolvedPrevout{
 			found:    true,
