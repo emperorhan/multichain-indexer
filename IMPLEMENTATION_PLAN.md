@@ -187,6 +187,41 @@ or hardening work. Planner MUST select from this list first:
   - `failure_mode` is empty
   - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
 
+### C0139 (`I-0698`) tranche activation
+- Focus: deterministic stream session fallback before optional verification work.
+- Focused unresolved implementation requirement from production code scan:
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: restart continuity must preserve stream ordering across process restarts.
+  - `chain_adapter_runtime_wired`: stream session boundaries must remain deterministic and operator-reproducible.
+- Current gap: when `STREAM_SESSION_ID` is unset, `cmd/indexer/main.go` uses a timestamp session token, which changes checkpoint namespace across process restarts and can undermine deterministic replay continuity.
+- C0139 lock state: `C0139-PRD-STREAM-SESSION-ID-DEFAULT-DETERMINISM`.
+- `C0139` queue adjacency: hard dependency `I-0698 -> I-0699 -> I-0700`.
+- Downstream execution pair:
+  - `I-0699` (developer) — normalize stream-session fallback to a stable value, extend stream-boundary checkpoint continuity tests, and publish evidence.
+  - `I-0700` (qa) — validate required evidence fields for deterministic default-session restart behavior.
+- Slice gates for this tranche:
+  - `I-0699` updates `cmd/indexer/main.go` so empty `STREAM_SESSION_ID` resolves to `default`.
+  - `I-0699` extends `cmd/indexer/main_test.go` and `internal/pipeline/pipeline_test.go` to cover restart checkpoints under `stream_session_id=default`.
+  - `I-0699` publishes required evidence artifact: `.ralph/reports/I-0699-m96-s1-stream-session-default-matrix.md`.
+  - `I-0700` validates required rows in the artifact for `solana`, `base`, and `btc` and blocks `C0139` on any hard-stop invariant failure.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+#### C0139 decision hook
+- `DP-0188-C0139`: `C0139` remains blocked until required rows in `.ralph/reports/I-0699-m96-s1-stream-session-default-matrix.md` for mandatory chains are present with:
+  - `stream_session_id=default`
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `checkpoint_persisted=true`
+  - `checkpoint_loaded=true`
+  - `stream_restart=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:

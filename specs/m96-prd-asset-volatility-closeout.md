@@ -866,6 +866,50 @@ Required machine-checkable constraints:
 #### C0138 Decision Hook
 - `DP-0187-C0138`: `C0138` remains blocked until required rows in `.ralph/reports/I-0696-m96-s1-stream-session-checkpoint-matrix.md` for mandatory chains are present with the hard-stop checks above.
 
+### C0139 (`I-0698`) implementation handoff addendum
+- Focused PRD traceability:
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: stream restart behavior must preserve boundary ordering.
+  - `chain_adapter_runtime_wired`: stream runtime determinism must include session identity defaults.
+- `C0139` lock state: `C0139-PRD-STREAM-SESSION-ID-DEFAULT-DETERMINISM`.
+- `C0139` queue adjacency: hard dependency `I-0698 -> I-0699 -> I-0700`.
+
+#### C0139 stream session default contracts (`I-0699`)
+- Required artifact path:
+  - `.ralph/reports/I-0699-m96-s1-stream-session-default-matrix.md`
+- Required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `stream_session_id`, `stream_boundary`, `checkpoint_key`, `checkpoint_persisted`, `checkpoint_loaded`, `checkpoint_start_id`, `checkpoint_end_id`, `stream_restart`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`, `stream_session_id=default`, `stream_restart=true`
+  - `chain=base`, `network=sepolia`, `stream_session_id=default`, `stream_restart=true`
+  - `chain=btc`, `network=testnet`, `stream_session_id=default`, `stream_restart=true`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `checkpoint_persisted=true`
+  - `checkpoint_loaded=true`
+  - `stream_restart=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
+- `outcome=NO-GO` rows must keep a non-empty `failure_mode`.
+
+#### C0139 Decision Hook
+- `DP-0188-C0139`: `C0139` remains blocked until required rows in `.ralph/reports/I-0699-m96-s1-stream-session-default-matrix.md` for mandatory chains are present with:
+  - `stream_session_id=default`
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `checkpoint_persisted=true`
+  - `checkpoint_loaded=true`
+  - `stream_restart=true`
+  - required hard-stop booleans (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`) true
+  - `failure_mode` is empty
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
+
 ### C0134 (`I-0678`) implementation handoff addendum
 - Focus: PRD-traceable DB statement-timeout governance before optional refinements continue.
 - Focused unresolved requirement traceability from `PRD.md`:
