@@ -677,6 +677,50 @@ Slice gates for this tranche:
 #### C0151 decision hook
 - `DP-0199-C0151`: `C0151` remains blocked until required rows in `.ralph/reports/I-0737-m99-s1-btc-rollback-anchor-reorg-proof-matrix.md` are complete and `GO` for required `btc` rows, and the BTC row in `.ralph/reports/I-0730-m99-s1-reorg-recovery-determinism-matrix.md` is `outcome=GO` with `evidence_present=true` and required hard-stop booleans `true`.
 
+### C0152 (`I-0739`) implementation handoff addendum
+- Focused unresolved implementation requirement from production code scan:
+  - `R1`: no-duplicate indexing across mandatory event classes.
+  - `R2`: full in-scope asset-volatility event coverage for mandatory chains.
+  - `R3`: fee coverage integrity (`solana_fee_event_coverage`, `base_fee_split_coverage`).
+  - `8.5`: failed-path cursor/watermark progression must remain prohibited.
+  - `chain_adapter_runtime_wired`: decoder/adapter wiring must remain deterministic under replay.
+- `C0152` lock state: `C0152-PRD-SIDECAR-BTC-CLASS-COVERAGE`.
+- `C0152` has downstream adjacency `I-0740 -> I-0741`.
+- Downstream execution pair:
+  - `I-0740` (developer) — extend sidecar fixed fixtures and decoder assertions for mandatory class paths where coverage is currently under-indexed (`btc` sidecar fixtures are currently the smallest set and omit deterministic BTC class permutations in coverage tests).
+  - `I-0741` (qa) — validate required sidecar coverage evidence rows and block `C0152` on any hard-stop false.
+- Slice gates for this tranche:
+  - `I-0740` updates `sidecar/src/__fixtures__/btc_transactions.ts` and related fixture outputs in `sidecar/src/decoder/golden_fixture_output/btc/` to add fixed input/output pairs for:
+    - `TRANSFER:vin`
+    - `TRANSFER:vout`
+    - `miner_fee`
+    - BTC fee-boundary/replay permutation cases.
+  - `I-0740` updates `sidecar/src/decoder/golden_fixture_decoder.test.ts` and fixture loader assertions so mandatory class-path assertions are explicit and replay-safe.
+  - `I-0740` publishes required artifact:
+    - `.ralph/reports/I-0740-m99-s1-sidecar-btc-class-coverage-matrix.md`
+  - `I-0741` validates required rows for `solana-devnet`, `base-sepolia`, and `btc-testnet` with required class-path and hard-stop booleans true, and no missing evidence.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+- `I-0740` required artifact row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `mandatory_class`, `is_unique_by_canonical_id`, `fixture_parser_deterministic`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `solana_fee_event_coverage_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0740` required mandatory rows:
+  - `chain=solana`, `network=devnet`, `class_path in [TRANSFER, MINT, BURN, FEE]`
+  - `chain=base`, `network=sepolia`, `class_path in [TRANSFER, MINT, BURN, fee_execution_l2, fee_data_l1]`
+  - `chain=btc`, `network=testnet`, `class_path in [TRANSFER:vin, TRANSFER:vout, miner_fee]`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `solana_fee_event_coverage_ok=true`
+  - `base_fee_split_coverage_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+
+#### C0152 decision hook
+- `DP-0200-C0152`: `C0152` remains blocked until `.ralph/reports/I-0740-m99-s1-sidecar-btc-class-coverage-matrix.md` has required rows for mandatory chains/class paths with all required hard-stop booleans true and `failure_mode` empty for `GO` rows.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:
