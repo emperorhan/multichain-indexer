@@ -20,6 +20,7 @@ or hardening work. Planner MUST select from this list first:
 4. **Ethereum Mainnet Adapter** — Completed by `C0131`; runtime target wiring and
    selection now pass alias + deterministic startup tests.
 5. **Connection Pool Monitoring** — No metrics for PostgreSQL pool utilization.
+  - selected for **C0135** implementation in `I-0682`/`I-0683`.
 6. **Query Timeout Configuration** — No statement-level timeout support.
 
 ## C0134 (`I-0678`) tranche activation
@@ -53,6 +54,38 @@ or hardening work. Planner MUST select from this list first:
   - `statement_timeout_ms > 0` for timeout override rows and documented behavior for default rows
   - required `failure_mode` is non-empty for required `NO-GO` rows
 - Hard-stop timeout governance checks include explicit confirmation that DB statement timeout cannot be omitted when `I-0679` reports mandatory timeout coverage is enabled.
+
+## C0135 (`I-0681`) tranche activation
+- Focus: PRD-priority operational observability gap for deterministic production operation under restart/replay load.
+- Focused implementation requirement from production code scan:
+  - PostgreSQL pool settings are configurable and applied, but no runtime telemetry is exported for pool pressure (`open`, `in_use`, `idle`, `wait_count`, `wait_duration`) to explain fail-fast continuity and commit timing under load.
+- C0135 lock state: `C0135-PRD-DB-POOL-UTILIZATION-METRICS`.
+- C0135 queue adjacency: hard dependency `I-0681 -> I-0682 -> I-0683`.
+- Downstream execution pair:
+  - `I-0682` (developer) — add deterministic PostgreSQL pool utilization metrics and expose them on `/metrics`, including bounded sampling and optional interval configuration.
+  - `I-0683` (qa) — validate `I-0682` evidence, including no regression in required hard-stop invariants and non-negative utilization telemetry values.
+- Slice gates for this tranche:
+  - `I-0682` adds deterministic pool metric declarations in `internal/metrics/metrics.go`.
+  - `I-0682` adds periodic `db.Stats()` sampling/recording to the indexer runtime loop (`cmd/indexer/main.go`) and documents metric namespaces/labels.
+  - `I-0682` adds configurable sampling interval env parsing (`DB_POOL_STATS_INTERVAL_MS`) with defaulting and tests.
+  - `I-0682` publishes required evidence artifact:
+    - `.ralph/reports/I-0682-m96-s1-db-pool-metrics-matrix.md`
+  - `I-0683` validates required `I-0682` rows for `chain=solana`, `base`, `btc`, with `outcome=GO`, `evidence_present=true`, and hard-stop invariant booleans true.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+## C0135 decision hooks
+- `DP-0184-C0135`: `C0135` remains blocked until required rows in
+  `.ralph/reports/I-0682-m96-s1-db-pool-metrics-matrix.md` for `chain=solana`, `base`, and `btc` are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+  - non-negative `db_pool_open`, `db_pool_in_use`, `db_pool_idle`, `db_pool_wait_count`, and `db_pool_wait_duration_seconds` gauge values
+  - required `NO-GO` rows contain non-empty `failure_mode`.
 
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
