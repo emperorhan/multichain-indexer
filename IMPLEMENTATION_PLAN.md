@@ -643,6 +643,40 @@ Slice gates for this tranche:
   - `chain_adapter_runtime_wired_ok=true`
   - `failure_mode` is empty for required GO rows and non-empty for required NO-GO rows.
 
+### C0151 (`I-0736`) implementation handoff addendum
+- Focused unresolved PRD-priority implementation requirement identified from production scan:
+  - `R4`: deterministic replay.
+  - `10`: deterministic behavior under one-chain perturbation.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `reorg_recovery_deterministic`: restart/rollback from rollback-anchor boundaries must remain deterministic.
+  - `chain_adapter_runtime_wired`: chain adapter/runtime wiring remains deterministic for recovery paths.
+- `C0151` lock state: `C0151-PRD-BTC-ROLLBACK-ANCHOR-REPROOF`.
+- `C0151` depends on `I-0731` and has downstream adjacency `I-0736 -> I-0737 -> I-0738`.
+
+#### C0151 implementation contracts (`I-0737`)
+- Required artifact path:
+  - `.ralph/reports/I-0737-m99-s1-btc-rollback-anchor-reorg-proof-matrix.md`
+- Required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `recovery_permutation`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required mandatory rows:
+  - `chain=btc`, `network=testnet`, `class_path=miner_fee`, `recovery_permutation=restart_from_rollback_anchor`
+  - `chain=btc`, `network=testnet`, `class_path=TRANSFER:vin`, `recovery_permutation=restart_from_rollback_anchor`
+  - `chain=btc`, `network=testnet`, `class_path=TRANSFER:vout`, `recovery_permutation=restart_from_rollback_anchor`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `reorg_recovery_deterministic_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+- `I-0737` must also update `.ralph/reports/I-0730-m99-s1-reorg-recovery-determinism-matrix.md` so BTC testnet run `run-I-0730-M99-BTC-ROLLBACK-ANCHOR` is `evidence_present=true`, `outcome=GO`, and hard-stop booleans are `true`.
+
+#### C0151 decision hook
+- `DP-0199-C0151`: `C0151` remains blocked until required rows in `.ralph/reports/I-0737-m99-s1-btc-rollback-anchor-reorg-proof-matrix.md` are complete and `GO` for required `btc` rows, and the BTC row in `.ralph/reports/I-0730-m99-s1-reorg-recovery-determinism-matrix.md` is `outcome=GO` with `evidence_present=true` and required hard-stop booleans `true`.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:
@@ -5536,12 +5570,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0733` (`C0150`) implementation
-2. `I-0734` (`C0150` qa gate) after `I-0733`
+1. `I-0737` (`C0151`) implementation
+2. `I-0738` (`C0151` qa gate) after `I-0737`
 
 Planned next tranche queue:
-1. `I-0733` (`C0150`) to implement partition-stable canonical event-id dedupe and replay-safe upsert behavior.
-2. `I-0734` (`C0150` qa gate) to validate `I-0733` evidence rows.
+1. `I-0737` (`C0151`) to close BTC rollback-anchor reorg recovery determinism proof on `restart_from_rollback_anchor`.
+2. `I-0738` (`C0151` qa gate) to validate the deterministic BTC rollback-anchor proof and close `DP-0199-C0151`.
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

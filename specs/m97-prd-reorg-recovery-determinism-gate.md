@@ -227,3 +227,39 @@
   - For required `NO-GO` rows, `failure_mode` must be non-empty and hard-stop booleans are not interpreted as passing.
   - For required `GO` rows, all listed hard-stop booleans are true, peer deltas are zero where required, and `failure_mode` is empty.
 - `DP-0151-C0116`: `C0116` remains blocked unless all required `I-0614` rows for mandatory chains (`solana-devnet`, `base-sepolia`, `btc-testnet`) are present and satisfy `GO` + hard-stop constraints above.
+
+## C0151 (`I-0736`) addendum
+- Focused PRD requirements for unresolved BTC rollback-anchor determinism closure:
+  - `R4`: deterministic replay.
+  - `10`: deterministic behavior under one-chain perturbation.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `reorg_recovery_deterministic`: restart behavior from rollback-anchor boundaries remains deterministic.
+  - `chain_adapter_runtime_wired`: chain adapter/runtime wiring remains deterministic for recovery paths.
+- `C0151` lock state: `C0151-PRD-BTC-ROLLBACK-ANCHOR-REPROOF`.
+- `C0151` depends on `I-0731` and has downstream adjacency `I-0737 -> I-0738`.
+
+### C0151 implementation contract (`I-0737`)
+- Required artifact path:
+  - `.ralph/reports/I-0737-m99-s1-btc-rollback-anchor-reorg-proof-matrix.md`
+- Required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `class_path`, `recovery_permutation`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `reorg_recovery_deterministic_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required mandatory rows:
+  - `chain=btc`, `network=testnet`, `class_path=miner_fee`, `recovery_permutation=restart_from_rollback_anchor`
+  - `chain=btc`, `network=testnet`, `class_path=TRANSFER:vin`, `recovery_permutation=restart_from_rollback_anchor`
+  - `chain=btc`, `network=testnet`, `class_path=TRANSFER:vout`, `recovery_permutation=restart_from_rollback_anchor`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `reorg_recovery_deterministic_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+- `I-0737` must also update `.ralph/reports/I-0730-m99-s1-reorg-recovery-determinism-matrix.md` so row
+  `chain=btc`, `network=testnet`, `run-I-0730-M99-BTC-ROLLBACK-ANCHOR` is `evidence_present=true`, `outcome=GO`, and all hard-stop booleans are `true`.
+- `I-0738` validates all required rows and issues a NO-GO when any required `GO` row fails any hard-stop invariant.
+
+### C0151 decision hook
+- `DP-0199-C0151`: `C0151` remains blocked until required rows in `.ralph/reports/I-0737-m99-s1-btc-rollback-anchor-reorg-proof-matrix.md` are complete with `GO`, required hard-stop booleans true, and the BTC row in `.ralph/reports/I-0730-m99-s1-reorg-recovery-determinism-matrix.md` has `evidence_present=true`, `outcome=GO`, and `failure_mode` empty.
