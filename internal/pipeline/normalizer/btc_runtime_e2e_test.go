@@ -183,10 +183,10 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	}
 
 	require.Len(t, normalized.Transactions, 1)
-	require.Len(t, normalized.Transactions[0].BalanceEvents, 2)
+	require.Len(t, normalized.Transactions[0].BalanceEvents, 3)
 
 	// Verify event ID uniqueness.
-	uniqueEventIDs := make(map[string]struct{}, 2)
+	uniqueEventIDs := make(map[string]struct{}, 3)
 	for _, be := range normalized.Transactions[0].BalanceEvents {
 		assert.NotEmpty(t, be.EventID)
 		_, exists := uniqueEventIDs[be.EventID]
@@ -195,19 +195,24 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	}
 
 	// Verify UTXO delta signs: vin_spend negative, vout_receive positive.
-	var vinEvent, voutEvent *event.NormalizedBalanceEvent
+	var vinEvent, voutEvent, feeEvent *event.NormalizedBalanceEvent
 	for i := range normalized.Transactions[0].BalanceEvents {
 		be := &normalized.Transactions[0].BalanceEvents[i]
 		if be.EventAction == "vin_spend" {
 			vinEvent = be
 		} else if be.EventAction == "vout_receive" {
 			voutEvent = be
+		} else if be.EventCategory == model.EventCategoryFee {
+			feeEvent = be
 		}
 	}
 	require.NotNil(t, vinEvent, "should have vin_spend event")
 	require.NotNil(t, voutEvent, "should have vout_receive event")
+	require.NotNil(t, feeEvent, "should have miner_fee event")
 	assert.Equal(t, "-50000", vinEvent.Delta, "vin_spend should be negative")
 	assert.Equal(t, "18500", voutEvent.Delta, "vout_receive should be positive")
+	assert.Equal(t, "miner_fee", feeEvent.EventAction)
+	assert.Equal(t, "-1500", feeEvent.Delta)
 
 	// Verify fee metadata.
 	assert.Equal(t, "confirmed", vinEvent.FinalityState)
@@ -248,7 +253,7 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 			assert.Equal(t, model.ChainBTC, token.Chain)
 			assert.Equal(t, "BTC", token.ContractAddress)
 			return tokenID, nil
-		}).Times(2)
+		}).Times(3)
 
 	mockBERepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -256,11 +261,11 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 			assert.Equal(t, model.ChainBTC, be.Chain)
 			assert.NotEmpty(t, be.EventID)
 			return true, nil
-		}).Times(2)
+		}).Times(3)
 
 	mockBalanceRepo.EXPECT().
 		AdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBTC, model.NetworkMainnet, watchedAddress, tokenID, &walletID, &orgID, gomock.Any(), cursorSequence, gomock.Any()).
-		Return(nil).Times(2)
+		Return(nil).Times(3)
 
 	mockCursorRepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), model.ChainBTC, model.NetworkMainnet, watchedAddress, gomock.Any(), cursorSequence, int64(1)).

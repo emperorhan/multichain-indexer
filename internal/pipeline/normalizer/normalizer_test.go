@@ -2493,6 +2493,29 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 			assert.Equal(t, fee, feeConserves)
 		}
 	}
+	assertBTCMinerFeeEvent := func(t *testing.T, batch event.NormalizedBatch) {
+		t.Helper()
+
+		feeEvents := 0
+		for _, tx := range batch.Transactions {
+			for _, be := range tx.BalanceEvents {
+				if be.EventCategory != model.EventCategoryFee {
+					continue
+				}
+				feeEvents++
+				assert.Equal(t, model.EventCategoryFee, be.EventCategory)
+				assert.Equal(t, "miner_fee", be.EventAction)
+				assert.Equal(t, "btc", be.ProgramID)
+				assert.Equal(t, "BTC", be.AssetID)
+				assert.Equal(t, "BTC", be.ContractAddress)
+				assert.Equal(t, "btc_fee", be.EventPathType)
+				assert.Equal(t, "fee:miner", be.EventPath)
+				assert.Equal(t, "-300", be.Delta)
+				require.NotEmpty(t, be.Address)
+			}
+		}
+		assert.Equal(t, 1, feeEvents)
+	}
 
 	t.Run("solana-devnet", func(t *testing.T) {
 		solanaAddress := "sol-m96-sd-owner"
@@ -3050,11 +3073,15 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		assertNoDuplicateCanonicalIDs(t, recovered)
 
 		assert.Equal(t, 4, countCategory(canonical, model.EventCategoryTransfer))
-		assert.Equal(t, 0, countCategory(canonical, model.EventCategoryFee))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFee))
 		assertBTCMinerFeeConservation(t, canonical)
 		assertBTCMinerFeeConservation(t, replay)
 		assertBTCMinerFeeConservation(t, swap)
 		assertBTCMinerFeeConservation(t, recovered)
+		assertBTCMinerFeeEvent(t, canonical)
+		assertBTCMinerFeeEvent(t, replay)
+		assertBTCMinerFeeEvent(t, swap)
+		assertBTCMinerFeeEvent(t, recovered)
 
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(replay))
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(swap))
@@ -7880,13 +7907,14 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMine
 
 	tx := n.normalizedTxFromResult(batch, result)
 	txReplay := n.normalizedTxFromResult(batch, result)
-	require.Len(t, tx.BalanceEvents, 2)
-	require.Len(t, txReplay.BalanceEvents, 2)
+	require.Len(t, tx.BalanceEvents, 3)
+	require.Len(t, txReplay.BalanceEvents, 3)
 	assert.Equal(t, "abcdef001122", tx.TxHash)
 
 	seenIDs := map[string]struct{}{}
 	seenPaths := map[string]struct{}{}
 	foundTransfers := 0
+	feeEvents := 0
 
 	for _, be := range tx.BalanceEvents {
 		assert.NotEmpty(t, be.EventID)
@@ -7899,13 +7927,17 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMine
 			foundTransfers++
 			assert.NotEmpty(t, be.EventPath)
 			assert.Equal(t, "btc_utxo", be.EventPathType)
+		} else if be.EventCategory == model.EventCategoryFee {
+			feeEvents++
 		}
 	}
 
 	assert.Equal(t, 2, foundTransfers)
+	assert.Equal(t, 1, feeEvents)
 	assert.Equal(t, map[string]struct{}{
 		"vin:0":   {},
 		"vout:1": {},
+		"fee:miner": {},
 	}, seenPaths)
 
 	replayIDs := map[string]struct{}{}

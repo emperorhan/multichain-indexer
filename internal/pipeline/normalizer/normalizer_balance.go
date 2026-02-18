@@ -178,7 +178,7 @@ func buildCanonicalBTCBalanceEvents(
 		})
 	}
 
-	if shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount) && !hasBTCFeeEvent(normalizedEvents, feePayer) {
+	if shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount, normalizedEvents) && !hasBTCFeeEvent(normalizedEvents, feePayer) {
 		normalizedEvents = append(normalizedEvents, buildBTCFeeBalanceEvent(feePayer, feeAmount))
 	}
 
@@ -691,14 +691,58 @@ func canonicalizeBTCAssetID(value string) string {
 	return trimmed
 }
 
-func shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount string) bool {
-	// BTC balance snapshots for watched addresses already include spend/receive legs
-	// for each input and output participant, so adding a synthetic miner fee
-	// event double-counts signed deltas for fee-paying addresses.
-	_ = feeAmount
-	_ = txStatus
-	_ = feePayer
-	return false
+func shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount string, rawEvents []event.NormalizedBalanceEvent) bool {
+	if !shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount) {
+		return false
+	}
+	return !hasBTCFeeRepresentedAsChangeOutput(rawEvents, feePayer, feeAmount)
+}
+
+func hasBTCFeeRepresentedAsChangeOutput(events []event.NormalizedBalanceEvent, feePayer, feeAmount string) bool {
+	feePayer = canonicalizeAddressIdentity(model.ChainBTC, feePayer)
+	if feePayer == "" {
+		return false
+	}
+
+	fee, ok := parseBigInt(feeAmount)
+	if !ok || fee.Sign() == 0 {
+		return false
+	}
+
+	hasInputSpend := false
+	hasRecipient := false
+	hasEqualFeeChangeOutput := false
+
+	for _, be := range events {
+		if be.EventCategory != model.EventCategoryTransfer {
+			continue
+		}
+		action := strings.TrimSpace(be.EventAction)
+		if action == "vin_spend" {
+			hasInputSpend = true
+			continue
+		}
+		if action != "vout_receive" {
+			continue
+		}
+
+		beDelta, ok := parseBigInt(be.Delta)
+		if !ok || beDelta.Sign() == 0 {
+			continue
+		}
+
+		address := canonicalizeAddressIdentity(model.ChainBTC, be.Address)
+		if address == feePayer {
+			if beDelta.Cmp(fee) == 0 {
+				hasEqualFeeChangeOutput = true
+			}
+			continue
+		}
+
+		hasRecipient = true
+	}
+
+	return hasInputSpend && hasRecipient && hasEqualFeeChangeOutput
 }
 
 func hasBTCFeeEvent(events []event.NormalizedBalanceEvent, feePayer string) bool {
