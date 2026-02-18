@@ -599,10 +599,7 @@ func canonicalizeBTCBalanceEvents(
 
 	for _, be := range normalizedEvents {
 		metadata := metadataFromChainData(be.ChainData)
-		be.EventPath = strings.TrimSpace(metadata["event_path"])
-		if be.EventPath == "" {
-			be.EventPath = strings.TrimSpace(be.EventPath)
-		}
+		be.EventPath = resolveBTCEventPathFromMetadata(metadata, int32(be.OuterInstructionIndex))
 		if be.EventPath == "" {
 			be.EventPath = balanceEventPath(int32(be.OuterInstructionIndex), int32(be.InnerInstructionIndex))
 		}
@@ -650,6 +647,21 @@ func canonicalizeBTCBalanceEvents(
 		return events[i].EventID < events[j].EventID
 	})
 	return events
+}
+
+func resolveBTCEventPathFromMetadata(metadata map[string]string, outerInstructionIndex int32) string {
+	if metadata == nil {
+		return ""
+	}
+	eventPath := strings.TrimSpace(metadata["event_path"])
+	if eventPath != "" {
+		return eventPath
+	}
+	utxoPathType := strings.ToLower(strings.TrimSpace(metadata["utxo_path_type"]))
+	if (utxoPathType == "vin" || utxoPathType == "vout") && outerInstructionIndex >= 0 {
+		return fmt.Sprintf("%s:%d", utxoPathType, outerInstructionIndex)
+	}
+	return ""
 }
 
 func shouldReplaceCanonicalBTCEvent(existing, incoming event.NormalizedBalanceEvent) bool {

@@ -7857,18 +7857,36 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMine
 					"finality_state": "confirmed",
 				},
 			},
+			{
+				OuterInstructionIndex: 1,
+				InnerInstructionIndex: -1,
+				EventCategory:         "TRANSFER",
+				EventAction:           "vout_receive",
+				ProgramId:             "btc",
+				Address:               "tb1payer",
+				ContractAddress:       "BTC",
+				Delta:                 "10000",
+				TokenSymbol:           "BTC",
+				TokenName:             "Bitcoin",
+				TokenDecimals:         8,
+				TokenType:             "NATIVE",
+				Metadata: map[string]string{
+					"utxo_path_type": "vout",
+					"finality_state": "confirmed",
+				},
+			},
 		},
 	}
 
 	tx := n.normalizedTxFromResult(batch, result)
 	txReplay := n.normalizedTxFromResult(batch, result)
-	require.Len(t, tx.BalanceEvents, 1)
-	require.Len(t, txReplay.BalanceEvents, 1)
+	require.Len(t, tx.BalanceEvents, 2)
+	require.Len(t, txReplay.BalanceEvents, 2)
 	assert.Equal(t, "abcdef001122", tx.TxHash)
 
 	seenIDs := map[string]struct{}{}
 	seenPaths := map[string]struct{}{}
-	foundTransfer := false
+	foundTransfers := 0
 
 	for _, be := range tx.BalanceEvents {
 		assert.NotEmpty(t, be.EventID)
@@ -7878,14 +7896,17 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMine
 		seenPaths[be.EventPath] = struct{}{}
 
 		if be.EventCategory == model.EventCategoryTransfer {
-			foundTransfer = true
-			assert.Equal(t, "vin:0", be.EventPath)
+			foundTransfers++
+			assert.NotEmpty(t, be.EventPath)
 			assert.Equal(t, "btc_utxo", be.EventPathType)
 		}
 	}
 
-	assert.True(t, foundTransfer)
-	assert.Equal(t, seenPaths, map[string]struct{}{"vin:0": {}})
+	assert.Equal(t, 2, foundTransfers)
+	assert.Equal(t, map[string]struct{}{
+		"vin:0":   {},
+		"vout:1": {},
+	}, seenPaths)
 
 	replayIDs := map[string]struct{}{}
 	for _, be := range txReplay.BalanceEvents {
