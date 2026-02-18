@@ -17,6 +17,11 @@ type Token struct {
 	Decimals        int             `db:"decimals"`
 	TokenType       TokenType       `db:"token_type"`
 	IsDenied        bool            `db:"is_denied"`
+	DeniedReason    string          `db:"denied_reason"`
+	DeniedAt        *time.Time      `db:"denied_at"`
+	ScamScore       int16           `db:"scam_score"`
+	ScamSignals     json.RawMessage `db:"scam_signals"`
+	DeniedSource    string          `db:"denied_source"`
 	ChainData       json.RawMessage `db:"chain_data"`
 	CreatedAt       time.Time       `db:"created_at"`
 	UpdatedAt       time.Time       `db:"updated_at"`

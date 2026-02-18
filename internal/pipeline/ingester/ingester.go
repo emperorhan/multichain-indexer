@@ -336,6 +336,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	}
 
 	var totalEvents int
+	deniedCache := make(map[string]bool) // "chain:network:contract" → denied
 
 	for _, ntx := range batch.Transactions {
 		canonicalTxHash := canonicalSignatureIdentity(batch.Chain, ntx.TxHash)
@@ -383,9 +384,55 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				return fmt.Errorf("upsert token %s: %w", be.ContractAddress, err)
 			}
 
-			balanceBefore, balanceAfter, err := ing.computeBalanceTransition(ctx, dbTx, batch, be, tokenID)
+			// CHECK 1: Blacklist enforcement (with per-batch cache)
+			deniedKey := fmt.Sprintf("%s:%s:%s", batch.Chain, batch.Network, be.ContractAddress)
+			denied, cached := deniedCache[deniedKey]
+			if !cached {
+				denied, err = ing.tokenRepo.IsDeniedTx(ctx, dbTx, batch.Chain, batch.Network, be.ContractAddress)
+				if err != nil {
+					return fmt.Errorf("check token denied %s: %w", be.ContractAddress, err)
+				}
+				deniedCache[deniedKey] = denied
+			}
+			if denied {
+				ing.logger.Debug("skipping denied token event",
+					"contract", be.ContractAddress,
+					"address", be.Address,
+					"delta", be.Delta,
+				)
+				metrics.IngesterDeniedEventsSkipped.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+				continue
+			}
+
+			balanceBefore, balanceExists, balanceAfter, err := ing.computeBalanceTransition(ctx, dbTx, batch, be, tokenID)
 			if err != nil {
 				return fmt.Errorf("compute balance transition: %w", err)
+			}
+
+			// CHECK 2: Auto-detection of scam signals
+			if signal := detectScamSignal(batch.Chain, be, balanceBefore, balanceExists); signal != "" {
+				ing.logger.Warn("scam token detected, auto-denying",
+					"signal", signal,
+					"contract", be.ContractAddress,
+					"address", be.Address,
+					"delta", be.Delta,
+					"balance_before", balanceBefore,
+					"balance_exists", balanceExists,
+				)
+				if err := ing.tokenRepo.DenyTokenTx(
+					ctx, dbTx,
+					batch.Chain, batch.Network, be.ContractAddress,
+					fmt.Sprintf("auto-detected: %s", signal),
+					"ingester_auto",
+					100,
+					[]string{signal},
+				); err != nil {
+					return fmt.Errorf("deny scam token %s: %w", be.ContractAddress, err)
+				}
+				deniedCache[deniedKey] = true
+				metrics.IngesterScamTokensDetected.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+				metrics.IngesterDeniedEventsSkipped.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+				continue
 			}
 
 			// 2b. Upsert balance event
@@ -509,18 +556,53 @@ func (ing *Ingester) computeBalanceTransition(
 	batch event.NormalizedBatch,
 	be event.NormalizedBalanceEvent,
 	tokenID uuid.UUID,
-) (string, string, error) {
-	beforeAmount, err := ing.balanceRepo.GetAmountTx(ctx, tx, batch.Chain, batch.Network, be.Address, tokenID)
+) (string, bool, string, error) {
+	beforeAmount, exists, err := ing.balanceRepo.GetAmountWithExistsTx(ctx, tx, batch.Chain, batch.Network, be.Address, tokenID)
 	if err != nil {
-		return "", "", fmt.Errorf("get current balance: %w", err)
+		return "", false, "", fmt.Errorf("get current balance: %w", err)
 	}
 
 	afterAmount, err := addDecimalStrings(beforeAmount, be.Delta)
 	if err != nil {
-		return "", "", fmt.Errorf("apply delta %s to balance %s: %w", be.Delta, beforeAmount, err)
+		return "", false, "", fmt.Errorf("apply delta %s to balance %s: %w", be.Delta, beforeAmount, err)
 	}
 
-	return beforeAmount, afterAmount, nil
+	return beforeAmount, exists, afterAmount, nil
+}
+
+// detectScamSignal checks for scam token signals.
+// Returns the signal name if suspicious, or empty string if clean.
+func detectScamSignal(chain model.Chain, be event.NormalizedBalanceEvent, balanceBefore string, balanceExists bool) string {
+	// Skip native tokens — fee deductions from zero balance are normal
+	if be.TokenType == model.TokenTypeNative {
+		return ""
+	}
+
+	// Skip BTC — UTXO model doesn't produce fake transfer patterns
+	if chain == model.ChainBTC {
+		return ""
+	}
+
+	// Check sidecar-propagated signal from metadata
+	if be.ChainData != nil {
+		var metadata map[string]string
+		if err := json.Unmarshal(be.ChainData, &metadata); err == nil {
+			if signal, ok := metadata["scam_signal"]; ok && signal != "" {
+				return signal
+			}
+		}
+	}
+
+	// Go-level detection: zero_balance_withdrawal
+	// Token never held (no balance record) but negative delta
+	delta := new(big.Int)
+	if _, ok := delta.SetString(strings.TrimSpace(be.Delta), 10); ok {
+		if delta.Sign() < 0 && !balanceExists {
+			return "zero_balance_withdrawal"
+		}
+	}
+
+	return ""
 }
 
 func addDecimalStrings(a, b string) (string, error) {

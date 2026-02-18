@@ -85,15 +85,20 @@ func newIngesterMocks(t *testing.T) (
 	ctrl := gomock.NewController(t)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockBalanceRepo.EXPECT().
-		GetAmountTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		AnyTimes().
-		Return("0", nil)
+		Return("0", false, nil)
+	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
+	mockTokenRepo.EXPECT().
+		IsDeniedTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Return(false, nil)
 	return ctrl,
 		storemocks.NewMockTxBeginner(ctrl),
 		storemocks.NewMockTransactionRepository(ctrl),
 		storemocks.NewMockBalanceEventRepository(ctrl),
 		mockBalanceRepo,
-		storemocks.NewMockTokenRepository(ctrl),
+		mockTokenRepo,
 		storemocks.NewMockCursorRepository(ctrl),
 		storemocks.NewMockIndexerConfigRepository(ctrl)
 }

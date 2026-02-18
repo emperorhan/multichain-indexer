@@ -324,6 +324,22 @@ func (mr *MockBalanceRepositoryMockRecorder) GetAmountTx(ctx, tx, chain, network
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAmountTx", reflect.TypeOf((*MockBalanceRepository)(nil).GetAmountTx), ctx, tx, chain, network, address, tokenID)
 }
 
+// GetAmountWithExistsTx mocks base method.
+func (m *MockBalanceRepository) GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (string, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAmountWithExistsTx", ctx, tx, chain, network, address, tokenID)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetAmountWithExistsTx indicates an expected call of GetAmountWithExistsTx.
+func (mr *MockBalanceRepositoryMockRecorder) GetAmountWithExistsTx(ctx, tx, chain, network, address, tokenID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAmountWithExistsTx", reflect.TypeOf((*MockBalanceRepository)(nil).GetAmountWithExistsTx), ctx, tx, chain, network, address, tokenID)
+}
+
 // GetByAddress mocks base method.
 func (m *MockBalanceRepository) GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error) {
 	m.ctrl.T.Helper()
@@ -376,6 +392,49 @@ func (m *MockTokenRepository) FindByContractAddress(ctx context.Context, chain m
 func (mr *MockTokenRepositoryMockRecorder) FindByContractAddress(ctx, chain, network, contractAddress any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByContractAddress", reflect.TypeOf((*MockTokenRepository)(nil).FindByContractAddress), ctx, chain, network, contractAddress)
+}
+
+// IsDeniedTx mocks base method.
+func (m *MockTokenRepository) IsDeniedTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsDeniedTx", ctx, tx, chain, network, contractAddress)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsDeniedTx indicates an expected call of IsDeniedTx.
+func (mr *MockTokenRepositoryMockRecorder) IsDeniedTx(ctx, tx, chain, network, contractAddress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsDeniedTx", reflect.TypeOf((*MockTokenRepository)(nil).IsDeniedTx), ctx, tx, chain, network, contractAddress)
+}
+
+// DenyTokenTx mocks base method.
+func (m *MockTokenRepository) DenyTokenTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string, reason string, source string, score int16, signals []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DenyTokenTx", ctx, tx, chain, network, contractAddress, reason, source, score, signals)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DenyTokenTx indicates an expected call of DenyTokenTx.
+func (mr *MockTokenRepositoryMockRecorder) DenyTokenTx(ctx, tx, chain, network, contractAddress, reason, source, score, signals any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DenyTokenTx", reflect.TypeOf((*MockTokenRepository)(nil).DenyTokenTx), ctx, tx, chain, network, contractAddress, reason, source, score, signals)
+}
+
+// AllowTokenTx mocks base method.
+func (m *MockTokenRepository) AllowTokenTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string, reason string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AllowTokenTx", ctx, tx, chain, network, contractAddress, reason)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AllowTokenTx indicates an expected call of AllowTokenTx.
+func (mr *MockTokenRepositoryMockRecorder) AllowTokenTx(ctx, tx, chain, network, contractAddress, reason any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AllowTokenTx", reflect.TypeOf((*MockTokenRepository)(nil).AllowTokenTx), ctx, tx, chain, network, contractAddress, reason)
 }
 
 // UpsertTx mocks base method.

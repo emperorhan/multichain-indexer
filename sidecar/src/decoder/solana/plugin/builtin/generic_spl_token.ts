@@ -1,5 +1,6 @@
 import { EventPlugin } from '../interface';
 import { BalanceEvent, ParsedOuterInstruction } from '../types';
+import { BalanceValidator } from '../balance_validator';
 
 const SPL_TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
@@ -21,22 +22,41 @@ export class GenericSplTokenPlugin implements EventPlugin {
 
     const info: any = parsed.info || {};
 
+    let events: BalanceEvent[] | null = null;
     switch (parsed.type) {
       case 'transfer':
-        return parseTokenTransfer(outer, info, watchedSet, accountKeyMap, meta, false);
+        events = parseTokenTransfer(outer, info, watchedSet, accountKeyMap, meta, false);
+        break;
       case 'transferChecked':
-        return parseTokenTransfer(outer, info, watchedSet, accountKeyMap, meta, true);
+        events = parseTokenTransfer(outer, info, watchedSet, accountKeyMap, meta, true);
+        break;
       case 'mintTo':
-        return parseTokenMint(outer, info, watchedSet, accountKeyMap, meta, false);
+        events = parseTokenMint(outer, info, watchedSet, accountKeyMap, meta, false);
+        break;
       case 'mintToChecked':
-        return parseTokenMint(outer, info, watchedSet, accountKeyMap, meta, true);
+        events = parseTokenMint(outer, info, watchedSet, accountKeyMap, meta, true);
+        break;
       case 'burn':
-        return parseTokenBurn(outer, info, watchedSet, accountKeyMap, meta, false);
+        events = parseTokenBurn(outer, info, watchedSet, accountKeyMap, meta, false);
+        break;
       case 'burnChecked':
-        return parseTokenBurn(outer, info, watchedSet, accountKeyMap, meta, true);
+        events = parseTokenBurn(outer, info, watchedSet, accountKeyMap, meta, true);
+        break;
       default:
         return null;
     }
+
+    if (events && events.length > 0) {
+      const balanceMap = BalanceValidator.buildBalanceMap(meta);
+      for (const ev of events) {
+        const signal = BalanceValidator.validateEvent(ev, balanceMap);
+        if (signal) {
+          ev.metadata = { ...ev.metadata, scam_signal: signal };
+        }
+      }
+    }
+
+    return events;
   }
 }
 

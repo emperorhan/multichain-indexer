@@ -113,6 +113,21 @@ var (
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"chain", "network"})
 
+	// Scam detection
+	IngesterDeniedEventsSkipped = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "ingester",
+		Name:      "denied_events_skipped_total",
+		Help:      "Total balance events skipped due to denied/scam token",
+	}, []string{"chain", "network"})
+
+	IngesterScamTokensDetected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "ingester",
+		Name:      "scam_tokens_detected_total",
+		Help:      "Total tokens auto-detected and denied as scam",
+	}, []string{"chain", "network"})
+
 	// Pipeline-level
 	PipelineCursorSequence = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "indexer",

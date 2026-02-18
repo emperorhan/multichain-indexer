@@ -162,6 +162,18 @@ func (*interleaveTokenRepo) FindByContractAddress(context.Context, model.Chain, 
 	return nil, nil
 }
 
+func (*interleaveTokenRepo) IsDeniedTx(context.Context, *sql.Tx, model.Chain, model.Network, string) (bool, error) {
+	return false, nil
+}
+
+func (*interleaveTokenRepo) DenyTokenTx(context.Context, *sql.Tx, model.Chain, model.Network, string, string, string, int16, []string) error {
+	return nil
+}
+
+func (*interleaveTokenRepo) AllowTokenTx(context.Context, *sql.Tx, model.Chain, model.Network, string, string) error {
+	return nil
+}
+
 type interleaveBalanceEventRepo struct {
 	state *interleaveState
 }
@@ -244,6 +256,24 @@ func (r *interleaveBalanceRepo) GetAmountTx(
 		return "0", nil
 	}
 	return amount, nil
+}
+
+func (r *interleaveBalanceRepo) GetAmountWithExistsTx(
+	_ context.Context,
+	_ *sql.Tx,
+	chain model.Chain,
+	network model.Network,
+	address string,
+	tokenID uuid.UUID,
+) (string, bool, error) {
+	primaryKey := interleaveBalanceKey(chain, network, address, tokenID)
+	r.state.mu.Lock()
+	defer r.state.mu.Unlock()
+	amount, exists := r.state.balances[primaryKey]
+	if !exists || amount == "" {
+		return "0", false, nil
+	}
+	return amount, true, nil
 }
 
 func (*interleaveBalanceRepo) GetByAddress(context.Context, model.Chain, model.Network, string) ([]model.Balance, error) {

@@ -223,9 +223,13 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	mockBERepo := storemocks.NewMockBalanceEventRepository(ctrl)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockBalanceRepo.EXPECT().
-		GetAmountTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		AnyTimes().Return("0", nil)
+		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes().Return("0", false, nil)
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
+	mockTokenRepo.EXPECT().
+		IsDeniedTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Return(false, nil)
 	mockCursorRepo := storemocks.NewMockCursorRepository(ctrl)
 	mockConfigRepo := storemocks.NewMockIndexerConfigRepository(ctrl)
 
