@@ -25,6 +25,7 @@ or hardening work. Planner MUST select from this list first:
 7. **Stream Restart Checkpoint Resume** — stream-mode consumer restarts still lack durable checkpoint restore for boundary replay.
 8. **Stream Session Checkpoint Isolation** — checkpoint state is shared across `stream_session_id` values, risking cross-session cursor bleed.
 9. **Ethereum-mainnet Normalizer Family Gap** — `chain=ethereum` with `network=mainnet` is selected and wired at runtime, but normalization still takes the Solana canonicalization branch (`normalizedTxFromResult`) for that chain, causing EVM/fee-path incompatibility and incomplete adapter-runtime closure.
+10. **Chain-scoped auto-tune telemetry/input completeness** — R9 requires adaptive control to remain chain-local using chain-only signals (`rpc error budget`, `DB commit latency`) while preserving fail-fast behavior; current tuning inputs are narrower than PRD intent.
 
 ## C0134 (`I-0678`) tranche activation
 - Focus: post-PRD reliability hardening for production DB call-time boundedness before optional refinements resume.
@@ -439,6 +440,45 @@ Slice gates for this tranche:
   - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
   - required `finality_probe` values above
   - `failure_mode` is empty for `GO` rows and non-empty for `NO-GO` rows.
+
+### C0146 (`I-0719`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R9`: chain-scoped adaptive throughput control.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: control-loop and coordinator wiring remains deterministic under replay boundaries.
+- `C0146` lock state: `C0146-PRD-CHAIN-SCOPED-AUTOTUNE-INPUT-COMPLETE`.
+- `C0146` queue adjacency: hard dependency `I-0719 -> I-0720 -> I-0721`.
+
+#### C0146 implementation contracts (`I-0720`)
+- Required artifact path:
+  - `.ralph/reports/I-0720-m96-s1-chain-scoped-autotune-input-matrix.md`
+- Required row fields (`s1`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `chain_runtime_id`, `decision_epoch`, `peer_chain`, `autotune_input_chain_scoped`, `chain_lag_blocks`, `queue_depth`, `queue_capacity`, `rpc_error_rate_bps`, `db_commit_latency_p95_ms`, `cross_chain_control_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`
+  - `chain=base`, `network=sepolia`
+  - `chain=btc`, `network=testnet`
+- Required hard-stop checks for `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `autotune_input_chain_scoped=true`
+  - `cross_chain_control_delta=0`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+- For required `NO-GO` rows, `failure_mode` must be non-empty.
+
+#### C0146 decision hook
+- `DP-0194-C0146`: `C0146` remains blocked until required rows in `.ralph/reports/I-0720-m96-s1-chain-scoped-autotune-input-matrix.md` for mandatory chains are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `autotune_input_chain_scoped=true`
+  - `cross_chain_control_delta=0`
+  - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
+  - `failure_mode` is empty for `GO` and non-empty for `NO-GO`.
 
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
@@ -5333,14 +5373,14 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0713` (`C0144`) planner handoff
-2. `I-0714` (`C0144` implementer) after `I-0713`
-3. `I-0715` (`C0144` qa gate) after `I-0714`
+1. `I-0719` (`C0146`) planner handoff
+2. `I-0720` (`C0146` implementer) after `I-0719`
+3. `I-0721` (`C0146` qa gate) after `I-0720`
 
 Planned next tranche queue:
-1. `I-0713` (`C0144`) to scope and dispatch the next production feature slice.
-2. `I-0714` (`C0144` implementer) to harden stream boundary restart-isolation runtime semantics and evidence.
-3. `I-0715` (`C0144` qa gate) to enforce hard-stop stream-restart isolation evidence and invariant gates.
+1. `I-0719` (`C0146`) to scope and dispatch chain-scoped adaptive throughput control completion.
+2. `I-0720` (`C0146` implementer) to harden chain-local auto-tune signal completeness and control isolation.
+3. `I-0721` (`C0146` qa gate) to validate `I-0720` evidence and chain-scoped hard-stop gates.
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

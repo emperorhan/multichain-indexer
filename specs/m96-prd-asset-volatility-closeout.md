@@ -1172,3 +1172,42 @@ Required machine-checkable constraints:
   - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
   - required `finality_probe` values above
   - `failure_mode` is empty for `GO` rows and non-empty for `NO-GO` rows.
+
+### C0146 (`I-0719`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R9`: chain-scoped adaptive throughput control.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: auto-tune signaling and coordinator adaptation remains deterministic across replay boundaries.
+- `C0146` lock state: `C0146-PRD-CHAIN-SCOPED-AUTOTUNE-INPUT-COMPLETE`.
+- `C0146` queue adjacency: hard dependency `I-0719 -> I-0720 -> I-0721`.
+
+#### C0146 implementation contracts (`I-0720`)
+- Required artifact path:
+  - `.ralph/reports/I-0720-m96-s1-chain-scoped-autotune-input-matrix.md`
+- Required row fields (`s1`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `chain_runtime_id`, `decision_epoch`, `autotune_input_chain_scoped`, `chain_lag_blocks`, `queue_depth`, `queue_capacity`, `rpc_error_rate_bps`, `db_commit_latency_p95_ms`, `cross_chain_control_delta`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`
+  - `chain=base`, `network=sepolia`
+  - `chain=btc`, `network=testnet`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `autotune_input_chain_scoped=true`
+  - `cross_chain_control_delta=0`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+- Required `NO-GO` rows must have non-empty `failure_mode`.
+
+#### C0146 decision hook
+- `DP-0194-C0146`: `C0146` remains blocked until required rows in `.ralph/reports/I-0720-m96-s1-chain-scoped-autotune-input-matrix.md` for mandatory chains are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `autotune_input_chain_scoped=true`
+  - `cross_chain_control_delta=0`
+  - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
+  - `failure_mode` is empty for `GO` rows and non-empty for `NO-GO` rows.
