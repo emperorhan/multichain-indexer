@@ -127,9 +127,17 @@ func resolveStreamBackend(cfg *config.Config, streamSessionID string, logger *sl
 		return newInMemoryStreamFactory(), false, nil
 	}
 
-	redisStream, err := newStreamFactory(cfg.Redis.URL)
+	redisURL := strings.TrimSpace(cfg.Redis.URL)
+	if redisURL == "" {
+		return nil, true, fmt.Errorf("initialize redis stream transport: redis URL is empty")
+	}
+
+	redisStream, err := newStreamFactory(redisURL)
 	if err != nil {
 		return nil, true, fmt.Errorf("initialize redis stream transport: %w", err)
+	}
+	if redisStream == nil {
+		return nil, true, fmt.Errorf("initialize redis stream transport: backend is nil")
 	}
 
 	logger.Info("redis stream transport enabled",

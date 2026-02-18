@@ -44,17 +44,62 @@ func TestResolveStreamBackend_FailsWhenStreamEnabledAndRedisUnavailable(t *testi
 		},
 	}
 
+	inMemoryCalled := false
+	streamFactoryCalled := false
 	originalNewStream := newStreamFactory
+	originalNewInMemoryStream := newInMemoryStreamFactory
 	newStreamFactory = func(_ string) (redispkg.MessageTransport, error) {
+		streamFactoryCalled = true
 		return nil, errors.New("redis unavailable")
 	}
+	newInMemoryStreamFactory = func() redispkg.MessageTransport {
+		inMemoryCalled = true
+		return redispkg.NewInMemoryStream()
+	}
 	defer func() { newStreamFactory = originalNewStream }()
+	defer func() { newInMemoryStreamFactory = originalNewInMemoryStream }()
 
 	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "memory-fallback", slog.Default())
 	require.Error(t, err)
 	assert.True(t, streamEnabled)
+	assert.True(t, streamFactoryCalled)
+	assert.False(t, inMemoryCalled)
 	assert.Nil(t, streamBackend)
 	assert.Contains(t, err.Error(), "initialize redis stream transport")
+}
+
+func TestResolveStreamBackend_FailsWhenStreamEnabledAndRedisURLEmpty(t *testing.T) {
+	cfg := &config.Config{
+		Pipeline: config.PipelineConfig{
+			StreamTransportEnabled: true,
+		},
+		Redis: config.RedisConfig{
+			URL: "   ",
+		},
+	}
+
+	streamFactoryCalled := false
+	inMemoryCalled := false
+	originalNewStream := newStreamFactory
+	originalNewInMemoryStream := newInMemoryStreamFactory
+	newStreamFactory = func(_ string) (redispkg.MessageTransport, error) {
+		streamFactoryCalled = true
+		return nil, errors.New("should not be called when redis URL is empty")
+	}
+	newInMemoryStreamFactory = func() redispkg.MessageTransport {
+		inMemoryCalled = true
+		return redispkg.NewInMemoryStream()
+	}
+	defer func() { newStreamFactory = originalNewStream }()
+	defer func() { newInMemoryStreamFactory = originalNewInMemoryStream }()
+
+	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "memory-fallback", slog.Default())
+	require.Error(t, err)
+	assert.True(t, streamEnabled)
+	assert.False(t, streamFactoryCalled)
+	assert.False(t, inMemoryCalled)
+	assert.Nil(t, streamBackend)
+	assert.Contains(t, err.Error(), "initialize redis stream transport: redis URL is empty")
 }
 
 func TestResolveStreamBackend_UsesInMemoryTransportWhenStreamDisabled(t *testing.T) {
@@ -64,16 +109,24 @@ func TestResolveStreamBackend_UsesInMemoryTransportWhenStreamDisabled(t *testing
 		},
 	}
 
+	streamFactoryCalled := false
 	originalNewInMemoryStream := newInMemoryStreamFactory
+	originalNewStream := newStreamFactory
 	newInMemoryStreamFactory = func() redispkg.MessageTransport {
 		return redispkg.NewInMemoryStream()
 	}
+	newStreamFactory = func(_ string) (redispkg.MessageTransport, error) {
+		streamFactoryCalled = true
+		return redispkg.NewInMemoryStream(), nil
+	}
 	defer func() { newInMemoryStreamFactory = originalNewInMemoryStream }()
+	defer func() { newStreamFactory = originalNewStream }()
 
 	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "memory-fallback", slog.Default())
 	require.NoError(t, err)
 	require.NotNil(t, streamBackend)
 	assert.False(t, streamEnabled)
+	assert.False(t, streamFactoryCalled)
 	assert.NoError(t, streamBackend.Close())
 }
 
