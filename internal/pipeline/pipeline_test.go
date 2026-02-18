@@ -86,3 +86,62 @@ func TestPipeline_Run_ImmediateCancel(t *testing.T) {
 	// Should return context.Canceled from one of the stages
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+func TestPipeline_Run_StreamTransportRequiresBackend(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+	mockDB := storemocks.NewMockTxBeginner(ctrl)
+
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]model.WatchedAddress{}, nil).AnyTimes()
+
+	cfg := Config{
+		Chain:                  model.ChainSolana,
+		Network:                model.NetworkDevnet,
+		BatchSize:              100,
+		IndexingInterval:       5 * time.Second,
+		FetchWorkers:           1,
+		NormalizerWorkers:      1,
+		ChannelBufferSize:      10,
+		SidecarAddr:            "localhost:50051",
+		SidecarTimeout:         30 * time.Second,
+		StreamTransportEnabled: true,
+		StreamNamespace:        "pipeline",
+		StreamSessionID:        "test-session",
+	}
+
+	repos := &Repos{
+		WatchedAddr:  mockWatchedAddr,
+		Cursor:       storemocks.NewMockCursorRepository(ctrl),
+		Transaction:  storemocks.NewMockTransactionRepository(ctrl),
+		BalanceEvent: storemocks.NewMockBalanceEventRepository(ctrl),
+		Balance:      storemocks.NewMockBalanceRepository(ctrl),
+		Token:        storemocks.NewMockTokenRepository(ctrl),
+		Config:       storemocks.NewMockIndexerConfigRepository(ctrl),
+	}
+
+	p := New(cfg, mockAdapter, mockDB, repos, slog.Default())
+	err := p.Run(context.Background())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "stream transport enabled but stream backend is not configured")
+}
+
+func TestPipeline_Run_StreamBoundaryName(t *testing.T) {
+	p := New(
+		Config{
+			Chain:           model.ChainBTC,
+			Network:         model.NetworkTestnet,
+			StreamNamespace: "indexer-bus",
+			StreamSessionID: "session-1",
+		},
+		nil,
+		nil,
+		nil,
+		slog.Default(),
+	)
+
+	got := p.streamBoundaryName("fetcher-normalizer")
+	assert.Equal(t, "indexer-bus:chain=btc:network=testnet:session=session-1:boundary=fetcher-normalizer", got)
+}

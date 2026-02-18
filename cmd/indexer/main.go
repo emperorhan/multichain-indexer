@@ -21,6 +21,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
+	redispkg "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	"github.com/emperorhan/multichain-indexer/internal/tracing"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
@@ -133,6 +134,20 @@ func main() {
 	defer db.Close()
 	logger.Info("connected to database")
 
+	streamTransportEnabled := cfg.Pipeline.StreamTransportEnabled
+	var redisStream *redispkg.Stream
+	if streamTransportEnabled {
+		redisStream, err = redispkg.NewStream(cfg.Redis.URL)
+		if err != nil {
+			logger.Warn("failed to initialize redis stream transport; falling back to in-memory channels", "error", err, "redis_url", cfg.Redis.URL)
+			streamTransportEnabled = false
+		} else {
+			logger.Info("redis stream transport enabled", "redis_url", cfg.Redis.URL, "stream_namespace", cfg.Pipeline.StreamNamespace)
+			defer redisStream.Close()
+		}
+	}
+	streamSessionID := time.Now().Format("20060102T150405.000000000")
+
 	// Create repositories
 	repos := &pipeline.Repos{
 		WatchedAddr:  postgres.NewWatchedAddressRepo(db),
@@ -200,16 +215,20 @@ func main() {
 				PolicyManifestRefreshEpoch: cfg.Pipeline.CoordinatorAutoTunePolicyManifestRefreshEpoch,
 				PolicyActivationHoldTicks:  cfg.Pipeline.CoordinatorAutoTunePolicyActivationHoldTicks,
 			},
-			FetchWorkers:      cfg.Pipeline.FetchWorkers,
-			NormalizerWorkers: cfg.Pipeline.NormalizerWorkers,
-			ChannelBufferSize: cfg.Pipeline.ChannelBufferSize,
-			SidecarAddr:       cfg.Sidecar.Addr,
-			SidecarTimeout:    cfg.Sidecar.Timeout,
-			SidecarTLSEnabled: cfg.Sidecar.TLSEnabled,
-			SidecarTLSCert:    cfg.Sidecar.TLSCert,
-			SidecarTLSKey:     cfg.Sidecar.TLSKey,
-			SidecarTLSCA:      cfg.Sidecar.TLSCA,
-			CommitInterleaver: commitInterleaver,
+			FetchWorkers:           cfg.Pipeline.FetchWorkers,
+			NormalizerWorkers:      cfg.Pipeline.NormalizerWorkers,
+			ChannelBufferSize:      cfg.Pipeline.ChannelBufferSize,
+			SidecarAddr:            cfg.Sidecar.Addr,
+			SidecarTimeout:         cfg.Sidecar.Timeout,
+			SidecarTLSEnabled:      cfg.Sidecar.TLSEnabled,
+			SidecarTLSCert:         cfg.Sidecar.TLSCert,
+			SidecarTLSKey:          cfg.Sidecar.TLSKey,
+			SidecarTLSCA:           cfg.Sidecar.TLSCA,
+			StreamTransportEnabled: streamTransportEnabled,
+			StreamBackend:          redisStream,
+			StreamNamespace:        cfg.Pipeline.StreamNamespace,
+			StreamSessionID:        streamSessionID,
+			CommitInterleaver:      commitInterleaver,
 		}
 		pipelines = append(pipelines, pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL)))
 	}

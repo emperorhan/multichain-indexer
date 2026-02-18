@@ -2,7 +2,9 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
@@ -14,26 +16,33 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/normalizer"
 	"github.com/emperorhan/multichain-indexer/internal/store"
+	redisstream "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	"golang.org/x/sync/errgroup"
 )
 
 type Config struct {
-	Chain               model.Chain
-	Network             model.Network
-	BatchSize           int
-	IndexingInterval    time.Duration
-	CoordinatorAutoTune CoordinatorAutoTuneConfig
-	FetchWorkers        int
-	NormalizerWorkers   int
-	ChannelBufferSize   int
-	SidecarAddr       string
-	SidecarTimeout    time.Duration
-	SidecarTLSEnabled bool
-	SidecarTLSCert    string
-	SidecarTLSKey     string
-	SidecarTLSCA      string
-	CommitInterleaver ingester.CommitInterleaver
+	Chain                  model.Chain
+	Network                model.Network
+	BatchSize              int
+	IndexingInterval       time.Duration
+	CoordinatorAutoTune    CoordinatorAutoTuneConfig
+	FetchWorkers           int
+	NormalizerWorkers      int
+	ChannelBufferSize      int
+	SidecarAddr            string
+	SidecarTimeout         time.Duration
+	SidecarTLSEnabled      bool
+	SidecarTLSCert         string
+	SidecarTLSKey          string
+	SidecarTLSCA           string
+	StreamTransportEnabled bool
+	StreamBackend          *redisstream.Stream
+	StreamNamespace        string
+	StreamSessionID        string
+	CommitInterleaver      ingester.CommitInterleaver
 }
+
+const streamBoundaryFetchToNormal = "fetcher-normalizer"
 
 type CoordinatorAutoTuneConfig struct {
 	Enabled bool
@@ -96,11 +105,21 @@ func New(
 
 func (p *Pipeline) Run(ctx context.Context) error {
 	bufSize := p.cfg.ChannelBufferSize
+	if p.cfg.StreamTransportEnabled && p.cfg.StreamBackend == nil {
+		return fmt.Errorf("stream transport enabled but stream backend is not configured")
+	}
 
 	// Channels between stages
 	jobCh := make(chan event.FetchJob, bufSize)
-	rawBatchCh := make(chan event.RawBatch, bufSize)
+	rawBatchInputCh := make(chan event.RawBatch, bufSize)
+	rawBatchOutputCh := rawBatchInputCh
 	normalizedCh := make(chan event.NormalizedBatch, bufSize)
+
+	if p.cfg.StreamTransportEnabled {
+		streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
+		rawBatchOutputCh = make(chan event.RawBatch, bufSize)
+		p.logger.Info("pipeline stream transport active", "boundary", streamBoundaryFetchToNormal, "stream", streamName, "chain", p.cfg.Chain, "network", p.cfg.Network)
+	}
 
 	// Create stages
 	coord := coordinator.New(
@@ -130,13 +149,13 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	})
 
 	fetch := fetcher.New(
-		p.adapter, jobCh, rawBatchCh,
+		p.adapter, jobCh, rawBatchOutputCh,
 		p.cfg.FetchWorkers, p.logger,
 	)
 
 	norm := normalizer.New(
 		p.cfg.SidecarAddr, p.cfg.SidecarTimeout,
-		rawBatchCh, normalizedCh,
+		rawBatchInputCh, normalizedCh,
 		p.cfg.NormalizerWorkers, p.logger,
 		normalizer.WithTLS(p.cfg.SidecarTLSEnabled, p.cfg.SidecarTLSCA, p.cfg.SidecarTLSCert, p.cfg.SidecarTLSKey),
 	)
@@ -174,11 +193,21 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				return nil
 			case <-ticker.C:
 				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "fetch_job").Set(float64(len(jobCh)))
-				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "raw_batch").Set(float64(len(rawBatchCh)))
+				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "raw_batch").Set(float64(len(rawBatchInputCh)))
 				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "normalized").Set(float64(len(normalizedCh)))
 			}
 		}
 	})
+
+	if p.cfg.StreamTransportEnabled {
+		streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
+		g.Go(func() error {
+			return p.runRawBatchStreamProducer(gCtx, rawBatchOutputCh, p.cfg.StreamBackend, streamName)
+		})
+		g.Go(func() error {
+			return p.runRawBatchStreamConsumer(gCtx, rawBatchInputCh, p.cfg.StreamBackend, streamName)
+		})
+	}
 
 	g.Go(func() error {
 		return coord.Run(gCtx)
@@ -194,4 +223,50 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	})
 
 	return g.Wait()
+}
+
+func (p *Pipeline) streamBoundaryName(boundary string) string {
+	namespace := strings.TrimSpace(p.cfg.StreamNamespace)
+	if namespace == "" {
+		namespace = "pipeline"
+	}
+	sessionID := strings.TrimSpace(p.cfg.StreamSessionID)
+	if sessionID == "" {
+		sessionID = "default"
+	}
+	return fmt.Sprintf("%s:chain=%s:network=%s:session=%s:boundary=%s", namespace, p.cfg.Chain, p.cfg.Network, sessionID, boundary)
+}
+
+func (p *Pipeline) runRawBatchStreamProducer(ctx context.Context, in <-chan event.RawBatch, stream *redisstream.Stream, streamName string) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case batch, ok := <-in:
+			if !ok {
+				return nil
+			}
+			if _, err := stream.PublishJSON(ctx, streamName, batch); err != nil {
+				return fmt.Errorf("stream producer failed: %w", err)
+			}
+		}
+	}
+}
+
+func (p *Pipeline) runRawBatchStreamConsumer(ctx context.Context, out chan<- event.RawBatch, stream *redisstream.Stream, streamName string) error {
+	lastID := "0"
+	for {
+		var batch event.RawBatch
+		nextID, err := stream.ReadJSON(ctx, streamName, lastID, &batch)
+		if err != nil {
+			return fmt.Errorf("stream consumer failed: %w", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- batch:
+			lastID = nextID
+		}
+	}
 }

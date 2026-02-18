@@ -102,6 +102,8 @@ type PipelineConfig struct {
 	CoordinatorAutoTunePolicyManifestDigest       string
 	CoordinatorAutoTunePolicyManifestRefreshEpoch int64
 	CoordinatorAutoTunePolicyActivationHoldTicks  int
+	StreamTransportEnabled                        bool
+	StreamNamespace                               string
 }
 
 type ServerConfig struct {
@@ -179,6 +181,8 @@ func Load() (*Config, error) {
 			CoordinatorAutoTunePolicyManifestDigest:       getEnv("COORDINATOR_AUTOTUNE_POLICY_MANIFEST_DIGEST", "manifest-v1"),
 			CoordinatorAutoTunePolicyManifestRefreshEpoch: int64(getEnvInt("COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH", 0)),
 			CoordinatorAutoTunePolicyActivationHoldTicks:  getEnvInt("COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS", 1),
+			StreamTransportEnabled:                        getEnvBool("PIPELINE_STREAM_TRANSPORT_ENABLED", false),
+			StreamNamespace:                               getEnv("PIPELINE_STREAM_NAMESPACE", "pipeline"),
 		},
 		Server: ServerConfig{
 			HealthPort: getEnvInt("HEALTH_PORT", 8080),
