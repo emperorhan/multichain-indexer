@@ -480,6 +480,47 @@ Slice gates for this tranche:
   - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
   - `failure_mode` is empty for `GO` and non-empty for `NO-GO`.
 
+### C0147 (`I-0722`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R5`: deterministic replay under restart.
+  - `R7`: strict chain isolation.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain/target wiring remains deterministic under restart boundaries.
+- `C0147` lock state: `C0147-PRD-RUNTIME-TARGET-VALIDATION-HARDENING`.
+- `C0147` queue adjacency: hard dependency `I-0722 -> I-0723 -> I-0724`.
+
+#### C0147 implementation contracts (`I-0723`)
+- Required artifact path:
+  - `.ralph/reports/I-0723-m96-s1-runtime-target-validation-matrix.md`
+- Required row fields (`s1`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `runtime_mode`, `target_key`, `chain`, `network`, `target_accepted`, `adapter_chain`, `adapter_network`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- Required mandatory rows:
+  - `chain=solana`, `network=devnet`, `target_key=solana-devnet`, `target_accepted=true`
+  - `chain=base`, `network=sepolia`, `target_key=base-sepolia`, `target_accepted=true`
+  - `chain=btc`, `network=testnet`, `target_key=btc-testnet`, `target_accepted=true`
+  - `runtime_mode=like-group`, `target_key=dogecoin-mainnet`, `target_accepted=false`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `target_accepted=true`
+  - `adapter_chain` and `adapter_network` are non-empty
+  - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`)
+- Required `NO-GO` checks:
+  - `outcome=NO-GO`
+  - `evidence_present=true`
+  - `target_accepted=false`
+  - `failure_mode` non-empty
+
+#### C0147 decision hook
+- `DP-0195-C0147`: `C0147` remains blocked until required rows in `.ralph/reports/I-0723-m96-s1-runtime-target-validation-matrix.md` are present with:
+  - `outcome=GO` for mandatory-chain rows and `outcome=NO-GO` for unsupported targets
+  - `evidence_present=true`
+  - `target_accepted=true` on GO rows
+  - `chain_adapter_runtime_wired_ok=true` on GO rows
+  - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`) on GO rows
+  - `failure_mode` empty for GO rows and non-empty for NO-GO rows.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:
@@ -5373,14 +5414,14 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0719` (`C0146`) planner handoff
-2. `I-0720` (`C0146` implementer) after `I-0719`
-3. `I-0721` (`C0146` qa gate) after `I-0720`
+1. `I-0722` (`C0147`) planner handoff
+2. `I-0723` (`C0147` implementer) after `I-0722`
+3. `I-0724` (`C0147` qa gate) after `I-0723`
 
 Planned next tranche queue:
-1. `I-0719` (`C0146`) to scope and dispatch chain-scoped adaptive throughput control completion.
-2. `I-0720` (`C0146` implementer) to harden chain-local auto-tune signal completeness and control isolation.
-3. `I-0721` (`C0146` qa gate) to validate `I-0720` evidence and chain-scoped hard-stop gates.
+1. `I-0722` (`C0147`) to scope and dispatch mandatory runtime target validation hardening.
+2. `I-0723` (`C0147` implementer) to enforce deterministic `RUNTIME_CHAIN_TARGET` parsing, validation, and startup wiring.
+3. `I-0724` (`C0147` qa gate) to validate required target rows and hard-stop semantics in `I-0723` evidence.
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
