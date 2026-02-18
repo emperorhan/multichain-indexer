@@ -760,6 +760,378 @@ func TestProcessJob_SeamCarryoverSuppressesPreCursorSequenceWhenNewerSignaturesE
 	}
 }
 
+func TestProcessJob_SeamCarryoverDeterministicPermutationsAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name                string
+		chain               model.Chain
+		network             model.Network
+		address             string
+		cursor              string
+		cursorSequence      int64
+		permutationA        []chain.SignatureInfo
+		permutationB        []chain.SignatureInfo
+		expectedHashes      []string
+		expectedSequence    int64
+		expectedCursorValue string
+		batchSize           int
+	}
+
+	testCases := []testCase{
+		{
+			name:           "solana-devnet",
+			chain:          model.ChainSolana,
+			network:        model.NetworkDevnet,
+			address:        "sol-carryover-addr",
+			cursor:         "sol-boundary-100",
+			cursorSequence: 100,
+			permutationA: []chain.SignatureInfo{
+				{Hash: "sol-carryover-new", Sequence: 102},
+				{Hash: "sol-carryover-old", Sequence: 99},
+				{Hash: " sol-carryover-boundary ", Sequence: 100},
+				{Hash: "sol-carryover-same", Sequence: 100},
+			},
+			permutationB: []chain.SignatureInfo{
+				{Hash: "sol-carryover-same", Sequence: 100},
+				{Hash: "sol-carryover-old", Sequence: 99},
+				{Hash: "sol-carryover-new", Sequence: 102},
+				{Hash: " sol-carryover-boundary ", Sequence: 100},
+			},
+			expectedHashes:      []string{"sol-carryover-same", "sol-carryover-new"},
+			expectedSequence:    102,
+			expectedCursorValue: "sol-carryover-new",
+		},
+		{
+			name:           "base-sepolia",
+			chain:          model.ChainBase,
+			network:        model.NetworkSepolia,
+			address:        "0xbase-carryover-addr",
+			cursor:         "0xBB00",
+			cursorSequence: 200,
+			permutationA: []chain.SignatureInfo{
+				{Hash: "CC00", Sequence: 201},
+				{Hash: " 0XBB00 ", Sequence: 200},
+				{Hash: "bb00", Sequence: 200},
+				{Hash: "AA00", Sequence: 199},
+			},
+			permutationB: []chain.SignatureInfo{
+				{Hash: "AA00", Sequence: 199},
+				{Hash: "bb00", Sequence: 200},
+				{Hash: "CC00", Sequence: 201},
+				{Hash: " 0XBB00 ", Sequence: 200},
+			},
+			expectedHashes:      []string{"0xcc00"},
+			expectedSequence:    201,
+			expectedCursorValue: "0xcc00",
+		},
+		{
+			name:           "btc-testnet",
+			chain:          model.ChainBTC,
+			network:        model.NetworkTestnet,
+			address:        "tb1c-addr",
+			cursor:         "aabb",
+			cursorSequence: 500,
+			permutationA: []chain.SignatureInfo{
+				{Hash: "tx-old", Sequence: 400},
+				{Hash: " 0XbbAA", Sequence: 500},
+				{Hash: "00aa", Sequence: 500},
+				{Hash: "tx-new", Sequence: 501},
+			},
+			permutationB: []chain.SignatureInfo{
+				{Hash: "00aa", Sequence: 500},
+				{Hash: "tx-old", Sequence: 400},
+				{Hash: "tx-new", Sequence: 501},
+				{Hash: " 0XbbAA", Sequence: 500},
+			},
+			expectedHashes:      []string{"00aa", "bbaa", "tx-new"},
+			expectedSequence:    501,
+			expectedCursorValue: "tx-new",
+			batchSize: 3,
+		},
+	}
+
+	extractHashes := func(sigs []event.SignatureInfo) []string {
+		out := make([]string, 0, len(sigs))
+		for _, sig := range sigs {
+			out = append(out, sig.Hash)
+		}
+		return out
+	}
+
+	run := func(t *testing.T, tc testCase, input []chain.SignatureInfo) event.RawBatch {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+		rawBatchCh := make(chan event.RawBatch, 1)
+		f := &Fetcher{
+			adapter:          mockAdapter,
+			rawBatchCh:       rawBatchCh,
+			logger:           slog.Default(),
+			retryMaxAttempts: 1,
+		}
+
+		cursor := tc.cursor
+		batchSize := tc.batchSize
+		if batchSize <= 0 {
+			batchSize = 2
+		}
+		job := event.FetchJob{
+			Chain:          tc.chain,
+			Network:        tc.network,
+			Address:        tc.address,
+			CursorValue:    &cursor,
+			CursorSequence: tc.cursorSequence,
+			BatchSize:      batchSize,
+		}
+
+		mockAdapter.EXPECT().
+			FetchNewSignatures(gomock.Any(), tc.address, gomock.Any(), batchSize+1).
+			Return(input, nil)
+
+		mockAdapter.EXPECT().
+			FetchTransactions(gomock.Any(), tc.expectedHashes).
+			DoAndReturn(func(_ context.Context, hashes []string) ([]json.RawMessage, error) {
+				payloads := make([]json.RawMessage, 0, len(hashes))
+				for _, hash := range hashes {
+					payloads = append(payloads, json.RawMessage(fmt.Sprintf(`{"tx":"%s"}`, hash)))
+				}
+				return payloads, nil
+			})
+
+		require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
+		batch := <-rawBatchCh
+		require.NotNil(t, batch.NewCursorValue)
+		assert.Equal(t, tc.expectedCursorValue, *batch.NewCursorValue)
+		require.Equal(t, tc.expectedSequence, batch.NewCursorSequence)
+		return batch
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			first := run(t, tc, tc.permutationA)
+			second := run(t, tc, tc.permutationB)
+
+			assert.Equal(t, tc.expectedHashes, extractHashes(first.Signatures))
+			assert.Equal(t, tc.expectedHashes, extractHashes(second.Signatures))
+			assert.Equal(t, first.Signatures, second.Signatures)
+		})
+	}
+}
+
+func TestProcessJob_AdaptiveBatchCarryoverPreservesAcrossAliasRepresentativeSwitchAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name          string
+		chain         model.Chain
+		network       model.Network
+		addressA      string
+		addressB      string
+		sigsA         []chain.SignatureInfo
+		sigsB         []chain.SignatureInfo
+		expectedA     []string
+		expectedB     []string
+		expectedCursor string
+	}
+
+	testCases := []testCase{
+		{
+			name:     "solana-devnet",
+			chain:    model.ChainSolana,
+			network:  model.NetworkDevnet,
+			addressA: " sol-carryover-alias-addr ",
+			addressB: "sol-carryover-alias-addr",
+			sigsA: []chain.SignatureInfo{
+				{Hash: "sol-alias-1", Sequence: 100},
+				{Hash: "sol-alias-2", Sequence: 200},
+			},
+			sigsB: []chain.SignatureInfo{
+				{Hash: "sol-alias-3", Sequence: 300},
+				{Hash: "sol-alias-4", Sequence: 400},
+			},
+			expectedA:     []string{"sol-alias-1", "sol-alias-2"},
+			expectedB:     []string{"sol-alias-3", "sol-alias-4"},
+			expectedCursor: "sol-alias-4",
+		},
+		{
+			name:     "base-sepolia",
+			chain:    model.ChainBase,
+			network:  model.NetworkSepolia,
+			addressA: " 0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA ",
+			addressB: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			sigsA: []chain.SignatureInfo{
+				{Hash: "0xCC00", Sequence: 500},
+				{Hash: "0xBB00", Sequence: 400},
+			},
+			sigsB: []chain.SignatureInfo{
+				{Hash: "0xDD00", Sequence: 600},
+				{Hash: "0xEE00", Sequence: 700},
+			},
+			expectedA:     []string{"0xbb00", "0xcc00"},
+			expectedB:     []string{"0xdd00", "0xee00"},
+			expectedCursor: "0xee00",
+		},
+		{
+			name:     "btc-testnet",
+			chain:    model.ChainBTC,
+			network:  model.NetworkTestnet,
+			addressA: " tb1qcarryoveraliasaddress000000000000000000 ",
+			addressB: "tb1qcarryoveraliasaddress000000000000000000",
+			sigsA: []chain.SignatureInfo{
+				{Hash: "tb1-tx-1", Sequence: 120},
+				{Hash: "tb1-tx-2", Sequence: 121},
+			},
+			sigsB: []chain.SignatureInfo{
+				{Hash: "tb1-tx-3", Sequence: 130},
+				{Hash: "tb1-tx-4", Sequence: 131},
+			},
+			expectedA:     []string{"tb1-tx-1", "tb1-tx-2"},
+			expectedB:     []string{"tb1-tx-3", "tb1-tx-4"},
+			expectedCursor: "tb1-tx-4",
+		},
+	}
+
+	expectedTxs := func(hashes []string) []json.RawMessage {
+		out := make([]json.RawMessage, 0, len(hashes))
+		for _, hash := range hashes {
+			out = append(out, json.RawMessage(fmt.Sprintf(`{"tx":"%s"}`, hash)))
+		}
+		return out
+	}
+
+	run := func(t *testing.T, tc testCase) event.RawBatch {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+
+		rawBatchCh := make(chan event.RawBatch, 2)
+		f := &Fetcher{
+			adapter:          mockAdapter,
+			rawBatchCh:       rawBatchCh,
+			logger:           slog.Default(),
+			retryMaxAttempts: 1,
+		}
+
+		canonicalFetchAddress := canonicalizeWatchedAddressIdentity(tc.chain, tc.addressA)
+
+		mockAdapter.EXPECT().
+			FetchNewSignatures(gomock.Any(), canonicalFetchAddress, gomock.Any(), 4).
+			Return(tc.sigsA, nil)
+		mockAdapter.EXPECT().
+			FetchTransactions(gomock.Any(), tc.expectedA).
+			Return(expectedTxs(tc.expectedA), nil)
+
+		mockAdapter.EXPECT().
+			FetchNewSignatures(gomock.Any(), canonicalFetchAddress, gomock.Any(), 2).
+			Return(tc.sigsB, nil)
+		mockAdapter.EXPECT().
+			FetchTransactions(gomock.Any(), tc.expectedB).
+			Return(expectedTxs(tc.expectedB), nil)
+
+		first := event.FetchJob{
+			Chain:     tc.chain,
+			Network:   tc.network,
+			Address:   tc.addressA,
+			BatchSize: 4,
+		}
+		second := event.FetchJob{
+			Chain:     tc.chain,
+			Network:   tc.network,
+			Address:   tc.addressB,
+			BatchSize: 4,
+		}
+
+		require.NoError(t, f.processJob(context.Background(), slog.Default(), first))
+		firstBatch := <-rawBatchCh
+		require.Len(t, firstBatch.Signatures, len(tc.expectedA))
+		assert.Equal(t, tc.expectedA, []string{firstBatch.Signatures[0].Hash, firstBatch.Signatures[1].Hash})
+
+		require.NoError(t, f.processJob(context.Background(), slog.Default(), second))
+		secondBatch := <-rawBatchCh
+		require.NotNil(t, secondBatch.NewCursorValue)
+		assert.Equal(t, tc.expectedCursor, *secondBatch.NewCursorValue)
+		return secondBatch
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			batch := run(t, tc)
+			require.Len(t, batch.Signatures, len(tc.expectedB))
+			assert.Equal(t, tc.expectedB, []string{batch.Signatures[0].Hash, batch.Signatures[1].Hash})
+		})
+	}
+}
+
+func TestProcessJob_AdaptiveBatchStateUsesChainNetworkScopeForAliasCanonicalizedAddresses(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
+	rawBatchCh := make(chan event.RawBatch, 2)
+	f := &Fetcher{
+		adapter:          mockAdapter,
+		rawBatchCh:       rawBatchCh,
+		logger:           slog.Default(),
+		retryMaxAttempts: 1,
+	}
+
+	address := " shared-chain-network-addr "
+	solAddress := canonicalizeWatchedAddressIdentity(model.ChainSolana, address)
+	baseAddress := canonicalizeWatchedAddressIdentity(model.ChainBase, address)
+	require.Equal(t, "shared-chain-network-addr", solAddress)
+	require.Equal(t, "shared-chain-network-addr", baseAddress)
+
+	solSignatures := []chain.SignatureInfo{
+		{Hash: "sol-scoped-1", Sequence: 11},
+		{Hash: "sol-scoped-2", Sequence: 12},
+	}
+	baseSignatures := []chain.SignatureInfo{
+		{Hash: "base-scoped-1", Sequence: 21},
+		{Hash: "base-scoped-2", Sequence: 22},
+	}
+
+	mockAdapter.EXPECT().
+		FetchNewSignatures(gomock.Any(), solAddress, gomock.Any(), 4).
+		Return(solSignatures, nil)
+	mockAdapter.EXPECT().
+		FetchTransactions(gomock.Any(), []string{"sol-scoped-1", "sol-scoped-2"}).
+		Return([]json.RawMessage{
+			json.RawMessage(`{"tx":"sol-scoped-1"}`),
+			json.RawMessage(`{"tx":"sol-scoped-2"}`),
+		}, nil)
+
+	mockAdapter.EXPECT().
+		FetchNewSignatures(gomock.Any(), baseAddress, gomock.Any(), 4).
+		Return(baseSignatures, nil)
+	mockAdapter.EXPECT().
+		FetchTransactions(gomock.Any(), []string{"base-scoped-1", "base-scoped-2"}).
+		Return([]json.RawMessage{
+			json.RawMessage(`{"tx":"base-scoped-1"}`),
+			json.RawMessage(`{"tx":"base-scoped-2"}`),
+		}, nil)
+
+	solanaJob := event.FetchJob{
+		Chain:     model.ChainSolana,
+		Network:   model.NetworkDevnet,
+		Address:   address,
+		BatchSize: 4,
+	}
+	baseJob := event.FetchJob{
+		Chain:     model.ChainBase,
+		Network:   model.NetworkSepolia,
+		Address:   address,
+		BatchSize: 4,
+	}
+
+	require.NoError(t, f.processJob(context.Background(), slog.Default(), solanaJob))
+	require.NoError(t, f.processJob(context.Background(), slog.Default(), baseJob))
+
+	solBatch := <-rawBatchCh
+	baseBatch := <-rawBatchCh
+	require.Len(t, solBatch.Signatures, 2)
+	require.Len(t, baseBatch.Signatures, 2)
+	assert.Equal(t, []string{"sol-scoped-1", "sol-scoped-2"}, []string{solBatch.Signatures[0].Hash, solBatch.Signatures[1].Hash})
+	assert.Equal(t, []string{"base-scoped-1", "base-scoped-2"}, []string{baseBatch.Signatures[0].Hash, baseBatch.Signatures[1].Hash})
+}
+
 func TestProcessJob_SeamCarryoverKeepsPreCursorSequenceWhenNoNewerSignatures(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
@@ -872,7 +1244,7 @@ func TestProcessJob_BoundaryPartitionVarianceConvergesAcrossMandatoryChains(t *t
 			}
 
 			expectedHashes := canonicalizeSignatures(tc.chain, sigResponses[i])
-			expectedHashes = suppressBoundaryCursorSignatures(tc.chain, expectedHashes, canonicalizeCursorValue(tc.chain, job.CursorValue))
+			expectedHashes = suppressBoundaryCursorSignatures(tc.chain, expectedHashes, canonicalizeCursorValue(tc.chain, job.CursorValue), job.CursorSequence)
 			if len(expectedHashes) > job.BatchSize {
 				expectedHashes = expectedHashes[:job.BatchSize]
 			}
@@ -902,7 +1274,7 @@ func TestProcessJob_BoundaryPartitionVarianceConvergesAcrossMandatoryChains(t *t
 
 		collected := make([]string, 0, 4)
 		for _, job := range jobs {
-			f.setAdaptiveBatchSize(job.Address, job.BatchSize)
+			f.setAdaptiveBatchSize(job.Chain, job.Network, job.Address, job.BatchSize)
 			require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
 			select {
 			case batch := <-rawBatchCh:
@@ -1249,7 +1621,7 @@ func TestProcessJob_PinnedCutoffPaginationPermutationsConvergeAcrossMandatoryCha
 				BatchSize:      spec.batchSize,
 			}
 
-			f.setAdaptiveBatchSize(tc.address, spec.batchSize)
+			f.setAdaptiveBatchSize(tc.chain, tc.network, tc.address, spec.batchSize)
 			require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
 
 			select {
@@ -1352,7 +1724,7 @@ func TestProcessJob_PinnedCutoffLateAppendDeferredWithoutDuplicateAcrossMandator
 				BatchSize:      3,
 				FetchCutoffSeq: tc.firstCutoff,
 			}
-			f.setAdaptiveBatchSize(tc.address, first.BatchSize)
+			f.setAdaptiveBatchSize(tc.chain, tc.network, tc.address, first.BatchSize)
 			require.NoError(t, f.processJob(context.Background(), slog.Default(), first))
 
 			cursor := tc.resumeCursor
@@ -1365,7 +1737,7 @@ func TestProcessJob_PinnedCutoffLateAppendDeferredWithoutDuplicateAcrossMandator
 				BatchSize:      2,
 				FetchCutoffSeq: tc.secondCutoff,
 			}
-			f.setAdaptiveBatchSize(tc.address, second.BatchSize)
+			f.setAdaptiveBatchSize(tc.chain, tc.network, tc.address, second.BatchSize)
 			require.NoError(t, f.processJob(context.Background(), slog.Default(), second))
 
 			collected := make([]string, 0, len(tc.expectedHashes))
@@ -1446,7 +1818,7 @@ func TestProcessJob_PinnedCutoffReplayResumeConvergesAcrossMandatoryChains(t *te
 		out := make([]string, 0, len(tc.expectedHashes))
 		cursorSeqs := make([]int64, 0, len(jobs))
 		for _, job := range jobs {
-			f.setAdaptiveBatchSize(tc.address, job.BatchSize)
+			f.setAdaptiveBatchSize(tc.chain, tc.network, tc.address, job.BatchSize)
 			require.NoError(t, f.processJob(context.Background(), slog.Default(), job))
 			select {
 			case batch := <-rawBatchCh:

@@ -1749,7 +1749,7 @@ run_codex_self_heal() {
   local model="$3"
   local validation_log="$4"
   local attempt="$5"
-  local prompt log_file rc validation_excerpt failure_type issue_id
+  local prompt log_file rc validation_excerpt failure_type issue_id prompt_file
 
   log_file="${LOGS_DIR}/$(basename "${issue_file}" .md)-self-heal-${attempt}-$(date -u +%Y%m%dT%H%M%SZ).log"
   issue_id="$(meta_value "${issue_file}" "id")"
@@ -1813,9 +1813,13 @@ EOF
     "${CODEX_SAFETY_GUARD_CMD}" "${cmd[@]}"
   fi
 
+  prompt_file="$(mktemp)"
+  printf '%s\n' "${prompt}" > "${prompt_file}"
+
   set +e
-  "${cmd[@]}" "${prompt}" >"${log_file}" 2>&1
+  "${cmd[@]}" "-" <"${prompt_file}" >"${log_file}" 2>&1
   rc=$?
+  rm -f "${prompt_file}"
   set -e
   RALPH_LAST_LOG_FILE="${log_file}"
   return "${rc}"

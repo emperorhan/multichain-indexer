@@ -281,7 +281,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 		}
 	}
 
-	groups := groupWatchedAddresses(c.chain, addresses)
+	groups := groupWatchedAddresses(c.chain, c.network, addresses)
 	c.logger.Debug("creating fetch jobs", "address_count", len(addresses), "fan_in_group_count", len(groups))
 
 	jobs := make([]event.FetchJob, 0, len(groups))
@@ -312,7 +312,23 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			})
 		}
 
-		representative, cursorValue, cursorSequence := resolveLagAwareCandidate(c.chain, group.identity, candidates)
+		representative, cursorValue, cursorSequence := resolveLagAwareCandidate(c.chain, c.network, group.identity, candidates)
+		if len(group.members) > 1 {
+			c.logger.Warn("coordinator fan-in overlap collision resolved deterministically",
+				"chain", c.chain,
+				"network", c.network,
+				"identity", group.identity,
+				"candidate_count", len(candidates),
+				"candidate_addresses", fanInCandidateAddresses(candidates),
+				"candidate_scope_keys", fanInCandidateScopeKeys(c.chain, c.network, candidates),
+				"candidate_cursor_sequences", fanInCandidateCursorSequences(candidates),
+				"candidate_cursor_values", fanInCandidateCursorValues(c.chain, candidates),
+				"selected_address", representative.address.Address,
+				"selected_scope_key", stableAddressScopeOrderKey(c.chain, c.network, representative.address.Address),
+				"selected_cursor_sequence", cursorSequence,
+				"selected_cursor_value", derefCursorValue(cursorValue),
+			)
+		}
 
 		if !hasMinCursor || cursorSequence < minCursorSequence {
 			minCursorSequence = cursorSequence
@@ -479,7 +495,7 @@ type watchedAddressCandidate struct {
 	cursor  *model.AddressCursor
 }
 
-func groupWatchedAddresses(chain model.Chain, addresses []model.WatchedAddress) []watchedAddressGroup {
+func groupWatchedAddresses(chain model.Chain, network model.Network, addresses []model.WatchedAddress) []watchedAddressGroup {
 	if len(addresses) == 0 {
 		return nil
 	}
@@ -503,8 +519,8 @@ func groupWatchedAddresses(chain model.Chain, addresses []model.WatchedAddress) 
 	for _, identity := range identities {
 		members := append([]model.WatchedAddress(nil), groupsByIdentity[identity]...)
 		sort.Slice(members, func(i, j int) bool {
-			leftKey := stableAddressOrderKey(chain, members[i].Address)
-			rightKey := stableAddressOrderKey(chain, members[j].Address)
+			leftKey := stableAddressScopeOrderKey(chain, network, members[i].Address)
+			rightKey := stableAddressScopeOrderKey(chain, network, members[j].Address)
 			if leftKey != rightKey {
 				return leftKey < rightKey
 			}
@@ -524,8 +540,54 @@ func groupWatchedAddresses(chain model.Chain, addresses []model.WatchedAddress) 
 	return groups
 }
 
+// fanInCandidateAddresses returns raw candidate addresses in deterministic candidate order.
+func fanInCandidateAddresses(candidates []watchedAddressCandidate) []string {
+	addresses := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		addresses = append(addresses, candidate.address.Address)
+	}
+	return addresses
+}
+
+func fanInCandidateScopeKeys(chain model.Chain, network model.Network, candidates []watchedAddressCandidate) []string {
+	keys := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		keys = append(keys, stableAddressScopeOrderKey(chain, network, candidate.address.Address))
+	}
+	return keys
+}
+
+func fanInCandidateCursorSequences(candidates []watchedAddressCandidate) []int64 {
+	sequences := make([]int64, 0, len(candidates))
+	for _, candidate := range candidates {
+		sequences = append(sequences, lagAwareCursorSequence(candidate.cursor))
+	}
+	return sequences
+}
+
+func fanInCandidateCursorValues(chain model.Chain, candidates []watchedAddressCandidate) []string {
+	cursorValues := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		cursorValue := lagAwareCursorValue(chain, candidate.cursor)
+		if cursorValue == nil {
+			cursorValues = append(cursorValues, "")
+			continue
+		}
+		cursorValues = append(cursorValues, *cursorValue)
+	}
+	return cursorValues
+}
+
+func derefCursorValue(cursor *string) string {
+	if cursor == nil {
+		return ""
+	}
+	return *cursor
+}
+
 func resolveLagAwareCandidate(
 	chain model.Chain,
+	network model.Network,
 	identity string,
 	candidates []watchedAddressCandidate,
 ) (watchedAddressCandidate, *string, int64) {
@@ -535,7 +597,7 @@ func resolveLagAwareCandidate(
 
 	best := candidates[0]
 	for _, candidate := range candidates[1:] {
-		if shouldReplaceLagAwareCandidate(chain, identity, best, candidate) {
+		if shouldReplaceLagAwareCandidate(chain, network, identity, best, candidate) {
 			best = candidate
 		}
 	}
@@ -546,6 +608,7 @@ func resolveLagAwareCandidate(
 
 func shouldReplaceLagAwareCandidate(
 	chain model.Chain,
+	network model.Network,
 	identity string,
 	existing watchedAddressCandidate,
 	incoming watchedAddressCandidate,
@@ -556,16 +619,28 @@ func shouldReplaceLagAwareCandidate(
 		return incomingSeq < existingSeq
 	}
 
+	existingCanonical := isCanonicalAddressForm(chain, identity, existing.address.Address)
+	incomingCanonical := isCanonicalAddressForm(chain, identity, incoming.address.Address)
+	if existingCanonical != incomingCanonical {
+		return incomingCanonical
+	}
+
+	existingExactCanonical := isCanonicalAddressExactForm(identity, existing.address.Address)
+	incomingExactCanonical := isCanonicalAddressExactForm(identity, incoming.address.Address)
+	if existingExactCanonical != incomingExactCanonical {
+		return incomingExactCanonical
+	}
+
 	existingCursor := lagAwareCursorValue(chain, existing.cursor)
 	incomingCursor := lagAwareCursorValue(chain, incoming.cursor)
 	if cmp := compareLagAwareCursorValue(incomingCursor, existingCursor); cmp != 0 {
 		return cmp < 0
 	}
 
-	existingCanonical := isCanonicalAddressForm(chain, identity, existing.address.Address)
-	incomingCanonical := isCanonicalAddressForm(chain, identity, incoming.address.Address)
-	if existingCanonical != incomingCanonical {
-		return incomingCanonical
+	existingScopeKey := stableAddressScopeOrderKey(chain, network, existing.address.Address)
+	incomingScopeKey := stableAddressScopeOrderKey(chain, network, incoming.address.Address)
+	if existingScopeKey != incomingScopeKey {
+		return incomingScopeKey < existingScopeKey
 	}
 
 	existingKey := stableAddressOrderKey(chain, existing.address.Address)
@@ -579,6 +654,17 @@ func shouldReplaceLagAwareCandidate(
 	if existingTrimmed != incomingTrimmed {
 		return incomingTrimmed < existingTrimmed
 	}
+
+	existingWhitespace := len(existing.address.Address) - len(existingTrimmed)
+	incomingWhitespace := len(incoming.address.Address) - len(incomingTrimmed)
+	if existingWhitespace != incomingWhitespace {
+		return incomingWhitespace < existingWhitespace
+	}
+
+	if len(incoming.address.Address) != len(existing.address.Address) {
+		return len(incoming.address.Address) < len(existing.address.Address)
+	}
+
 	return incoming.address.Address < existing.address.Address
 }
 
@@ -620,6 +706,15 @@ func compareLagAwareCursorValue(left, right *string) int {
 func isCanonicalAddressForm(chain model.Chain, identity, address string) bool {
 	return canonicalWatchedAddressIdentity(chain, address) == identity &&
 		strings.TrimSpace(address) == identity
+}
+
+func isCanonicalAddressExactForm(identity, address string) bool {
+	trimmed := strings.TrimSpace(address)
+	return trimmed == identity && trimmed == address
+}
+
+func stableAddressScopeOrderKey(chain model.Chain, network model.Network, address string) string {
+	return fmt.Sprintf("%s|%s|%s", chain, network, stableAddressOrderKey(chain, address))
 }
 
 func stableAddressOrderKey(chain model.Chain, address string) string {
@@ -667,6 +762,13 @@ func canonicalSignatureIdentity(chain model.Chain, hash string) string {
 	trimmed := strings.TrimSpace(hash)
 	if trimmed == "" {
 		return ""
+	}
+	if chain == model.ChainBTC {
+		withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
+		if withoutPrefix == "" {
+			return ""
+		}
+		return strings.ToLower(withoutPrefix)
 	}
 	if !isEVMChain(chain) {
 		return trimmed

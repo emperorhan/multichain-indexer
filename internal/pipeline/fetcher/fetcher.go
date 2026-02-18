@@ -156,7 +156,15 @@ func (f *Fetcher) worker(ctx context.Context, workerID int) error {
 }
 
 func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.FetchJob) error {
-	requestedBatch := f.resolveBatchSize(job.Address, job.BatchSize)
+	fetchAddress := canonicalizeWatchedAddressIdentity(job.Chain, job.Address)
+	if fetchAddress == "" {
+		fetchAddress = strings.TrimSpace(job.Address)
+	}
+	if fetchAddress == "" {
+		fetchAddress = job.Address
+	}
+
+	requestedBatch := f.resolveBatchSize(job.Chain, job.Network, fetchAddress, job.BatchSize)
 	canonicalCursor := canonicalizeCursorValue(job.Chain, job.CursorValue)
 	signatureBatch := requestedBatch
 	if canonicalCursor != nil {
@@ -164,9 +172,11 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	}
 
 	// 1. Fetch new signatures with retry/backoff and adaptive batch size reduction.
-	sigs, sigBatchSize, err := f.fetchSignaturesWithRetry(ctx, log, job, canonicalCursor, signatureBatch)
+	fetchJob := job
+	fetchJob.Address = fetchAddress
+	sigs, sigBatchSize, err := f.fetchSignaturesWithRetry(ctx, log, fetchJob, canonicalCursor, signatureBatch)
 	if err != nil {
-		f.setAdaptiveBatchSize(job.Address, sigBatchSize)
+		f.setAdaptiveBatchSize(job.Chain, job.Network, fetchAddress, sigBatchSize)
 		return err
 	}
 
@@ -178,8 +188,8 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	// Canonicalize provider-returned ordering and suppress overlap duplicates.
 	sigs = canonicalizeSignatures(job.Chain, sigs)
 	sigs = suppressPostCutoffSignatures(sigs, job.FetchCutoffSeq)
-	sigs = suppressBoundaryCursorSignatures(job.Chain, sigs, canonicalCursor)
-	sigs = suppressPreCursorSequenceCarryover(sigs, job.CursorSequence)
+	sigs = suppressBoundaryCursorSignatures(job.Chain, sigs, canonicalCursor, job.CursorSequence)
+	sigs = suppressPreCursorSequenceCarryover(sigs, job.CursorSequence, requestedBatch)
 	if len(sigs) == 0 {
 		log.Debug("no canonical signatures after overlap suppression", "address", job.Address)
 		return nil
@@ -191,7 +201,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	// 2. Fetch raw transactions with retry/backoff.
 	selectedSigs, rawTxs, txBatchSize, err := f.fetchTransactionsWithRetry(ctx, log, job, sigs)
 	if err != nil {
-		f.setAdaptiveBatchSize(job.Address, txBatchSize)
+		f.setAdaptiveBatchSize(job.Chain, job.Network, fetchAddress, txBatchSize)
 		return err
 	}
 
@@ -237,7 +247,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 		return ctx.Err()
 	}
 
-	f.updateAdaptiveBatchSize(job.Address, job.BatchSize, requestedBatch, sigBatchSize, txBatchSize, len(selectedSigs))
+	f.updateAdaptiveBatchSize(job.Chain, job.Network, fetchAddress, job.BatchSize, requestedBatch, sigBatchSize, txBatchSize, len(selectedSigs))
 	return nil
 }
 
@@ -406,7 +416,7 @@ func (f *Fetcher) recordRPCResult(chain, network string, isError bool) {
 	f.autoTuneSignals.RecordRPCResult(chain, network, isError)
 }
 
-func (f *Fetcher) resolveBatchSize(address string, hardCap int) int {
+func (f *Fetcher) resolveBatchSize(chain model.Chain, network model.Network, address string, hardCap int) int {
 	if hardCap <= 0 {
 		hardCap = 1
 	}
@@ -418,23 +428,24 @@ func (f *Fetcher) resolveBatchSize(address string, hardCap int) int {
 		f.batchSizeByAddress = make(map[string]int)
 	}
 
-	size, ok := f.batchSizeByAddress[address]
+	key := f.batchStateKey(chain, network, address)
+	size, ok := f.batchSizeByAddress[key]
 	if !ok || size <= 0 {
-		f.batchSizeByAddress[address] = hardCap
+		f.batchSizeByAddress[key] = hardCap
 		return hardCap
 	}
 	if size > hardCap {
 		size = hardCap
-		f.batchSizeByAddress[address] = size
+		f.batchSizeByAddress[key] = size
 	}
 	if size < f.effectiveAdaptiveMinBatch() {
 		size = f.effectiveAdaptiveMinBatch()
-		f.batchSizeByAddress[address] = size
+		f.batchSizeByAddress[key] = size
 	}
 	return size
 }
 
-func (f *Fetcher) setAdaptiveBatchSize(address string, size int) {
+func (f *Fetcher) setAdaptiveBatchSize(chain model.Chain, network model.Network, address string, size int) {
 	if size <= 0 {
 		return
 	}
@@ -448,10 +459,19 @@ func (f *Fetcher) setAdaptiveBatchSize(address string, size int) {
 	if f.batchSizeByAddress == nil {
 		f.batchSizeByAddress = make(map[string]int)
 	}
-	f.batchSizeByAddress[address] = size
+	f.batchSizeByAddress[f.batchStateKey(chain, network, address)] = size
 }
 
-func (f *Fetcher) updateAdaptiveBatchSize(address string, hardCap, requested, usedSigBatch, usedTxBatch, selectedCount int) {
+func (f *Fetcher) updateAdaptiveBatchSize(
+	chain model.Chain,
+	network model.Network,
+	address string,
+	hardCap,
+	requested,
+	usedSigBatch,
+	usedTxBatch,
+	selectedCount int,
+) {
 	usedBatch := usedSigBatch
 	if usedTxBatch < usedBatch {
 		usedBatch = usedTxBatch
@@ -461,7 +481,7 @@ func (f *Fetcher) updateAdaptiveBatchSize(address string, hardCap, requested, us
 	}
 
 	if usedBatch < requested {
-		f.setAdaptiveBatchSize(address, usedBatch)
+		f.setAdaptiveBatchSize(chain, network, address, usedBatch)
 		return
 	}
 
@@ -477,8 +497,12 @@ func (f *Fetcher) updateAdaptiveBatchSize(address string, hardCap, requested, us
 		if next > hardCap {
 			next = hardCap
 		}
-		f.setAdaptiveBatchSize(address, next)
+		f.setAdaptiveBatchSize(chain, network, address, next)
 	}
+}
+
+func (f *Fetcher) batchStateKey(chain model.Chain, network model.Network, address string) string {
+	return fmt.Sprintf("%s|%s|%s", chain, network, canonicalizeWatchedAddressIdentity(chain, address))
 }
 
 func (f *Fetcher) reduceBatchSize(current int) int {
@@ -591,18 +615,13 @@ func canonicalizeSignatures(chainID model.Chain, sigs []chain.SignatureInfo) []c
 	for _, sig := range byIdentity {
 		ordered = append(ordered, sig)
 	}
-
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].Sequence != ordered[j].Sequence {
-			return ordered[i].Sequence < ordered[j].Sequence
-		}
-		return ordered[i].Hash < ordered[j].Hash
-	})
+	sortSignatureInfosBySequenceThenHash(ordered)
 
 	return ordered
 }
 
-func suppressBoundaryCursorSignatures(chainID model.Chain, sigs []chain.SignatureInfo, cursor *string) []chain.SignatureInfo {
+func suppressBoundaryCursorSignatures(chainID model.Chain, sigs []chain.SignatureInfo, cursor *string, cursorSequence int64) []chain.SignatureInfo {
+	_ = cursorSequence
 	if len(sigs) == 0 || cursor == nil {
 		return sigs
 	}
@@ -636,31 +655,74 @@ func suppressPostCutoffSignatures(sigs []chain.SignatureInfo, cutoffSeq int64) [
 	return filtered
 }
 
-func suppressPreCursorSequenceCarryover(sigs []chain.SignatureInfo, previousCursorSequence int64) []chain.SignatureInfo {
+func suppressPreCursorSequenceCarryover(
+	sigs []chain.SignatureInfo,
+	previousCursorSequence int64,
+	requestedBatch int,
+) []chain.SignatureInfo {
+	// Keep rollback candidates intact when no signatures reach the prior cursor sequence.
 	if len(sigs) == 0 || previousCursorSequence <= 0 {
 		return sigs
 	}
 
-	hasAtOrAfterCursor := false
-	for _, sig := range sigs {
-		if sig.Sequence >= previousCursorSequence {
-			hasAtOrAfterCursor = true
-			break
-		}
-	}
-	if !hasAtOrAfterCursor {
-		// Keep rollback candidates intact when all signatures are before cursor.
-		return sigs
+	stable := make([]chain.SignatureInfo, len(sigs))
+	copy(stable, sigs)
+	sortSignatureInfosBySequenceThenHash(stable)
+
+	if requestedBatch <= 0 {
+		requestedBatch = 1
 	}
 
-	filtered := make([]chain.SignatureInfo, 0, len(sigs))
-	for _, sig := range sigs {
+	cursorHits := make([]chain.SignatureInfo, 0, len(stable))
+	cursorMisses := make([]chain.SignatureInfo, 0, len(stable))
+	for _, sig := range stable {
 		if sig.Sequence < previousCursorSequence {
 			continue
 		}
-		filtered = append(filtered, sig)
+		if sig.Sequence == previousCursorSequence {
+			cursorHits = append(cursorHits, sig)
+			continue
+		}
+		cursorMisses = append(cursorMisses, sig)
 	}
-	return filtered
+
+	if len(cursorHits) == 0 && len(cursorMisses) == 0 {
+		return stable
+	}
+
+	// If we are overflowing the requested batch, prefer newest signatures and
+	// deterministically retain only enough cursor-sequence entries to fill the window.
+	if len(cursorMisses) >= requestedBatch {
+		return cursorMisses[:requestedBatch]
+	}
+	if len(cursorMisses)+len(cursorHits) <= requestedBatch {
+		cursorMisses = append(cursorMisses, cursorHits...)
+		sortSignatureInfosBySequenceThenHash(cursorMisses)
+		return cursorMisses
+	}
+
+	keepAtCursorCount := requestedBatch - len(cursorMisses)
+	if keepAtCursorCount > 0 && len(cursorHits) > keepAtCursorCount {
+		selectedCursorHits := append([]chain.SignatureInfo(nil), cursorHits...)
+		sort.Slice(selectedCursorHits, func(i, j int) bool {
+			return selectedCursorHits[i].Hash > selectedCursorHits[j].Hash
+		})
+		selectedCursorHits = selectedCursorHits[:keepAtCursorCount]
+		cursorHits = selectedCursorHits
+	}
+
+	composite := append(append(make([]chain.SignatureInfo, 0, len(cursorMisses)+len(cursorHits)), cursorMisses...), cursorHits...)
+	sortSignatureInfosBySequenceThenHash(composite)
+	return composite
+}
+
+func sortSignatureInfosBySequenceThenHash(sigs []chain.SignatureInfo) {
+	sort.Slice(sigs, func(i, j int) bool {
+		if sigs[i].Sequence != sigs[j].Sequence {
+			return sigs[i].Sequence < sigs[j].Sequence
+		}
+		return sigs[i].Hash < sigs[j].Hash
+	})
 }
 
 func shouldReplaceCanonicalSignature(existing, incoming chain.SignatureInfo) bool {
@@ -679,6 +741,27 @@ func shouldReplaceCanonicalSignature(existing, incoming chain.SignatureInfo) boo
 	}
 
 	return incoming.Hash < existing.Hash
+}
+
+func canonicalizeWatchedAddressIdentity(chainID model.Chain, address string) string {
+	trimmed := strings.TrimSpace(address)
+	if trimmed == "" {
+		return ""
+	}
+	if isEVMChain(chainID) {
+		withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
+		if withoutPrefix == "" {
+			return ""
+		}
+		if isHexString(withoutPrefix) {
+			return "0x" + strings.ToLower(withoutPrefix)
+		}
+		if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
+			return "0x" + strings.ToLower(withoutPrefix)
+		}
+	}
+
+	return trimmed
 }
 
 func canonicalSignatureIdentity(chainID model.Chain, hash string) string {

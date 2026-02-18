@@ -487,6 +487,9 @@ func TestTick_FanInOrderVarianceDeterministicAcrossMandatoryChains(t *testing.T)
 	solOther := "9xQeWvG816bUx9EPf7R3mNq8K6V3A8wH2fJ9Q9q5Y8V"
 	solAliasCursor := "sig-sol-200"
 	solOtherCursor := "sig-sol-201"
+	btcAliasA := "tb1kz4qaexampleaddress0000000000000000000"
+	btcAliasB := "  tb1kz4qaexampleaddress0000000000000000000"
+	btcAliasCursor := "7btxexamplecursor0000000000000000000000"
 
 	tests := []testCase{
 		{
@@ -526,6 +529,23 @@ func TestTick_FanInOrderVarianceDeterministicAcrossMandatoryChains(t *testing.T)
 			cursorByKey: map[string]*model.AddressCursor{
 				solAlias: {Address: solAlias, CursorValue: strPtr(solAliasCursor), CursorSequence: 200},
 				solOther: {Address: solOther, CursorValue: strPtr(solOtherCursor), CursorSequence: 201},
+			},
+		},
+		{
+			name:    "btc-testnet",
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			addressesA: []model.WatchedAddress{
+				{Address: btcAliasB, WalletID: &walletB},
+				{Address: btcAliasA, WalletID: &walletA},
+			},
+			addressesB: []model.WatchedAddress{
+				{Address: btcAliasA, WalletID: &walletA},
+				{Address: btcAliasB, WalletID: &walletB},
+			},
+			cursorByKey: map[string]*model.AddressCursor{
+				btcAliasA: {Address: btcAliasA, CursorValue: strPtr(btcAliasCursor), CursorSequence: 50},
+				btcAliasB: {Address: btcAliasB, CursorValue: strPtr("7btxexamplecursor0000000000000000000000"), CursorSequence: 52},
 			},
 		},
 	}
@@ -589,6 +609,142 @@ func TestTick_FanInOrderVarianceDeterministicAcrossMandatoryChains(t *testing.T)
 			jobsA := run(t, tc, tc.addressesA)
 			jobsB := run(t, tc, tc.addressesB)
 			assert.Equal(t, jobsA, jobsB)
+		})
+	}
+}
+
+func TestTick_FanInRepresentativeAliasCarryoverDeterministicAcrossMandatoryChains(t *testing.T) {
+	type testCase struct {
+		name            string
+		chain           model.Chain
+		network         model.Network
+		permA           []model.WatchedAddress
+		permB           []model.WatchedAddress
+		cursorByKey     map[string]*model.AddressCursor
+		expectedAddress string
+		expectedCursor  string
+		expectedSeq     int64
+		expectedWallet  string
+		expectedOrg     string
+	}
+
+	baseCanonical := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	baseAlias := " 0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	solCanonical := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
+	solAlias := " " + solCanonical + " "
+	btcCanonical := "tb1qcanonicalaliasaddress000000000000000000"
+	btcAlias := " " + btcCanonical
+	wallet := "wallet-carryover"
+	org := "org-carryover"
+
+	tests := []testCase{
+		{
+			name:     "base-sepolia",
+			chain:    model.ChainBase,
+			network:  model.NetworkSepolia,
+			permA:    []model.WatchedAddress{{Address: baseAlias, WalletID: &wallet, OrganizationID: &org}, {Address: baseCanonical, WalletID: &wallet, OrganizationID: &org}},
+			permB:    []model.WatchedAddress{{Address: baseCanonical, WalletID: &wallet, OrganizationID: &org}, {Address: baseAlias, WalletID: &wallet, OrganizationID: &org}},
+			cursorByKey: map[string]*model.AddressCursor{
+				baseAlias:   {Address: baseAlias, CursorValue: strPtr("0xABC001"), CursorSequence: 9},
+				baseCanonical: {Address: baseCanonical, CursorValue: strPtr("0XABC001"), CursorSequence: 9},
+			},
+			expectedAddress: baseCanonical,
+			expectedCursor:  "0xabc001",
+			expectedSeq:     9,
+			expectedWallet:  wallet,
+			expectedOrg:     org,
+		},
+		{
+			name:     "solana-devnet",
+			chain:    model.ChainSolana,
+			network:  model.NetworkDevnet,
+			permA:    []model.WatchedAddress{{Address: solAlias, WalletID: &wallet, OrganizationID: &org}, {Address: solCanonical, WalletID: &wallet, OrganizationID: &org}},
+			permB:    []model.WatchedAddress{{Address: solCanonical, WalletID: &wallet, OrganizationID: &org}, {Address: solAlias, WalletID: &wallet, OrganizationID: &org}},
+			cursorByKey: map[string]*model.AddressCursor{
+				solAlias:     {Address: solAlias, CursorValue: strPtr("SOL-BOUNDARY"), CursorSequence: 10},
+				solCanonical: {Address: solCanonical, CursorValue: strPtr("sol-boundary"), CursorSequence: 10},
+			},
+			expectedAddress: solCanonical,
+			expectedCursor:  "sol-boundary",
+			expectedSeq:     10,
+			expectedWallet:  wallet,
+			expectedOrg:     org,
+		},
+		{
+			name:     "btc-testnet",
+			chain:    model.ChainBTC,
+			network:  model.NetworkTestnet,
+			permA:    []model.WatchedAddress{{Address: btcAlias, WalletID: &wallet, OrganizationID: &org}, {Address: btcCanonical, WalletID: &wallet, OrganizationID: &org}},
+			permB:    []model.WatchedAddress{{Address: btcCanonical, WalletID: &wallet, OrganizationID: &org}, {Address: btcAlias, WalletID: &wallet, OrganizationID: &org}},
+			cursorByKey: map[string]*model.AddressCursor{
+				btcAlias:     {Address: btcAlias, CursorValue: strPtr("aaAABB"), CursorSequence: 20},
+				btcCanonical: {Address: btcCanonical, CursorValue: strPtr("AAaabb"), CursorSequence: 20},
+			},
+			expectedAddress: btcCanonical,
+			expectedCursor:  "aaaabb",
+			expectedSeq:     20,
+			expectedWallet:  wallet,
+			expectedOrg:     org,
+		},
+	}
+
+	run := func(t *testing.T, tc testCase, addresses []model.WatchedAddress) event.FetchJob {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+		mockCursor := storemocks.NewMockCursorRepository(ctrl)
+		jobCh := make(chan event.FetchJob, 10)
+
+		c := New(
+			tc.chain, tc.network,
+			mockWatchedAddr, mockCursor,
+			100, time.Second,
+			jobCh, slog.Default(),
+		)
+
+		mockWatchedAddr.EXPECT().
+			GetActive(gomock.Any(), tc.chain, tc.network).
+			Return(addresses, nil)
+
+		mockCursor.EXPECT().
+			Get(gomock.Any(), tc.chain, tc.network, gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ model.Chain, _ model.Network, address string) (*model.AddressCursor, error) {
+				cursor, ok := tc.cursorByKey[address]
+				if !ok {
+					return nil, nil
+				}
+				return cursor, nil
+			}).
+			Times(len(addresses))
+
+		require.NoError(t, c.tick(context.Background()))
+		require.Len(t, jobCh, 1)
+		return <-jobCh
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			jobA := run(t, tc, tc.permA)
+			jobB := run(t, tc, tc.permB)
+
+			require.Equal(t, tc.expectedAddress, jobA.Address)
+			require.Equal(t, tc.expectedAddress, jobB.Address)
+			assert.Equal(t, tc.expectedSeq, jobA.CursorSequence)
+			assert.Equal(t, tc.expectedSeq, jobB.CursorSequence)
+			if tc.expectedCursor == "" {
+				assert.Nil(t, jobA.CursorValue)
+				assert.Nil(t, jobB.CursorValue)
+			} else {
+				require.NotNil(t, jobA.CursorValue)
+				assert.Equal(t, tc.expectedCursor, *jobA.CursorValue)
+				require.NotNil(t, jobB.CursorValue)
+				assert.Equal(t, tc.expectedCursor, *jobB.CursorValue)
+			}
+			assert.Equal(t, tc.expectedWallet, *jobA.WalletID)
+			assert.Equal(t, tc.expectedWallet, *jobB.WalletID)
+			assert.Equal(t, tc.expectedOrg, *jobA.OrgID)
+			assert.Equal(t, tc.expectedOrg, *jobB.OrgID)
 		})
 	}
 }
