@@ -220,6 +220,35 @@ func isCanonicalityDrift(batch event.NormalizedBatch) bool {
 	return false
 }
 
+func isBTCRestartAnchorReplay(batch event.NormalizedBatch) bool {
+	if batch.Chain != model.ChainBTC {
+		return false
+	}
+	if batch.PreviousCursorValue == nil || batch.NewCursorValue == nil {
+		return false
+	}
+	if batch.PreviousCursorSequence != batch.NewCursorSequence || batch.NewCursorSequence <= 0 {
+		return false
+	}
+	if len(batch.Transactions) != 0 {
+		return false
+	}
+
+	previousCursor := canonicalSignatureIdentity(batch.Chain, *batch.PreviousCursorValue)
+	if previousCursor == "" {
+		previousCursor = strings.TrimSpace(*batch.PreviousCursorValue)
+	}
+	newCursor := canonicalSignatureIdentity(batch.Chain, *batch.NewCursorValue)
+	if newCursor == "" {
+		newCursor = strings.TrimSpace(*batch.NewCursorValue)
+	}
+	if previousCursor == "" || newCursor == "" {
+		return false
+	}
+
+	return previousCursor != newCursor
+}
+
 func rollbackForkCursorSequence(batch event.NormalizedBatch) int64 {
 	if batch.NewCursorSequence < batch.PreviousCursorSequence {
 		if btcFloor, ok := rollbackBTCEarliestCompetingSequence(batch); ok {
@@ -314,34 +343,42 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	}()
 
 	if isCanonicalityDrift(batch) {
-		rollbackBatch := withRollbackForkCursor(batch)
-		if err := ing.reorgHandler(ctx, dbTx, rollbackBatch); err != nil {
-			return fmt.Errorf("handle reorg path: %w", err)
-		}
-
-		if shouldContinueCompetingBranchReplay(batch) {
-			ing.logger.Info("rollback path executed; continuing with competing branch replay",
+		if isBTCRestartAnchorReplay(batch) {
+			ing.logger.Info("rollback-anchor marker consumed without rewind",
 				"address", batch.Address,
 				"previous_cursor", batch.PreviousCursorValue,
 				"new_cursor", batch.NewCursorValue,
-				"fork_cursor_sequence", rollbackBatch.PreviousCursorSequence,
-				"replacement_txs", len(batch.Transactions),
 			)
 		} else {
-			commitStart := time.Now()
-			if err := dbTx.Commit(); err != nil {
-				return fmt.Errorf("commit rollback path: %w", err)
+			rollbackBatch := withRollbackForkCursor(batch)
+			if err := ing.reorgHandler(ctx, dbTx, rollbackBatch); err != nil {
+				return fmt.Errorf("handle reorg path: %w", err)
 			}
-			committed = true
-			ing.recordCommitLatencyMs(batch.Chain.String(), batch.Network.String(), time.Since(commitStart).Milliseconds())
 
-			ing.logger.Info("rollback path executed",
-				"address", batch.Address,
-				"previous_cursor", batch.PreviousCursorValue,
-				"new_cursor", batch.NewCursorValue,
-				"fork_cursor_sequence", rollbackBatch.PreviousCursorSequence,
-			)
-			return nil
+			if shouldContinueCompetingBranchReplay(batch) {
+				ing.logger.Info("rollback path executed; continuing with competing branch replay",
+					"address", batch.Address,
+					"previous_cursor", batch.PreviousCursorValue,
+					"new_cursor", batch.NewCursorValue,
+					"fork_cursor_sequence", rollbackBatch.PreviousCursorSequence,
+					"replacement_txs", len(batch.Transactions),
+				)
+			} else {
+				commitStart := time.Now()
+				if err := dbTx.Commit(); err != nil {
+					return fmt.Errorf("commit rollback path: %w", err)
+				}
+				committed = true
+				ing.recordCommitLatencyMs(batch.Chain.String(), batch.Network.String(), time.Since(commitStart).Milliseconds())
+
+				ing.logger.Info("rollback path executed",
+					"address", batch.Address,
+					"previous_cursor", batch.PreviousCursorValue,
+					"new_cursor", batch.NewCursorValue,
+					"fork_cursor_sequence", rollbackBatch.PreviousCursorSequence,
+				)
+				return nil
+			}
 		}
 	}
 
@@ -759,7 +796,7 @@ func (ing *Ingester) findRewindCursor(
 		WHERE be.chain = $1 AND be.network = $2
 		  AND be.watched_address = $3
 		  AND be.block_cursor < $4
-		ORDER BY be.block_cursor DESC, be.id DESC
+	ORDER BY be.block_cursor DESC, be.id DESC
 		LIMIT 1
 	`
 	var cursorValue string

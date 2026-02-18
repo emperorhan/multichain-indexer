@@ -50,6 +50,75 @@ func TestIsCanonicalityDrift_SameSequenceDifferentHash_WithTxs(t *testing.T) {
 	assert.False(t, isCanonicalityDrift(batch), "same sequence with txs is live/backfill overlap, not reorg")
 }
 
+func TestIsBTCRestartAnchorReplay(t *testing.T) {
+	previousCursor := "btc-batch-prev"
+	newCursor := "btc-batch-new"
+	positiveSeq := int64(102)
+
+	assert.True(t, isBTCRestartAnchorReplay(event.NormalizedBatch{
+		Chain:                  model.ChainBTC,
+		PreviousCursorValue:    &previousCursor,
+		PreviousCursorSequence: positiveSeq,
+		NewCursorValue:         &newCursor,
+		NewCursorSequence:      positiveSeq,
+		Transactions:           []event.NormalizedTransaction{},
+	}))
+
+	assert.False(t, isBTCRestartAnchorReplay(event.NormalizedBatch{
+		Chain:                  model.ChainBTC,
+		PreviousCursorValue:    &previousCursor,
+		PreviousCursorSequence: positiveSeq,
+		NewCursorValue:         &newCursor,
+		NewCursorSequence:      positiveSeq + 1,
+		Transactions:           []event.NormalizedTransaction{},
+	}))
+
+	assert.False(t, isBTCRestartAnchorReplay(event.NormalizedBatch{
+		Chain:                  model.ChainSolana,
+		PreviousCursorValue:    &previousCursor,
+		PreviousCursorSequence: positiveSeq,
+		NewCursorValue:         &newCursor,
+		NewCursorSequence:      positiveSeq,
+		Transactions:           []event.NormalizedTransaction{},
+	}))
+
+	assert.False(t, isBTCRestartAnchorReplay(event.NormalizedBatch{
+		Chain:                  model.ChainBTC,
+		PreviousCursorValue:    &previousCursor,
+		PreviousCursorSequence: positiveSeq,
+		NewCursorValue:         &newCursor,
+		NewCursorSequence:      positiveSeq,
+		Transactions:           []event.NormalizedTransaction{{TxHash: "btc-tx"}},
+	}))
+
+	assert.True(t, isBTCRestartAnchorReplay(event.NormalizedBatch{
+		Chain:                  model.ChainBTC,
+		PreviousCursorValue:    ptr(" BTC-BATCH-PREV "),
+		PreviousCursorSequence: positiveSeq,
+		NewCursorValue:         ptr("0xbtc-batch-new"),
+		NewCursorSequence:      positiveSeq,
+		Transactions:           []event.NormalizedTransaction{},
+	}))
+
+	assert.False(t, isBTCRestartAnchorReplay(event.NormalizedBatch{
+		Chain:                  model.ChainBTC,
+		PreviousCursorValue:    ptr("btc-batch-prev"),
+		PreviousCursorSequence: positiveSeq,
+		NewCursorValue:         ptr(" BTC-BATCH-PREV "),
+		NewCursorSequence:      positiveSeq,
+		Transactions:           []event.NormalizedTransaction{},
+	}))
+
+	assert.False(t, isBTCRestartAnchorReplay(event.NormalizedBatch{
+		Chain:                  model.ChainBTC,
+		PreviousCursorValue:    ptr("  "),
+		PreviousCursorSequence: positiveSeq,
+		NewCursorValue:         ptr("0xbtc-batch-new"),
+		NewCursorSequence:      positiveSeq,
+		Transactions:           []event.NormalizedTransaction{},
+	}))
+}
+
 func TestIsCanonicalityDrift_NilPreviousCursor(t *testing.T) {
 	batch := event.NormalizedBatch{
 		Chain:             model.ChainSolana,

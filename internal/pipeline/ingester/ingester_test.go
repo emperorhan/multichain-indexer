@@ -1864,6 +1864,39 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 		rollbackForkSequences []int64
 	}
 
+	runID := "run-I-0730-M99-BTC-ROLLBACK-ANCHOR"
+	recoveryPermutation := "restart_from_rollback_anchor"
+
+	eventIDCountsUnique := func(eventIDCounts map[string]int) bool {
+		for _, count := range eventIDCounts {
+			if count != 1 {
+				return false
+			}
+		}
+		return true
+	}
+
+	eventSetEqual := func(a, b map[string]struct{}) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for key := range a {
+			if _, exists := b[key]; !exists {
+				return false
+			}
+		}
+		return true
+	}
+
+	seqWritesMonotonic := func(values []int64) bool {
+		for i := 1; i < len(values); i++ {
+			if values[i] < values[i-1] {
+				return false
+			}
+		}
+		return true
+	}
+
 	eventIDFor := func(txHash, path string, category model.EventCategory) string {
 		canonicalTx := canonicalSignatureIdentity(model.ChainBTC, txHash)
 		return strings.Join([]string{
@@ -2039,6 +2072,7 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 	stable101Cursor := "btc-stable-101"
 	old102Cursor := "btc-old-102"
 	new102Cursor := "btc-new-102"
+	restartAnchorCursor := "btc-restart-anchor-102"
 
 	baseline := runScenario(t, []event.NormalizedBatch{
 		buildBatch(&cursor99, 99, stable101Cursor, 101, stable100, stable101),
@@ -2056,14 +2090,35 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 		buildBatch(&old102Cursor, 102, stable101Cursor, 101, stable100, stable101),
 		buildBatch(&stable101Cursor, 101, new102Cursor, 102, new102),
 	})
+	restartFromRollbackAnchor := runScenario(t, []event.NormalizedBatch{
+		buildBatch(&cursor99, 99, new102Cursor, 102, stable100, stable101),
+		buildBatch(&new102Cursor, 102, new102Cursor, 102, new102),
+		buildBatch(&new102Cursor, 102, restartAnchorCursor, 102),
+		buildBatch(&restartAnchorCursor, 102, new102Cursor, 102, new102),
+	})
+
+	assertAllEventIDsUnique := func(t *testing.T, scenario string, counts map[string]int) {
+		t.Helper()
+		for eventID, count := range counts {
+			assert.Equalf(t, 1, count, "event_id %s repeated in %s", eventID, scenario)
+		}
+	}
+
+	assertAllEventIDsUnique(t, "baseline", baseline.eventIDCounts)
+	assertAllEventIDsUnique(t, "one-block reorg", oneBlockReorg.eventIDCounts)
+	assertAllEventIDsUnique(t, "multi-block reorg", multiBlockReorg.eventIDCounts)
+	assertAllEventIDsUnique(t, "restart-anchor", restartFromRollbackAnchor.eventIDCounts)
 
 	assert.Equal(t, baseline.tupleKeys, oneBlockReorg.tupleKeys)
 	assert.Equal(t, baseline.tupleKeys, multiBlockReorg.tupleKeys)
+	assert.Equal(t, baseline.tupleKeys, restartFromRollbackAnchor.tupleKeys)
 	assert.Equal(t, baseline.eventIDs, oneBlockReorg.eventIDs)
 	assert.Equal(t, baseline.eventIDs, multiBlockReorg.eventIDs)
+	assert.Equal(t, baseline.eventIDs, restartFromRollbackAnchor.eventIDs)
 	assert.Equal(t, "8", baseline.totalDelta)
 	assert.Equal(t, baseline.totalDelta, oneBlockReorg.totalDelta)
 	assert.Equal(t, baseline.totalDelta, multiBlockReorg.totalDelta)
+	assert.Equal(t, baseline.totalDelta, restartFromRollbackAnchor.totalDelta)
 
 	// Orphaned branch events must not survive rollback.
 	assert.NotContains(t, oneBlockReorg.eventIDs, eventIDFor("btc-old-102", "vout:0", model.EventCategoryTransfer))
@@ -2071,35 +2126,78 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-100", "vout:0", model.EventCategoryTransfer))
 	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-101", "vin:0", model.EventCategoryTransfer))
 	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-102", "vout:0", model.EventCategoryTransfer))
+	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-100", "vout:0", model.EventCategoryTransfer))
+	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-101", "vin:0", model.EventCategoryTransfer))
+	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-102", "vout:0", model.EventCategoryTransfer))
+	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-102", "fee", model.EventCategoryFee))
 
 	// Replacement-branch emissions are one-time even across rollback + replay.
 	assert.Equal(t, 1, oneBlockReorg.eventIDCounts[eventIDFor("btc-stable-101", "vin:0", model.EventCategoryTransfer)])
 	assert.Equal(t, 1, oneBlockReorg.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.EventCategoryTransfer)])
 	assert.Equal(t, 1, multiBlockReorg.eventIDCounts[eventIDFor("btc-stable-100", "vout:0", model.EventCategoryTransfer)])
 	assert.Equal(t, 1, multiBlockReorg.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.EventCategoryTransfer)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-stable-100", "vout:0", model.EventCategoryTransfer)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-stable-101", "vin:0", model.EventCategoryTransfer)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.EventCategoryTransfer)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-stable-100", "fee", model.EventCategoryFee)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-new-102", "fee", model.EventCategoryFee)])
+
+	canonicalEventIDUniqueOK := eventIDCountsUnique(baseline.eventIDCounts) &&
+		eventIDCountsUnique(oneBlockReorg.eventIDCounts) &&
+		eventIDCountsUnique(multiBlockReorg.eventIDCounts) &&
+		eventIDCountsUnique(restartFromRollbackAnchor.eventIDCounts)
+	replayIdempotentOK := eventSetEqual(baseline.eventIDs, oneBlockReorg.eventIDs) &&
+		eventSetEqual(baseline.eventIDs, multiBlockReorg.eventIDs) &&
+		eventSetEqual(baseline.eventIDs, restartFromRollbackAnchor.eventIDs)
+	cursorMonotonicOK := seqWritesMonotonic(restartFromRollbackAnchor.cursorWrites) &&
+		seqWritesMonotonic(restartFromRollbackAnchor.watermarkWrites)
+	signedDeltaConservationOK := baseline.totalDelta == oneBlockReorg.totalDelta &&
+		baseline.totalDelta == multiBlockReorg.totalDelta &&
+		baseline.totalDelta == restartFromRollbackAnchor.totalDelta
+	reorgRecoveryDeterministicOK := eventSetEqual(baseline.tupleKeys, oneBlockReorg.tupleKeys) &&
+		eventSetEqual(baseline.tupleKeys, multiBlockReorg.tupleKeys) &&
+		eventSetEqual(baseline.tupleKeys, restartFromRollbackAnchor.tupleKeys)
+	chainAdapterRuntimeWiredOK := restartFromRollbackAnchor.cursorSequence == 102 &&
+		restartFromRollbackAnchor.cursorValue == canonicalSignatureIdentity(model.ChainBTC, "btc-new-102") &&
+		restartFromRollbackAnchor.watermark == 102
+
+	assert.True(t, canonicalEventIDUniqueOK, "%s | %s canonical_event_id_unique_ok", runID, recoveryPermutation)
+	assert.True(t, replayIdempotentOK, "%s | %s replay_idempotent_ok", runID, recoveryPermutation)
+	assert.True(t, cursorMonotonicOK, "%s | %s cursor_monotonic_ok", runID, recoveryPermutation)
+	assert.True(t, signedDeltaConservationOK, "%s | %s signed_delta_conservation_ok", runID, recoveryPermutation)
+	assert.True(t, reorgRecoveryDeterministicOK, "%s | %s reorg_recovery_deterministic_ok", runID, recoveryPermutation)
+	assert.True(t, chainAdapterRuntimeWiredOK, "%s | %s chain_adapter_runtime_wired_ok", runID, recoveryPermutation)
 
 	expectedCursor := canonicalSignatureIdentity(model.ChainBTC, "btc-new-102")
 	assert.Equal(t, expectedCursor, baseline.cursorValue)
 	assert.Equal(t, expectedCursor, oneBlockReorg.cursorValue)
 	assert.Equal(t, expectedCursor, multiBlockReorg.cursorValue)
+	assert.Equal(t, expectedCursor, restartFromRollbackAnchor.cursorValue)
 	assert.Equal(t, int64(102), baseline.cursorSequence)
 	assert.Equal(t, int64(102), oneBlockReorg.cursorSequence)
 	assert.Equal(t, int64(102), multiBlockReorg.cursorSequence)
+	assert.Equal(t, int64(102), restartFromRollbackAnchor.cursorSequence)
 	assert.Equal(t, int64(102), baseline.watermark)
 	assert.Equal(t, int64(102), oneBlockReorg.watermark)
 	assert.Equal(t, int64(102), multiBlockReorg.watermark)
+	assert.Equal(t, int64(102), restartFromRollbackAnchor.watermark)
 
 	assert.Equal(t, []int64{101, 102}, baseline.cursorWrites)
 	assert.Equal(t, []int64{102, 100, 101, 102}, oneBlockReorg.cursorWrites)
 	assert.Equal(t, []int64{102, 0, 101, 102}, multiBlockReorg.cursorWrites)
+	assert.Equal(t, []int64{102, 102, 102, 102}, restartFromRollbackAnchor.cursorWrites)
 	assert.Equal(t, []int64{101, 102}, baseline.watermarkWrites)
 	assert.Equal(t, []int64{102, 102, 102, 102}, oneBlockReorg.watermarkWrites)
 	assert.Equal(t, []int64{102, 102, 102, 102}, multiBlockReorg.watermarkWrites)
+	assert.Equal(t, []int64{102, 102, 102, 102}, restartFromRollbackAnchor.watermarkWrites)
 	assertMonotonicWrites(t, map[string][]int64{"one-block": oneBlockReorg.watermarkWrites}, "btc one-block watermark")
 	assertMonotonicWrites(t, map[string][]int64{"multi-block": multiBlockReorg.watermarkWrites}, "btc multi-block watermark")
+	assertMonotonicWrites(t, map[string][]int64{"rollback-anchor": restartFromRollbackAnchor.watermarkWrites}, "btc rollback-anchor watermark")
+	assertMonotonicWrites(t, map[string][]int64{"restart-anchor cursor": restartFromRollbackAnchor.cursorWrites}, "btc rollback-anchor cursor")
 
 	assert.Equal(t, []int64{101}, oneBlockReorg.rollbackForkSequences)
 	assert.Equal(t, []int64{100}, multiBlockReorg.rollbackForkSequences)
+	assert.Empty(t, restartFromRollbackAnchor.rollbackForkSequences)
 }
 
 func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
