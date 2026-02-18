@@ -21,6 +21,39 @@ or hardening work. Planner MUST select from this list first:
    selection now pass alias + deterministic startup tests.
 5. **Connection Pool Monitoring** — No metrics for PostgreSQL pool utilization.
 6. **Query Timeout Configuration** — No statement-level timeout support.
+
+## C0134 (`I-0678`) tranche activation
+- Focus: post-PRD reliability hardening for production DB call-time boundedness before optional refinements resume.
+- Focused unresolved implementation requirement from production code:
+  - no explicit statement timeout envelope exists for PostgreSQL writes/reads; long-hanging queries can block restart-safe commit/rollback boundaries.
+- Focused PRD traceability from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R4`: deterministic replay.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain adapter/normalizer wiring remains deterministic and replay-safe when DB path stalls are triggered.
+- C0134 lock state: `C0134-PRD-DB-STATEMENT-TIMEOUT-GOVERNANCE`.
+- C0134 queue adjacency: hard dependency `I-0678 -> I-0679 -> I-0680`.
+- Downstream execution pair:
+  - `I-0679` (developer) — implement configurable PostgreSQL statement timeout in `internal/config/config.go` and `internal/store/postgres/db.go` with startup-safe defaults and tests.
+  - `I-0680` (qa) — validate timeout configuration evidence and block `C0134` on any required hard-stop or timeout-governance failure.
+- Slice gates for this tranche:
+  - `I-0679` adds `DB_STATEMENT_TIMEOUT_MS` config loading, defaulting to bounded value compatible with existing deploy behavior.
+  - `I-0679` applies the effective statement timeout in `postgres.New` so it is enforced for all DB statements in this runtime.
+  - `I-0679` extends config tests (and DB-path evidence points) to prove both default and env-override behavior for all mandatory chains.
+  - `I-0679` publishes required timeout governance artifact:
+    - `.ralph/reports/I-0679-m96-s1-db-query-timeout-matrix.md`
+  - `I-0680` validates required timeout rows for `chain=solana`, `base`, and `btc`; blocks `C0134` on any required `NO-GO`, `evidence_present=false`, hard-stop invariant false, or timeout not applied/recorded.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+## C0134 decision hooks
+- `DP-0183-C0134`: `C0134` remains blocked until required rows in `.ralph/reports/I-0679-m96-s1-db-query-timeout-matrix.md` for `chain=solana`, `base`, and `btc` are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - required hard-stop booleans (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`) true
+  - `statement_timeout_ms > 0` for timeout override rows and documented behavior for default rows
+  - required `failure_mode` is non-empty for required `NO-GO` rows
+- Hard-stop timeout governance checks include explicit confirmation that DB statement timeout cannot be omitted when `I-0679` reports mandatory timeout coverage is enabled.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:

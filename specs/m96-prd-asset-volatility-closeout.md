@@ -756,3 +756,39 @@ Required machine-checkable constraints:
   - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
   - required peer deltas equal zero where present (`peer_cursor_delta=0`, `peer_watermark_delta=0`)
   - and non-empty `failure_mode` for any required `NO-GO` row.
+
+### C0134 (`I-0678`) implementation handoff addendum
+- Focus: PRD-traceable DB statement-timeout governance before optional refinements continue.
+- Focused unresolved requirement traceability from `PRD.md`:
+  - `R4`: deterministic replay.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain adapter/normalizer runtime behavior remains deterministic under fail-safe constraints.
+- C0134 lock state: `C0134-PRD-DB-STATEMENT-TIMEOUT-GOVERNANCE`.
+- `C0134` queue adjacency: hard dependency `I-0678 -> I-0679 -> I-0680`.
+
+#### Required evidence artifacts for `I-0679`
+- `.ralph/reports/I-0679-m96-s1-db-query-timeout-matrix.md`
+
+#### C0134 hard-stop contracts (`I-0679`)
+- `.ralph/reports/I-0679-m96-s1-db-query-timeout-matrix.md` required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `statement_timeout_ms`, `timeout_override`, `applied_to_statement_session`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`
+  - `chain=base`, `network=sepolia`
+  - `chain=btc`, `network=testnet`
+
+#### C0134 hard-stop checks for required `GO` rows
+- `outcome=GO`
+- `evidence_present=true`
+- `statement_timeout_ms` is parsed from config and non-negative.
+- `applied_to_statement_session=true` for at least one mandatory-chain row where timeout is enforced.
+- `canonical_event_id_unique_ok=true`
+- `replay_idempotent_ok=true`
+- `cursor_monotonic_ok=true`
+- `signed_delta_conservation_ok=true`
+- `chain_adapter_runtime_wired_ok=true`
+- `failure_mode` is empty.
+- For required `NO-GO` rows, `failure_mode` is non-empty.
+
+#### C0134 decision hook
+- `DP-0183-C0134` remains blocked unless all required `I-0679-m96-s1-db-query-timeout-matrix.md` rows for `solana`, `base`, and `btc` are present with `outcome=GO`, `evidence_present=true`, required timeout governance checks above, and hard-stop booleans true.
