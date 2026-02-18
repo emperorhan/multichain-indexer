@@ -26,6 +26,7 @@ or hardening work. Planner MUST select from this list first:
 8. **Stream Session Checkpoint Isolation** — checkpoint state is shared across `stream_session_id` values, risking cross-session cursor bleed.
 9. **Ethereum-mainnet Normalizer Family Gap** — `chain=ethereum` with `network=mainnet` is selected and wired at runtime, but normalization still takes the Solana canonicalization branch (`normalizedTxFromResult`) for that chain, causing EVM/fee-path incompatibility and incomplete adapter-runtime closure.
 10. **Chain-scoped auto-tune telemetry/input completeness** — R9 requires adaptive control to remain chain-local using chain-only signals (`rpc error budget`, `DB commit latency`) while preserving fail-fast behavior; current tuning inputs are narrower than PRD intent.
+11. **Partitioned storage canonical dedupe stability** — `balance_events` conflict target is currently `(event_id, block_time)`, which can allow duplicate canonical ids during replay/reorg when block_time changes while event identity does not.
 
 ## C0134 (`I-0678`) tranche activation
 - Focus: post-PRD reliability hardening for production DB call-time boundedness before optional refinements resume.
@@ -603,6 +604,44 @@ Slice gates for this tranche:
 
 #### C0149 decision hook
 - `DP-0197-C0149`: `C0149` remains blocked until required rows in `.ralph/reports/I-0730-m96-s1-reorg-recovery-determinism-matrix.md` are present for mandatory chains with `outcome=GO`, `evidence_present=true`, hard-stop booleans above, and valid `fork_type` / `recovery_permutation` coverage.
+
+### C0150 (`I-0732`) implementation handoff
+- Focused unresolved PRD-priority implementation requirement from production code scan:
+  - `R1`: no-duplicate indexing for canonical balances.
+  - `R4`: deterministic replay without duplicate event emission.
+  - `8.5`: failed-path cursor/watermark progression remains prohibited.
+  - `chain_adapter_runtime_wired`: adapter/runtime wiring remains deterministic under rollback replay.
+- `C0150` lock state: `C0150-PRD-PARTITION-DEDUPE-STABILITY`.
+- `C0150` depends on `I-0731` and has downstream adjacency `I-0732 -> I-0733 -> I-0734`.
+- Downstream execution pair:
+  - `I-0733` (developer) — make canonical-event dedupe independent of `block_time` for persisted events despite partitioned storage.
+  - `I-0734` (qa) — validate fixed behavior across mandatory chains and required evidence rows.
+- Slice gates for this tranche:
+  - `I-0733` updates `internal/store/postgres/balance_event_repo.go` and the migration plan so replay upsert of identical canonical `event_id` values is idempotent even when `block_time` shifts.
+  - `I-0733` adds/extends integration tests in `internal/store/postgres/integration_test.go` for deterministic cross-block-time replay and reorg replay.
+  - `I-0733` publishes required evidence artifact:
+    - `.ralph/reports/I-0733-m99-s1-balance-event-id-dedupe-cross-blocktime-matrix.md`
+  - `I-0734` validates required rows for `solana`, `base`, and `btc`; blocks `C0150` on any hard-stop false or missing evidence row.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+- `I-0733` required artifact row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `event_id`, `replay_mode`, `block_time_shift_ms`, `upsert_count_before`, `upsert_count_after`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0733` required mandatory rows:
+  - `chain=solana`, `network=devnet`, `replay_mode=deterministic_replay`
+  - `chain=base`, `network=sepolia`, `replay_mode=deterministic_replay`
+  - `chain=btc`, `network=testnet`, `replay_mode=deterministic_replay`
+
+#### C0150 decision hook
+- `DP-0198-C0150`: `C0150` remains blocked until required rows in `.ralph/reports/I-0733-m99-s1-balance-event-id-dedupe-cross-blocktime-matrix.md` are present for `chain=solana`, `base`, and `btc` with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `upsert_count_before=1`
+  - `upsert_count_after=1`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty for required GO rows and non-empty for required NO-GO rows.
 
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
@@ -5497,12 +5536,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0730` (`C0149`) implementation
-2. `I-0731` (`C0149` qa gate) after `I-0730`
+1. `I-0733` (`C0150`) implementation
+2. `I-0734` (`C0150` qa gate) after `I-0733`
 
 Planned next tranche queue:
-1. `I-0730` (`C0149`) to implement reorg-recovery boundary determinism for mandatory asset-volatility classes.
-2. `I-0731` (`C0149` qa gate) to validate required rows in `I-0730` evidence.
+1. `I-0733` (`C0150`) to implement partition-stable canonical event-id dedupe and replay-safe upsert behavior.
+2. `I-0734` (`C0150` qa gate) to validate `I-0733` evidence rows.
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
