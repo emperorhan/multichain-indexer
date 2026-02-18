@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { decodeBaseTransaction } from './transaction_decoder';
+import { erc20MintTx, erc20BurnTx } from '../../__fixtures__/base_transactions';
 
 const WATCHED_ADDRESS = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const COUNTERPARTY = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -65,6 +66,42 @@ describe('decodeBaseTransaction', () => {
     expect(erc20Transfer?.delta).toBe('-10');
     expect(erc20Transfer?.contractAddress).toBe(TOKEN_CONTRACT);
     expect(erc20Transfer?.metadata.event_path).toBe('log:7');
+  });
+
+  it('classifies ERC20 zero-from transfer as MINT class', () => {
+    const result = decodeBaseTransaction(
+      erc20MintTx,
+      erc20MintTx.tx.hash,
+      new Set([WATCHED_ADDRESS]),
+    );
+
+    const mintEvents = result.balanceEvents.filter((ev) => ev.eventCategory === 'MINT');
+    expect(mintEvents).toHaveLength(1);
+    expect(mintEvents[0].eventAction).toBe('erc20_mint');
+    expect(mintEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(mintEvents[0].contractAddress).toBe(TOKEN_CONTRACT);
+    expect(mintEvents[0].delta).toBe('5000000');
+    expect(mintEvents[0].metadata.event_path).toBe('log:6');
+    expect(result.metadata?.fee_execution_l2).toBe('2000000000000');
+    expect(result.metadata?.fee_data_l1).toBe('10000');
+  });
+
+  it('classifies ERC20 zero-to transfer as BURN class', () => {
+    const result = decodeBaseTransaction(
+      erc20BurnTx,
+      erc20BurnTx.tx.hash,
+      new Set([WATCHED_ADDRESS]),
+    );
+
+    const burnEvents = result.balanceEvents.filter((ev) => ev.eventCategory === 'BURN');
+    expect(burnEvents).toHaveLength(1);
+    expect(burnEvents[0].eventAction).toBe('erc20_burn');
+    expect(burnEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(burnEvents[0].contractAddress).toBe(TOKEN_CONTRACT);
+    expect(burnEvents[0].delta).toBe('-3000000');
+    expect(burnEvents[0].metadata.event_path).toBe('log:7');
+    expect(result.metadata?.fee_execution_l2).toBe('2000000000000');
+    expect(result.metadata?.fee_data_l1).toBe('5000');
   });
 
   it('returns failed status when receipt status is zero', () => {

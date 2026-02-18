@@ -143,6 +143,126 @@ export const splTransferCheckedTx = {
   },
 };
 
+export const splMintTx = {
+  slot: 1100,
+  blockTime: 1700008000,
+  transaction: {
+    message: {
+      accountKeys: [
+        { pubkey: WATCHED_ADDRESS },
+        { pubkey: 'mintDestinationATA' },
+        { pubkey: SPL_TOKEN_PROGRAM_ID },
+        { pubkey: USDC_MINT },
+      ],
+      instructions: [
+        {
+          programId: SPL_TOKEN_PROGRAM_ID,
+          parsed: {
+            type: 'mintTo',
+            info: {
+              account: 'mintDestinationATA',
+              mint: USDC_MINT,
+              authority: WATCHED_ADDRESS,
+              amount: '2500000',
+            },
+          },
+        },
+      ],
+    },
+  },
+  meta: {
+    err: null,
+    fee: 5000,
+    preBalances: [2000000000],
+    postBalances: [1999995000],
+    preTokenBalances: [
+      {
+        accountIndex: 1,
+        mint: USDC_MINT,
+        owner: WATCHED_ADDRESS,
+        uiTokenAmount: {
+          amount: '0',
+          decimals: 6,
+          uiAmount: 0,
+        },
+      },
+    ],
+    postTokenBalances: [
+      {
+        accountIndex: 1,
+        mint: USDC_MINT,
+        owner: WATCHED_ADDRESS,
+        uiTokenAmount: {
+          amount: '2500000',
+          decimals: 6,
+          uiAmount: 2.5,
+        },
+      },
+    ],
+    innerInstructions: [],
+  },
+};
+
+export const splBurnTx = {
+  slot: 1200,
+  blockTime: 1700009000,
+  transaction: {
+    message: {
+      accountKeys: [
+        { pubkey: WATCHED_ADDRESS },
+        { pubkey: 'burnSourceATA' },
+        { pubkey: SPL_TOKEN_PROGRAM_ID },
+        { pubkey: USDC_MINT },
+      ],
+      instructions: [
+        {
+          programId: SPL_TOKEN_PROGRAM_ID,
+          parsed: {
+            type: 'burn',
+            info: {
+              account: 'burnSourceATA',
+              mint: USDC_MINT,
+              owner: WATCHED_ADDRESS,
+              amount: '1250000',
+            },
+          },
+        },
+      ],
+    },
+  },
+  meta: {
+    err: null,
+    fee: 5000,
+    preBalances: [2000000000],
+    postBalances: [1999995000],
+    preTokenBalances: [
+      {
+        accountIndex: 1,
+        mint: USDC_MINT,
+        owner: WATCHED_ADDRESS,
+        uiTokenAmount: {
+          amount: '2500000',
+          decimals: 6,
+          uiAmount: 2.5,
+        },
+      },
+    ],
+    postTokenBalances: [
+      {
+        accountIndex: 1,
+        mint: USDC_MINT,
+        owner: WATCHED_ADDRESS,
+        uiTokenAmount: {
+          amount: '1250000',
+          decimals: 6,
+          uiAmount: 1.25,
+        },
+      },
+    ],
+    innerInstructions: [],
+  },
+};
+
 export const failedTx = {
   slot: 400,
   blockTime: 1700003000,

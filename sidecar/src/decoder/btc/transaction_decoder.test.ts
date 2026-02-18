@@ -207,4 +207,21 @@ describe('decodeBTCTransaction', () => {
     }, 'fallback', new Set([watched]));
     expect(confirmed.metadata?.finality_state).toBe('confirmed');
   });
+
+  it('captures miner fee metadata as deterministic fee class', () => {
+    const watched = 'tb1watched';
+    const result = decodeBTCTransaction({
+      chain: 'btc',
+      txid: 'tx-miner-fee',
+      block_height: 900,
+      confirmations: 2,
+      fee_sat: '777',
+      fee_payer: watched,
+      vin: [{ index: 0, address: watched, value_sat: '10000', txid: 'prev', vout: 0 }],
+      vout: [{ index: 0, address: 'tb1external', value_sat: '9000' }],
+    }, 'fallback', new Set([watched]));
+
+    expect(result.feeAmount).toBe('777');
+    expect(result.metadata?.btc_fee_sat).toBe('777');
+  });
 });

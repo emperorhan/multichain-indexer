@@ -3,8 +3,12 @@ import { decodeSolanaTransaction } from './transaction_decoder';
 import {
   WATCHED_ADDRESS,
   OTHER_ADDRESS,
+  USDC_MINT,
   solTransferTx,
   splTransferCheckedTx,
+  splTransferTx,
+  splMintTx,
+  splBurnTx,
   failedTx,
   innerInstructionsTx,
   createAccountTx,
@@ -152,6 +156,38 @@ describe('decodeSolanaTransaction', () => {
     expect(transferEvents[0].delta).toBe('-1000000');
     expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
     expect(transferEvents[0].contractAddress).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+  });
+
+  it('parses SPL transfer as signed delta events', () => {
+    const result = decodeSolanaTransaction(splTransferTx, 'sig12', watchedSet);
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].eventAction).toBe('spl_transfer');
+    expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
+  });
+
+  it('parses SPL mint instruction as MINT class', () => {
+    const result = decodeSolanaTransaction(splMintTx, 'sig13', watchedSet);
+    const mintEvents = result.balanceEvents.filter((e) => e.eventCategory === 'MINT');
+    expect(mintEvents).toHaveLength(1);
+
+    const mintEvent = mintEvents[0];
+    expect(mintEvent.eventAction).toBe('spl_mint');
+    expect(mintEvent.address).toBe(WATCHED_ADDRESS);
+    expect(mintEvent.contractAddress).toBe(USDC_MINT);
+    expect(mintEvent.delta).toBe('2500000');
+  });
+
+  it('parses SPL burn instruction as BURN class', () => {
+    const result = decodeSolanaTransaction(splBurnTx, 'sig14', watchedSet);
+    const burnEvents = result.balanceEvents.filter((e) => e.eventCategory === 'BURN');
+    expect(burnEvents).toHaveLength(1);
+
+    const burnEvent = burnEvents[0];
+    expect(burnEvent.eventAction).toBe('spl_burn');
+    expect(burnEvent.address).toBe(WATCHED_ADDRESS);
+    expect(burnEvent.contractAddress).toBe(USDC_MINT);
+    expect(burnEvent.delta).toBe('-1250000');
   });
 
   it('handles undefined innerInstructions (not empty array)', () => {

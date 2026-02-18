@@ -2,6 +2,7 @@ import { BalanceEventInfo, TransactionResult } from '../solana/transaction_decod
 
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55aebf9f4f7b8';
 const ZERO_PROGRAM_ID = '0x0000000000000000000000000000000000000000000000000000000000000000';
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 interface BaseEnvelope {
   chain?: string;
@@ -111,6 +112,34 @@ export function decodeBaseTransaction(
       base_log_index: String(logIndex),
       base_event_path: eventPath,
     };
+
+    if (eventFrom === ZERO_ADDRESS) {
+      if (eventTo !== '' && normalizedWatched.has(eventTo)) {
+        balanceEvents.push(buildERC20MintEvent(
+          eventTo,
+          eventFrom,
+          normalizeAddress(log.address),
+          value,
+          txIndex,
+          eventMetadata,
+        ));
+      }
+      continue;
+    }
+
+    if (eventTo === ZERO_ADDRESS) {
+      if (eventFrom !== '' && normalizedWatched.has(eventFrom)) {
+        balanceEvents.push(buildERC20BurnEvent(
+          eventFrom,
+          eventTo,
+          normalizeAddress(log.address),
+          value,
+          txIndex,
+          eventMetadata,
+        ));
+      }
+      continue;
+    }
 
     if (eventFrom !== '' && normalizedWatched.has(eventFrom)) {
       balanceEvents.push(buildERC20TransferEvent(
@@ -237,6 +266,58 @@ function buildERC20TransferEvent(
     address: watchedAddress,
     contractAddress: contractAddress || 'ETH',
     delta: isDebit ? `-${amount.toString()}` : amount.toString(),
+    counterpartyAddress: counterparty,
+    tokenSymbol: '',
+    tokenName: '',
+    tokenDecimals: 18,
+    tokenType: 'FUNGIBLE',
+    metadata,
+  };
+}
+
+function buildERC20MintEvent(
+  watchedAddress: string,
+  counterparty: string,
+  contractAddress: string,
+  amount: bigint,
+  txIndex: number,
+  metadata: Record<string, string>,
+): BalanceEventInfo {
+  return {
+    outerInstructionIndex: txIndex,
+    innerInstructionIndex: -1,
+    eventCategory: 'MINT',
+    eventAction: 'erc20_mint',
+    programId: normalizeAddress(contractAddress) || ZERO_PROGRAM_ID,
+    address: watchedAddress,
+    contractAddress: normalizeAddress(contractAddress) || ZERO_PROGRAM_ID,
+    delta: amount.toString(),
+    counterpartyAddress: counterparty,
+    tokenSymbol: '',
+    tokenName: '',
+    tokenDecimals: 18,
+    tokenType: 'FUNGIBLE',
+    metadata,
+  };
+}
+
+function buildERC20BurnEvent(
+  watchedAddress: string,
+  counterparty: string,
+  contractAddress: string,
+  amount: bigint,
+  txIndex: number,
+  metadata: Record<string, string>,
+): BalanceEventInfo {
+  return {
+    outerInstructionIndex: txIndex,
+    innerInstructionIndex: -1,
+    eventCategory: 'BURN',
+    eventAction: 'erc20_burn',
+    programId: normalizeAddress(contractAddress) || ZERO_PROGRAM_ID,
+    address: watchedAddress,
+    contractAddress: normalizeAddress(contractAddress) || ZERO_PROGRAM_ID,
+    delta: `-${amount.toString()}`,
     counterpartyAddress: counterparty,
     tokenSymbol: '',
     tokenName: '',

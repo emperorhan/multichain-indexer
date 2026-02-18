@@ -6,6 +6,7 @@ export const WATCHED_ADDRESS = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const COUNTERPARTY = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 export const TOKEN_CONTRACT = '0xcccccccccccccccccccccccccccccccccccccccc';
 export const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55aebf9f4f7b8';
+export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 function padTopic(address: string): string {
   return `0x${'0'.repeat(24)}${address.toLowerCase().replace(/^0x/, '')}`;
@@ -95,6 +96,69 @@ export const erc20ReceiveTx = {
         topics: [TRANSFER_TOPIC, padTopic(COUNTERPARTY), padTopic(WATCHED_ADDRESS)],
         data: '0x' + (2000000n).toString(16),
         logIndex: '0x5',
+      },
+    ],
+  },
+};
+
+export const erc20MintTx = {
+  chain: 'base',
+  tx: {
+    hash: '0xerc20mint',
+    blockNumber: '0x80',
+    transactionIndex: '0x4',
+    from: ZERO_ADDRESS,
+    to: TOKEN_CONTRACT,
+    value: '0x0',
+    gasPrice: '0x3b9aca00',
+  },
+  receipt: {
+    transactionHash: '0xerc20mint',
+    blockNumber: '0x80',
+    transactionIndex: '0x4',
+    status: '0x1',
+    from: ZERO_ADDRESS,
+    to: TOKEN_CONTRACT,
+    gasUsed: '0x7d0',
+    effectiveGasPrice: '0x3b9aca00',
+    l1Fee: '0x2710',
+    logs: [
+      {
+        address: TOKEN_CONTRACT,
+        topics: [TRANSFER_TOPIC, padTopic(ZERO_ADDRESS), padTopic(WATCHED_ADDRESS)],
+        data: '0x' + (5000000n).toString(16),
+        logIndex: '0x6',
+      },
+    ],
+  },
+};
+
+export const erc20BurnTx = {
+  chain: 'base',
+  tx: {
+    hash: '0xerc20burn',
+    blockNumber: '0x81',
+    transactionIndex: '0x0',
+    from: WATCHED_ADDRESS,
+    to: COUNTERPARTY,
+    value: '0x0',
+    gasPrice: '0x3b9aca00',
+  },
+  receipt: {
+    transactionHash: '0xerc20burn',
+    blockNumber: '0x81',
+    transactionIndex: '0x0',
+    status: '0x1',
+    from: WATCHED_ADDRESS,
+    gasUsed: '0x7d0',
+    effectiveGasPrice: '0x3b9aca00',
+    l1Fee: '0x1388',
+    logs: [
+      {
+        address: TOKEN_CONTRACT,
+        topics: [TRANSFER_TOPIC, padTopic(WATCHED_ADDRESS), padTopic(ZERO_ADDRESS)],
+        data: '0x' + (3000000n).toString(16),
+        logIndex: '0x7',
       },
     ],
   },
