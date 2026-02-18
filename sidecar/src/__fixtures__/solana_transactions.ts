@@ -375,6 +375,74 @@ export const transferWithSeedTx = {
   },
 };
 
+export const transferWithPubkeyTx = {
+  slot: 1510,
+  blockTime: 1700004550,
+  transaction: {
+    message: {
+      accountKeys: [
+        { pubkey: WATCHED_ADDRESS },
+        { pubkey: OTHER_ADDRESS },
+        { pubkey: SYSTEM_PROGRAM_ID },
+      ],
+      instructions: [
+        {
+          programId: SYSTEM_PROGRAM_ID,
+          parsed: {
+            type: 'transfer',
+            info: {
+              fromPubkey: WATCHED_ADDRESS,
+              toPubkey: OTHER_ADDRESS,
+              lamports: '333',
+            },
+          },
+        },
+      ],
+    },
+  },
+  meta: {
+    err: null,
+    fee: 5000,
+    preBalances: [2000000000, 500000000, 1],
+    postBalances: [1999999667, 500000333, 1],
+    innerInstructions: [],
+  },
+};
+
+export const createAccountFromPubkeyTx = {
+  slot: 1511,
+  blockTime: 1700004560,
+  transaction: {
+    message: {
+      accountKeys: [
+        { pubkey: WATCHED_ADDRESS },
+        { pubkey: 'newAccountPubkey222' },
+        { pubkey: SYSTEM_PROGRAM_ID },
+      ],
+      instructions: [
+        {
+          programId: SYSTEM_PROGRAM_ID,
+          parsed: {
+            type: 'createAccount',
+            info: {
+              fromPubkey: WATCHED_ADDRESS,
+              newAccount: 'newAccountPubkey222',
+              lamports: 2039280,
+            },
+          },
+        },
+      ],
+    },
+  },
+  meta: {
+    err: null,
+    fee: 5000,
+    preBalances: [2000000000, 0, 1],
+    postBalances: [1997960720, 2039280, 1],
+    innerInstructions: [],
+  },
+};
+
 export const createAccountWithSeedTx = {
   slot: 1501,
   blockTime: 1700004510,

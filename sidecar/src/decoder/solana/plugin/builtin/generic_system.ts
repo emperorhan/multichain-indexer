@@ -51,8 +51,26 @@ export class GenericSystemPlugin implements EventPlugin {
     eventAction = 'system_transfer',
     accountKeyMap?: Map<number, string>,
   ): BalanceEvent[] {
-    const from = resolveAddress(firstDefined(info.source, info.fromAddress, info.fromAccount), accountKeyMap);
-    const to = resolveAddress(firstDefined(info.destination, info.toAddress, info.toAccount), accountKeyMap);
+    const from = resolveAddress(
+      firstDefined(
+        info.source,
+        info.fromAddress,
+        info.fromAccount,
+        info.fromPubkey,
+        info.from,
+      ),
+      accountKeyMap,
+    );
+    const to = resolveAddress(
+      firstDefined(
+        info.destination,
+        info.toAddress,
+        info.toAccount,
+        info.toPubkey,
+        info.to,
+      ),
+      accountKeyMap,
+    );
     const lamports = parseLamports(info.lamports);
 
     if (lamports === '0') return [];
@@ -75,7 +93,16 @@ export class GenericSystemPlugin implements EventPlugin {
     accountKeyMap?: Map<number, string>,
     eventAction = 'system_create_account',
   ): BalanceEvent[] {
-    const from = resolveAddress(firstDefined(info.source, info.fromAddress, info.fromAccount, info.fromPubkey), accountKeyMap);
+    const from = resolveAddress(
+      firstDefined(
+        info.source,
+        info.fromAddress,
+        info.fromAccount,
+        info.fromPubkey,
+        info.from,
+      ),
+      accountKeyMap,
+    );
     const to = resolveAddress(firstDefined(info.newAccount, info.baseAccount, info.to, info.account), accountKeyMap);
     const lamports = parseLamports(info.lamports);
 
@@ -98,7 +125,16 @@ export class GenericSystemPlugin implements EventPlugin {
     watchedSet: Set<string>,
     accountKeyMap?: Map<number, string>,
   ): BalanceEvent[] {
-    const from = resolveAddress(firstDefined(info.nonceAccount, info.account, info.fromAccount, info.fromAddress), accountKeyMap);
+    const from = resolveAddress(
+      firstDefined(
+        info.nonceAccount,
+        info.account,
+        info.fromAccount,
+        info.fromAddress,
+        info.fromPubkey,
+      ),
+      accountKeyMap,
+    );
     const to = resolveAddress(firstDefined(info.to, info.toAddress, info.destination, info.recipient), accountKeyMap);
     const lamports = parseLamports(info.lamports);
 

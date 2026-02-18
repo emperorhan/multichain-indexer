@@ -14,7 +14,9 @@ import {
   innerInstructionsTx,
   createAccountTx,
   transferWithSeedTx,
+  transferWithPubkeyTx,
   createAccountWithSeedTx,
+  createAccountFromPubkeyTx,
   withdrawNonceAccountTx,
   noTransferTx,
   stringAccountKeysTx,
@@ -155,6 +157,17 @@ describe('decodeSolanaTransaction', () => {
     expect(transferEvents[0].counterpartyAddress).toBe(OTHER_ADDRESS);
   });
 
+  it('parses system transfer with from/to pubkey aliases', () => {
+    const result = decodeSolanaTransaction(transferWithPubkeyTx, 'sig19', watchedSet);
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].eventAction).toBe('system_transfer');
+    expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(transferEvents[0].delta).toBe('-333');
+    expect(transferEvents[0].counterpartyAddress).toBe(OTHER_ADDRESS);
+  });
+
   it('parses system createAccountWithSeed instruction as deterministic signed delta', () => {
     const result = decodeSolanaTransaction(createAccountWithSeedTx, 'sig17', watchedSet);
     const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
@@ -163,6 +176,17 @@ describe('decodeSolanaTransaction', () => {
     expect(transferEvents[0].eventAction).toBe('system_create_account_with_seed');
     expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
     expect(transferEvents[0].delta).toBe('-2039280');
+  });
+
+  it('parses system createAccount with fromPubkey alias', () => {
+    const result = decodeSolanaTransaction(createAccountFromPubkeyTx, 'sig20', watchedSet);
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].eventAction).toBe('system_create_account');
+    expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(transferEvents[0].delta).toBe('-2039280');
+    expect(transferEvents[0].counterpartyAddress).toBe('newAccountPubkey222');
   });
 
   it('parses system withdrawNonceAccount instruction as deterministic signed delta', () => {
