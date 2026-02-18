@@ -361,9 +361,9 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			contract := fmt.Sprintf("test-replay-token-%s-%s", tc.chain, tc.network) + "+" + uuid.NewString()[:8]
-			txHash := "test-replay-tx-" + tc.chain + "-" + tc.network + "-" + uuid.NewString()[:8]
-			eventID := "replay-event-" + tc.chain + "-" + tc.network + "-" + uuid.NewString()[:8]
-			watchedAddr := "test-replay-watched-" + tc.chain + "-" + tc.network + "-" + uuid.NewString()[:8]
+			txHash := fmt.Sprintf("test-replay-tx-%s-%s-%s", tc.chain, tc.network, uuid.NewString()[:8])
+			eventID := fmt.Sprintf("replay-event-%s-%s-%s", tc.chain, tc.network, uuid.NewString()[:8])
+			watchedAddr := fmt.Sprintf("test-replay-watched-%s-%s-%s", tc.chain, tc.network, uuid.NewString()[:8])
 
 			// Setup shared tx and token.
 			setupTx, err := db.BeginTx(ctx, nil)
