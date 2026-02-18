@@ -237,14 +237,18 @@ func (p *Pipeline) streamBoundaryName(boundary string) string {
 	if namespace == "" {
 		namespace = "pipeline"
 	}
+	return fmt.Sprintf("%s:chain=%s:network=%s:boundary=%s", namespace, p.cfg.Chain, p.cfg.Network, boundary)
+}
+
+func (p *Pipeline) streamBoundaryCheckpointKey(boundary string) string {
 	sessionID := strings.TrimSpace(p.cfg.StreamSessionID)
 	if sessionID == "" {
 		sessionID = "default"
 	}
-	return fmt.Sprintf("%s:chain=%s:network=%s:session=%s:boundary=%s", namespace, p.cfg.Chain, p.cfg.Network, sessionID, boundary)
+	return fmt.Sprintf("stream-checkpoint:chain=%s:network=%s:session=%s:boundary=%s", p.cfg.Chain, p.cfg.Network, sessionID, boundary)
 }
 
-func (p *Pipeline) streamBoundaryCheckpointKey(boundary string) string {
+func (p *Pipeline) streamBoundaryLegacyCheckpointKey(boundary string) string {
 	return fmt.Sprintf("stream-checkpoint:chain=%s:network=%s:boundary=%s", p.cfg.Chain, p.cfg.Network, boundary)
 }
 
@@ -299,22 +303,37 @@ func (p *Pipeline) loadStreamCheckpoint(ctx context.Context, stream redisstream.
 	}
 
 	checkpointKey := p.streamBoundaryCheckpointKey(boundary)
+	legacyCheckpointKey := p.streamBoundaryLegacyCheckpointKey(boundary)
+
 	raw, err := checkpointManager.LoadStreamCheckpoint(ctx, checkpointKey)
 	if err != nil {
 		p.logger.Warn("stream checkpoint load failed; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", checkpointKey, "error", err)
-		return "0", nil
+	} else if trimmed := strings.TrimSpace(raw); trimmed != "" && trimmed != "0" {
+		if streamErr := validateStreamOffset(trimmed); streamErr == nil {
+			return trimmed, nil
+		} else {
+			p.logger.Warn("stream checkpoint invalid; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", checkpointKey, "checkpoint", trimmed, "error", streamErr)
+		}
 	}
 
-	if err := validateStreamOffset(raw); err != nil {
-		p.logger.Warn("stream checkpoint invalid; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", checkpointKey, "checkpoint", raw, "error", err)
+	legacyRaw, err := checkpointManager.LoadStreamCheckpoint(ctx, legacyCheckpointKey)
+	if err != nil {
+		p.logger.Warn("legacy stream checkpoint load failed; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", legacyCheckpointKey, "error", err)
 		return "0", nil
 	}
-
-	if strings.TrimSpace(raw) == "" {
-		return "0", nil
+	trimmedLegacy := strings.TrimSpace(legacyRaw)
+	if trimmedLegacy != "" && trimmedLegacy != "0" {
+		if streamErr := validateStreamOffset(trimmedLegacy); streamErr == nil {
+			if err := checkpointManager.PersistStreamCheckpoint(ctx, checkpointKey, trimmedLegacy); err != nil {
+				p.logger.Warn("legacy stream checkpoint migration failed", "boundary", boundary, "from_key", legacyCheckpointKey, "to_key", checkpointKey, "error", err)
+			}
+			return trimmedLegacy, nil
+		} else {
+			p.logger.Warn("legacy stream checkpoint invalid; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", legacyCheckpointKey, "checkpoint", trimmedLegacy, "error", streamErr)
+		}
 	}
 
-	return raw, nil
+	return "0", nil
 }
 
 func (p *Pipeline) storeStreamCheckpoint(ctx context.Context, stream redisstream.MessageTransport, boundary string, streamID string) error {
