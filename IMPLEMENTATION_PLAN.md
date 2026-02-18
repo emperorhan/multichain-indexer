@@ -12,8 +12,7 @@
 The following feature gaps should be addressed before any additional verification
 or hardening work. Planner MUST select from this list first:
 
-1. **Redis Stream Integration** — `internal/store/redis/` has Stream wrapper but
-   is not connected to pipeline. Wire Redis as inter-stage message bus.
+1. **Redis Stream Integration** — completed by `C0129` (pipeline stream wiring).
 2. **Sidecar Golden Dataset Tests** — No fixed test fixtures for decoders.
    Create golden input/output pairs for Solana/Base/BTC decoders.
 3. **BTC Adapter Test Coverage** — Only 7 tests vs Solana(15)/Base(12).
@@ -22,6 +21,50 @@ or hardening work. Planner MUST select from this list first:
    Base/EVM logic. Implement dedicated Ethereum adapter if needed.
 5. **Connection Pool Monitoring** — No metrics for PostgreSQL pool utilization.
 6. **Query Timeout Configuration** — No statement-level timeout support.
+## C0130 (`I-0665`) tranche activation
+- Focus: PRD-priority implementation gap for mandatory class-path event coverage
+  with deterministic sidecar golden fixtures before optional hardening work continues.
+- Focused unresolved PRD requirements from `PRD.md`:
+  - `R1`: no-duplicate indexing via deterministic canonical ownership.
+  - `R2`: full in-scope asset-volatility event coverage with replay-safe persistence.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is forbidden.
+  - `chain_adapter_runtime_wired`: runtime adapter wiring remains chain-scoped.
+- Lock state: `C0130-PRD-SIDECAR-GOLDEN-CLASSPATH-COVERAGE`.
+- C0130 queue adjacency: hard dependency `I-0665 -> I-0666 -> I-0667`.
+- Downstream execution pair:
+  - `I-0666` (developer) — complete mandatory sidecar class-path decoding (notably SPL `MINT`/`BURN`) and add fixed golden fixtures and fixture-driven assertions for required mandatory classes.
+  - `I-0667` (qa) — validate implementation artifacts and block `C0130` on any hard-stop regression.
+- Slice gates for this tranche:
+  - `I-0666` updates sidecar production code in `sidecar/src/decoder/solana/plugin/builtin/generic_spl_token.ts` (and any adjacent decoder helpers) so required class-path events are deterministic and ownership-consistent.
+  - `I-0666` adds fixed golden fixture coverage in `sidecar/src/__fixtures__/` and decoder tests (`sidecar/src/decoder/**/*.test.ts`) for required mandatory-chain event classes.
+  - `I-0666` publishes required evidence artifacts:
+    - `.ralph/reports/I-0666-m96-s1-sidecar-class-coverage-matrix.md`
+    - `.ralph/reports/I-0666-m96-s2-sidecar-duplicate-suppression-matrix.md`
+    - `.ralph/reports/I-0666-m96-s3-sidecar-one-chain-isolation-matrix.md`
+  - `I-0667` validates all required `I-0666` rows for `solana-devnet`,
+    `base-sepolia`, and `btc-testnet`, and blocks `C0130` if any required row
+    has `outcome=NO-GO`, `evidence_present=false`, hard-stop boolean false,
+    or peer deltas non-zero (`peer_cursor_delta!=0` or `peer_watermark_delta!=0`).
+  - No runtime implementation changes are executed in this planner tranche; planning/spec-doc handoff only.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+## C0130 decision gates
+- `DP-0179-C0130`: `C0130` is blocked until all required `I-0666` rows in
+  `.ralph/reports/I-0666-m96-s1-sidecar-class-coverage-matrix.md`,
+  `.ralph/reports/I-0666-m96-s2-sidecar-duplicate-suppression-matrix.md`, and
+  `.ralph/reports/I-0666-m96-s3-sidecar-one-chain-isolation-matrix.md`
+  for `solana-devnet`, `base-sepolia`, and `btc-testnet` are present and satisfy:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - required `peer_cursor_delta=0` and `peer_watermark_delta=0`.
+  - required `NO-GO` rows contain non-empty `failure_mode`.
+
 ## C0129 (`I-0660`) tranche activation
 - Focus: PRD-priority feature-gap closure before optional refinements resume.
 - Focused unresolved implementation gap: pipeline transport is still in-process-only despite present Redis stream abstraction.
