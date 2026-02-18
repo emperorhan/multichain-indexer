@@ -23,6 +23,7 @@ or hardening work. Planner MUST select from this list first:
   - selected for **C0135** implementation in `I-0682`/`I-0683`.
 6. **Query Timeout Configuration** — No statement-level timeout support.
 7. **Stream Restart Checkpoint Resume** — stream-mode consumer restarts still lack durable checkpoint restore for boundary replay.
+8. **Stream Session Checkpoint Isolation** — checkpoint state is shared across `stream_session_id` values, risking cross-session cursor bleed.
 
 ## C0134 (`I-0678`) tranche activation
 - Focus: post-PRD reliability hardening for production DB call-time boundedness before optional refinements resume.
@@ -137,6 +138,53 @@ or hardening work. Planner MUST select from this list first:
   - `failure_mode` is empty
   - `checkpoint_persisted=true` and `checkpoint_loaded=true`
   - `stream_restart=true` for required restart rows
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
+
+### C0138 (`I-0693`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R5`: deterministic replay and restart continuity.
+  - `R7`: chain/network state progression isolation.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: stream-boundary wiring remains deterministic under restart and session churn.
+- C0138 lock state: `C0138-PRD-STREAM-CHECKPOINT-SESSION-ISOLATION`.
+- `C0138` queue adjacency: hard dependency `I-0693 -> I-0696 -> I-0697`.
+
+#### C0138 checkpoint session isolation contracts (`I-0696`)
+- Required artifact path:
+  - `.ralph/reports/I-0696-m96-s1-stream-session-checkpoint-matrix.md`
+- Required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `stream_session_id`, `stream_boundary`, `checkpoint_key`, `checkpoint_key_scope_includes_session`, `checkpoint_persisted`, `checkpoint_loaded`, `checkpoint_start_id`, `checkpoint_end_id`, `stream_restart`, `legacy_compatibility_row_present`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows:
+  - `chain=solana`, `network=devnet`, `stream_session_id=session-a`, `stream_restart=true`
+  - `chain=base`, `network=sepolia`, `stream_session_id=session-a`, `stream_restart=true`
+  - `chain=btc`, `network=testnet`, `stream_session_id=session-a`, `stream_restart=true`
+- Required hard-stop checks:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `checkpoint_key_scope_includes_session=true`
+  - `checkpoint_persisted=true`
+  - `checkpoint_loaded=true`
+  - `stream_restart=true`
+  - `legacy_compatibility_row_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
+- `outcome=NO-GO` rows must keep a non-empty `failure_mode`.
+
+#### C0138 decision hook
+- `DP-0187-C0138`: `C0138` remains blocked until required rows in `.ralph/reports/I-0696-m96-s1-stream-session-checkpoint-matrix.md` for `chain=solana`, `base`, and `btc` are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `checkpoint_key_scope_includes_session=true`
+  - `checkpoint_persisted=true`
+  - `checkpoint_loaded=true`
+  - `legacy_compatibility_row_present=true`
+  - required hard-stop booleans (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`) true
+  - `failure_mode` is empty
   - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
 
 ## C0133 (`I-0675`) tranche activation
