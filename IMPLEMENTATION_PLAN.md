@@ -817,6 +817,58 @@ Slice gates for this tranche:
   - `chain_adapter_runtime_wired_ok=true`
   - required `NO-GO` semantics for non-empty `failure_mode`.
 
+### C0156 (`I-0755`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing under overlapping fan-in ownership.
+  - `R4`: deterministic replay.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: coordinator/fetcher fan-in wiring remains deterministic when overlap candidates are pruned/retained across restart.
+- `C0156` lock state: `C0156-PRD-WATCHED-ADDRESS-FANIN-DETERMINISTIC-COLLISION-HARDENING`.
+- `C0156` queue adjacency: hard dependency `I-0755 -> I-0756`.
+- Downstream execution pair:
+  - `I-0755` (developer) — harden fan-in representative selection and overlap suppression determinism in coordinator/fetcher paths and publish mandatory overlap-replay evidence.
+  - `I-0756` (qa) — validate required fan-in overlap evidence and close `C0156`.
+- Slice gates for this tranche:
+  - `I-0755` updates `internal/pipeline/coordinator/coordinator.go` so fan-in group identity selection is stable under alias churn and sequence-carry-over ties (`chain/network` scoped deterministic ordering, deterministic representative selection, explicit collision diagnostics).
+  - `I-0755` updates `internal/pipeline/fetcher/fetcher.go` so overlap suppression is deterministic across representative switches and canonical cursor-boundary transitions.
+  - `I-0755` adds/extends tests in `internal/pipeline/coordinator/coordinator_test.go` and `internal/pipeline/fetcher/fetcher_test.go` for alias-equivalent fan-in, restart replay, and overlap carryover permutations.
+  - `I-0755` publishes required artifact:
+    - `.ralph/reports/I-0755-m99-s1-watched-address-fanin-dedupe-matrix.md`
+  - `I-0756` validates required rows for `solana`, `base`, and `btc` and blocks `C0156` on any required hard-stop violation.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+- `I-0755` required artifact row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fan_in_profile`, `watch_group_identity`, `canonical_representative`, `canonical_event_id_count`, `missing_logical_events`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+- `I-0755` required mandatory rows:
+  - `chain=solana`, `network=devnet`, `fan_in_profile=alias_overlap`
+  - `chain=base`, `network=sepolia`, `fan_in_profile=alias_overlap`
+  - `chain=btc`, `network=testnet`, `fan_in_profile=alias_overlap`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_count=1`
+  - `missing_logical_events=0`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty for `GO` rows.
+
+#### C0156 decision hook
+- `DP-0204-C0156`: `C0156` remains blocked until required rows in `.ralph/reports/I-0755-m99-s1-watched-address-fanin-dedupe-matrix.md` are present for `chain=solana`, `base`, and `btc` with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `fan_in_profile=alias_overlap`
+  - `canonical_event_id_count=1`
+  - `missing_logical_events=0`
+  - `failure_mode` is empty
+  - required `NO-GO` rows have non-empty `failure_mode`.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:
@@ -5710,12 +5762,12 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0737` (`C0151`) implementation
-2. `I-0738` (`C0151` qa gate) after `I-0737`
+1. `I-0755` (`C0156`) implementation
+2. `I-0756` (`C0156` qa gate) after `I-0755`
 
 Planned next tranche queue:
-1. `I-0737` (`C0151`) to close BTC rollback-anchor reorg recovery determinism proof on `restart_from_rollback_anchor`.
-2. `I-0738` (`C0151` qa gate) to validate the deterministic BTC rollback-anchor proof and close `DP-0199-C0151`.
+1. `I-0755` (`C0156`) to harden watched-address overlap fan-in determinism and close `DP-0204-C0156`.
+2. `I-0756` (`C0156` qa gate) to validate mandatory overlap fan-in evidence and close `DP-0204-C0156`.
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.

@@ -1286,3 +1286,45 @@ Required machine-checkable constraints:
   - `evidence_present=true`
   - `upsert_count_after=1`
   - required hard-stop booleans true.
+
+### C0156 (`I-0755`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing under overlapping fan-in ownership.
+  - `R4`: deterministic replay.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: adapter/fan-in runtime wiring remains deterministic under restart permutations.
+- `C0156` queue adjacency: hard dependency `I-0755 -> I-0756`.
+- `C0156` required implementation contracts (`I-0755`):
+  - Required artifact path:
+    - `.ralph/reports/I-0755-m99-s1-watched-address-fanin-dedupe-matrix.md`
+  - Required row fields:
+    - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `fan_in_profile`, `watch_group_identity`, `canonical_representative`, `canonical_event_id_count`, `missing_logical_events`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+  - Required mandatory rows:
+    - `chain=solana`, `network=devnet`, `fan_in_profile=alias_overlap`
+    - `chain=base`, `network=sepolia`, `fan_in_profile=alias_overlap`
+    - `chain=btc`, `network=testnet`, `fan_in_profile=alias_overlap`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_count=1`
+  - `missing_logical_events=0`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+
+#### C0156 decision hook
+- `DP-0204-C0156`: `C0156` remains blocked until required rows in `.ralph/reports/I-0755-m99-s1-watched-address-fanin-dedupe-matrix.md` are present for mandatory chains with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `fan_in_profile=alias_overlap`
+  - `canonical_event_id_count=1`
+  - `missing_logical_events=0`
+  - `failure_mode` is empty for `GO` rows.
