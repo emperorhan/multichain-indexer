@@ -36,7 +36,7 @@ func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.B
 		return false, nil
 	}
 
-	exists, err := r.eventByCanonicalIDExists(ctx, tx, canonicalID)
+	exists, err := r.eventByCanonicalIDExists(ctx, tx, be.Chain, be.Network, be.EventID)
 	if err != nil {
 		return false, fmt.Errorf("upsert balance event: exists check: %w", err)
 	}
@@ -158,14 +158,14 @@ func (r *BalanceEventRepo) updateExistingByCanonicalID(ctx context.Context, tx *
 	return false, nil
 }
 
-func (r *BalanceEventRepo) eventByCanonicalIDExists(ctx context.Context, tx *sql.Tx, canonicalID uuid.UUID) (bool, error) {
+func (r *BalanceEventRepo) eventByCanonicalIDExists(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, eventID string) (bool, error) {
 	const sqlExists = `
 		SELECT EXISTS(
-			SELECT 1 FROM balance_events WHERE id = $1
+			SELECT 1 FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3
 		)
 	`
 	var exists bool
-	if err := tx.QueryRowContext(ctx, sqlExists, canonicalID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, sqlExists, chain, network, eventID).Scan(&exists); err != nil {
 		return false, fmt.Errorf("query canonical event existence: %w", err)
 	}
 	return exists, nil
@@ -183,42 +183,14 @@ func (r *BalanceEventRepo) insertByCanonicalID(ctx context.Context, tx *sql.Tx, 
 			event_id, block_hash, tx_index, event_path, event_path_type,
 			actor_address, asset_type, asset_id,
 			finality_state, decoder_version, schema_version
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
-		ON CONFLICT (id, block_time) DO UPDATE
-		SET
-			finality_state = EXCLUDED.finality_state,
-			block_hash = COALESCE(NULLIF(EXCLUDED.block_hash, ''), balance_events.block_hash),
-			tx_index = CASE
-				WHEN EXCLUDED.tx_index <> 0 THEN EXCLUDED.tx_index
-			ELSE balance_events.tx_index
-			END,
-			block_cursor = GREATEST(balance_events.block_cursor, EXCLUDED.block_cursor),
-			-- Keep deterministic partition targeting by monotonic block-time progression per canonical identity.
-			block_time = GREATEST(balance_events.block_time, COALESCE(EXCLUDED.block_time, balance_events.block_time)),
-			chain_data = COALESCE(EXCLUDED.chain_data, balance_events.chain_data),
-			decoder_version = COALESCE(NULLIF(EXCLUDED.decoder_version, ''), balance_events.decoder_version),
-			schema_version = COALESCE(NULLIF(EXCLUDED.schema_version, ''), balance_events.schema_version)
-		WHERE
-			CASE LOWER(COALESCE(TRIM(EXCLUDED.finality_state), ''))
-				WHEN 'finalized' THEN 4
-				WHEN 'safe' THEN 3
-				WHEN 'confirmed' THEN 2
-				WHEN 'processed' THEN 1
-				WHEN 'latest' THEN 1
-				WHEN 'pending' THEN 1
-				WHEN 'unsafe' THEN 1
-				ELSE 0
-			END >
-			CASE LOWER(COALESCE(TRIM(balance_events.finality_state), ''))
-				WHEN 'finalized' THEN 4
-				WHEN 'safe' THEN 3
-				WHEN 'confirmed' THEN 2
-				WHEN 'processed' THEN 1
-				WHEN 'latest' THEN 1
-				WHEN 'pending' THEN 1
-				WHEN 'unsafe' THEN 1
-				ELSE 0
-			END
+		) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM balance_events
+			WHERE chain = $2
+				AND network = $3
+				AND event_id = $23
+		)
 		RETURNING (xmax = 0) AS inserted
 	`
 	var inserted bool

@@ -427,13 +427,13 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 			var upsertCountBefore int
 			err = db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3", tc.chain, tc.network, eventID).Scan(&upsertCountBefore)
 			require.NoError(t, err)
-			assert.Equal(t, 1, upsertCountBefore)
+			assert.Equal(t, 1, upsertCountBefore, "upsert_count_before=1")
 
-			// Replay the same canonical event_id with shifted block_time to validate deterministic cursor and finality replay.
+			// Replay with forward block-time shift + lower cursor; idempotence should avoid duplicate row.
 			blockTimeAfter := time.Date(2026, 2, 1, 0, 5, 0, 0, time.UTC)
 			event.BlockTime = &blockTimeAfter
 			event.FinalityState = "confirmed"
-			event.BlockCursor = 101
+			event.BlockCursor = 99
 
 			txB, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
@@ -453,24 +453,70 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 			).Scan(&storedState, &storedCursor, &storedBlockTime)
 			require.NoError(t, err)
 			assert.Equal(t, "confirmed", storedState)
-			assert.Equal(t, int64(101), storedCursor)
+			assert.Equal(t, int64(100), storedCursor)
+			assert.True(t, !storedBlockTime.Before(blockTimeBefore))
 			assert.True(t, !storedBlockTime.Before(blockTimeAfter))
 
-			// Replay the same canonical event_id with higher finality without re-creating the row.
-			event.FinalityState = "finalized"
-			event.BlockCursor = 102
+			// Replay with higher cursor within the same forward-shifted partition drift.
+			event.BlockCursor = 150
 
 			txC, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
-			insertedFinalized, err := beRepo.UpsertTx(ctx, txC, event)
+			insertedReplayHigherCursor, err := beRepo.UpsertTx(ctx, txC, event)
 			require.NoError(t, err)
 			require.NoError(t, txC.Commit())
+			assert.False(t, insertedReplayHigherCursor)
+
+			err = db.QueryRow(
+				"SELECT finality_state, block_cursor, block_time FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3",
+				tc.chain,
+				tc.network,
+				eventID,
+			).Scan(&storedState, &storedCursor, &storedBlockTime)
+			require.NoError(t, err)
+			assert.Equal(t, "confirmed", storedState)
+			assert.Equal(t, int64(150), storedCursor)
+			assert.True(t, !storedBlockTime.Before(blockTimeAfter))
+
+			// Replay with backward block-time regression + lower finality; keep finality and cursor monotonic.
+			blockTimeRewind := time.Date(2025, 12, 31, 23, 50, 0, 0, time.UTC)
+			event.BlockTime = &blockTimeRewind
+			event.FinalityState = "processed"
+			event.BlockCursor = 120
+
+			txD, err := db.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			insertedRewind, err := beRepo.UpsertTx(ctx, txD, event)
+			require.NoError(t, err)
+			require.NoError(t, txD.Commit())
+			assert.False(t, insertedRewind)
+
+			err = db.QueryRow(
+				"SELECT finality_state, block_cursor, block_time FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3",
+				tc.chain,
+				tc.network,
+				eventID,
+			).Scan(&storedState, &storedCursor, &storedBlockTime)
+			require.NoError(t, err)
+			assert.Equal(t, "confirmed", storedState)
+			assert.Equal(t, int64(150), storedCursor)
+			assert.True(t, !storedBlockTime.Before(blockTimeAfter))
+
+			// Replay finality upgrade after shift should update canonical row only once.
+			event.FinalityState = "finalized"
+			event.BlockCursor = 160
+
+			txE, err := db.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			insertedFinalized, err := beRepo.UpsertTx(ctx, txE, event)
+			require.NoError(t, err)
+			require.NoError(t, txE.Commit())
 			assert.False(t, insertedFinalized)
 
 			var upsertCountAfter int
 			err = db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3", tc.chain, tc.network, eventID).Scan(&upsertCountAfter)
 			require.NoError(t, err)
-			assert.Equal(t, 1, upsertCountAfter)
+			assert.Equal(t, 1, upsertCountAfter, "upsert_count_after=1")
 
 			err = db.QueryRow(
 				"SELECT finality_state, block_cursor, block_time FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3",
@@ -480,7 +526,7 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 			).Scan(&storedState, &storedCursor, &storedBlockTime)
 			require.NoError(t, err)
 			assert.Equal(t, "finalized", storedState)
-			assert.Equal(t, int64(102), storedCursor)
+			assert.Equal(t, int64(160), storedCursor)
 			assert.True(t, !storedBlockTime.Before(blockTimeAfter))
 		})
 	}
