@@ -142,4 +142,40 @@ var (
 		Name:      "channel_depth",
 		Help:      "Current depth of pipeline channel buffers",
 	}, []string{"chain", "network", "stage"})
+
+	// Database pool
+	DBPoolOpen = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "postgres",
+		Name:      "db_pool_open",
+		Help:      "Current number of open PostgreSQL connections in the pool",
+	}, []string{"chain", "network"})
+
+	DBPoolInUse = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "postgres",
+		Name:      "db_pool_in_use",
+		Help:      "Current number of in-use PostgreSQL connections in the pool",
+	}, []string{"chain", "network"})
+
+	DBPoolIdle = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "postgres",
+		Name:      "db_pool_idle",
+		Help:      "Current number of idle PostgreSQL connections in the pool",
+	}, []string{"chain", "network"})
+
+	DBPoolWaitCount = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "postgres",
+		Name:      "db_pool_wait_count",
+		Help:      "Cumulative count of waits for PostgreSQL connections from pool",
+	}, []string{"chain", "network"})
+
+	DBPoolWaitDurationSeconds = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "postgres",
+		Name:      "db_pool_wait_duration_seconds",
+		Help:      "Latest PostgreSQL pool wait duration in seconds",
+	}, []string{"chain", "network"})
 )

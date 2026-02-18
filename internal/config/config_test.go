@@ -23,6 +23,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 25, cfg.DB.MaxOpenConns)
 	assert.Equal(t, 5, cfg.DB.MaxIdleConns)
 	assert.Equal(t, dbStatementTimeoutDefaultMS, cfg.DB.StatementTimeoutMS)
+	assert.Equal(t, dbPoolStatsIntervalDefaultMS, cfg.DB.PoolStatsIntervalMS)
 	assert.Equal(t, "redis://localhost:6380", cfg.Redis.URL)
 	assert.Equal(t, "localhost:50051", cfg.Sidecar.Addr)
 	assert.Equal(t, "https://api.devnet.solana.com", cfg.Solana.RPCURL)
@@ -101,6 +102,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 	t.Setenv("COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH", "4")
 	t.Setenv("COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS", "4")
 	t.Setenv("DB_STATEMENT_TIMEOUT_MS", "45000")
+	t.Setenv("DB_POOL_STATS_INTERVAL_MS", "12500")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("HEALTH_PORT", "9090")
 	t.Setenv("RUNTIME_DEPLOYMENT_MODE", RuntimeDeploymentModeIndependent)
@@ -117,6 +119,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 	assert.Equal(t, "redis://redis:6379", cfg.Redis.URL)
 	assert.Equal(t, "mainnet", cfg.Solana.Network)
 	assert.Equal(t, 45000, cfg.DB.StatementTimeoutMS)
+	assert.Equal(t, 12500, cfg.DB.PoolStatsIntervalMS)
 	assert.Equal(t, 4, cfg.Pipeline.FetchWorkers)
 	assert.Equal(t, 3, cfg.Pipeline.NormalizerWorkers)
 	assert.Equal(t, 500, cfg.Pipeline.BatchSize)
@@ -171,6 +174,58 @@ func TestLoad_DBStatementTimeout_OutOfRangeValue(t *testing.T) {
 	_, err := Load()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DB_STATEMENT_TIMEOUT_MS")
+}
+
+func TestLoad_DBPoolStatsInterval_Default(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, dbPoolStatsIntervalDefaultMS, cfg.DB.PoolStatsIntervalMS)
+}
+
+func TestLoad_DBPoolStatsInterval_OutOfRangeLow(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+	t.Setenv("DB_POOL_STATS_INTERVAL_MS", "1")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DB_POOL_STATS_INTERVAL_MS")
+}
+
+func TestLoad_DBPoolStatsInterval_OutOfRangeHigh(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+	t.Setenv("DB_POOL_STATS_INTERVAL_MS", "99999999")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DB_POOL_STATS_INTERVAL_MS")
+}
+
+func TestLoad_DBPoolStatsInterval_InvalidValue(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+	t.Setenv("DB_POOL_STATS_INTERVAL_MS", "not-a-number")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DB_POOL_STATS_INTERVAL_MS")
 }
 
 func TestLoad_DBStatementTimeout_OutOfRangeHighValue(t *testing.T) {

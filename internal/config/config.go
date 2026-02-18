@@ -9,9 +9,12 @@ import (
 )
 
 const (
-	dbStatementTimeoutDefaultMS = 30000
-	dbStatementTimeoutMinMS     = 0
-	dbStatementTimeoutMaxMS     = 3_600_000
+	dbStatementTimeoutDefaultMS  = 30000
+	dbStatementTimeoutMinMS      = 0
+	dbStatementTimeoutMaxMS      = 3_600_000
+	dbPoolStatsIntervalDefaultMS = 5000
+	dbPoolStatsIntervalMinMS     = 100
+	dbPoolStatsIntervalMaxMS     = 3_600_000
 )
 
 type Config struct {
@@ -29,11 +32,12 @@ type Config struct {
 }
 
 type DBConfig struct {
-	URL                string
-	MaxOpenConns       int
-	MaxIdleConns       int
-	ConnMaxLifetime    time.Duration
-	StatementTimeoutMS int
+	URL                 string
+	MaxOpenConns        int
+	MaxIdleConns        int
+	ConnMaxLifetime     time.Duration
+	StatementTimeoutMS  int
+	PoolStatsIntervalMS int
 }
 
 type RedisConfig struct {
@@ -134,15 +138,21 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("DB_STATEMENT_TIMEOUT_MS: %w", err)
 	}
 
+	poolStatsIntervalMS, err := getEnvIntBounded("DB_POOL_STATS_INTERVAL_MS", dbPoolStatsIntervalDefaultMS, dbPoolStatsIntervalMinMS, dbPoolStatsIntervalMaxMS)
+	if err != nil {
+		return nil, fmt.Errorf("DB_POOL_STATS_INTERVAL_MS: %w", err)
+	}
+
 	pipelineBatchSize := getEnvInt("BATCH_SIZE", 100)
 
 	cfg := &Config{
 		DB: DBConfig{
-			URL:                getEnv("DB_URL", "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable"),
-			MaxOpenConns:       getEnvInt("DB_MAX_OPEN_CONNS", 25),
-			MaxIdleConns:       getEnvInt("DB_MAX_IDLE_CONNS", 5),
-			ConnMaxLifetime:    time.Duration(getEnvInt("DB_CONN_MAX_LIFETIME_MIN", 30)) * time.Minute,
-			StatementTimeoutMS: statementTimeoutMS,
+			URL:                 getEnv("DB_URL", "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable"),
+			MaxOpenConns:        getEnvInt("DB_MAX_OPEN_CONNS", 25),
+			MaxIdleConns:        getEnvInt("DB_MAX_IDLE_CONNS", 5),
+			ConnMaxLifetime:     time.Duration(getEnvInt("DB_CONN_MAX_LIFETIME_MIN", 30)) * time.Minute,
+			StatementTimeoutMS:  statementTimeoutMS,
+			PoolStatsIntervalMS: poolStatsIntervalMS,
 		},
 		Redis: RedisConfig{
 			URL: getEnv("REDIS_URL", "redis://localhost:6380"),

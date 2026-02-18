@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -18,12 +19,14 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/chain/solana"
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
 	redispkg "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	"github.com/emperorhan/multichain-indexer/internal/tracing"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 )
@@ -75,6 +78,80 @@ func (a *chainAliasAdapter) FetchNewSignaturesWithCutoff(
 
 func (a *chainAliasAdapter) FetchTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error) {
 	return a.delegate.FetchTransactions(ctx, signatures)
+}
+
+type dbStatsProvider interface {
+	Stats() sql.DBStats
+}
+
+type dbPoolStatsGauges struct {
+	open         *prometheus.GaugeVec
+	inUse        *prometheus.GaugeVec
+	idle         *prometheus.GaugeVec
+	waitCount    *prometheus.GaugeVec
+	waitDuration *prometheus.GaugeVec
+}
+
+func collectDBPoolStats(db dbStatsProvider, targets []runtimeTarget, gauges dbPoolStatsGauges) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("db pool stats collection panicked: %v", r)
+		}
+	}()
+	if db == nil {
+		return fmt.Errorf("db stats provider is nil")
+	}
+
+	stats := db.Stats()
+	for _, target := range targets {
+		chainLabel := target.chain.String()
+		networkLabel := string(target.network)
+
+		gauges.open.WithLabelValues(chainLabel, networkLabel).Set(float64(stats.OpenConnections))
+		gauges.inUse.WithLabelValues(chainLabel, networkLabel).Set(float64(stats.InUse))
+		gauges.idle.WithLabelValues(chainLabel, networkLabel).Set(float64(stats.Idle))
+		gauges.waitCount.WithLabelValues(chainLabel, networkLabel).Set(float64(stats.WaitCount))
+		gauges.waitDuration.WithLabelValues(chainLabel, networkLabel).Set(stats.WaitDuration.Seconds())
+	}
+
+	return nil
+}
+
+func startDBPoolStatsPump(ctx context.Context, db dbStatsProvider, targets []runtimeTarget, intervalMS int, logger *slog.Logger) {
+	if db == nil || len(targets) == 0 || intervalMS <= 0 {
+		return
+	}
+
+	gauges := dbPoolStatsGauges{
+		open:         metrics.DBPoolOpen,
+		inUse:        metrics.DBPoolInUse,
+		idle:         metrics.DBPoolIdle,
+		waitCount:    metrics.DBPoolWaitCount,
+		waitDuration: metrics.DBPoolWaitDurationSeconds,
+	}
+
+	interval := time.Duration(intervalMS) * time.Millisecond
+	ticker := time.NewTicker(interval)
+
+	go func() {
+		defer ticker.Stop()
+
+		if err := collectDBPoolStats(db, targets, gauges); err != nil {
+			logger.Warn("failed to collect initial db pool stats", "error", err)
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				logger.Info("db pool stats sampler stopped", "cause", "context_done")
+				return
+			case <-ticker.C:
+				if err := collectDBPoolStats(db, targets, gauges); err != nil {
+					logger.Warn("failed to collect db pool stats", "error", err)
+				}
+			}
+		}
+	}()
 }
 
 func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarget {
@@ -338,6 +415,8 @@ func main() {
 			return p.Run(gCtx)
 		})
 	}
+
+	startDBPoolStatsPump(gCtx, db.DB, targets, cfg.DB.PoolStatsIntervalMS, logger)
 
 	// Signal handler
 	g.Go(func() error {
