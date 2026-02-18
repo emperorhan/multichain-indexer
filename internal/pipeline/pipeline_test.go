@@ -462,36 +462,49 @@ func TestPipeline_Run_RawBatchStreamConsumer_InvalidCheckpointFallsBackToBootstr
 
 func TestPipeline_Run_StreamBoundaryCheckpointKey_DeterministicAndScopedByChainNetworkSessionBoundary(t *testing.T) {
 	testCases := []struct {
-		name     string
-		chain    model.Chain
-		network  model.Network
-		session  string
-		boundary string
-		expected string
+		name      string
+		chain     model.Chain
+		network   model.Network
+		namespace string
+		session   string
+		boundary  string
+		expected  string
 	}{
 		{
-			name:     "solana-devnet-fetcher-normalizer-session-alpha",
-			chain:    model.ChainSolana,
-			network:  model.NetworkDevnet,
-			session:  "session-alpha",
-			boundary: streamBoundaryFetchToNormal,
-			expected: "stream-checkpoint:chain=solana:network=devnet:session=session-alpha:boundary=fetcher-normalizer",
+			name:      "solana-devnet-fetcher-normalizer-session-alpha",
+			chain:     model.ChainSolana,
+			network:   model.NetworkDevnet,
+			namespace: "pipeline",
+			session:   "session-alpha",
+			boundary:  streamBoundaryFetchToNormal,
+			expected:  "stream-checkpoint:namespace=pipeline:chain=solana:network=devnet:session=session-alpha:boundary=fetcher-normalizer",
 		},
 		{
-			name:     "base-sepolia-fetcher-normalizer-session-beta",
-			chain:    model.ChainBase,
-			network:  model.NetworkSepolia,
-			session:  "session-beta",
-			boundary: streamBoundaryFetchToNormal,
-			expected: "stream-checkpoint:chain=base:network=sepolia:session=session-beta:boundary=fetcher-normalizer",
+			name:      "base-sepolia-fetcher-normalizer-session-beta",
+			chain:     model.ChainBase,
+			network:   model.NetworkSepolia,
+			namespace: "pipeline",
+			session:   "session-beta",
+			boundary:  streamBoundaryFetchToNormal,
+			expected:  "stream-checkpoint:namespace=pipeline:chain=base:network=sepolia:session=session-beta:boundary=fetcher-normalizer",
 		},
 		{
-			name:     "btc-testnet-fetcher-normalizer-session-gamma",
-			chain:    model.ChainBTC,
-			network:  model.NetworkTestnet,
-			session:  "session-gamma",
-			boundary: streamBoundaryFetchToNormal,
-			expected: "stream-checkpoint:chain=btc:network=testnet:session=session-gamma:boundary=fetcher-normalizer",
+			name:      "btc-testnet-fetcher-normalizer-session-gamma",
+			chain:     model.ChainBTC,
+			network:   model.NetworkTestnet,
+			namespace: "pipeline",
+			session:   "session-gamma",
+			boundary:  streamBoundaryFetchToNormal,
+			expected:  "stream-checkpoint:namespace=pipeline:chain=btc:network=testnet:session=session-gamma:boundary=fetcher-normalizer",
+		},
+		{
+			name:      "btc-testnet-custom-namespace",
+			chain:     model.ChainBTC,
+			network:   model.NetworkTestnet,
+			namespace: "namespace-a",
+			session:   "session-gamma",
+			boundary:  streamBoundaryFetchToNormal,
+			expected:  "stream-checkpoint:namespace=namespace-a:chain=btc:network=testnet:session=session-gamma:boundary=fetcher-normalizer",
 		},
 	}
 
@@ -502,7 +515,8 @@ func TestPipeline_Run_StreamBoundaryCheckpointKey_DeterministicAndScopedByChainN
 				Config{
 					Chain:           tc.chain,
 					Network:         tc.network,
-					StreamSessionID: tc.session,
+					StreamNamespace: tc.namespace,
+					StreamSessionID:  tc.session,
 				},
 				nil,
 				nil,
@@ -527,19 +541,19 @@ func TestPipeline_Run_StreamBoundaryCheckpointKey_DefaultSession(t *testing.T) {
 			name:     "solana-devnet-default",
 			chain:    model.ChainSolana,
 			network:  model.NetworkDevnet,
-			expected: "stream-checkpoint:chain=solana:network=devnet:session=default:boundary=fetcher-normalizer",
+			expected: "stream-checkpoint:namespace=pipeline:chain=solana:network=devnet:session=default:boundary=fetcher-normalizer",
 		},
 		{
 			name:     "base-sepolia-default",
 			chain:    model.ChainBase,
 			network:  model.NetworkSepolia,
-			expected: "stream-checkpoint:chain=base:network=sepolia:session=default:boundary=fetcher-normalizer",
+			expected: "stream-checkpoint:namespace=pipeline:chain=base:network=sepolia:session=default:boundary=fetcher-normalizer",
 		},
 		{
 			name:     "btc-testnet-default",
 			chain:    model.ChainBTC,
 			network:  model.NetworkTestnet,
-			expected: "stream-checkpoint:chain=btc:network=testnet:session=default:boundary=fetcher-normalizer",
+			expected: "stream-checkpoint:namespace=pipeline:chain=btc:network=testnet:session=default:boundary=fetcher-normalizer",
 		},
 	}
 
@@ -559,6 +573,75 @@ func TestPipeline_Run_StreamBoundaryCheckpointKey_DefaultSession(t *testing.T) {
 
 			got := p.streamBoundaryCheckpointKey(streamBoundaryFetchToNormal)
 			assert.Equal(t, tc.expected, got)
+		})
+	}
+}
+
+func TestPipeline_Run_RawBatchStreamConsumer_DoesNotReuseCheckpointAcrossNamespaces(t *testing.T) {
+	testCases := []struct {
+		name     string
+		chain    model.Chain
+		network  model.Network
+		namespace string
+	}{
+		{
+			name:      "solana-devnet",
+			chain:     model.ChainSolana,
+			network:   model.NetworkDevnet,
+			namespace: "namespace-a",
+		},
+		{
+			name:      "base-sepolia",
+			chain:     model.ChainBase,
+			network:   model.NetworkSepolia,
+			namespace: "namespace-b",
+		},
+		{
+			name:      "btc-testnet",
+			chain:     model.ChainBTC,
+			network:   model.NetworkTestnet,
+			namespace: "namespace-c",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			checkpointStream := newCheckpointInMemoryStream()
+
+			cfgA := Config{
+				Chain:                  tc.chain,
+				Network:                tc.network,
+				StreamBackend:          checkpointStream,
+				StreamNamespace:        tc.namespace,
+				StreamSessionID:        "session-a",
+				StreamTransportEnabled: true,
+			}
+			cfgB := cfgA
+			if tc.namespace == "namespace-b" {
+				cfgB.StreamNamespace = "namespace-b-alt"
+			} else if tc.namespace == "namespace-c" {
+				cfgB.StreamNamespace = "namespace-c-alt"
+			} else {
+				cfgB.StreamNamespace = "namespace-a-alt"
+			}
+
+			pA := New(cfgA, nil, nil, &Repos{}, slog.Default())
+			pB := New(cfgB, nil, nil, &Repos{}, slog.Default())
+
+			aKey := pA.streamBoundaryCheckpointKey(streamBoundaryFetchToNormal)
+			bKey := pB.streamBoundaryCheckpointKey(streamBoundaryFetchToNormal)
+
+			require.NotEqual(t, aKey, bKey)
+			require.NoError(t, checkpointStream.PersistStreamCheckpoint(context.Background(), aKey, "1"))
+
+			loadedA, err := pA.loadStreamCheckpoint(context.Background(), checkpointStream, streamBoundaryFetchToNormal)
+			require.NoError(t, err)
+			assert.Equal(t, "1", loadedA)
+
+			loadedB, err := pB.loadStreamCheckpoint(context.Background(), checkpointStream, streamBoundaryFetchToNormal)
+			require.NoError(t, err)
+			assert.Equal(t, "0", loadedB)
 		})
 	}
 }
