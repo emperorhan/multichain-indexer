@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+const (
+	dbStatementTimeoutDefaultMS = 30000
+	dbStatementTimeoutMinMS     = 0
+	dbStatementTimeoutMaxMS     = 3_600_000
+)
+
 type Config struct {
 	DB       DBConfig
 	Redis    RedisConfig
@@ -23,10 +29,11 @@ type Config struct {
 }
 
 type DBConfig struct {
-	URL             string
-	MaxOpenConns    int
-	MaxIdleConns    int
-	ConnMaxLifetime time.Duration
+	URL                string
+	MaxOpenConns       int
+	MaxIdleConns       int
+	ConnMaxLifetime    time.Duration
+	StatementTimeoutMS int
 }
 
 type RedisConfig struct {
@@ -122,14 +129,20 @@ type TracingConfig struct {
 }
 
 func Load() (*Config, error) {
+	statementTimeoutMS, err := getEnvIntBounded("DB_STATEMENT_TIMEOUT_MS", dbStatementTimeoutDefaultMS, dbStatementTimeoutMinMS, dbStatementTimeoutMaxMS)
+	if err != nil {
+		return nil, fmt.Errorf("DB_STATEMENT_TIMEOUT_MS: %w", err)
+	}
+
 	pipelineBatchSize := getEnvInt("BATCH_SIZE", 100)
 
 	cfg := &Config{
 		DB: DBConfig{
-			URL:             getEnv("DB_URL", "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable"),
-			MaxOpenConns:    getEnvInt("DB_MAX_OPEN_CONNS", 25),
-			MaxIdleConns:    getEnvInt("DB_MAX_IDLE_CONNS", 5),
-			ConnMaxLifetime: time.Duration(getEnvInt("DB_CONN_MAX_LIFETIME_MIN", 30)) * time.Minute,
+			URL:                getEnv("DB_URL", "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable"),
+			MaxOpenConns:       getEnvInt("DB_MAX_OPEN_CONNS", 25),
+			MaxIdleConns:       getEnvInt("DB_MAX_IDLE_CONNS", 5),
+			ConnMaxLifetime:    time.Duration(getEnvInt("DB_CONN_MAX_LIFETIME_MIN", 30)) * time.Minute,
+			StatementTimeoutMS: statementTimeoutMS,
 		},
 		Redis: RedisConfig{
 			URL: getEnv("REDIS_URL", "redis://localhost:6380"),
@@ -400,6 +413,24 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func getEnvIntBounded(key string, fallback int, min int, max int) (int, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("must be an integer")
+	}
+
+	if value < min || value > max {
+		return 0, fmt.Errorf("must be within [%d, %d]", min, max)
+	}
+
+	return value, nil
 }
 
 func getEnvBool(key string, fallback bool) bool {
