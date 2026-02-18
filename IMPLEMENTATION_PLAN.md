@@ -5236,14 +5236,14 @@ Completed milestones/slices:
 198. `I-0555` (`C0100-S2`) after `I-0554`
 
 Active downstream queue from this plan:
-1. `I-0707` (`C0142` planner producer) after `I-0704`
-2. `I-0708` (`C0142` implementer) after `I-0707`
-3. `I-0709` (`C0142` qa gate) after `I-0708`
+1. `I-0710` (`C0143`) planner handoff
+2. `I-0711` (`C0143` implementer) after `I-0710`
+3. `I-0712` (`C0143` qa gate) after `I-0711`
 
 Planned next tranche queue:
-1. `I-0707` (`C0142` planner producer) after `I-0704`
-2. `I-0708` (`C0142` implementer) after `I-0707`
-3. `I-0709` (`C0142` qa gate) after `I-0708`
+1. `I-0710` (`C0143`) to scope and dispatch the next production feature slice.
+2. `I-0711` (`C0143` implementer) to address Solana system-instruction transfer-path coverage.
+3. `I-0712` (`C0143` qa gate) to enforce hard-stop evidence and invariant gates.
 
 Superseded issues:
 - `I-0106` is superseded by `I-0108` + `I-0109` to keep M4 slices independently releasable.
