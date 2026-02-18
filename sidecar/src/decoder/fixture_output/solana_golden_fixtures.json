@@ -1,0 +1,350 @@
+{
+  "fixtures": [
+    {
+      "fixture_id": "I-0672-M96-SOL-TRANSFER-001",
+      "fixture_seed": 5101,
+      "run_id": "run-I-0672-m96-s1",
+      "chain": "solana",
+      "network": "solana-devnet",
+      "class_path": "TRANSFER",
+      "signature": "sig-sol-transfer-001",
+      "watched_addresses": ["7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"],
+      "input": {
+        "slot": 100,
+        "blockTime": 1700000000,
+        "transaction": {
+          "message": {
+            "accountKeys": [
+              { "pubkey": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump" },
+              { "pubkey": "ANotherAddr1111111111111111111111111111111" },
+              { "pubkey": "11111111111111111111111111111111" }
+            ],
+            "instructions": [
+              {
+                "programId": "11111111111111111111111111111111",
+                "parsed": {
+                  "type": "transfer",
+                  "info": {
+                    "source": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+                    "destination": "ANotherAddr1111111111111111111111111111111",
+                    "lamports": 1000000000
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "meta": {
+          "err": null,
+          "fee": 5000,
+          "preBalances": [2000000000, 500000000, 1],
+          "postBalances": [999995000, 1500000000, 1],
+          "innerInstructions": []
+        }
+      },
+      "expected_output": {
+        "tx_hash": "sig-sol-transfer-001",
+        "block_cursor": 100,
+        "block_time": 1700000000,
+        "fee_amount": "5000",
+        "fee_payer": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+        "status": "SUCCESS",
+        "balance_events": [
+          {
+            "outer_instruction_index": -1,
+            "inner_instruction_index": -1,
+            "event_category": "FEE",
+            "event_action": "transaction_fee",
+            "program_id": "11111111111111111111111111111111",
+            "address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+            "contract_address": "11111111111111111111111111111111",
+            "delta": "-5000",
+            "counterparty_address": "",
+            "token_symbol": "SOL",
+            "token_name": "Solana",
+            "token_decimals": 9,
+            "token_type": "NATIVE"
+          },
+          {
+            "outer_instruction_index": 0,
+            "inner_instruction_index": -1,
+            "event_category": "TRANSFER",
+            "event_action": "system_transfer",
+            "program_id": "11111111111111111111111111111111",
+            "address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+            "contract_address": "11111111111111111111111111111111",
+            "delta": "-1000000000",
+            "counterparty_address": "ANotherAddr1111111111111111111111111111111",
+            "token_symbol": "SOL",
+            "token_name": "Solana",
+            "token_decimals": 9,
+            "token_type": "NATIVE"
+          }
+        ]
+      }
+    },
+    {
+      "fixture_id": "I-0672-M96-SOL-MINT-001",
+      "fixture_seed": 5102,
+      "run_id": "run-I-0672-m96-s1",
+      "chain": "solana",
+      "network": "solana-devnet",
+      "class_path": "MINT",
+      "signature": "sig-sol-mint-001",
+      "watched_addresses": ["7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"],
+      "input": {
+        "slot": 1100,
+        "blockTime": 1700008000,
+        "transaction": {
+          "message": {
+            "accountKeys": [
+              { "pubkey": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump" },
+              { "pubkey": "mintDestinationATA" },
+              { "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+              { "pubkey": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" }
+            ],
+            "instructions": [
+              {
+                "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "parsed": {
+                  "type": "mintTo",
+                  "info": {
+                    "account": "mintDestinationATA",
+                    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "authority": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+                    "amount": "2500000"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "meta": {
+          "err": null,
+          "fee": 5000,
+          "preBalances": [2000000000, 0, 1],
+          "postBalances": [1997955720, 2500000, 1],
+          "preTokenBalances": [
+            {
+              "accountIndex": 1,
+              "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+              "owner": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+              "uiTokenAmount": {
+                "amount": "0",
+                "decimals": 0,
+                "uiAmount": 0
+              }
+            }
+          ],
+          "postTokenBalances": [
+            {
+              "accountIndex": 1,
+              "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+              "owner": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+              "uiTokenAmount": {
+                "amount": "2500000",
+                "decimals": 0,
+                "uiAmount": 2500000
+              }
+            }
+          ],
+          "innerInstructions": []
+        }
+      },
+      "expected_output": {
+        "tx_hash": "sig-sol-mint-001",
+        "block_cursor": 1100,
+        "block_time": 1700008000,
+        "fee_amount": "5000",
+        "fee_payer": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+        "status": "SUCCESS",
+        "balance_events": [
+          {
+            "outer_instruction_index": -1,
+            "inner_instruction_index": -1,
+            "event_category": "FEE",
+            "event_action": "transaction_fee",
+            "program_id": "11111111111111111111111111111111",
+            "address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+            "contract_address": "11111111111111111111111111111111",
+            "delta": "-5000",
+            "counterparty_address": "",
+            "token_symbol": "SOL",
+            "token_name": "Solana",
+            "token_decimals": 9,
+            "token_type": "NATIVE"
+          },
+          {
+            "outer_instruction_index": 0,
+            "inner_instruction_index": -1,
+            "event_category": "MINT",
+            "event_action": "spl_mint",
+            "program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+            "contract_address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "delta": "2500000",
+            "counterparty_address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+            "token_symbol": "",
+            "token_name": "",
+            "token_decimals": 0,
+            "token_type": "FUNGIBLE",
+            "metadata": {
+              "event_path": "outer:0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "fixture_id": "I-0672-M96-SOL-BURN-001",
+      "fixture_seed": 5103,
+      "run_id": "run-I-0672-m96-s1",
+      "chain": "solana",
+      "network": "solana-devnet",
+      "class_path": "BURN",
+      "signature": "sig-sol-burn-001",
+      "watched_addresses": ["7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"],
+      "input": {
+        "slot": 1200,
+        "blockTime": 1700009000,
+        "transaction": {
+          "message": {
+            "accountKeys": [
+              { "pubkey": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump" },
+              { "pubkey": "burnSourceATA" },
+              { "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+              { "pubkey": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" }
+            ],
+            "instructions": [
+              {
+                "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "parsed": {
+                  "type": "burn",
+                  "info": {
+                    "account": "burnSourceATA",
+                    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "owner": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+                    "amount": "1250000"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "meta": {
+          "err": null,
+          "fee": 5000,
+          "preBalances": [2000000000, 2500000, 0, 0],
+          "postBalances": [1998750000, 2500000, 0, 0],
+          "preTokenBalances": [],
+          "postTokenBalances": [],
+          "innerInstructions": []
+        }
+      },
+      "expected_output": {
+        "tx_hash": "sig-sol-burn-001",
+        "block_cursor": 1200,
+        "block_time": 1700009000,
+        "fee_amount": "5000",
+        "fee_payer": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+        "status": "SUCCESS",
+        "balance_events": [
+          {
+            "outer_instruction_index": -1,
+            "inner_instruction_index": -1,
+            "event_category": "FEE",
+            "event_action": "transaction_fee",
+            "program_id": "11111111111111111111111111111111",
+            "address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+            "contract_address": "11111111111111111111111111111111",
+            "delta": "-5000",
+            "counterparty_address": "",
+            "token_symbol": "SOL",
+            "token_name": "Solana",
+            "token_decimals": 9,
+            "token_type": "NATIVE"
+          },
+          {
+            "outer_instruction_index": 0,
+            "inner_instruction_index": -1,
+            "event_category": "BURN",
+            "event_action": "spl_burn",
+            "program_id": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+            "contract_address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "delta": "-1250000",
+            "counterparty_address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+            "token_symbol": "",
+            "token_name": "",
+            "token_decimals": 0,
+            "token_type": "FUNGIBLE",
+            "metadata": {
+              "event_path": "outer:0",
+              "scam_signal": "zero_balance_withdrawal"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "fixture_id": "I-0672-M96-SOL-FEE-001",
+      "fixture_seed": 5104,
+      "run_id": "run-I-0672-m96-s1",
+      "chain": "solana",
+      "network": "solana-devnet",
+      "class_path": "FEE",
+      "signature": "sig-sol-fee-001",
+      "watched_addresses": ["7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"],
+      "input": {
+        "slot": 700,
+        "blockTime": 1700006000,
+        "transaction": {
+          "message": {
+            "accountKeys": [
+              { "pubkey": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump" },
+              { "pubkey": "someProgram" }
+            ],
+            "instructions": [
+              {
+                "programId": "someProgram",
+                "parsed": null
+              }
+            ]
+          }
+        },
+        "meta": {
+          "err": null,
+          "fee": 5000,
+          "preBalances": [2000000000, 1],
+          "postBalances": [1999995000, 1],
+          "innerInstructions": []
+        }
+      },
+      "expected_output": {
+        "tx_hash": "sig-sol-fee-001",
+        "block_cursor": 700,
+        "block_time": 1700006000,
+        "fee_amount": "5000",
+        "fee_payer": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+        "status": "SUCCESS",
+        "balance_events": [
+          {
+            "outer_instruction_index": -1,
+            "inner_instruction_index": -1,
+            "event_category": "FEE",
+            "event_action": "transaction_fee",
+            "program_id": "11111111111111111111111111111111",
+            "address": "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
+            "contract_address": "11111111111111111111111111111111",
+            "delta": "-5000",
+            "counterparty_address": "",
+            "token_symbol": "SOL",
+            "token_name": "Solana",
+            "token_decimals": 9,
+            "token_type": "NATIVE"
+          }
+        ]
+      }
+    }
+  ]
+}

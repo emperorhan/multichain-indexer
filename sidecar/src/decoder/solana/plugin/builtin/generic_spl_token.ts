@@ -180,8 +180,8 @@ function parseTokenBurn(
   const sourceTokenAccount = resolveAccount(info.account, accountKeyMap);
   const authority = resolveAccount(info.authority, accountKeyMap) || resolveAccount(info.owner, accountKeyMap);
   const burner = resolveOwnerFromBalances(meta, sourceTokenAccount, accountKeyMap)
-    || sourceTokenAccount
-    || authority;
+    || authority
+    || sourceTokenAccount;
   if (!burner || !watchedSet.has(burner)) {
     return [];
   }
