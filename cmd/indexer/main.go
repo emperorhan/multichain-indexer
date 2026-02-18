@@ -563,28 +563,46 @@ func filterRuntimeTargetsByKeys(targets []runtimeTarget, keys []string) ([]runti
 		return nil, nil
 	}
 
-	requested := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		requested[strings.TrimSpace(strings.ToLower(key))] = struct{}{}
+	requested := normalizeRuntimeTargetKeys(keys)
+	requestedSet := make(map[string]struct{}, len(requested))
+	for _, key := range requested {
+		requestedSet[key] = struct{}{}
 	}
 
 	filtered := make([]runtimeTarget, 0, len(targets))
 	seen := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
 		key := runtimeTargetKey(target.chain, target.network)
-		if _, want := requested[key]; want {
+		if _, want := requestedSet[key]; want {
 			filtered = append(filtered, target)
 			seen[key] = struct{}{}
 		}
 	}
 
 	missing := make([]string, 0)
-	for key := range requested {
+	for _, key := range requested {
 		if _, exists := seen[key]; !exists {
 			missing = append(missing, key)
 		}
 	}
 	return filtered, missing
+}
+
+func normalizeRuntimeTargetKeys(keys []string) []string {
+	normalized := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		norm := strings.ToLower(strings.TrimSpace(key))
+		if norm == "" {
+			continue
+		}
+		if _, exists := seen[norm]; exists {
+			continue
+		}
+		seen[norm] = struct{}{}
+		normalized = append(normalized, norm)
+	}
+	return normalized
 }
 
 func runtimeTargetKeys(targets []runtimeTarget) []string {

@@ -150,6 +150,32 @@ func TestLoad_EnvOverride(t *testing.T) {
 	assert.Equal(t, []string{"base-sepolia"}, cfg.Runtime.ChainTargets)
 }
 
+func TestLoad_RejectsInvalidRuntimeTargetFormat(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://test:test@db:5432/testdb")
+	t.Setenv("SOLANA_DEVNET_RPC_URL", "https://mainnet.solana.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base-sepolia.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc-testnet.example")
+	t.Setenv("SIDECAR_ADDR", "sidecar:50051")
+	t.Setenv("RUNTIME_CHAIN_TARGET", "solana")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be in <chain>-<network> format")
+}
+
+func TestLoad_RejectsUnsupportedRuntimeTargetNetwork(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://test:test@db:5432/testdb")
+	t.Setenv("SOLANA_DEVNET_RPC_URL", "https://mainnet.solana.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base-sepolia.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc-testnet.example")
+	t.Setenv("SIDECAR_ADDR", "sidecar:50051")
+	t.Setenv("RUNTIME_CHAIN_TARGET", "solana-mainnet")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported network")
+}
+
 func TestLoad_DBStatementTimeout_InvalidValue(t *testing.T) {
 	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
 	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
@@ -502,6 +528,24 @@ func TestChainNameFromTargetKey_AcceptsEthereumMainnet(t *testing.T) {
 	chainName, err := chainNameFromTargetKey("ethereum-mainnet")
 	require.NoError(t, err)
 	assert.Equal(t, "ethereum", chainName)
+}
+
+func TestChainNameFromTargetKey_NormalizesWhitespaceAndCase(t *testing.T) {
+	chainName, err := chainNameFromTargetKey(" SOLANA-devNET ")
+	require.NoError(t, err)
+	assert.Equal(t, "solana", chainName)
+}
+
+func TestChainNameFromTargetKey_RejectsUnsupportedNetwork(t *testing.T) {
+	_, err := chainNameFromTargetKey("base-mainnet")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported network")
+}
+
+func TestChainNameFromTargetKey_RejectsInvalidFormat(t *testing.T) {
+	_, err := chainNameFromTargetKey("solana")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be in <chain>-<network> format")
 }
 
 func TestValidate_LikeGroupBTCAllowedWhenRPCConfigured(t *testing.T) {

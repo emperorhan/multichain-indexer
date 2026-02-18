@@ -274,6 +274,10 @@ func (c *Config) validate() error {
 		}
 	}
 
+	if err := validateRuntimeChainTargets(c.Runtime.ChainTargets); err != nil {
+		return err
+	}
+
 	requiredChains, err := requiredRuntimeChains(c.Runtime)
 	if err != nil {
 		return err
@@ -347,21 +351,62 @@ func requiredRuntimeChains(runtime RuntimeConfig) (map[string]bool, error) {
 }
 
 func chainNameFromTargetKey(target string) (string, error) {
+	chainName, _, err := parseRuntimeTargetKey(target)
+	return chainName, err
+}
+
+func parseRuntimeTargetKey(target string) (string, string, error) {
 	normalized := strings.TrimSpace(strings.ToLower(target))
 	if normalized == "" {
-		return "", fmt.Errorf("runtime chain target must not be empty")
-	}
-	parts := strings.SplitN(normalized, "-", 2)
-	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
-		return "", fmt.Errorf("runtime chain target %q must be in <chain>-<network> format", target)
+		return "", "", fmt.Errorf("runtime chain target must not be empty")
 	}
 
-	switch parts[0] {
-	case "solana", "base", "ethereum", "btc":
-		return parts[0], nil
-	default:
-		return "", fmt.Errorf("runtime chain target %q has unsupported chain %q", target, parts[0])
+	parts := strings.SplitN(normalized, "-", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+		return "", "", fmt.Errorf("runtime chain target %q must be in <chain>-<network> format", target)
 	}
+
+	chain := strings.TrimSpace(parts[0])
+	network := strings.TrimSpace(parts[1])
+	switch chain {
+	case "solana":
+		if network != "devnet" {
+			return "", "", fmt.Errorf("runtime chain target %q has unsupported network %q for chain %q", target, network, chain)
+		}
+	case "base":
+		if network != "sepolia" {
+			return "", "", fmt.Errorf("runtime chain target %q has unsupported network %q for chain %q", target, network, chain)
+		}
+	case "ethereum":
+		if network != "mainnet" {
+			return "", "", fmt.Errorf("runtime chain target %q has unsupported network %q for chain %q", target, network, chain)
+		}
+	case "btc":
+		if network != "testnet" {
+			return "", "", fmt.Errorf("runtime chain target %q has unsupported network %q for chain %q", target, network, chain)
+		}
+	default:
+		return "", "", fmt.Errorf("runtime chain target %q has unsupported chain %q", target, chain)
+	}
+
+	return chain, network, nil
+}
+
+func validateRuntimeChainTargets(targets []string) error {
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		chain, network, err := parseRuntimeTargetKey(target)
+		if err != nil {
+			return fmt.Errorf("RUNTIME_CHAIN_TARGETS contains invalid value %q: %w", target, err)
+		}
+		key := chain + "-" + network
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+	}
+
+	return nil
 }
 
 func getEnv(key, fallback string) string {

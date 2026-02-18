@@ -521,6 +521,28 @@ func TestSelectRuntimeTargets_IndependentModeBTC(t *testing.T) {
 	assert.Equal(t, model.NetworkTestnet, selected[0].network)
 }
 
+func TestFilterRuntimeTargetsByKeys_DeterministicAcceptanceOrderAndDedup(t *testing.T) {
+	all := []runtimeTarget{
+		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
+		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+		{chain: model.ChainBTC, network: model.NetworkTestnet, group: config.RuntimeLikeGroupBTC},
+	}
+
+	selected, missing := filterRuntimeTargetsByKeys(all, []string{
+		"dogecoin-mainnet",
+		"base-sepolia",
+		"solana-devnet",
+		"base-sepolia",
+		"",
+		"  ",
+	})
+
+	require.Len(t, selected, 2)
+	assert.Equal(t, model.ChainSolana, selected[0].chain)
+	assert.Equal(t, model.ChainBase, selected[1].chain)
+	assert.Equal(t, []string{"dogecoin-mainnet"}, missing)
+}
+
 func TestSelectRuntimeTargets_IndependentModeEthereumMainnet(t *testing.T) {
 	all := []runtimeTarget{
 		{
@@ -557,6 +579,21 @@ func TestSelectRuntimeTargets_IndependentModeEthereumMainnet(t *testing.T) {
 	require.Len(t, selected, 1)
 	assert.Equal(t, model.ChainEthereum, selected[0].chain)
 	assert.Equal(t, model.NetworkMainnet, selected[0].network)
+}
+
+func TestSelectRuntimeTargets_LikeGroupMissingTargetsStableOrder(t *testing.T) {
+	all := []runtimeTarget{
+		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
+		{chain: model.ChainBase, network: model.NetworkSepolia, group: config.RuntimeLikeGroupEVM},
+		{chain: model.ChainBTC, network: model.NetworkTestnet, group: config.RuntimeLikeGroupBTC},
+	}
+
+	_, err := selectRuntimeTargets(all, config.RuntimeConfig{
+		DeploymentMode: config.RuntimeDeploymentModeLikeGroup,
+		ChainTargets:   []string{" dogecoin-mainnet ", "btc-mainnet", "base-sepolia"},
+	})
+	require.Error(t, err)
+	assert.EqualError(t, err, "requested runtime chain targets not found: dogecoin-mainnet,btc-mainnet")
 }
 
 func TestSelectRuntimeTargets_FailsWhenUnknownTargetRequested(t *testing.T) {
