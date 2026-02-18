@@ -245,7 +245,7 @@ create_continuous_quality_cycle() {
   developer_key="auto-quality-cycle-${cycle_id}-build"
   qa_key="auto-quality-cycle-${cycle_id}-qa"
 
-  planner_path="$("${NEW_ISSUE_SCRIPT}" planner "CQ ${cycle_id} planner: PRD-priority tranche" "" p0 high high 15 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired")"
+  planner_path="$("${NEW_ISSUE_SCRIPT}" planner "CQ ${cycle_id} planner: feature implementation planning" "" p0 high high 15 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,chain_adapter_runtime_wired")"
   planner_issue_id="$(basename "${planner_path}" .md)"
   cat > "${planner_path}" <<EOF
 id: ${planner_issue_id}
@@ -253,7 +253,7 @@ role: planner
 status: ready
 priority: p0
 depends_on:
-title: CQ ${cycle_id} planner: PRD-priority tranche
+title: CQ ${cycle_id} planner: feature implementation planning
 complexity: high
 risk_class: high
 max_diff_scope: 15
@@ -265,10 +265,16 @@ non_goals: no-runtime-code-changes
 evidence_required: true
 ---
 ## Objective
-- Produce the next executable plan that prioritizes unresolved requirements in \`PRD.md\` before optional reliability refinements.
+- Identify the next unimplemented feature gap in the codebase and produce an executable
+  plan for its implementation. Feature gaps include: Redis stream integration, sidecar
+  decoder coverage, chain adapter completeness, and missing pipeline functionality.
+  Verification/hardening work should only be planned after feature gaps are resolved.
 
 ## In Scope
-- Select the next unresolved PRD requirement(s) and map them to one focused implementation slice.
+- Identify the next feature implementation gap by inspecting production code
+  (not just PRD requirements). Examples: Redis unused in pipeline, missing event
+  classes in sidecar decoders, incomplete chain adapter test coverage.
+- Map the gap to a concrete code implementation task for the developer issue.
 - Update \`IMPLEMENTATION_PLAN.md\` and/or \`specs/*\` with PRD-traceable milestone/slice updates.
 - Create at least one downstream developer issue and one downstream qa issue in \`.ralph/issues/\`.
 - Emit planner contract JSON at \`.ralph/plans/plan-output-${planner_issue_id}.json\`.
@@ -295,7 +301,7 @@ evidence_required: true
 EOF
   validate_created_issue_contract "${planner_path}" "planner"
 
-  developer_path="$("${NEW_ISSUE_SCRIPT}" developer "CQ ${cycle_id} implementation: PRD-priority increment" "${planner_issue_id}" p0 high high 25 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
+  developer_path="$("${NEW_ISSUE_SCRIPT}" developer "CQ ${cycle_id} implementation: feature increment" "${planner_issue_id}" p0 high high 25 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
   developer_issue_id="$(basename "${developer_path}" .md)"
   cat > "${developer_path}" <<EOF
 id: ${developer_issue_id}
@@ -303,7 +309,7 @@ role: developer
 status: ready
 priority: p0
 depends_on: ${planner_issue_id}
-title: CQ ${cycle_id} implementation: PRD-priority increment
+title: CQ ${cycle_id} implementation: feature increment
 complexity: high
 risk_class: high
 max_diff_scope: 25
@@ -315,7 +321,8 @@ non_goals: infra-deployment-orchestration
 evidence_required: true
 ---
 ## Objective
-- Implement one production-safe increment that closes planner-selected PRD requirement gap(s).
+- Implement one concrete feature or fix in production code. The primary output must be
+  working Go or TypeScript code, not documentation or evidence matrices.
 
 ## In Scope
 - Execute one concrete planner-selected slice that explicitly traces to unresolved PRD requirement(s).
@@ -344,7 +351,7 @@ evidence_required: true
 EOF
   validate_created_issue_contract "${developer_path}" "developer"
 
-  qa_path="$("${NEW_ISSUE_SCRIPT}" qa "CQ ${cycle_id} QA: PRD-priority gate and counterexample checks" "${developer_issue_id}" p0 medium medium 20 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
+  qa_path="$("${NEW_ISSUE_SCRIPT}" qa "CQ ${cycle_id} QA: feature validation and regression checks" "${developer_issue_id}" p0 medium medium 20 "canonical_event_id_unique,replay_idempotent,cursor_monotonic,signed_delta_conservation,solana_fee_event_coverage,base_fee_split_coverage,reorg_recovery_deterministic,chain_adapter_runtime_wired")"
   qa_issue_id="$(basename "${qa_path}" .md)"
   cat > "${qa_path}" <<EOF
 id: ${qa_issue_id}
@@ -352,7 +359,7 @@ role: qa
 status: ready
 priority: p0
 depends_on: ${developer_issue_id}
-title: CQ ${cycle_id} QA: PRD-priority gate and counterexample checks
+title: CQ ${cycle_id} QA: feature validation and regression checks
 complexity: medium
 risk_class: medium
 max_diff_scope: 20

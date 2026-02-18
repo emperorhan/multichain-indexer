@@ -15,6 +15,14 @@ Planning rules:
 4. Record unknowns and explicit assumptions.
 5. Emit a machine-validated planning contract JSON for downstream automation.
 6. Every developer/qa task must define risk + diff boundary + invariant declarations.
+7. Prioritize FEATURE implementation gaps over verification/hardening work.
+   Feature gaps include: Redis process separation, sidecar decoder hardening,
+   new chain adapters, missing event class coverage in production code.
+   Do NOT create evidence matrix or verification-only tasks unless all
+   identified feature gaps are resolved.
+8. Developer issues MUST have concrete code implementation objectives
+   (e.g., "implement Redis stream producer in internal/store/redis/"),
+   not verification objectives (e.g., "produce coverage matrix").
 
 Expected outputs:
 - Updated `IMPLEMENTATION_PLAN.md`

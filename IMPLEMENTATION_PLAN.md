@@ -7,6 +7,22 @@
 
 ## Program Graph
 
+## Feature Implementation Backlog (Priority Order)
+
+The following feature gaps should be addressed before any additional verification
+or hardening work. Planner MUST select from this list first:
+
+1. **Redis Stream Integration** — `internal/store/redis/` has Stream wrapper but
+   is not connected to pipeline. Wire Redis as inter-stage message bus.
+2. **Sidecar Golden Dataset Tests** — No fixed test fixtures for decoders.
+   Create golden input/output pairs for Solana/Base/BTC decoders.
+3. **BTC Adapter Test Coverage** — Only 7 tests vs Solana(15)/Base(12).
+   Expand UTXO resolution and fee calculation test cases.
+4. **Ethereum Mainnet Adapter** — ChainEthereum defined but routes through
+   Base/EVM logic. Implement dedicated Ethereum adapter if needed.
+5. **Connection Pool Monitoring** — No metrics for PostgreSQL pool utilization.
+6. **Query Timeout Configuration** — No statement-level timeout support.
+
 ## C0128 (`I-0657`) tranche activation
 - Focus: PRD-priority mandatory-chain asset-volatility hard-stop implementation slice before optional refinements resume.
 - Focused unresolved PRD requirements from `PRD.md`:

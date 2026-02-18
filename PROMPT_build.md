@@ -14,6 +14,11 @@ Execution rules:
    - `denied_paths`
 7. Preserve declared invariants in `invariants`.
 8. Produce evidence artifacts needed for completion gate.
+9. Focus on implementing NEW functionality (adapters, pipelines, integrations),
+   not producing spec documents or evidence matrices.
+   Evidence/matrix artifacts are QA's responsibility, not developer's.
+10. If the issue objective describes verification/matrix/evidence work rather than
+    code implementation, reinterpret it as the underlying code change needed.
 
 Validation:
 - `make test`
