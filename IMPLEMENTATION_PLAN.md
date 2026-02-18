@@ -391,6 +391,55 @@ Slice gates for this tranche:
   - `peer_cursor_delta=0` and `peer_watermark_delta=0` where present
   - `failure_mode` is empty for `GO` rows and non-empty for `NO-GO` rows.
 
+### C0145 (`I-0716`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R4`: deterministic replay.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `cursor_monotonic`: replay ordering must remain deterministic under signature overlap.
+  - `chain_adapter_runtime_wired`: normalizer wiring and envelope ownership must remain deterministic under counterexamples.
+- `C0145` lock state: `C0145-PRD-FINALITY-METADATA-DETERMINISM`.
+- `C0145` queue adjacency: hard dependency `I-0716 -> I-0717 -> I-0718`.
+
+#### C0145 implementation contracts (`I-0717`)
+- Required artifact path:
+  - `.ralph/reports/I-0717-m96-s1-finality-metadata-resolution-matrix.md`
+  - `.ralph/reports/I-0717-m96-s2-finality-replay-invariance-matrix.md`
+  - `.ralph/reports/I-0717-m96-s3-finality-peer-isolation-matrix.md`
+- Required row fields (`s1`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `finality_probe`, `class_path`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required row fields (`s2`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `permutation`, `finality_probe`, `class_path`, `peer_chain`, `canonical_id_count`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required row fields (`s3`):
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required rows for finality probes:
+  - `chain=solana`, `network=devnet`, `finality_probe=mixed_metadata`
+  - `chain=base`, `network=sepolia`, `finality_probe=mixed_metadata`
+  - `chain=btc`, `network=testnet`, `finality_probe=fallback_default`
+- Required hard-stop checks for `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+  - where required in `s2`, `canonical_id_count=1`; where required in `s3`, `peer_cursor_delta=0`, `peer_watermark_delta=0`
+- For required `NO-GO` rows, `failure_mode` must be non-empty.
+
+#### C0145 decision hook
+- `DP-0193-C0145`: `C0145` remains blocked until required rows in:
+  - `.ralph/reports/I-0717-m96-s1-finality-metadata-resolution-matrix.md`
+  - `.ralph/reports/I-0717-m96-s2-finality-replay-invariance-matrix.md`
+  - `.ralph/reports/I-0717-m96-s3-finality-peer-isolation-matrix.md`
+  for `chain=solana`, `base`, and `btc` are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`)
+  - required `finality_probe` values above
+  - `failure_mode` is empty for `GO` rows and non-empty for `NO-GO` rows.
+
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
 - Focused requirements from `PRD.md`:
