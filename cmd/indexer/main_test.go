@@ -12,6 +12,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
+	redispkg "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -31,6 +32,87 @@ func (a *staticChainAdapter) FetchNewSignatures(context.Context, string, *string
 
 func (a *staticChainAdapter) FetchTransactions(context.Context, []string) ([]json.RawMessage, error) {
 	return nil, nil
+}
+
+func TestResolveStreamBackend_FailsWhenStreamEnabledAndRedisUnavailable(t *testing.T) {
+	cfg := &config.Config{
+		Pipeline: config.PipelineConfig{
+			StreamTransportEnabled: true,
+		},
+		Redis: config.RedisConfig{
+			URL: "redis://invalid:6379",
+		},
+	}
+
+	originalNewStream := newStreamFactory
+	newStreamFactory = func(_ string) (redispkg.MessageTransport, error) {
+		return nil, errors.New("redis unavailable")
+	}
+	defer func() { newStreamFactory = originalNewStream }()
+
+	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "memory-fallback", slog.Default())
+	require.Error(t, err)
+	assert.True(t, streamEnabled)
+	assert.Nil(t, streamBackend)
+	assert.Contains(t, err.Error(), "initialize redis stream transport")
+}
+
+func TestResolveStreamBackend_UsesInMemoryTransportWhenStreamDisabled(t *testing.T) {
+	cfg := &config.Config{
+		Pipeline: config.PipelineConfig{
+			StreamTransportEnabled: false,
+		},
+	}
+
+	originalNewInMemoryStream := newInMemoryStreamFactory
+	newInMemoryStreamFactory = func() redispkg.MessageTransport {
+		return redispkg.NewInMemoryStream()
+	}
+	defer func() { newInMemoryStreamFactory = originalNewInMemoryStream }()
+
+	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "memory-fallback", slog.Default())
+	require.NoError(t, err)
+	require.NotNil(t, streamBackend)
+	assert.False(t, streamEnabled)
+	assert.NoError(t, streamBackend.Close())
+}
+
+func TestResolveStreamBackend_UsesRedisStreamWhenEnabled(t *testing.T) {
+	cfg := &config.Config{
+		Pipeline: config.PipelineConfig{
+			StreamTransportEnabled: true,
+		},
+		Redis: config.RedisConfig{
+			URL: "redis://127.0.0.1:6379/0",
+		},
+	}
+
+	inMemoryCalled := false
+	originalNewStream := newStreamFactory
+	originalNewInMemoryStream := newInMemoryStreamFactory
+	expectedBackend := redispkg.NewInMemoryStream()
+	streamFactoryCalled := false
+
+	newStreamFactory = func(_ string) (redispkg.MessageTransport, error) {
+		streamFactoryCalled = true
+		return expectedBackend, nil
+	}
+	newInMemoryStreamFactory = func() redispkg.MessageTransport {
+		inMemoryCalled = true
+		return redispkg.NewInMemoryStream()
+	}
+	defer func() {
+		newStreamFactory = originalNewStream
+		newInMemoryStreamFactory = originalNewInMemoryStream
+	}()
+
+	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "stream-session", slog.Default())
+	require.NoError(t, err)
+	assert.True(t, streamEnabled)
+	assert.True(t, streamFactoryCalled)
+	assert.False(t, inMemoryCalled)
+	assert.Same(t, expectedBackend, streamBackend)
+	assert.NoError(t, streamBackend.Close())
 }
 
 func TestBuildRuntimeTargets_IncludesMandatoryChainsDeterministically(t *testing.T) {

@@ -33,6 +33,11 @@ import (
 
 const deterministicInterleaveMaxSkew = 250 * time.Millisecond
 
+var (
+	newStreamFactory         = func(redisURL string) (redispkg.MessageTransport, error) { return redispkg.NewStream(redisURL) }
+	newInMemoryStreamFactory = func() redispkg.MessageTransport { return redispkg.NewInMemoryStream() }
+)
+
 type runtimeTarget struct {
 	chain   model.Chain
 	network model.Network
@@ -115,6 +120,28 @@ func collectDBPoolStats(db dbStatsProvider, targets []runtimeTarget, gauges dbPo
 	}
 
 	return nil
+}
+
+func resolveStreamBackend(cfg *config.Config, streamSessionID string, logger *slog.Logger) (redispkg.MessageTransport, bool, error) {
+	if !cfg.Pipeline.StreamTransportEnabled {
+		return newInMemoryStreamFactory(), false, nil
+	}
+
+	redisStream, err := newStreamFactory(cfg.Redis.URL)
+	if err != nil {
+		return nil, true, fmt.Errorf("initialize redis stream transport: %w", err)
+	}
+
+	logger.Info("redis stream transport enabled",
+		"redis_url",
+		cfg.Redis.URL,
+		"stream_namespace",
+		cfg.Pipeline.StreamNamespace,
+		"stream_session_id",
+		streamSessionID,
+	)
+
+	return redisStream, true, nil
 }
 
 func startDBPoolStatsPump(ctx context.Context, db dbStatsProvider, targets []runtimeTarget, intervalMS int, logger *slog.Logger) {
@@ -275,31 +302,15 @@ func main() {
 	defer db.Close()
 	logger.Info("connected to database")
 
-	streamTransportEnabled := cfg.Pipeline.StreamTransportEnabled
-	var streamBackend redispkg.MessageTransport
 	streamSessionID := strings.TrimSpace(cfg.Pipeline.StreamSessionID)
 	if streamSessionID == "" {
 		streamSessionID = time.Now().Format("20060102T150405.000000000")
 	}
 
-	if streamTransportEnabled {
-		redisStream, err := redispkg.NewStream(cfg.Redis.URL)
-		if err != nil {
-			logger.Warn(
-				"failed to initialize redis stream transport; falling back to in-memory stream transport",
-				"error",
-				err,
-				"redis_url",
-				cfg.Redis.URL,
-			)
-			streamBackend = redispkg.NewInMemoryStream()
-		} else {
-			logger.Info("redis stream transport enabled", "redis_url", cfg.Redis.URL, "stream_namespace", cfg.Pipeline.StreamNamespace, "stream_session_id", streamSessionID)
-			streamBackend = redisStream
-		}
-	}
-	if streamTransportEnabled && streamBackend == nil {
-		streamTransportEnabled = false
+	streamBackend, streamTransportEnabled, err := resolveStreamBackend(cfg, streamSessionID, logger)
+	if err != nil {
+		logger.Error("failed to initialize stream transport", "error", err, "redis_url", cfg.Redis.URL)
+		os.Exit(1)
 	}
 	if !streamTransportEnabled {
 		streamSessionID = "memory-fallback"
