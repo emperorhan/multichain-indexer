@@ -80,6 +80,46 @@ func TestBuildRuntimeTargets_IncludesMandatoryChainsDeterministically(t *testing
 	require.NoError(t, validateRuntimeWiring(targets))
 }
 
+func TestBuildRuntimeTargets_IncludesEthereumMainnetWhenRequested(t *testing.T) {
+	cfg := &config.Config{
+		Solana: config.SolanaConfig{
+			RPCURL:  "https://solana.example",
+			Network: string(model.NetworkDevnet),
+		},
+		Base: config.BaseConfig{
+			RPCURL:  "https://base.example",
+			Network: string(model.NetworkSepolia),
+		},
+		BTC: config.BTCConfig{
+			RPCURL:  "https://btc.example",
+			Network: string(model.NetworkTestnet),
+		},
+		Pipeline: config.PipelineConfig{
+			BaseWatchedAddresses: []string{"0xabc", "0xdef"},
+		},
+		Runtime: config.RuntimeConfig{
+			DeploymentMode: config.RuntimeDeploymentModeIndependent,
+			ChainTargets:   []string{"ethereum-mainnet"},
+		},
+	}
+
+	targets := buildRuntimeTargets(cfg, slog.Default())
+	require.Len(t, targets, 4)
+
+	var ethereum *runtimeTarget
+	for idx := range targets {
+		if targets[idx].chain == model.ChainEthereum {
+			ethereum = &targets[idx]
+			break
+		}
+	}
+	require.NotNil(t, ethereum)
+	assert.Equal(t, model.NetworkMainnet, ethereum.network)
+	assert.Equal(t, config.RuntimeLikeGroupEVM, ethereum.group)
+	assert.Equal(t, "https://base.example", ethereum.rpcURL)
+	assert.Equal(t, model.ChainEthereum.String(), ethereum.adapter.Chain())
+}
+
 func TestValidateRuntimeWiring_AllowsSingleTarget(t *testing.T) {
 	targets := []runtimeTarget{
 		{
@@ -285,6 +325,44 @@ func TestSelectRuntimeTargets_IndependentModeBTC(t *testing.T) {
 	assert.Equal(t, model.NetworkTestnet, selected[0].network)
 }
 
+func TestSelectRuntimeTargets_IndependentModeEthereumMainnet(t *testing.T) {
+	all := []runtimeTarget{
+		{
+			chain:   model.ChainSolana,
+			network: model.NetworkDevnet,
+			group:   config.RuntimeLikeGroupSolana,
+			adapter: &staticChainAdapter{chain: model.ChainSolana.String()},
+		},
+		{
+			chain:   model.ChainBase,
+			network: model.NetworkSepolia,
+			group:   config.RuntimeLikeGroupEVM,
+			adapter: &staticChainAdapter{chain: model.ChainBase.String()},
+		},
+		{
+			chain:   model.ChainEthereum,
+			network: model.NetworkMainnet,
+			group:   config.RuntimeLikeGroupEVM,
+			adapter: &staticChainAdapter{chain: model.ChainEthereum.String()},
+		},
+		{
+			chain:   model.ChainBTC,
+			network: model.NetworkTestnet,
+			group:   config.RuntimeLikeGroupBTC,
+			adapter: &staticChainAdapter{chain: model.ChainBTC.String()},
+		},
+	}
+
+	selected, err := selectRuntimeTargets(all, config.RuntimeConfig{
+		DeploymentMode: config.RuntimeDeploymentModeIndependent,
+		ChainTargets:   []string{"ethereum-mainnet"},
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.Equal(t, model.ChainEthereum, selected[0].chain)
+	assert.Equal(t, model.NetworkMainnet, selected[0].network)
+}
+
 func TestSelectRuntimeTargets_FailsWhenUnknownTargetRequested(t *testing.T) {
 	all := []runtimeTarget{
 		{chain: model.ChainSolana, network: model.NetworkDevnet, group: config.RuntimeLikeGroupSolana},
@@ -294,7 +372,7 @@ func TestSelectRuntimeTargets_FailsWhenUnknownTargetRequested(t *testing.T) {
 
 	_, err := selectRuntimeTargets(all, config.RuntimeConfig{
 		DeploymentMode: config.RuntimeDeploymentModeLikeGroup,
-		ChainTargets:   []string{"ethereum-mainnet"},
+		ChainTargets:   []string{"dogecoin-mainnet"},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requested runtime chain targets not found")

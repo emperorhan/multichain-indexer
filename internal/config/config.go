@@ -261,6 +261,9 @@ func (c *Config) validate() error {
 	if requiredChains["base"] && c.Base.RPCURL == "" {
 		return fmt.Errorf("BASE_SEPOLIA_RPC_URL is required for selected runtime targets")
 	}
+	if requiredChains["ethereum"] && c.Base.RPCURL == "" {
+		return fmt.Errorf("BASE_SEPOLIA_RPC_URL is required for selected runtime targets")
+	}
 	if requiredChains["btc"] && c.BTC.RPCURL == "" {
 		return fmt.Errorf("BTC_TESTNET_RPC_URL is required for selected runtime targets")
 	}
@@ -269,9 +272,10 @@ func (c *Config) validate() error {
 
 func requiredRuntimeChains(runtime RuntimeConfig) (map[string]bool, error) {
 	required := map[string]bool{
-		"solana": false,
-		"base":   false,
-		"btc":    false,
+		"solana":   false,
+		"base":     false,
+		"ethereum": false,
+		"btc":      false,
 	}
 
 	addChainTargets := func(targets []string) error {
@@ -330,7 +334,7 @@ func chainNameFromTargetKey(target string) (string, error) {
 	}
 
 	switch parts[0] {
-	case "solana", "base", "btc":
+	case "solana", "base", "ethereum", "btc":
 		return parts[0], nil
 	default:
 		return "", fmt.Errorf("runtime chain target %q has unsupported chain %q", target, parts[0])

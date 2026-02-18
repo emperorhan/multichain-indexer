@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -38,8 +39,46 @@ type runtimeTarget struct {
 	rpcURL  string
 }
 
+type chainAliasAdapter struct {
+	chain    model.Chain
+	delegate chain.ChainAdapter
+}
+
+func (a *chainAliasAdapter) Chain() string {
+	return a.chain.String()
+}
+
+func (a *chainAliasAdapter) GetHeadSequence(ctx context.Context) (int64, error) {
+	return a.delegate.GetHeadSequence(ctx)
+}
+
+func (a *chainAliasAdapter) FetchNewSignatures(ctx context.Context, address string, cursor *string, batchSize int) ([]chain.SignatureInfo, error) {
+	return a.delegate.FetchNewSignatures(ctx, address, cursor, batchSize)
+}
+
+func (a *chainAliasAdapter) FetchNewSignaturesWithCutoff(
+	ctx context.Context,
+	address string,
+	cursor *string,
+	batchSize int,
+	cutoffSeq int64,
+) ([]chain.SignatureInfo, error) {
+	type cutoffAware interface {
+		FetchNewSignaturesWithCutoff(context.Context, string, *string, int, int64) ([]chain.SignatureInfo, error)
+	}
+
+	if adapter, ok := a.delegate.(cutoffAware); ok {
+		return adapter.FetchNewSignaturesWithCutoff(ctx, address, cursor, batchSize, cutoffSeq)
+	}
+	return a.delegate.FetchNewSignatures(ctx, address, cursor, batchSize)
+}
+
+func (a *chainAliasAdapter) FetchTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error) {
+	return a.delegate.FetchTransactions(ctx, signatures)
+}
+
 func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarget {
-	return []runtimeTarget{
+	targets := []runtimeTarget{
 		{
 			chain:   model.ChainSolana,
 			network: model.Network(cfg.Solana.Network),
@@ -65,6 +104,31 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 			rpcURL:  cfg.BTC.RPCURL,
 		},
 	}
+
+	if shouldBuildEthereumRuntimeTarget(cfg.Runtime.ChainTargets) {
+		targets = append(targets, runtimeTarget{
+			chain:   model.ChainEthereum,
+			network: model.NetworkMainnet,
+			group:   config.RuntimeLikeGroupEVM,
+			watched: cfg.Pipeline.BaseWatchedAddresses,
+			adapter: &chainAliasAdapter{
+				chain:    model.ChainEthereum,
+				delegate: base.NewAdapter(cfg.Base.RPCURL, logger),
+			},
+			rpcURL: cfg.Base.RPCURL,
+		})
+	}
+
+	return targets
+}
+
+func shouldBuildEthereumRuntimeTarget(targets []string) bool {
+	for _, target := range targets {
+		if strings.EqualFold(strings.TrimSpace(target), "ethereum-mainnet") {
+			return true
+		}
+	}
+	return false
 }
 
 func main() {

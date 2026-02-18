@@ -356,10 +356,10 @@ func TestValidate_IndependentMode_SolanaOnlyDoesNotRequireBaseRPC(t *testing.T) 
 	require.NoError(t, cfg.validate())
 }
 
-func TestValidate_IndependentMode_RejectsUnsupportedTargetChain(t *testing.T) {
+func TestValidate_IndependentMode_AcceptsEthereumTarget(t *testing.T) {
 	cfg := &Config{
 		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
-		Solana:  SolanaConfig{RPCURL: "https://solana.example"},
+		Solana:  SolanaConfig{RPCURL: ""},
 		Base:    BaseConfig{RPCURL: "https://base.example"},
 		Sidecar: SidecarConfig{Addr: "localhost:50051"},
 		Runtime: RuntimeConfig{
@@ -367,9 +367,7 @@ func TestValidate_IndependentMode_RejectsUnsupportedTargetChain(t *testing.T) {
 			ChainTargets:   []string{"ethereum-mainnet"},
 		},
 	}
-	err := cfg.validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported chain")
+	require.NoError(t, cfg.validate())
 }
 
 func TestValidate_IndependentMode_AcceptsBTCTarget(t *testing.T) {
@@ -385,6 +383,28 @@ func TestValidate_IndependentMode_AcceptsBTCTarget(t *testing.T) {
 		},
 	}
 	require.NoError(t, cfg.validate())
+}
+
+func TestValidate_IndependentMode_RejectsUnsupportedTargetChain(t *testing.T) {
+	cfg := &Config{
+		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:  SolanaConfig{RPCURL: "https://solana.example"},
+		Base:    BaseConfig{RPCURL: "https://base.example"},
+		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeIndependent,
+			ChainTargets:   []string{"dogecoin-mainnet"},
+		},
+	}
+	err := cfg.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported chain")
+}
+
+func TestChainNameFromTargetKey_AcceptsEthereumMainnet(t *testing.T) {
+	chainName, err := chainNameFromTargetKey("ethereum-mainnet")
+	require.NoError(t, err)
+	assert.Equal(t, "ethereum", chainName)
 }
 
 func TestValidate_LikeGroupBTCAllowedWhenRPCConfigured(t *testing.T) {
