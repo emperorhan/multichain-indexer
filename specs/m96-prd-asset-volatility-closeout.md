@@ -1252,3 +1252,37 @@ Required machine-checkable constraints:
   - `chain_adapter_runtime_wired_ok=true` on GO rows
   - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`) on GO rows
   - `failure_mode` empty for GO rows and non-empty for NO-GO rows.
+
+### C0153 (`I-0742`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R4`: deterministic replay.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: adapter/normalizer wiring remains deterministic under replay/reorg recovery.
+- `C0153` queue adjacency: hard dependency `I-0742 -> I-0745 -> I-0746`.
+- `C0153` required implementation contracts (`I-0745`):
+  - Required artifact path:
+    - `.ralph/reports/I-0745-m99-s1-balance-event-id-dedupe-cross-blocktime-matrix.md`
+  - Required row fields:
+    - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `event_id`, `replay_mode`, `block_time_shift_ms`, `upsert_count_before`, `upsert_count_after`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `evidence_present`, `outcome`, `failure_mode`
+  - Required mandatory rows:
+    - `chain=solana`, `network=devnet`, `replay_mode=deterministic_replay`
+    - `chain=base`, `network=sepolia`, `replay_mode=deterministic_replay`
+    - `chain=btc`, `network=testnet`, `replay_mode=deterministic_replay`
+- Required hard-stop checks for required `GO` rows:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `upsert_count_after=1`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+
+#### C0153 decision hook
+- `DP-0201-C0153`: `C0153` remains blocked until required rows in `.ralph/reports/I-0745-m99-s1-balance-event-id-dedupe-cross-blocktime-matrix.md` for mandatory chains (`solana`, `base`, `btc`) are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `upsert_count_after=1`
+  - required hard-stop booleans true.
