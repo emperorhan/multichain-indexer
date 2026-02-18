@@ -622,3 +622,42 @@ Required machine-checkable constraints:
 
 #### C0130 Decision Hook
 - `DP-0179-C0130`: C0130 remains blocked unless all required `I-0666` rows for mandatory chains and required class-paths are present with hard-stop `GO` semantics and zero required peer deltas.
+
+### C0131 (`I-0669`) implementation handoff addendum
+- Focus: PRD-priority ethereum-mainnet chain target/runtime wiring before optional refinements resume.
+- Focused unresolved requirement traceability:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage with replay deterministic outputs.
+  - `8.5`: failed-path cursor/watermark freeze.
+  - `10`: deterministic replay acceptance behavior.
+  - `chain_adapter_runtime_wired`: chain-adapter/runtime wiring determinism.
+- C0131 lock state: `C0131-PRD-ETHEREUM-TARGET-WIRING`.
+- C0131 queue adjacency: `I-0668 -> I-0669 -> I-0670`.
+- Required artifacts:
+  - `.ralph/reports/I-0669-m96-s1-ethereum-target-coverage-matrix.md`
+  - `.ralph/reports/I-0669-m96-s2-ethereum-runtime-wire-matrix.md`
+  - `.ralph/reports/I-0669-m96-s3-ethereum-peer-isolation-matrix.md`
+
+#### C0131 mandatory contracts (`I-0669`)
+- `I-0669-m96-s1-ethereum-target-coverage-matrix.md` required row keys:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `target_key`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0669-m96-s2-ethereum-runtime-wire-matrix.md` required row keys:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `target_key`, `runtime_group`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- `I-0669-m96-s3-ethereum-peer-isolation-matrix.md` required row keys:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `target_key`, `peer_chain`, `peer_cursor_delta`, `peer_watermark_delta`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required mandatory rows for C0131:
+  - `chain=ethereum`, `network=mainnet`, `target_key=ethereum-mainnet`
+
+#### C0131 hard-stop checks
+- `outcome=GO`
+- `evidence_present=true`
+- `canonical_event_id_unique_ok=true`
+- `replay_idempotent_ok=true`
+- `cursor_monotonic_ok=true`
+- `signed_delta_conservation_ok=true`
+- `chain_adapter_runtime_wired_ok=true`
+- required `peer_cursor_delta=0` and `peer_watermark_delta=0` where peer isolation columns are populated.
+- required `NO-GO` rows must contain non-empty `failure_mode`.
+
+#### C0131 decision hook
+- `DP-0180-C0131` remains blocked unless required rows for `chain=ethereum`, `network=mainnet` are present in all three required artifacts and satisfy all C0131 hard-stop checks.

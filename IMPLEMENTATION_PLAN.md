@@ -18,9 +18,49 @@ or hardening work. Planner MUST select from this list first:
 3. **BTC Adapter Test Coverage** — Only 7 tests vs Solana(15)/Base(12).
    Expand UTXO resolution and fee calculation test cases.
 4. **Ethereum Mainnet Adapter** — ChainEthereum defined but routes through
-   Base/EVM logic. Implement dedicated Ethereum adapter if needed.
+   chain target wiring is incomplete (runtime target key is still unsupported). Enable
+   deterministic production target activation in the runtime selection path.
 5. **Connection Pool Monitoring** — No metrics for PostgreSQL pool utilization.
 6. **Query Timeout Configuration** — No statement-level timeout support.
+## C0131 (`I-0668`) tranche activation
+- Focus: PRD-priority chain adapter runtime wiring gap closure for ethereum-mainnet before optional refinements continue.
+- Focused unresolved implementation requirement from `PRD.md`:
+  - `R1`: no-duplicate indexing via deterministic canonical ownership.
+  - `R2`: full in-scope asset-volatility event coverage and replayable outputs.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `10`: deterministic replay acceptance under perturbation.
+  - `chain_adapter_runtime_wired`: chain-adapter/runtime wiring remains deterministic and restart-safe.
+- Production-code gap confirmed in this handoff: `internal/config/config.go` currently limits
+  `chainNameFromTargetKey` to `solana|base|btc`, so `ethereum-mainnet` is rejected before
+  runtime startup selection can dispatch it.
+- C0131 lock state: `C0131-PRD-ETHEREUM-TARGET-WIRING`.
+- C0131 queue adjacency: hard dependency `I-0668 -> I-0669 -> I-0670`.
+- Downstream execution pair:
+  - `I-0669` (developer) — bind ethereum-mainnet as a configurable runtime target and wire `ChainEthereum` into startup path selection with explicit parity to existing EVM-adapter semantics.
+  - `I-0670` (qa) — validate target parser/selection evidence, then block `C0131` on any hard-stop failure.
+- Slice gates for this tranche:
+  - `I-0669` updates `internal/config/config.go` and `cmd/indexer/main.go` to accept `ethereum-mainnet` as a chain target key and map it consistently to `ChainEthereum` for runtime startup.
+  - `I-0669` updates target-family routing tests (`internal/config/config_test.go`, `cmd/indexer/main_test.go`) to verify startup selection and rejected aliases remain fail-fast.
+  - `I-0669` publishes implementation evidence in:
+    - `.ralph/reports/I-0669-m96-s1-ethereum-target-coverage-matrix.md`
+    - `.ralph/reports/I-0669-m96-s2-ethereum-runtime-wire-matrix.md`
+    - `.ralph/reports/I-0669-m96-s3-ethereum-peer-isolation-matrix.md`
+  - `I-0670` validates all required `I-0669` rows for `ethereum-mainnet` and blocks `C0131` if `outcome=NO-GO`, `evidence_present=false`, hard-stop booleans false, or non-zero required peer deltas.
+  - No runtime implementation changes are executed in this planner tranche; planning/spec-doc handoff only.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+## C0131 decision hooks
+- `DP-0180-C0131`: `C0131` remains blocked until all required `I-0669` rows in all three C0131 artifacts are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `peer_cursor_delta=0` and `peer_watermark_delta=0` where those columns are required.
+  - required `NO-GO` rows contain non-empty `failure_mode`.
+
 ## C0130 (`I-0665`) tranche activation
 - Focus: PRD-priority implementation gap for mandatory class-path event coverage
   with deterministic sidecar golden fixtures before optional hardening work continues.
