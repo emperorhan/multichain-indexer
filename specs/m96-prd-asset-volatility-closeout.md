@@ -945,3 +945,44 @@ Required machine-checkable constraints:
 
 #### C0134 decision hook
 - `DP-0183-C0134` remains blocked unless all required `I-0679-m96-s1-db-query-timeout-matrix.md` rows for `solana`, `base`, and `btc` are present with `outcome=GO`, `evidence_present=true`, required timeout governance checks above, and hard-stop booleans true.
+
+### C0140 (`I-0702`) implementation handoff addendum
+- Focused PRD traceability:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility event coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain adapter and normalizer-runtime wiring remains deterministic across optional EVM alias targets.
+- `C0140` lock state: `C0140-PRD-ETHEREUM-MAINNET-NORMALIZER-COMPATIBILITY`.
+- `C0140` queue adjacency: hard dependency `I-0701 -> I-0702 -> I-0703`.
+
+#### C0140 mandatory contracts (`I-0702`)
+- Required artifact path:
+  - `.ralph/reports/I-0702-m96-s1-ethereum-mainnet-normalizer-matrix.md`
+- Required row fields:
+  - `fixture_id`, `fixture_seed`, `run_id`, `chain`, `network`, `target_key`, `normalizer_family`, `peer_chain`, `evidence_present`, `canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`, `outcome`, `failure_mode`
+- Required row for C0140:
+  - `chain=ethereum`
+  - `network=mainnet`
+  - `target_key=ethereum-mainnet`
+  - `normalizer_family=base`
+- Required hard-stop checks:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+- `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `base_fee_split_coverage_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
+- `outcome=NO-GO` rows must have non-empty `failure_mode`.
+
+#### C0140 decision hook
+- `DP-0189-C0140`: `C0140` remains blocked until required rows in `.ralph/reports/I-0702-m96-s1-ethereum-mainnet-normalizer-matrix.md` for `chain=ethereum`, `network=mainnet` are present with:
+  - `target_key=ethereum-mainnet`
+  - `normalizer_family=base`
+  - `outcome=GO`
+  - `evidence_present=true`
+  - required hard-stop booleans true (`canonical_event_id_unique_ok`, `replay_idempotent_ok`, `cursor_monotonic_ok`, `signed_delta_conservation_ok`, `base_fee_split_coverage_ok`, `chain_adapter_runtime_wired_ok`)
+  - `failure_mode` is empty

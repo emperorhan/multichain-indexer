@@ -24,6 +24,7 @@ or hardening work. Planner MUST select from this list first:
 6. **Query Timeout Configuration** — No statement-level timeout support.
 7. **Stream Restart Checkpoint Resume** — stream-mode consumer restarts still lack durable checkpoint restore for boundary replay.
 8. **Stream Session Checkpoint Isolation** — checkpoint state is shared across `stream_session_id` values, risking cross-session cursor bleed.
+9. **Ethereum-mainnet Normalizer Family Gap** — `chain=ethereum` with `network=mainnet` is selected and wired at runtime, but normalization still takes the Solana canonicalization branch (`normalizedTxFromResult`) for that chain, causing EVM/fee-path incompatibility and incomplete adapter-runtime closure.
 
 ## C0134 (`I-0678`) tranche activation
 - Focus: post-PRD reliability hardening for production DB call-time boundedness before optional refinements resume.
@@ -221,6 +222,39 @@ or hardening work. Planner MUST select from this list first:
   - `chain_adapter_runtime_wired_ok=true`
   - `failure_mode` is empty
   - `peer_cursor_delta=0` and `peer_watermark_delta=0` where required.
+
+### C0140 (`I-0701`) implementation handoff addendum
+- Focused PRD traceability from `PRD.md`:
+  - `R1`: no-duplicate indexing.
+  - `R2`: full in-scope asset-volatility coverage.
+  - `R3`: chain-family fee completeness.
+  - `8.5`: failed-path cursor/watermark progression is prohibited.
+  - `chain_adapter_runtime_wired`: chain adapter and normalizer-runtime wiring remains deterministic across optional EVM alias targets.
+- Current gap: `internal/pipeline/normalizer/normalizer.go` only treats `chain=ethereum` as base/EVM for `network=sepolia`, so `network=mainnet` is routed through Solana canonical event modeling.
+- `C0140` lock state: `C0140-PRD-ETHEREUM-MAINNET-NORMALIZER-COMPATIBILITY`.
+- `C0140` queue adjacency: hard dependency `I-0701 -> I-0702 -> I-0703`.
+- Downstream execution pair:
+  - `I-0702` (developer) — make `normalizedTxFromResult` route `ChainEthereum` through EVM/base canonical event construction and add deterministic regression tests for `chain=ethereum`, `network=mainnet`.
+  - `I-0703` (qa) — validate required `I-0702` evidence for canonical ID, replay, cursor monotonicity, signed-delta conservation, base fee split accounting, and chain-adapter/runtime wire closure.
+- Slice gates for this tranche:
+  - `I-0702` updates `internal/pipeline/normalizer/normalizer.go` so `isBaseChain` is a chain-family predicate that includes `ChainEthereum` for all configured networks.
+  - `I-0702` adds/extends tests in `internal/pipeline/normalizer/normalizer_test.go` and any required fixtures to prove ethereum-mainnet parity with `base` canonical classes (`fee_execution_l2`, `fee_data_l1`, transfer/mint/burn behavior).
+  - `I-0702` publishes required evidence artifact:
+    - `.ralph/reports/I-0702-m96-s1-ethereum-mainnet-normalizer-matrix.md`
+  - `I-0703` validates required rows with `outcome=GO`, `evidence_present=true`, all required hard-stop booleans true, and non-empty `failure_mode` on required `NO-GO` rows.
+  - Validation remains `make test`, `make test-sidecar`, `make lint`.
+
+#### C0140 decision hook
+- `DP-0189-C0140`: `C0140` remains blocked until required rows in `.ralph/reports/I-0702-m96-s1-ethereum-mainnet-normalizer-matrix.md` for `chain=ethereum`, `network=mainnet`, `target_key=ethereum-mainnet` are present with:
+  - `outcome=GO`
+  - `evidence_present=true`
+  - `canonical_event_id_unique_ok=true`
+  - `replay_idempotent_ok=true`
+  - `cursor_monotonic_ok=true`
+  - `signed_delta_conservation_ok=true`
+  - `base_fee_split_coverage_ok=true`
+  - `chain_adapter_runtime_wired_ok=true`
+  - `failure_mode` is empty
 
 ## C0133 (`I-0675`) tranche activation
 - Focus: PRD-priority BTC chain-adapter completeness and deterministic boundary coverage.
