@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  REQUIRED_CHAIN_CLASS_PATHS,
+  REQUIRED_GOLDEN_CLASS_PATHS,
   getGoldenFixtures,
   GoldenFixtureCase,
 } from './golden_fixture_loader';
@@ -12,30 +14,32 @@ import {
   GoldenFixtureSummaryRow,
 } from './golden_fixture_test_utils';
 
-const REQUIRED_CLASS_PATHS = [
-  'TRANSFER',
-  'MINT',
-  'BURN',
-  'FEE',
-  'fee_execution_l2',
-  'fee_data_l1',
-  'TRANSFER:vin',
-  'TRANSFER:vout',
-  'miner_fee',
-];
-
 const REQUIRED_CHAINS = ['solana', 'base', 'btc'];
 
 function decodeAndSortFixtureRows(fixtures: GoldenFixtureCase[]): GoldenFixtureSummaryRow[] {
   return canonicalFixtureRows(decodeGoldenFixtureRows(fixtures));
 }
 
+function collectChainClassCoverage(fixtures: GoldenFixtureCase[]): Map<string, Set<string>> {
+  const coverage = new Map<string, Set<string>>();
+  for (const fixture of fixtures) {
+    const chainClassSet = coverage.get(fixture.chain) ?? new Set<string>();
+    chainClassSet.add(fixture.class_path);
+    coverage.set(fixture.chain, chainClassSet);
+  }
+  return coverage;
+}
+
+function classFixtures(fixtures: GoldenFixtureCase[], chain: string, classPath: string): GoldenFixtureCase[] {
+  return fixtures.filter((fixture) => fixture.chain === chain && fixture.class_path === classPath);
+}
+
 describe('golden fixture decoder determinism', () => {
   const allFixtures = getGoldenFixtures();
 
-  it('validates mandatory class-path and chain coverage in fixture catalog', () => {
+  it('validates explicit mandatory class-path coverage by chain', () => {
     const coveredClasses = new Set<string>(allFixtures.map((fixture) => fixture.class_path));
-    for (const required of REQUIRED_CLASS_PATHS) {
+    for (const required of REQUIRED_GOLDEN_CLASS_PATHS) {
       expect(coveredClasses.has(required)).toBe(true);
     }
 
@@ -44,7 +48,34 @@ describe('golden fixture decoder determinism', () => {
       expect(coveredChains.has(chain)).toBe(true);
     }
 
+    const coverageByChain = collectChainClassCoverage(allFixtures);
+    for (const row of REQUIRED_CHAIN_CLASS_PATHS) {
+      const chainClasses = coverageByChain.get(row.chain) ?? new Set<string>();
+      expect(chainClasses.has(row.class_path)).toBe(true);
+    }
+
     expect(new Set(allFixtures.map((fixture) => fixture.fixture_id)).size).toBe(allFixtures.length);
+  });
+
+  it('validates replay-safe canonical IDs for BTC mandatory class-path fixtures', () => {
+    const btcFixtures = allFixtures.filter((fixture) => fixture.chain === 'btc');
+    expect(btcFixtures.length).toBeGreaterThan(0);
+
+    for (const mandatory of REQUIRED_CHAIN_CLASS_PATHS.filter((item) => item.chain === 'btc')) {
+      const subset = classFixtures(allFixtures, mandatory.chain, mandatory.class_path);
+      expect(subset.length).toBeGreaterThan(0);
+
+      const asc = decodeAndSortFixtureRows([...subset].sort((left, right) => left.fixture_seed - right.fixture_seed));
+      const desc = decodeAndSortFixtureRows([...subset].sort((left, right) => right.fixture_seed - left.fixture_seed));
+      expect(asc).toEqual(desc);
+
+      const ids = collectCanonicalEventIds(decodeAndSortFixtureRows(subset));
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+
+    const btcAsc = decodeAndSortFixtureRows([...btcFixtures].sort((left, right) => left.fixture_seed - right.fixture_seed));
+    const btcDesc = decodeAndSortFixtureRows([...btcFixtures].sort((left, right) => right.fixture_seed - left.fixture_seed));
+    expect(btcAsc).toEqual(btcDesc);
   });
 
   it('loads fixtures in canonical seed+chain+id order', () => {

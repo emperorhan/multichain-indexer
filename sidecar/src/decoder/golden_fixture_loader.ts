@@ -5,6 +5,38 @@ import btcFixtureCatalog from './fixture_output/btc_golden_fixtures.json';
 
 export type GoldenChain = 'solana' | 'base' | 'btc';
 
+export interface RequiredChainClassPath {
+  chain: GoldenChain;
+  class_path: string;
+}
+
+export const REQUIRED_GOLDEN_CLASS_PATHS = [
+  'TRANSFER',
+  'MINT',
+  'BURN',
+  'FEE',
+  'fee_execution_l2',
+  'fee_data_l1',
+  'TRANSFER:vin',
+  'TRANSFER:vout',
+  'miner_fee',
+] as const;
+
+export const REQUIRED_CHAIN_CLASS_PATHS: RequiredChainClassPath[] = [
+  { chain: 'solana', class_path: 'TRANSFER' },
+  { chain: 'solana', class_path: 'MINT' },
+  { chain: 'solana', class_path: 'BURN' },
+  { chain: 'solana', class_path: 'FEE' },
+  { chain: 'base', class_path: 'TRANSFER' },
+  { chain: 'base', class_path: 'MINT' },
+  { chain: 'base', class_path: 'BURN' },
+  { chain: 'base', class_path: 'fee_execution_l2' },
+  { chain: 'base', class_path: 'fee_data_l1' },
+  { chain: 'btc', class_path: 'TRANSFER:vin' },
+  { chain: 'btc', class_path: 'TRANSFER:vout' },
+  { chain: 'btc', class_path: 'miner_fee' },
+];
+
 export interface GoldenBalanceEventSnapshot {
   outer_instruction_index: number;
   inner_instruction_index: number;

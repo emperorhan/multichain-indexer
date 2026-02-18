@@ -208,3 +208,97 @@ export const highConfirmationsTx = {
     },
   ],
 };
+
+export const btcTransferVinFixtureTx = {
+  chain: 'btc',
+  txid: 'btc-transfer-vin-001',
+  block_height: 800010,
+  block_hash: '0000000000000000000123456789abcdef00000000000000000000000000000000',
+  block_time: 1700100100,
+  confirmations: 6,
+  fee_sat: '1500',
+  fee_payer: WATCHED_ADDRESS,
+  vin: [
+    {
+      index: 0,
+      txid: 'prev-tx-001',
+      vout: 0,
+      address: WATCHED_ADDRESS,
+      value_sat: '50000',
+    },
+  ],
+  vout: [
+    {
+      index: 0,
+      address: EXTERNAL_ADDRESS,
+      value_sat: '30000',
+    },
+    {
+      index: 1,
+      address: WATCHED_ADDRESS,
+      value_sat: '18500',
+    },
+  ],
+};
+
+export const btcTransferVoutFixtureTx = {
+  chain: 'btc',
+  txid: 'btc-transfer-vout-001',
+  block_height: 800020,
+  block_time: 1700100200,
+  confirmations: 1,
+  fee_sat: '1200',
+  fee_payer: WATCHED_ADDRESS,
+  vin: [
+    {
+      index: 0,
+      txid: 'prev-tx-002',
+      vout: 0,
+      address: WATCHED_ADDRESS,
+      value_sat: '41000',
+    },
+  ],
+  vout: [
+    {
+      index: 0,
+      address: 'tb1qexternal33333333333333333333333',
+      value_sat: '20000',
+    },
+    {
+      index: 1,
+      address: WATCHED_ADDRESS,
+      value_sat: '19000',
+    },
+  ],
+};
+
+export const btcMinerFeeFixtureTx = {
+  chain: 'btc',
+  txid: 'btc-miner-fee-001',
+  block_height: 800030,
+  block_time: 1700100300,
+  confirmations: 2,
+  fee_sat: '2500',
+  fee_payer: WATCHED_ADDRESS,
+  vin: [
+    {
+      index: 0,
+      txid: 'prev-tx-003',
+      vout: 0,
+      address: WATCHED_ADDRESS,
+      value_sat: '22000',
+    },
+  ],
+  vout: [
+    {
+      index: 0,
+      address: 'tb1qexternal44444444444444444444444',
+      value_sat: '20000',
+    },
+    {
+      index: 1,
+      address: WATCHED_ADDRESS,
+      value_sat: '15000',
+    },
+  ],
+};

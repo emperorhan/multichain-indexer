@@ -1,0 +1,297 @@
+{
+  "fixtures": [
+    {
+      "fixture_id": "I-0672-M96-BTC-VIN-001",
+      "fixture_seed": 5301,
+      "run_id": "run-I-0672-m96-s1",
+      "chain": "btc",
+      "network": "btc-testnet",
+      "class_path": "TRANSFER:vin",
+      "signature": "sig-btc-vin-001",
+      "watched_addresses": ["tb1qwatched111111111111111111111111"],
+      "input": {
+        "chain": "btc",
+        "txid": "btc-transfer-vin-001",
+        "block_height": 800010,
+        "block_hash": "0000000000000000000123456789abcdef00000000000000000000000000000000",
+        "block_time": 1700100100,
+        "confirmations": 6,
+        "fee_sat": "1500",
+        "fee_payer": "tb1qwatched111111111111111111111111",
+        "vin": [
+          {
+            "index": 0,
+            "txid": "prev-tx-001",
+            "vout": 0,
+            "address": "tb1qwatched111111111111111111111111",
+            "value_sat": "50000"
+          }
+        ],
+        "vout": [
+          {
+            "index": 0,
+            "address": "tb1qexternal22222222222222222222222",
+            "value_sat": "30000"
+          },
+          {
+            "index": 1,
+            "address": "tb1qwatched111111111111111111111111",
+            "value_sat": "18500"
+          }
+        ]
+      },
+      "expected_output": {
+        "tx_hash": "btc-transfer-vin-001",
+        "block_cursor": 800010,
+        "block_time": 1700100100,
+        "fee_amount": "1500",
+        "fee_payer": "tb1qwatched111111111111111111111111",
+        "status": "SUCCESS",
+        "metadata": {
+          "finality_state": "confirmed",
+          "block_hash": "0000000000000000000123456789abcdef00000000000000000000000000000000",
+          "btc_fee_sat": "1500",
+          "btc_fee_payer": "tb1qwatched111111111111111111111111"
+        },
+        "balance_events": [
+          {
+            "outer_instruction_index": 0,
+            "inner_instruction_index": -1,
+            "event_category": "TRANSFER",
+            "event_action": "vin_spend",
+            "program_id": "btc",
+            "address": "tb1qwatched111111111111111111111111",
+            "contract_address": "BTC",
+            "delta": "-50000",
+            "counterparty_address": "",
+            "token_symbol": "BTC",
+            "token_name": "Bitcoin",
+            "token_decimals": 8,
+            "token_type": "NATIVE",
+            "metadata": {
+              "event_path": "vin:0",
+              "utxo_path_type": "vin",
+              "input_txid": "prev-tx-001",
+              "input_vout": "0",
+              "finality_state": "confirmed"
+            }
+          },
+          {
+            "outer_instruction_index": 1,
+            "inner_instruction_index": -1,
+            "event_category": "TRANSFER",
+            "event_action": "vout_receive",
+            "program_id": "btc",
+            "address": "tb1qwatched111111111111111111111111",
+            "contract_address": "BTC",
+            "delta": "18500",
+            "counterparty_address": "",
+            "token_symbol": "BTC",
+            "token_name": "Bitcoin",
+            "token_decimals": 8,
+            "token_type": "NATIVE",
+            "metadata": {
+              "event_path": "vout:1",
+              "utxo_path_type": "vout",
+              "finality_state": "confirmed"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "fixture_id": "I-0672-M96-BTC-VOUT-001",
+      "fixture_seed": 5302,
+      "run_id": "run-I-0672-m96-s2",
+      "chain": "btc",
+      "network": "btc-testnet",
+      "class_path": "TRANSFER:vout",
+      "signature": "sig-btc-vout-001",
+      "watched_addresses": ["tb1qwatched111111111111111111111111"],
+      "input": {
+        "chain": "btc",
+        "txid": "btc-transfer-vout-001",
+        "block_height": 800020,
+        "block_time": 1700100200,
+        "confirmations": 1,
+        "fee_sat": "1200",
+        "fee_payer": "tb1qwatched111111111111111111111111",
+        "vin": [
+          {
+            "index": 0,
+            "txid": "prev-tx-002",
+            "vout": 0,
+            "address": "tb1qwatched111111111111111111111111",
+            "value_sat": "41000"
+          }
+        ],
+        "vout": [
+          {
+            "index": 0,
+            "address": "tb1qexternal33333333333333333333333",
+            "value_sat": "20000"
+          },
+          {
+            "index": 1,
+            "address": "tb1qwatched111111111111111111111111",
+            "value_sat": "19000"
+          }
+        ]
+      },
+      "expected_output": {
+        "tx_hash": "btc-transfer-vout-001",
+        "block_cursor": 800020,
+        "block_time": 1700100200,
+        "fee_amount": "1200",
+        "fee_payer": "tb1qwatched111111111111111111111111",
+        "status": "SUCCESS",
+        "metadata": {
+          "finality_state": "confirmed",
+          "btc_fee_sat": "1200",
+          "btc_fee_payer": "tb1qwatched111111111111111111111111"
+        },
+        "balance_events": [
+          {
+            "outer_instruction_index": 0,
+            "inner_instruction_index": -1,
+            "event_category": "TRANSFER",
+            "event_action": "vin_spend",
+            "program_id": "btc",
+            "address": "tb1qwatched111111111111111111111111",
+            "contract_address": "BTC",
+            "delta": "-41000",
+            "counterparty_address": "",
+            "token_symbol": "BTC",
+            "token_name": "Bitcoin",
+            "token_decimals": 8,
+            "token_type": "NATIVE",
+            "metadata": {
+              "event_path": "vin:0",
+              "utxo_path_type": "vin",
+              "input_txid": "prev-tx-002",
+              "input_vout": "0",
+              "finality_state": "confirmed"
+            }
+          },
+          {
+            "outer_instruction_index": 1,
+            "inner_instruction_index": -1,
+            "event_category": "TRANSFER",
+            "event_action": "vout_receive",
+            "program_id": "btc",
+            "address": "tb1qwatched111111111111111111111111",
+            "contract_address": "BTC",
+            "delta": "19000",
+            "counterparty_address": "",
+            "token_symbol": "BTC",
+            "token_name": "Bitcoin",
+            "token_decimals": 8,
+            "token_type": "NATIVE",
+            "metadata": {
+              "event_path": "vout:1",
+              "utxo_path_type": "vout",
+              "finality_state": "confirmed"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "fixture_id": "I-0672-M96-BTC-FEE-001",
+      "fixture_seed": 5303,
+      "run_id": "run-I-0672-m96-s2",
+      "chain": "btc",
+      "network": "btc-testnet",
+      "class_path": "miner_fee",
+      "signature": "sig-btc-fee-001",
+      "watched_addresses": ["tb1qwatched111111111111111111111111"],
+      "input": {
+        "chain": "btc",
+        "txid": "btc-miner-fee-001",
+        "block_height": 800030,
+        "block_time": 1700100300,
+        "confirmations": 2,
+        "fee_sat": "2500",
+        "fee_payer": "tb1qwatched111111111111111111111111",
+        "vin": [
+          {
+            "index": 0,
+            "txid": "prev-tx-003",
+            "vout": 0,
+            "address": "tb1qwatched111111111111111111111111",
+            "value_sat": "22000"
+          }
+        ],
+        "vout": [
+          {
+            "index": 0,
+            "address": "tb1qexternal44444444444444444444444",
+            "value_sat": "20000"
+          },
+          {
+            "index": 1,
+            "address": "tb1qwatched111111111111111111111111",
+            "value_sat": "15000"
+          }
+        ]
+      },
+      "expected_output": {
+        "tx_hash": "btc-miner-fee-001",
+        "block_cursor": 800030,
+        "block_time": 1700100300,
+        "fee_amount": "2500",
+        "fee_payer": "tb1qwatched111111111111111111111111",
+        "status": "SUCCESS",
+        "metadata": {
+          "finality_state": "confirmed",
+          "btc_fee_sat": "2500",
+          "btc_fee_payer": "tb1qwatched111111111111111111111111"
+        },
+        "balance_events": [
+          {
+            "outer_instruction_index": 0,
+            "inner_instruction_index": -1,
+            "event_category": "TRANSFER",
+            "event_action": "vin_spend",
+            "program_id": "btc",
+            "address": "tb1qwatched111111111111111111111111",
+            "contract_address": "BTC",
+            "delta": "-22000",
+            "counterparty_address": "",
+            "token_symbol": "BTC",
+            "token_name": "Bitcoin",
+            "token_decimals": 8,
+            "token_type": "NATIVE",
+            "metadata": {
+              "event_path": "vin:0",
+              "utxo_path_type": "vin",
+              "input_txid": "prev-tx-003",
+              "input_vout": "0",
+              "finality_state": "confirmed"
+            }
+          },
+          {
+            "outer_instruction_index": 1,
+            "inner_instruction_index": -1,
+            "event_category": "TRANSFER",
+            "event_action": "vout_receive",
+            "program_id": "btc",
+            "address": "tb1qwatched111111111111111111111111",
+            "contract_address": "BTC",
+            "delta": "15000",
+            "counterparty_address": "",
+            "token_symbol": "BTC",
+            "token_name": "Bitcoin",
+            "token_decimals": 8,
+            "token_type": "NATIVE",
+            "metadata": {
+              "event_path": "vout:1",
+              "utxo_path_type": "vout",
+              "finality_state": "confirmed"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
