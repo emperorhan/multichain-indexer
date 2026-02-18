@@ -63,7 +63,7 @@ function isBasePayload(payload: unknown): boolean {
     return false;
   }
   const parsed = payload as Record<string, unknown>;
-  if (parsed.chain === 'base') {
+  if (parsed.chain === 'base' || parsed.chain === 'ethereum') {
     return true;
   }
   return parsed.tx !== undefined || parsed.receipt !== undefined;

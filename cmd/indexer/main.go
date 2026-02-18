@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/chain/base"
 	"github.com/emperorhan/multichain-indexer/internal/chain/btc"
+	"github.com/emperorhan/multichain-indexer/internal/chain/ethereum"
 	"github.com/emperorhan/multichain-indexer/internal/chain/solana"
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -46,44 +46,6 @@ type runtimeTarget struct {
 	watched []string
 	adapter chain.ChainAdapter
 	rpcURL  string
-}
-
-type chainAliasAdapter struct {
-	chain    model.Chain
-	delegate chain.ChainAdapter
-}
-
-func (a *chainAliasAdapter) Chain() string {
-	return a.chain.String()
-}
-
-func (a *chainAliasAdapter) GetHeadSequence(ctx context.Context) (int64, error) {
-	return a.delegate.GetHeadSequence(ctx)
-}
-
-func (a *chainAliasAdapter) FetchNewSignatures(ctx context.Context, address string, cursor *string, batchSize int) ([]chain.SignatureInfo, error) {
-	return a.delegate.FetchNewSignatures(ctx, address, cursor, batchSize)
-}
-
-func (a *chainAliasAdapter) FetchNewSignaturesWithCutoff(
-	ctx context.Context,
-	address string,
-	cursor *string,
-	batchSize int,
-	cutoffSeq int64,
-) ([]chain.SignatureInfo, error) {
-	type cutoffAware interface {
-		FetchNewSignaturesWithCutoff(context.Context, string, *string, int, int64) ([]chain.SignatureInfo, error)
-	}
-
-	if adapter, ok := a.delegate.(cutoffAware); ok {
-		return adapter.FetchNewSignaturesWithCutoff(ctx, address, cursor, batchSize, cutoffSeq)
-	}
-	return a.delegate.FetchNewSignatures(ctx, address, cursor, batchSize)
-}
-
-func (a *chainAliasAdapter) FetchTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error) {
-	return a.delegate.FetchTransactions(ctx, signatures)
 }
 
 type dbStatsProvider interface {
@@ -231,12 +193,9 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 			chain:   model.ChainEthereum,
 			network: model.NetworkMainnet,
 			group:   config.RuntimeLikeGroupEVM,
-			watched: cfg.Pipeline.BaseWatchedAddresses,
-			adapter: &chainAliasAdapter{
-				chain:    model.ChainEthereum,
-				delegate: base.NewAdapter(cfg.Base.RPCURL, logger),
-			},
-			rpcURL: cfg.Base.RPCURL,
+			watched: cfg.Pipeline.EthereumWatchedAddresses,
+			adapter: ethereum.NewAdapter(cfg.Ethereum.RPCURL, logger),
+			rpcURL:  cfg.Ethereum.RPCURL,
 		})
 	}
 
@@ -278,11 +237,14 @@ func main() {
 		"solana_network", cfg.Solana.Network,
 		"base_rpc", cfg.Base.RPCURL,
 		"base_network", cfg.Base.Network,
+		"ethereum_rpc", cfg.Ethereum.RPCURL,
+		"ethereum_network", cfg.Ethereum.Network,
 		"btc_rpc", cfg.BTC.RPCURL,
 		"btc_network", cfg.BTC.Network,
 		"sidecar_addr", cfg.Sidecar.Addr,
 		"solana_watched_addresses", len(cfg.Pipeline.SolanaWatchedAddresses),
 		"base_watched_addresses", len(cfg.Pipeline.BaseWatchedAddresses),
+		"ethereum_watched_addresses", len(cfg.Pipeline.EthereumWatchedAddresses),
 		"btc_watched_addresses", len(cfg.Pipeline.BTCWatchedAddresses),
 	)
 

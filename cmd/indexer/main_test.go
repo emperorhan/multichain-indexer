@@ -286,12 +286,16 @@ func TestBuildRuntimeTargets_IncludesEthereumMainnetWhenRequested(t *testing.T) 
 			RPCURL:  "https://base.example",
 			Network: string(model.NetworkSepolia),
 		},
+		Ethereum: config.EthereumConfig{
+			RPCURL:  "https://eth.example",
+			Network: "mainnet",
+		},
 		BTC: config.BTCConfig{
 			RPCURL:  "https://btc.example",
 			Network: string(model.NetworkTestnet),
 		},
 		Pipeline: config.PipelineConfig{
-			BaseWatchedAddresses: []string{"0xabc", "0xdef"},
+			EthereumWatchedAddresses: []string{"0xeth1", "0xeth2"},
 		},
 		Runtime: config.RuntimeConfig{
 			DeploymentMode: config.RuntimeDeploymentModeIndependent,
@@ -302,18 +306,19 @@ func TestBuildRuntimeTargets_IncludesEthereumMainnetWhenRequested(t *testing.T) 
 	targets := buildRuntimeTargets(cfg, slog.Default())
 	require.Len(t, targets, 4)
 
-	var ethereum *runtimeTarget
+	var eth *runtimeTarget
 	for idx := range targets {
 		if targets[idx].chain == model.ChainEthereum {
-			ethereum = &targets[idx]
+			eth = &targets[idx]
 			break
 		}
 	}
-	require.NotNil(t, ethereum)
-	assert.Equal(t, model.NetworkMainnet, ethereum.network)
-	assert.Equal(t, config.RuntimeLikeGroupEVM, ethereum.group)
-	assert.Equal(t, "https://base.example", ethereum.rpcURL)
-	assert.Equal(t, model.ChainEthereum.String(), ethereum.adapter.Chain())
+	require.NotNil(t, eth)
+	assert.Equal(t, model.NetworkMainnet, eth.network)
+	assert.Equal(t, config.RuntimeLikeGroupEVM, eth.group)
+	assert.Equal(t, "https://eth.example", eth.rpcURL)
+	assert.Equal(t, []string{"0xeth1", "0xeth2"}, eth.watched)
+	assert.Equal(t, model.ChainEthereum.String(), eth.adapter.Chain())
 }
 
 func TestValidateRuntimeWiring_AllowsSingleTarget(t *testing.T) {

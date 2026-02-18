@@ -20,21 +20,28 @@ const (
 )
 
 type Adapter struct {
-	client rpc.RPCClient
-	logger *slog.Logger
+	client    rpc.RPCClient
+	logger    *slog.Logger
+	chainName string
 }
 
 var _ chain.ChainAdapter = (*Adapter)(nil)
 
 func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
+	return NewAdapterWithChain("base", rpcURL, logger)
+}
+
+// NewAdapterWithChain creates an EVM adapter for any chain name.
+func NewAdapterWithChain(chainName, rpcURL string, logger *slog.Logger) *Adapter {
 	return &Adapter{
-		client: rpc.NewClient(rpcURL, logger),
-		logger: logger.With("chain", "base"),
+		client:    rpc.NewClient(rpcURL, logger),
+		logger:    logger.With("chain", chainName),
+		chainName: chainName,
 	}
 }
 
 func (a *Adapter) Chain() string {
-	return "base"
+	return a.chainName
 }
 
 func (a *Adapter) GetHeadSequence(ctx context.Context) (int64, error) {
@@ -244,7 +251,7 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 		}
 
 		payload, err := json.Marshal(map[string]interface{}{
-			"chain":   "base",
+			"chain":   a.chainName,
 			"tx":      tx,
 			"receipt": receipt,
 		})
@@ -311,7 +318,7 @@ func (a *Adapter) fetchTransactionsOneByOne(ctx context.Context, signatures []st
 			}
 
 			payload, err := json.Marshal(map[string]interface{}{
-				"chain":   "base",
+				"chain":   a.chainName,
 				"tx":      tx,
 				"receipt": receipt,
 			})

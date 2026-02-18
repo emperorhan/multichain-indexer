@@ -23,6 +23,7 @@ type Config struct {
 	Sidecar  SidecarConfig
 	Solana   SolanaConfig
 	Base     BaseConfig
+	Ethereum EthereumConfig
 	BTC      BTCConfig
 	Runtime  RuntimeConfig
 	Pipeline PipelineConfig
@@ -63,6 +64,11 @@ type BaseConfig struct {
 	Network string
 }
 
+type EthereumConfig struct {
+	RPCURL  string
+	Network string
+}
+
 type BTCConfig struct {
 	RPCURL  string
 	Network string
@@ -89,6 +95,7 @@ type PipelineConfig struct {
 	WatchedAddresses                              []string // legacy alias of SolanaWatchedAddresses
 	SolanaWatchedAddresses                        []string
 	BaseWatchedAddresses                          []string
+	EthereumWatchedAddresses                      []string
 	BTCWatchedAddresses                           []string
 	FetchWorkers                                  int
 	NormalizerWorkers                             int
@@ -173,6 +180,10 @@ func Load() (*Config, error) {
 			RPCURL:  getEnvAny([]string{"BASE_SEPOLIA_RPC_URL", "BASE_RPC_URL"}, ""),
 			Network: getEnv("BASE_NETWORK", "sepolia"),
 		},
+		Ethereum: EthereumConfig{
+			RPCURL:  getEnvAny([]string{"ETH_MAINNET_RPC_URL", "ETHEREUM_RPC_URL"}, ""),
+			Network: getEnv("ETHEREUM_NETWORK", "mainnet"),
+		},
 		BTC: BTCConfig{
 			RPCURL:  getEnvAny([]string{"BTC_TESTNET_RPC_URL", "BTC_RPC_URL"}, ""),
 			Network: getEnv("BTC_NETWORK", "testnet"),
@@ -226,6 +237,7 @@ func Load() (*Config, error) {
 		getEnvAny([]string{"SOLANA_WATCHED_ADDRESSES", "WATCHED_ADDRESSES"}, ""),
 	)
 	cfg.Pipeline.BaseWatchedAddresses = parseAddressCSV(getEnv("BASE_WATCHED_ADDRESSES", ""))
+	cfg.Pipeline.EthereumWatchedAddresses = parseAddressCSV(getEnv("ETH_WATCHED_ADDRESSES", ""))
 	cfg.Pipeline.BTCWatchedAddresses = parseAddressCSV(getEnv("BTC_WATCHED_ADDRESSES", ""))
 	cfg.Runtime.ChainTargets = normalizeCSVValues(parseAddressCSV(
 		getEnvAny([]string{"RUNTIME_CHAIN_TARGETS", "RUNTIME_CHAIN_TARGET"}, ""),
@@ -288,8 +300,8 @@ func (c *Config) validate() error {
 	if requiredChains["base"] && c.Base.RPCURL == "" {
 		return fmt.Errorf("BASE_SEPOLIA_RPC_URL is required for selected runtime targets")
 	}
-	if requiredChains["ethereum"] && c.Base.RPCURL == "" {
-		return fmt.Errorf("BASE_SEPOLIA_RPC_URL is required for selected runtime targets")
+	if requiredChains["ethereum"] && c.Ethereum.RPCURL == "" {
+		return fmt.Errorf("ETH_MAINNET_RPC_URL is required for selected runtime targets")
 	}
 	if requiredChains["btc"] && c.BTC.RPCURL == "" {
 		return fmt.Errorf("BTC_TESTNET_RPC_URL is required for selected runtime targets")

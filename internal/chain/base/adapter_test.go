@@ -100,8 +100,9 @@ func (f *fakeRPCClient) GetTransactionReceiptsByHash(_ context.Context, hashes [
 
 func newTestAdapter(client rpc.RPCClient) *Adapter {
 	return &Adapter{
-		client: client,
-		logger: slog.Default(),
+		client:    client,
+		logger:    slog.Default(),
+		chainName: "base",
 	}
 }
 

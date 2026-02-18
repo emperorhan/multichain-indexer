@@ -481,16 +481,67 @@ func TestValidate_IndependentMode_SolanaOnlyDoesNotRequireBaseRPC(t *testing.T) 
 
 func TestValidate_IndependentMode_AcceptsEthereumTarget(t *testing.T) {
 	cfg := &Config{
-		DB:      DBConfig{URL: "postgres://x:x@localhost/db"},
-		Solana:  SolanaConfig{RPCURL: ""},
-		Base:    BaseConfig{RPCURL: "https://base.example"},
-		Sidecar: SidecarConfig{Addr: "localhost:50051"},
+		DB:       DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:   SolanaConfig{RPCURL: ""},
+		Base:     BaseConfig{RPCURL: ""},
+		Ethereum: EthereumConfig{RPCURL: "https://eth.example"},
+		Sidecar:  SidecarConfig{Addr: "localhost:50051"},
 		Runtime: RuntimeConfig{
 			DeploymentMode: RuntimeDeploymentModeIndependent,
 			ChainTargets:   []string{"ethereum-mainnet"},
 		},
 	}
 	require.NoError(t, cfg.validate())
+}
+
+func TestValidate_IndependentMode_EthereumRequiresRPCURL(t *testing.T) {
+	cfg := &Config{
+		DB:       DBConfig{URL: "postgres://x:x@localhost/db"},
+		Solana:   SolanaConfig{RPCURL: ""},
+		Base:     BaseConfig{RPCURL: ""},
+		Ethereum: EthereumConfig{RPCURL: ""},
+		Sidecar:  SidecarConfig{Addr: "localhost:50051"},
+		Runtime: RuntimeConfig{
+			DeploymentMode: RuntimeDeploymentModeIndependent,
+			ChainTargets:   []string{"ethereum-mainnet"},
+		},
+	}
+	err := cfg.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ETH_MAINNET_RPC_URL")
+}
+
+func TestLoad_EthereumConfig_Defaults(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Empty(t, cfg.Ethereum.RPCURL)
+	assert.Equal(t, "mainnet", cfg.Ethereum.Network)
+	assert.Empty(t, cfg.Pipeline.EthereumWatchedAddresses)
+}
+
+func TestLoad_EthereumConfig_EnvOverride(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+	t.Setenv("ETH_MAINNET_RPC_URL", "https://eth-mainnet.example")
+	t.Setenv("ETHEREUM_NETWORK", "mainnet")
+	t.Setenv("ETH_WATCHED_ADDRESSES", "0xaaa,0xbbb")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "https://eth-mainnet.example", cfg.Ethereum.RPCURL)
+	assert.Equal(t, "mainnet", cfg.Ethereum.Network)
+	assert.Equal(t, []string{"0xaaa", "0xbbb"}, cfg.Pipeline.EthereumWatchedAddresses)
 }
 
 func TestValidate_IndependentMode_AcceptsBTCTarget(t *testing.T) {
