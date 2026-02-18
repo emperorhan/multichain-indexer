@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { decodeSolanaTransaction } from './transaction_decoder';
+import { decodeSolanaTransactionBatch } from '../index';
 import {
   WATCHED_ADDRESS,
   OTHER_ADDRESS,
@@ -12,6 +13,9 @@ import {
   failedTx,
   innerInstructionsTx,
   createAccountTx,
+  transferWithSeedTx,
+  createAccountWithSeedTx,
+  withdrawNonceAccountTx,
   noTransferTx,
   stringAccountKeysTx,
 } from '../../__fixtures__/solana_transactions';
@@ -138,6 +142,38 @@ describe('decodeSolanaTransaction', () => {
     expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
     expect(transferEvents[0].counterpartyAddress).toBe('newAccount111');
     expect(transferEvents[0].delta).toBe('-2039280');
+  });
+
+  it('parses system transferWithSeed instruction as deterministic signed delta', () => {
+    const result = decodeSolanaTransaction(transferWithSeedTx, 'sig16', watchedSet);
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].eventAction).toBe('system_transfer_with_seed');
+    expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(transferEvents[0].delta).toBe('-222');
+    expect(transferEvents[0].counterpartyAddress).toBe(OTHER_ADDRESS);
+  });
+
+  it('parses system createAccountWithSeed instruction as deterministic signed delta', () => {
+    const result = decodeSolanaTransaction(createAccountWithSeedTx, 'sig17', watchedSet);
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].eventAction).toBe('system_create_account_with_seed');
+    expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(transferEvents[0].delta).toBe('-2039280');
+  });
+
+  it('parses system withdrawNonceAccount instruction as deterministic signed delta', () => {
+    const result = decodeSolanaTransaction(withdrawNonceAccountTx, 'sig18', watchedSet);
+    const transferEvents = result.balanceEvents.filter((e) => e.eventCategory === 'TRANSFER');
+
+    expect(transferEvents).toHaveLength(1);
+    expect(transferEvents[0].eventAction).toBe('system_withdraw_nonce');
+    expect(transferEvents[0].address).toBe(WATCHED_ADDRESS);
+    expect(transferEvents[0].delta).toBe('-120000');
+    expect(transferEvents[0].counterpartyAddress).toBe('withdrawRecipient111');
   });
 
   it('returns no events for tx with no transfer instructions', () => {
@@ -299,4 +335,49 @@ describe('decodeSolanaTransaction', () => {
     expect(transferEvents[0].outerInstructionIndex).toBe(0);
     expect(transferEvents[0].innerInstructionIndex).toBe(1);
   });
+
+  it('is replay-invariant for system instruction permutations', () => {
+    const watchedAddresses = [WATCHED_ADDRESS];
+    const standardOrder = decodeSolanaTransactionBatch(
+      [
+        { signature: 'sig16', rawJson: Buffer.from(JSON.stringify(transferWithSeedTx)) },
+        { signature: 'sig17', rawJson: Buffer.from(JSON.stringify(createAccountWithSeedTx)) },
+        { signature: 'sig18', rawJson: Buffer.from(JSON.stringify(withdrawNonceAccountTx)) },
+      ],
+      watchedAddresses,
+    );
+    const perturbedOrder = decodeSolanaTransactionBatch(
+      [
+        { signature: 'sig17', rawJson: Buffer.from(JSON.stringify(createAccountWithSeedTx)) },
+        { signature: 'sig16', rawJson: Buffer.from(JSON.stringify(transferWithSeedTx)) },
+        { signature: 'sig18', rawJson: Buffer.from(JSON.stringify(withdrawNonceAccountTx)) },
+      ],
+      watchedAddresses,
+    );
+
+    expect(standardOrder.errors).toHaveLength(0);
+    expect(perturbedOrder.errors).toHaveLength(0);
+
+    const standardFingerprint = canonicalBalanceEventsFingerprint(standardOrder.results);
+    const perturbedFingerprint = canonicalBalanceEventsFingerprint(perturbedOrder.results);
+    expect(standardFingerprint).toEqual(perturbedFingerprint);
+  });
 });
+
+function canonicalBalanceEventsFingerprint(
+  results: Array<{ txHash: string; balanceEvents: Array<{ eventCategory: string; eventAction: string; outerInstructionIndex: number; innerInstructionIndex: number; address: string; contractAddress: string; delta: string; tokenType: string }> }>,
+): string[] {
+  return results.flatMap((result) =>
+    result.balanceEvents.map((event) => [
+      result.txHash,
+      event.eventCategory,
+      event.eventAction,
+      String(event.outerInstructionIndex),
+      String(event.innerInstructionIndex),
+      event.address,
+      event.contractAddress,
+      event.delta,
+      event.tokenType,
+    ].join('|')),
+  ).sort();
+}

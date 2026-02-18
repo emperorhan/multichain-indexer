@@ -340,6 +340,112 @@ export const innerInstructionsTx = {
   },
 };
 
+export const transferWithSeedTx = {
+  slot: 1500,
+  blockTime: 1700004500,
+  transaction: {
+    message: {
+      accountKeys: [
+        { pubkey: WATCHED_ADDRESS },
+        { pubkey: OTHER_ADDRESS },
+        { pubkey: SYSTEM_PROGRAM_ID },
+      ],
+      instructions: [
+        {
+          programId: SYSTEM_PROGRAM_ID,
+          parsed: {
+            type: 'transferWithSeed',
+            info: {
+              source: WATCHED_ADDRESS,
+              destination: OTHER_ADDRESS,
+              lamports: 222,
+              fromSeed: 'seed',
+            },
+          },
+        },
+      ],
+    },
+  },
+  meta: {
+    err: null,
+    fee: 5000,
+    preBalances: [2000000000, 500000000, 1],
+    postBalances: [1999999778, 500000222, 1],
+    innerInstructions: [],
+  },
+};
+
+export const createAccountWithSeedTx = {
+  slot: 1501,
+  blockTime: 1700004510,
+  transaction: {
+    message: {
+      accountKeys: [
+        { pubkey: WATCHED_ADDRESS },
+        { pubkey: 'seedAccount111' },
+        { pubkey: SYSTEM_PROGRAM_ID },
+      ],
+      instructions: [
+        {
+          programId: SYSTEM_PROGRAM_ID,
+          parsed: {
+            type: 'createAccountWithSeed',
+            info: {
+              fromAccount: WATCHED_ADDRESS,
+              newAccount: 'seedAccount111',
+              base: WATCHED_ADDRESS,
+              lamports: '2039280',
+              seed: 'seed',
+            },
+          },
+        },
+      ],
+    },
+  },
+  meta: {
+    err: null,
+    fee: 5000,
+    preBalances: [2000000000, 0, 1],
+    postBalances: [1997960720, 2039280, 1],
+    innerInstructions: [],
+  },
+};
+
+export const withdrawNonceAccountTx = {
+  slot: 1502,
+  blockTime: 1700004520,
+  transaction: {
+    message: {
+      accountKeys: [
+        { pubkey: WATCHED_ADDRESS },
+        { pubkey: 'withdrawRecipient111' },
+        { pubkey: SYSTEM_PROGRAM_ID },
+      ],
+      instructions: [
+        {
+          programId: SYSTEM_PROGRAM_ID,
+          parsed: {
+            type: 'withdrawNonceAccount',
+            info: {
+              nonceAccount: WATCHED_ADDRESS,
+              to: 'withdrawRecipient111',
+              lamports: 120000,
+              authority: WATCHED_ADDRESS,
+            },
+          },
+        },
+      ],
+    },
+  },
+  meta: {
+    err: null,
+    fee: 5000,
+    preBalances: [2000000000, 0, 1],
+    postBalances: [1999880000, 120000, 1],
+    innerInstructions: [],
+  },
+};
+
 export const createAccountTx = {
   slot: 600,
   blockTime: 1700005000,
