@@ -14,6 +14,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/fetcher"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/normalizer"
@@ -121,6 +122,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	rawBatchInputCh := make(chan event.RawBatch, bufSize)
 	rawBatchOutputCh := rawBatchInputCh
 	normalizedCh := make(chan event.NormalizedBatch, bufSize)
+	autoTuneSignalCollector := autotune.NewRuntimeSignalRegistry()
 
 	if p.cfg.StreamTransportEnabled {
 		streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
@@ -153,11 +155,12 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		PolicyManifestDigest:       p.cfg.CoordinatorAutoTune.PolicyManifestDigest,
 		PolicyManifestRefreshEpoch: p.cfg.CoordinatorAutoTune.PolicyManifestRefreshEpoch,
 		PolicyActivationHoldTicks:  p.cfg.CoordinatorAutoTune.PolicyActivationHoldTicks,
-	})
+	}).WithAutoTuneSignalSource(autoTuneSignalCollector)
 
 	fetch := fetcher.New(
 		p.adapter, jobCh, rawBatchOutputCh,
 		p.cfg.FetchWorkers, p.logger,
+		fetcher.WithAutoTuneSignalSink(autoTuneSignalCollector),
 	)
 
 	norm := normalizer.New(
@@ -174,6 +177,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		p.repos.Cursor, p.repos.Config,
 		normalizedCh, p.logger,
 		ingester.WithCommitInterleaver(p.cfg.CommitInterleaver),
+		ingester.WithAutoTuneSignalSink(autoTuneSignalCollector),
 	)
 
 	p.logger.Info("pipeline starting",

@@ -11,6 +11,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1000,6 +1001,62 @@ func TestTick_AutoTuneChainScopedOneChainLagDoesNotThrottleHealthyChain(t *testi
 
 	assert.Equal(t, baselineBatches, interleavedHealthyBatches, "healthy chain knobs must be independent from lagging chain pressure")
 	assert.Greater(t, maxIntSlice(laggingBatches), maxIntSlice(interleavedHealthyBatches), "lagging chain should scale independently without throttling healthy chain")
+}
+
+func TestTick_AutoTuneSignalPerturbationIsChainScopedByRuntimePair(t *testing.T) {
+	autoTuneCfg := AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          60,
+		MaxBatchSize:          160,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      80,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+	}
+
+	const tickCount = 6
+	healthyAddress := "0x2222222222222222222222222222222222222222"
+
+	baselineRegistry := autotune.NewRuntimeSignalRegistry()
+	baselineHarness := newAutoTuneHarness(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyAddress,
+		120,
+		130,
+		tickCount,
+		autoTuneCfg,
+	)
+	baselineHarness.coordinator.WithAutoTuneSignalSource(baselineRegistry)
+
+	perturbedRegistry := autotune.NewRuntimeSignalRegistry()
+	perturbedHarness := newAutoTuneHarness(
+		model.ChainBase,
+		model.NetworkSepolia,
+		healthyAddress,
+		120,
+		130,
+		tickCount,
+		autoTuneCfg,
+	)
+	perturbedHarness.coordinator.WithAutoTuneSignalSource(perturbedRegistry)
+
+	for i := 0; i < tickCount; i++ {
+		perturbedRegistry.RecordRPCResult(model.ChainSolana.String(), model.NetworkDevnet.String(), true)
+		perturbedRegistry.RecordDBCommitLatencyMs(model.ChainSolana.String(), model.NetworkDevnet.String(), int64(500*(i+1)))
+	}
+
+	baselineBatches := make([]int, 0, tickCount)
+	perturbedBatches := make([]int, 0, tickCount)
+	for i := 0; i < tickCount; i++ {
+		baselineBatches = append(baselineBatches, baselineHarness.tickAndAdvance(t).BatchSize)
+		perturbedBatches = append(perturbedBatches, perturbedHarness.tickAndAdvance(t).BatchSize)
+	}
+
+	assert.Equal(t, baselineBatches, perturbedBatches, "peer-chain runtime perturbations must not alter chain-local auto-tune outputs")
 }
 
 func TestTick_AutoTuneProfileTransitionPreservesBatchAcrossMandatoryChains(t *testing.T) {

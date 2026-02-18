@@ -36,47 +36,50 @@ type AutoTuneConfig struct {
 }
 
 type autoTuneInputs struct {
-	Chain              string
-	Network            string
-	HasHeadSignal      bool
-	HeadSequence       int64
-	HasMinCursorSignal bool
-	MinCursorSequence  int64
-	QueueDepth         int
-	QueueCapacity      int
-	DecisionEpochMs    int64
+	Chain                string
+	Network              string
+	HasHeadSignal        bool
+	HeadSequence         int64
+	HasMinCursorSignal   bool
+	MinCursorSequence    int64
+	QueueDepth           int
+	QueueCapacity        int
+	RPCErrorRateBps      int
+	DBCommitLatencyP95Ms int
+	DecisionEpochMs      int64
 }
 
 type autoTuneDiagnostics struct {
-	LagSequence            int64
-	QueueDepth             int
-	QueueCapacity          int
-	TelemetryState         string
-	OverrideState          string
-	Signal                 string
-	Decision               string
-	BatchBefore            int
-	BatchAfter             int
-	Streak                 int
-	Cooldown               int
-	TelemetryStaleTicks    int
-	TelemetryRecoveryTicks int
-	OverrideReleaseTicks   int
-	PolicyVersion          string
-	PolicyManifestDigest   string
-	PolicyEpoch            int64
-	PolicyActivationTicks  int
-	DecisionInputsHash     string
-	LocalInputsDigest      string
+	LagSequence               int64
+	QueueDepth                int
+	QueueCapacity             int
+	TelemetryState            string
+	OverrideState             string
+	Signal                    string
+	Decision                  string
+	BatchBefore               int
+	BatchAfter                int
+	Streak                    int
+	Cooldown                  int
+	TelemetryStaleTicks       int
+	TelemetryRecoveryTicks    int
+	OverrideReleaseTicks      int
+	PolicyVersion             string
+	PolicyManifestDigest      string
+	PolicyEpoch               int64
+	PolicyActivationTicks     int
+	DecisionInputsHash        string
+	LocalInputsDigest         string
 	DecisionInputsChainScoped bool
-	DecisionScope          string
-	CrossChainReads        bool
-	CrossChainWrites       bool
-	ChangedPeerCursor      int
-	ChangedPeerWatermark    int
-	DecisionOutputs        string
-	DecisionEpochMs        int64
-	DecisionSequence       int64
+	DecisionScope             string
+	CrossChainReads           bool
+	CrossChainWrites          bool
+	ChangedPeerCursor         int
+	ChangedPeerWatermark      int
+	CrossChainControlDelta    int
+	DecisionOutputs           string
+	DecisionEpochMs           int64
+	DecisionSequence          int64
 }
 
 type autoTuneSignal string
@@ -174,6 +177,8 @@ func (a *autoTuneController) decisionInputsDigest(inputs autoTuneInputs) string 
 		fmt.Sprintf("%d", inputs.MinCursorSequence),
 		fmt.Sprintf("%d", inputs.QueueDepth),
 		fmt.Sprintf("%d", inputs.QueueCapacity),
+		fmt.Sprintf("%d", inputs.RPCErrorRateBps),
+		fmt.Sprintf("%d", inputs.DBCommitLatencyP95Ms),
 	)
 }
 
@@ -195,7 +200,10 @@ func (i autoTuneInputs) decisionEpochMsString() string {
 }
 
 func (i autoTuneInputs) hashContextString() string {
-	return fmt.Sprintf("%s|%s|%t|%d|%t|%d|%d|%d", i.Chain, i.Network, i.HasHeadSignal, i.HeadSequence, i.HasMinCursorSignal, i.MinCursorSequence, i.QueueDepth, i.QueueCapacity)
+	return fmt.Sprintf("%s|%s|%t|%d|%t|%d|%d|%d|%d|%d",
+		i.Chain, i.Network, i.HasHeadSignal, i.HeadSequence,
+		i.HasMinCursorSignal, i.MinCursorSequence, i.QueueDepth, i.QueueCapacity,
+		i.RPCErrorRateBps, i.DBCommitLatencyP95Ms)
 }
 
 func formatBool(value bool) string {
@@ -227,6 +235,7 @@ func (a *autoTuneController) enrichDecisionDiagnostics(
 	diagnostics.CrossChainWrites = false
 	diagnostics.ChangedPeerCursor = 0
 	diagnostics.ChangedPeerWatermark = 0
+	diagnostics.CrossChainControlDelta = 0
 	diagnostics.DecisionOutputs = afterOutputs
 	diagnostics.DecisionEpochMs = inputs.DecisionEpochMs
 	diagnostics.DecisionSequence = a.nextDecisionSequence()
@@ -489,7 +498,9 @@ func (a *autoTuneController) Resolve(inputs autoTuneInputs) (int, autoTuneDiagno
 	}
 	decision := "hold"
 	appliedControl := false
-	blockedByCooldown := a.cooldownLeft > 0 && isOppositeSignal(signal, a.lastApplied)
+	blockedByCooldown := a.cooldownLeft > 0 &&
+		isOppositeSignal(signal, a.lastApplied) &&
+		!isCriticalChainScopedSignal(signal, inputs)
 	if signal != a.saturationSignal || !a.isSaturatedBoundary(signal) {
 		a.saturationSignal = autoTuneSignalHold
 	}
@@ -755,6 +766,11 @@ func (a *autoTuneController) isSaturatedBoundary(signal autoTuneSignal) bool {
 	}
 }
 
+const (
+	autoTuneRPCErrorRateHighWatermarkBps    = 250
+	autoTuneCommitLatencyP95HighWatermarkMs = 250
+)
+
 func clampedDecisionForSignal(signal autoTuneSignal) string {
 	switch signal {
 	case autoTuneSignalIncrease:
@@ -777,7 +793,23 @@ func isOppositeSignal(signal autoTuneSignal, lastApplied autoTuneSignal) bool {
 	}
 }
 
+func isCriticalChainScopedSignal(signal autoTuneSignal, inputs autoTuneInputs) bool {
+	switch signal {
+	case autoTuneSignalDecrease:
+		return inputs.RPCErrorRateBps >= autoTuneRPCErrorRateHighWatermarkBps ||
+			inputs.DBCommitLatencyP95Ms >= autoTuneCommitLatencyP95HighWatermarkMs
+	default:
+		return false
+	}
+}
+
 func (a *autoTuneController) classifySignal(inputs autoTuneInputs, lagSequence int64) autoTuneSignal {
+	if inputs.RPCErrorRateBps >= autoTuneRPCErrorRateHighWatermarkBps {
+		return autoTuneSignalDecrease
+	}
+	if inputs.DBCommitLatencyP95Ms >= autoTuneCommitLatencyP95HighWatermarkMs {
+		return autoTuneSignalDecrease
+	}
 	if isQueueHigh(inputs.QueueDepth, inputs.QueueCapacity, a.queueHighWatermarkPct) {
 		return autoTuneSignalDecrease
 	}

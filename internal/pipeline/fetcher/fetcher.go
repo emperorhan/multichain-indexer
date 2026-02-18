@@ -14,8 +14,9 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
-	"github.com/emperorhan/multichain-indexer/internal/tracing"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
+	"github.com/emperorhan/multichain-indexer/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	otelTrace "go.opentelemetry.io/otel/trace"
@@ -32,11 +33,12 @@ const (
 
 // Fetcher consumes FetchJobs, calls ChainAdapter, and produces RawBatches.
 type Fetcher struct {
-	adapter     chain.ChainAdapter
-	jobCh       <-chan event.FetchJob
-	rawBatchCh  chan<- event.RawBatch
-	workerCount int
-	logger      *slog.Logger
+	adapter         chain.ChainAdapter
+	jobCh           <-chan event.FetchJob
+	rawBatchCh      chan<- event.RawBatch
+	workerCount     int
+	logger          *slog.Logger
+	autoTuneSignals autotune.AutoTuneSignalSink
 
 	retryMaxAttempts int
 	backoffInitial   time.Duration
@@ -46,6 +48,14 @@ type Fetcher struct {
 
 	batchStateMu       sync.Mutex
 	batchSizeByAddress map[string]int
+}
+
+type Option func(*Fetcher)
+
+func WithAutoTuneSignalSink(sink autotune.AutoTuneSignalSink) Option {
+	return func(f *Fetcher) {
+		f.autoTuneSignals = sink
+	}
 }
 
 type cutoffAwareAdapter interface {
@@ -58,6 +68,7 @@ func New(
 	rawBatchCh chan<- event.RawBatch,
 	workerCount int,
 	logger *slog.Logger,
+	opts ...Option,
 ) *Fetcher {
 	if workerCount <= 0 {
 		workerCount = 1
@@ -66,7 +77,7 @@ func New(
 		logger = slog.Default()
 	}
 
-	return &Fetcher{
+	f := &Fetcher{
 		adapter:            adapter,
 		jobCh:              jobCh,
 		rawBatchCh:         rawBatchCh,
@@ -78,6 +89,12 @@ func New(
 		adaptiveMinBatch:   defaultAdaptiveMinBatch,
 		batchSizeByAddress: make(map[string]int),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(f)
+		}
+	}
+	return f
 }
 
 func (f *Fetcher) Run(ctx context.Context) error {
@@ -172,7 +189,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	}
 
 	// 2. Fetch raw transactions with retry/backoff.
-	selectedSigs, rawTxs, txBatchSize, err := f.fetchTransactionsWithRetry(ctx, log, sigs)
+	selectedSigs, rawTxs, txBatchSize, err := f.fetchTransactionsWithRetry(ctx, log, job, sigs)
 	if err != nil {
 		f.setAdaptiveBatchSize(job.Address, txBatchSize)
 		return err
@@ -243,6 +260,7 @@ func (f *Fetcher) fetchSignaturesWithRetry(
 	}
 	for attempt := 1; attempt <= attempts; attempt++ {
 		sigs, err := f.fetchNewSignatures(ctx, job.Address, cursor, currentBatch, job.FetchCutoffSeq)
+		f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
 		if err == nil {
 			return sigs, currentBatch, nil
 		}
@@ -308,7 +326,12 @@ func (f *Fetcher) fetchNewSignatures(
 	return f.adapter.FetchNewSignatures(ctx, address, cursor, batchSize)
 }
 
-func (f *Fetcher) fetchTransactionsWithRetry(ctx context.Context, log *slog.Logger, sigs []chain.SignatureInfo) ([]chain.SignatureInfo, []json.RawMessage, int, error) {
+func (f *Fetcher) fetchTransactionsWithRetry(
+	ctx context.Context,
+	log *slog.Logger,
+	job event.FetchJob,
+	sigs []chain.SignatureInfo,
+) ([]chain.SignatureInfo, []json.RawMessage, int, error) {
 	const stage = "fetcher.fetch_transactions"
 
 	currentBatch := len(sigs)
@@ -327,6 +350,7 @@ func (f *Fetcher) fetchTransactionsWithRetry(ctx context.Context, log *slog.Logg
 		}
 
 		rawTxs, err := f.adapter.FetchTransactions(ctx, sigHashes)
+		f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
 		if err == nil {
 			return selected, rawTxs, currentBatch, nil
 		}
@@ -373,6 +397,13 @@ func (f *Fetcher) fetchTransactionsWithRetry(ctx context.Context, log *slog.Logg
 	}
 
 	return nil, nil, currentBatch, fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, attempts, lastDecision.Reason, lastErr)
+}
+
+func (f *Fetcher) recordRPCResult(chain, network string, isError bool) {
+	if f.autoTuneSignals == nil {
+		return
+	}
+	f.autoTuneSignals.RecordRPCResult(chain, network, isError)
 }
 
 func (f *Fetcher) resolveBatchSize(address string, hardCap int) int {

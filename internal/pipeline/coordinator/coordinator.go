@@ -27,6 +27,7 @@ type Coordinator struct {
 	logger          *slog.Logger
 	headProvider    headSequenceProvider
 	autoTune        *autotune.Controller
+	autoTuneSignals autotune.AutoTuneSignalSource
 }
 
 type headSequenceProvider interface {
@@ -97,6 +98,11 @@ func (c *Coordinator) ExportAutoTuneRestartState() *AutoTuneRestartState {
 		PolicyEpoch:               policy.Epoch,
 		PolicyActivationRemaining: policy.ActivationHoldRemaining,
 	}
+}
+
+func (c *Coordinator) WithAutoTuneSignalSource(source autotune.AutoTuneSignalSource) *Coordinator {
+	c.autoTuneSignals = source
+	return c
 }
 
 func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestartState) *Coordinator {
@@ -327,16 +333,26 @@ func (c *Coordinator) tick(ctx context.Context) error {
 
 	batchSize := c.batchSize
 	if c.autoTune != nil && len(jobs) > 0 {
+		rpcErrorRateBps := 0
+		dbCommitLatencyP95Ms := 0
+		if c.autoTuneSignals != nil {
+			snapshot := c.autoTuneSignals.Snapshot(c.chain.String(), c.network.String())
+			rpcErrorRateBps = snapshot.RPCErrorRateBps
+			dbCommitLatencyP95Ms = snapshot.DBCommitLatencyP95Ms
+		}
+
 		resolved, diagnostics := c.autoTune.Resolve(autotune.Inputs{
-			Chain:              c.chain.String(),
-			Network:            c.network.String(),
-			HasHeadSignal:      c.headProvider != nil,
-			HeadSequence:       fetchCutoffSeq,
-			HasMinCursorSignal: hasMinCursor,
-			MinCursorSequence:  minCursorSequence,
-			QueueDepth:         len(c.jobCh),
-			QueueCapacity:      cap(c.jobCh),
-			DecisionEpochMs:    time.Now().UnixMilli(),
+			Chain:                c.chain.String(),
+			Network:              c.network.String(),
+			HasHeadSignal:        c.headProvider != nil,
+			HeadSequence:         fetchCutoffSeq,
+			HasMinCursorSignal:   hasMinCursor,
+			MinCursorSequence:    minCursorSequence,
+			QueueDepth:           len(c.jobCh),
+			QueueCapacity:        cap(c.jobCh),
+			RPCErrorRateBps:      rpcErrorRateBps,
+			DBCommitLatencyP95Ms: dbCommitLatencyP95Ms,
+			DecisionEpochMs:      time.Now().UnixMilli(),
 		})
 		batchSize = resolved
 		c.logger.Debug("coordinator auto-tune decision",

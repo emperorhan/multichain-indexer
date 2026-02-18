@@ -238,6 +238,70 @@ func TestAutoTuneController_DecisionHashIncludesChainScopedInputs(t *testing.T) 
 	assert.NotEqual(t, controller.decisionInputsDigest(baseInputs), controller.decisionInputsDigest(peerInputs))
 }
 
+func TestRuntimeSignalRegistry_IsolatedByChainAndNetwork(t *testing.T) {
+	registry := NewRuntimeSignalRegistry()
+
+	for i := 0; i < 10; i++ {
+		registry.RecordRPCResult("solana", "devnet", false)
+		registry.RecordDBCommitLatencyMs("solana", "devnet", int64(i+10))
+	}
+	for i := 0; i < 10; i++ {
+		registry.RecordRPCResult("base", "sepolia", true)
+		registry.RecordDBCommitLatencyMs("base", "sepolia", int64(100+i*10))
+	}
+
+	solSnapshot := registry.Snapshot("solana", "devnet")
+	baseSnapshot := registry.Snapshot("base", "sepolia")
+	unknownSnapshot := registry.Snapshot("btc", "testnet")
+
+	require.Equal(t, 0, solSnapshot.RPCErrorRateBps)
+	assert.Equal(t, 19, solSnapshot.DBCommitLatencyP95Ms)
+
+	assert.Equal(t, 10000, baseSnapshot.RPCErrorRateBps)
+	assert.Equal(t, 190, baseSnapshot.DBCommitLatencyP95Ms)
+
+	assert.Equal(t, 0, unknownSnapshot.RPCErrorRateBps)
+	assert.Equal(t, 0, unknownSnapshot.DBCommitLatencyP95Ms)
+}
+
+func TestAutoTuneController_ChainScopedInputsCanOverrideLagPressure(t *testing.T) {
+	controller := newAutoTuneController(80, AutoTuneConfig{
+		Enabled:               true,
+		MinBatchSize:          50,
+		MaxBatchSize:          120,
+		StepUp:                20,
+		StepDown:              10,
+		LagHighWatermark:      100,
+		LagLowWatermark:       20,
+		QueueHighWatermarkPct: 90,
+		QueueLowWatermarkPct:  10,
+		HysteresisTicks:       1,
+		CooldownTicks:         1,
+	})
+	require.NotNil(t, controller)
+
+	lagPressureInputs := autoTuneInputs{
+		HasHeadSignal:        true,
+		HeadSequence:         1_000,
+		HasMinCursorSignal:   true,
+		MinCursorSequence:    10,
+		QueueDepth:           1,
+		QueueCapacity:        10,
+		RPCErrorRateBps:      0,
+		DBCommitLatencyP95Ms: 0,
+	}
+
+	chainScopedPressureInputs := lagPressureInputs
+	chainScopedPressureInputs.RPCErrorRateBps = 0
+	chainScopedPressureInputs.DBCommitLatencyP95Ms = 700
+
+	_, lagDecision := controller.Resolve(lagPressureInputs)
+	_, scopedDecision := controller.Resolve(chainScopedPressureInputs)
+
+	assert.Equal(t, "apply_increase", lagDecision.Decision)
+	assert.Equal(t, "apply_decrease", scopedDecision.Decision)
+}
+
 func TestAutoTuneController_CooldownPreservesOppositeStreakForDeterministicRecovery(t *testing.T) {
 	controller := newAutoTuneController(80, AutoTuneConfig{
 		Enabled:               true,

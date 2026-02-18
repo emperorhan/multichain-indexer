@@ -14,13 +14,14 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/tracing"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	otelTrace "go.opentelemetry.io/otel/trace"
-	"github.com/google/uuid"
 )
 
 const (
@@ -40,6 +41,7 @@ type Ingester struct {
 	configRepo        store.IndexerConfigRepository
 	normalizedCh      <-chan event.NormalizedBatch
 	logger            *slog.Logger
+	autoTuneSignals   autotune.AutoTuneSignalSink
 	commitInterleaver CommitInterleaver
 	reorgHandler      func(context.Context, *sql.Tx, event.NormalizedBatch) error
 	retryMaxAttempts  int
@@ -53,6 +55,12 @@ type Option func(*Ingester)
 func WithCommitInterleaver(interleaver CommitInterleaver) Option {
 	return func(ing *Ingester) {
 		ing.commitInterleaver = interleaver
+	}
+}
+
+func WithAutoTuneSignalSink(sink autotune.AutoTuneSignalSink) Option {
+	return func(ing *Ingester) {
+		ing.autoTuneSignals = sink
 	}
 }
 
@@ -320,10 +328,12 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				"replacement_txs", len(batch.Transactions),
 			)
 		} else {
+			commitStart := time.Now()
 			if err := dbTx.Commit(); err != nil {
 				return fmt.Errorf("commit rollback path: %w", err)
 			}
 			committed = true
+			ing.recordCommitLatencyMs(batch.Chain.String(), batch.Network.String(), time.Since(commitStart).Milliseconds())
 
 			ing.logger.Info("rollback path executed",
 				"address", batch.Address,
@@ -516,6 +526,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	}
 
 	// 5. Commit
+	commitStart := time.Now()
 	if err := dbTx.Commit(); err != nil {
 		reconciled, reconcileErr := ing.reconcileAmbiguousCommitOutcome(ctx, batch, err)
 		if reconcileErr != nil {
@@ -523,6 +534,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		}
 		if reconciled {
 			committed = true
+			ing.recordCommitLatencyMs(batch.Chain.String(), batch.Network.String(), time.Since(commitStart).Milliseconds())
 			ing.logger.Warn("commit outcome reconciled as committed",
 				"chain", batch.Chain,
 				"network", batch.Network,
@@ -535,6 +547,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		}
 		return fmt.Errorf("commit: %w", err)
 	}
+	ing.recordCommitLatencyMs(batch.Chain.String(), batch.Network.String(), time.Since(commitStart).Milliseconds())
 	committed = true
 
 	metrics.IngesterBalanceEventsWritten.WithLabelValues(batch.Chain.String(), batch.Network.String()).Add(float64(totalEvents))
@@ -979,6 +992,13 @@ func (ing *Ingester) effectiveRetryMaxAttempts() int {
 		return 1
 	}
 	return ing.retryMaxAttempts
+}
+
+func (ing *Ingester) recordCommitLatencyMs(chain, network string, latencyMs int64) {
+	if ing.autoTuneSignals == nil {
+		return
+	}
+	ing.autoTuneSignals.RecordDBCommitLatencyMs(chain, network, latencyMs)
 }
 
 func (ing *Ingester) retryDelay(attempt int) time.Duration {
