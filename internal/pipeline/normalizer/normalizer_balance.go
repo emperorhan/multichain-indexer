@@ -94,51 +94,57 @@ func buildCanonicalBaseBalanceEvents(
 	}
 
 	if shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount) {
-		executionFee := deriveBaseExecutionFee(feeAmount, meta)
-		dataFee, hasDataFee := deriveBaseDataFee(meta)
+		if chain == model.ChainEthereum {
+			// L1: single FEE event (no execution/data split)
+			normalizedEvents = append(normalizedEvents, buildEthL1FeeBalanceEvent(feePayer, feeAmount, eventPath))
+		} else {
+			// L2: dual fee events (fee_execution_l2 + fee_data_l1)
+			executionFee := deriveBaseExecutionFee(feeAmount, meta)
+			dataFee, hasDataFee := deriveBaseDataFee(meta)
 
-		executionEvent := buildBaseFeeBalanceEvent(
-			model.EventCategoryFeeExecutionL2,
-			feePayer,
-			executionFee.String(),
-			eventPath,
-			"net_base",
-		)
-		marker := map[string]string{}
-		if hasBaseFeeComponentMetaMismatch(feeAmount, meta) {
-			marker["fee_total_mismatch"] = "true"
-			execAmount, hasExecution := deriveBaseExecutionFeeFromMetadata(meta)
-			dataAmount, hasData := deriveBaseDataFee(meta)
-			if !hasExecution {
-				execAmount = big.NewInt(0)
-			}
-			if !hasData {
-				dataAmount = big.NewInt(0)
-			}
-			marker["fee_execution_total_from_components"] = execAmount.String()
-			marker["fee_data_total_from_components"] = dataAmount.String()
-			marker["fee_amount_total"] = feeAmount
-		}
-		if missingDataFee {
-			marker["data_fee_l1_unavailable"] = "true"
-		}
-		if len(marker) > 0 {
-			executionEvent.ChainData = mergeMetadataJSON(executionEvent.ChainData, marker)
-		}
-
-		normalizedEvents = append(normalizedEvents, executionEvent)
-
-		if hasDataFee {
-			normalizedEvents = append(
-				normalizedEvents,
-				buildBaseFeeBalanceEvent(
-					model.EventCategoryFeeDataL1,
-					feePayer,
-					dataFee.String(),
-					eventPath,
-					"net_base_data",
-				),
+			executionEvent := buildBaseFeeBalanceEvent(
+				model.EventCategoryFeeExecutionL2,
+				feePayer,
+				executionFee.String(),
+				eventPath,
+				"net_base",
 			)
+			marker := map[string]string{}
+			if hasBaseFeeComponentMetaMismatch(feeAmount, meta) {
+				marker["fee_total_mismatch"] = "true"
+				execAmount, hasExecution := deriveBaseExecutionFeeFromMetadata(meta)
+				dataAmount, hasData := deriveBaseDataFee(meta)
+				if !hasExecution {
+					execAmount = big.NewInt(0)
+				}
+				if !hasData {
+					dataAmount = big.NewInt(0)
+				}
+				marker["fee_execution_total_from_components"] = execAmount.String()
+				marker["fee_data_total_from_components"] = dataAmount.String()
+				marker["fee_amount_total"] = feeAmount
+			}
+			if missingDataFee {
+				marker["data_fee_l1_unavailable"] = "true"
+			}
+			if len(marker) > 0 {
+				executionEvent.ChainData = mergeMetadataJSON(executionEvent.ChainData, marker)
+			}
+
+			normalizedEvents = append(normalizedEvents, executionEvent)
+
+			if hasDataFee {
+				normalizedEvents = append(
+					normalizedEvents,
+					buildBaseFeeBalanceEvent(
+						model.EventCategoryFeeDataL1,
+						feePayer,
+						dataFee.String(),
+						eventPath,
+						"net_base_data",
+					),
+				)
+			}
 		}
 	}
 
@@ -362,6 +368,27 @@ func reconcileBaseFeeComponentMetadata(out map[string]string, rawEvents []*sidec
 	applyBasePathMetadata(out, pathSource.metadata)
 }
 
+func buildEthL1FeeBalanceEvent(feePayer, feeAmount, eventPath string) event.NormalizedBalanceEvent {
+	return event.NormalizedBalanceEvent{
+		OuterInstructionIndex: -1,
+		InnerInstructionIndex: -1,
+		EventCategory:         model.EventCategoryFee,
+		EventAction:           "net_eth",
+		ProgramID:             "0x0000000000000000000000000000000000000000000000000000000000000000",
+		ContractAddress:       "ETH",
+		Address:               feePayer,
+		CounterpartyAddress:   "",
+		Delta:                 canonicalFeeDelta(feeAmount),
+		ChainData:             json.RawMessage("{}"),
+		TokenSymbol:           "ETH",
+		TokenName:             "Ether",
+		TokenDecimals:         18,
+		TokenType:             model.TokenTypeNative,
+		AssetID:               "ETH",
+		EventPath:             eventPath,
+	}
+}
+
 func buildBaseFeeBalanceEvent(
 	category model.EventCategory,
 	feePayer, feeAmount string,
@@ -543,9 +570,16 @@ func canonicalizeBaseBalanceEvents(
 ) []event.NormalizedBalanceEvent {
 	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
 	eventsByID := make(map[string]event.NormalizedBalanceEvent, len(normalizedEvents))
+	decoderVersion := "base-decoder-v1"
+	if chain == model.ChainEthereum {
+		decoderVersion = "evm-l1-decoder-v1"
+	}
+
 	for _, be := range normalizedEvents {
 		if be.EventCategory == model.EventCategoryFeeExecutionL2 || be.EventCategory == model.EventCategoryFeeDataL1 {
 			be.EventAction = string(be.EventCategory)
+			be.Delta = canonicalFeeDelta(be.Delta)
+		} else if be.EventCategory == model.EventCategoryFee {
 			be.Delta = canonicalFeeDelta(be.Delta)
 		}
 		if metadataPath := resolveBaseMetadataEventPath(metadataFromChainData(be.ChainData)); metadataPath != "" {
@@ -565,7 +599,7 @@ func canonicalizeBaseBalanceEvents(
 		}
 
 		assetType := mapTokenTypeToAssetType(be.TokenType)
-		if isBaseFeeCategory(be.EventCategory) {
+		if isBaseFeeCategory(be.EventCategory) || be.EventCategory == model.EventCategoryFee {
 			assetType = "fee"
 		}
 
@@ -573,7 +607,7 @@ func canonicalizeBaseBalanceEvents(
 		be.AssetType = assetType
 		be.EventPathType = "base_log"
 		be.FinalityState = finalityState
-		be.DecoderVersion = "base-decoder-v1"
+		be.DecoderVersion = decoderVersion
 		be.SchemaVersion = "v2"
 		be.EventID = buildCanonicalEventID(
 			chain, network,

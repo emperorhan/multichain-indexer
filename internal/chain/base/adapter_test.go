@@ -103,6 +103,7 @@ func newTestAdapter(client rpc.RPCClient) *Adapter {
 		client:    client,
 		logger:    slog.Default(),
 		chainName: "base",
+		evmLayer:  "l2",
 	}
 }
 
@@ -271,6 +272,7 @@ func TestAdapter_FetchTransactions(t *testing.T) {
 	var decoded map[string]interface{}
 	require.NoError(t, json.Unmarshal(payloads[0], &decoded))
 	assert.Equal(t, "base", decoded["chain"])
+	assert.Equal(t, "l2", decoded["evm_layer"])
 
 	txMap, ok := decoded["tx"].(map[string]interface{})
 	require.True(t, ok)

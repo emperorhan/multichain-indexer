@@ -23,6 +23,7 @@ type Adapter struct {
 	client    rpc.RPCClient
 	logger    *slog.Logger
 	chainName string
+	evmLayer  string // "l1" or "l2"
 }
 
 var _ chain.ChainAdapter = (*Adapter)(nil)
@@ -31,12 +32,20 @@ func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
 	return NewAdapterWithChain("base", rpcURL, logger)
 }
 
+func inferEVMLayer(chainName string) string {
+	if chainName == "ethereum" {
+		return "l1"
+	}
+	return "l2"
+}
+
 // NewAdapterWithChain creates an EVM adapter for any chain name.
 func NewAdapterWithChain(chainName, rpcURL string, logger *slog.Logger) *Adapter {
 	return &Adapter{
 		client:    rpc.NewClient(rpcURL, logger),
 		logger:    logger.With("chain", chainName),
 		chainName: chainName,
+		evmLayer:  inferEVMLayer(chainName),
 	}
 }
 
@@ -251,9 +260,10 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 		}
 
 		payload, err := json.Marshal(map[string]interface{}{
-			"chain":   a.chainName,
-			"tx":      tx,
-			"receipt": receipt,
+			"chain":     a.chainName,
+			"evm_layer": a.evmLayer,
+			"tx":        tx,
+			"receipt":   receipt,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("marshal payload %s: %w", txHash, err)
@@ -318,9 +328,10 @@ func (a *Adapter) fetchTransactionsOneByOne(ctx context.Context, signatures []st
 			}
 
 			payload, err := json.Marshal(map[string]interface{}{
-				"chain":   a.chainName,
-				"tx":      tx,
-				"receipt": receipt,
+				"chain":     a.chainName,
+				"evm_layer": a.evmLayer,
+				"tx":        tx,
+				"receipt":   receipt,
 			})
 			if err != nil {
 				mu.Lock()

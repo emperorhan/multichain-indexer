@@ -6,6 +6,7 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 interface BaseEnvelope {
   chain?: string;
+  evm_layer?: string;
   tx?: EvmTransaction;
   receipt?: EvmReceipt;
   blockTimestamp?: string | number;
@@ -70,7 +71,8 @@ export function decodeBaseTransaction(
   const totalFee = executionFee + dataFee;
   const feeAmount = totalFee.toString();
 
-  const feeMetadata = buildFeeMetadata(executionFee, dataFee, gasUsed, effectiveGasPrice, receipt);
+  const evmLayer = envelope.evm_layer || '';
+  const feeMetadata = buildFeeMetadata(executionFee, dataFee, gasUsed, effectiveGasPrice, receipt, evmLayer);
   const normalizedWatched = new Set(Array.from(watchedAddresses).map(normalizeAddress));
   const balanceEvents: BalanceEventInfo[] = [];
 
@@ -198,15 +200,23 @@ function buildFeeMetadata(
   dataFee: bigint,
   gasUsed: bigint,
   effectiveGasPrice: bigint,
-  receipt: EvmReceipt
+  receipt: EvmReceipt,
+  evmLayer: string
 ): Record<string, string> {
-  const metadata: Record<string, string> = {
-    fee_execution_l2: executionFee.toString(),
-    base_gas_used: gasUsed.toString(),
-    base_effective_gas_price: effectiveGasPrice.toString(),
-  };
+  const isL1 = evmLayer === 'l1';
 
-  if (dataFee > 0n) {
+  const metadata: Record<string, string> = isL1
+    ? {
+        gas_used: gasUsed.toString(),
+        effective_gas_price: effectiveGasPrice.toString(),
+      }
+    : {
+        fee_execution_l2: executionFee.toString(),
+        base_gas_used: gasUsed.toString(),
+        base_effective_gas_price: effectiveGasPrice.toString(),
+      };
+
+  if (!isL1 && dataFee > 0n) {
     metadata.fee_data_l1 = dataFee.toString();
   }
 

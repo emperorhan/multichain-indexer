@@ -2252,6 +2252,68 @@ func TestProcessBatch_BaseFailedTransaction_IncompleteFeeMetadata_NoSyntheticFee
 	}
 }
 
+func TestProcessBatch_EthereumL1_SingleFeeEvent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockChainDecoderClient(ctrl)
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	n := &Normalizer{
+		sidecarTimeout: 30_000_000_000,
+		normalizedCh:   normalizedCh,
+		logger:         slog.Default(),
+	}
+
+	batch := event.RawBatch{
+		Chain:   model.ChainEthereum,
+		Network: model.NetworkMainnet,
+		Address: "0x1111111111111111111111111111111111111111",
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{"tx":"eth-l1-1"}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: "0xeth_l1_sig1", Sequence: 100},
+		},
+	}
+
+	txResult := loadBaseFeeFixture(t, "ethereum_l1_fee.json")
+	response := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{txResult},
+	}
+
+	mockClient.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(response, nil)
+
+	err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
+	require.NoError(t, err)
+
+	result := <-normalizedCh
+	require.Len(t, result.Transactions, 1)
+
+	tx := result.Transactions[0]
+
+	// L1: should emit single FEE event, NOT fee_execution_l2 or fee_data_l1
+	feeEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFee)
+	execL2Events := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
+	dataL1Events := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+
+	require.Len(t, feeEvents, 1, "L1 should emit exactly one FEE event")
+	require.Len(t, execL2Events, 0, "L1 should NOT emit fee_execution_l2")
+	require.Len(t, dataL1Events, 0, "L1 should NOT emit fee_data_l1")
+
+	feeEvent := feeEvents[0]
+	assert.Equal(t, model.EventCategoryFee, feeEvent.EventCategory)
+	assert.Equal(t, "net_eth", feeEvent.EventAction)
+	assert.Equal(t, "-21000000000000", feeEvent.Delta)
+	assert.Equal(t, "fee", feeEvent.AssetType)
+	assert.Equal(t, "evm-l1-decoder-v1", feeEvent.DecoderVersion)
+
+	// All events should have evm-l1-decoder-v1
+	for _, be := range tx.BalanceEvents {
+		assert.Equal(t, "evm-l1-decoder-v1", be.DecoderVersion)
+	}
+}
+
 func TestProcessBatch_M94S3_MintBurnClassCoverage_AndReplayStability(t *testing.T) {
 	assertNoDuplicateCanonicalIDs := func(t *testing.T, batch event.NormalizedBatch) {
 		t.Helper()
@@ -2980,10 +3042,10 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 					TokenDecimals:         18,
 					TokenType:             string(model.TokenTypeFungible),
 					Metadata: map[string]string{
-						"event_path":       "log:21",
-						"fee_execution_l2": "700",
-						"fee_data_l1":      "300",
-						"base_event_path":  "log:21",
+						"event_path":          "log:21",
+						"gas_used":            "21000",
+						"effective_gas_price":  "1000000000",
+						"base_event_path":     "log:21",
 					},
 				},
 			},
@@ -3114,9 +3176,10 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryTransfer))
 		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryMint))
 		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryBurn))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFeeExecutionL2))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFeeDataL1))
-		assert.Equal(t, 0, countCategory(canonical, model.EventCategoryFee))
+		// Ethereum L1: single FEE event (no L2 execution/data split)
+		assert.Equal(t, 0, countCategory(canonical, model.EventCategoryFeeExecutionL2))
+		assert.Equal(t, 0, countCategory(canonical, model.EventCategoryFeeDataL1))
+		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFee))
 
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(replay))
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(swap))
