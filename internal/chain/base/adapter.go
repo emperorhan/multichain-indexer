@@ -28,6 +28,7 @@ type Adapter struct {
 }
 
 var _ chain.ChainAdapter = (*Adapter)(nil)
+var _ chain.ReorgAwareAdapter = (*Adapter)(nil)
 
 func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
 	return NewAdapterWithChain("base", rpcURL, logger)
@@ -240,6 +241,21 @@ func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address stri
 	)
 
 	return signatures, nil
+}
+
+func (a *Adapter) GetBlockHash(ctx context.Context, blockNumber int64) (string, string, error) {
+	block, err := a.client.GetBlockByNumber(ctx, blockNumber, false)
+	if err != nil {
+		return "", "", fmt.Errorf("get block %d: %w", blockNumber, err)
+	}
+	if block == nil {
+		return "", "", fmt.Errorf("block %d not found", blockNumber)
+	}
+	return block.Hash, block.ParentHash, nil
+}
+
+func (a *Adapter) GetFinalizedBlockNumber(ctx context.Context) (int64, error) {
+	return a.client.GetFinalizedBlockNumber(ctx)
 }
 
 func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error) {

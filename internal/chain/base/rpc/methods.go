@@ -44,6 +44,38 @@ func (c *Client) GetBlockByNumber(ctx context.Context, blockNumber int64, includ
 	return &block, nil
 }
 
+func (c *Client) GetBlockByTag(ctx context.Context, tag string, includeFullTx bool) (*Block, error) {
+	params := []interface{}{tag, includeFullTx}
+	result, err := c.call(ctx, "eth_getBlockByNumber", params)
+	if err != nil {
+		return nil, fmt.Errorf("eth_getBlockByNumber(%s): %w", tag, err)
+	}
+	if string(result) == "null" {
+		return nil, nil
+	}
+
+	var block Block
+	if err := json.Unmarshal(result, &block); err != nil {
+		return nil, fmt.Errorf("unmarshal block: %w", err)
+	}
+	return &block, nil
+}
+
+func (c *Client) GetFinalizedBlockNumber(ctx context.Context) (int64, error) {
+	block, err := c.GetBlockByTag(ctx, "finalized", false)
+	if err != nil {
+		return 0, fmt.Errorf("get finalized block: %w", err)
+	}
+	if block == nil {
+		return 0, fmt.Errorf("finalized block not available")
+	}
+	blockNumber, err := ParseHexInt64(block.Number)
+	if err != nil {
+		return 0, fmt.Errorf("parse finalized block number: %w", err)
+	}
+	return blockNumber, nil
+}
+
 func (c *Client) GetTransactionByHash(ctx context.Context, hash string) (*Transaction, error) {
 	result, err := c.call(ctx, "eth_getTransactionByHash", []interface{}{hash})
 	if err != nil {

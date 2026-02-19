@@ -17,6 +17,8 @@ import (
 type RPCClient interface {
 	GetBlockNumber(ctx context.Context) (int64, error)
 	GetBlockByNumber(ctx context.Context, blockNumber int64, includeFullTx bool) (*Block, error)
+	GetBlockByTag(ctx context.Context, tag string, includeFullTx bool) (*Block, error)
+	GetFinalizedBlockNumber(ctx context.Context) (int64, error)
 	GetTransactionByHash(ctx context.Context, hash string) (*Transaction, error)
 	GetTransactionReceipt(ctx context.Context, hash string) (*TransactionReceipt, error)
 	GetLogs(ctx context.Context, filter LogFilter) ([]*Log, error)

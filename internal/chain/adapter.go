@@ -29,6 +29,16 @@ type CutoffAwareChainAdapter interface {
 	FetchNewSignaturesWithCutoff(ctx context.Context, address string, cursor *string, batchSize int, cutoffSeq int64) ([]SignatureInfo, error)
 }
 
+// ReorgAwareAdapter extends ChainAdapter with block hash verification
+// and finality tracking for chains that support reorg detection.
+type ReorgAwareAdapter interface {
+	ChainAdapter
+	// GetBlockHash returns hash and parent hash for a given block number.
+	GetBlockHash(ctx context.Context, blockNumber int64) (hash, parentHash string, err error)
+	// GetFinalizedBlockNumber returns the latest finalized block number.
+	GetFinalizedBlockNumber(ctx context.Context) (int64, error)
+}
+
 // SignatureInfo represents a transaction reference from the chain.
 type SignatureInfo struct {
 	Hash     string     // tx_hash (Solana: signature, EVM: hash)

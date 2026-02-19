@@ -105,6 +105,16 @@ type IndexerConfigRepository interface {
 	GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)
 }
 
+// IndexedBlockRepository provides access to indexed block metadata for reorg detection.
+type IndexedBlockRepository interface {
+	UpsertTx(ctx context.Context, tx *sql.Tx, block *model.IndexedBlock) error
+	BulkUpsertTx(ctx context.Context, tx *sql.Tx, blocks []*model.IndexedBlock) error
+	GetUnfinalized(ctx context.Context, chain model.Chain, network model.Network) ([]model.IndexedBlock, error)
+	GetByBlockNumber(ctx context.Context, chain model.Chain, network model.Network, blockNumber int64) (*model.IndexedBlock, error)
+	UpdateFinalityTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, upToBlock int64, newState string) error
+	DeleteFromBlockTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) error
+}
+
 // RuntimeConfigRepository provides access to runtime-overridable configuration.
 type RuntimeConfigRepository interface {
 	GetActive(ctx context.Context, chain model.Chain, network model.Network) (map[string]string, error)

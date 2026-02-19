@@ -69,7 +69,10 @@ type txEnvelopeOut struct {
 	ValueSat string `json:"value_sat"`
 }
 
+const defaultBTCFinalityConfirmations = 6
+
 var _ chain.ChainAdapter = (*Adapter)(nil)
+var _ chain.ReorgAwareAdapter = (*Adapter)(nil)
 
 func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
 	if logger == nil {
@@ -94,6 +97,33 @@ func (a *Adapter) Chain() string {
 
 func (a *Adapter) GetHeadSequence(ctx context.Context) (int64, error) {
 	return a.client.GetBlockCount(ctx)
+}
+
+func (a *Adapter) GetBlockHash(ctx context.Context, blockNumber int64) (string, string, error) {
+	hash, err := a.client.GetBlockHash(ctx, blockNumber)
+	if err != nil {
+		return "", "", fmt.Errorf("get block hash %d: %w", blockNumber, err)
+	}
+	header, err := a.client.GetBlockHeader(ctx, hash)
+	if err != nil {
+		return hash, "", fmt.Errorf("get block header %s: %w", hash, err)
+	}
+	if header == nil {
+		return hash, "", nil
+	}
+	return hash, header.PreviousBlockHash, nil
+}
+
+func (a *Adapter) GetFinalizedBlockNumber(ctx context.Context) (int64, error) {
+	head, err := a.client.GetBlockCount(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("get block count: %w", err)
+	}
+	finalized := head - defaultBTCFinalityConfirmations
+	if finalized < 0 {
+		finalized = 0
+	}
+	return finalized, nil
 }
 
 func (a *Adapter) FetchNewSignatures(ctx context.Context, address string, cursor *string, batchSize int) ([]chain.SignatureInfo, error) {

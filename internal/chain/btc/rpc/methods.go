@@ -48,6 +48,22 @@ func (c *Client) GetBlock(ctx context.Context, hash string, verbosity int) (*Blo
 	return &block, nil
 }
 
+func (c *Client) GetBlockHeader(ctx context.Context, hash string) (*BlockHeader, error) {
+	result, err := c.call(ctx, "getblockheader", []interface{}{hash, true})
+	if err != nil {
+		return nil, fmt.Errorf("getblockheader(%s): %w", hash, err)
+	}
+	if string(result) == "null" {
+		return nil, nil
+	}
+
+	var header BlockHeader
+	if err := json.Unmarshal(result, &header); err != nil {
+		return nil, fmt.Errorf("unmarshal block header: %w", err)
+	}
+	return &header, nil
+}
+
 func (c *Client) GetRawTransactionVerbose(ctx context.Context, txid string) (*Transaction, error) {
 	result, err := c.call(ctx, "getrawtransaction", []interface{}{txid, true})
 	if err != nil {

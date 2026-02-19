@@ -47,6 +47,19 @@ func (f *fakeRPCClient) GetBlock(_ context.Context, hash string, _ int) (*rpc.Bl
 	return f.blocksByHash[hash], nil
 }
 
+func (f *fakeRPCClient) GetBlockHeader(_ context.Context, hash string) (*rpc.BlockHeader, error) {
+	block := f.blocksByHash[hash]
+	if block == nil {
+		return nil, nil
+	}
+	return &rpc.BlockHeader{
+		Hash:              block.Hash,
+		Height:            block.Height,
+		PreviousBlockHash: block.PreviousBlockHash,
+		Time:              block.Time,
+	}, nil
+}
+
 func (f *fakeRPCClient) GetRawTransactionVerbose(_ context.Context, txid string) (*rpc.Transaction, error) {
 	if f.txErr != nil {
 		return nil, f.txErr

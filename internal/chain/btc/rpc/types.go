@@ -26,10 +26,18 @@ func (e *RPCError) Error() string {
 }
 
 type Block struct {
-	Hash   string         `json:"hash"`
-	Height int64          `json:"height"`
-	Time   int64          `json:"time"`
-	Tx     []*Transaction `json:"tx"`
+	Hash              string         `json:"hash"`
+	Height            int64          `json:"height"`
+	Time              int64          `json:"time"`
+	PreviousBlockHash string         `json:"previousblockhash"`
+	Tx                []*Transaction `json:"tx"`
+}
+
+type BlockHeader struct {
+	Hash              string `json:"hash"`
+	Height            int64  `json:"height"`
+	PreviousBlockHash string `json:"previousblockhash"`
+	Time              int64  `json:"time"`
 }
 
 type Transaction struct {

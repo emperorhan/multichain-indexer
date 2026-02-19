@@ -22,13 +22,14 @@ func NewTransactionRepo(db *DB) *TransactionRepo {
 func (r *TransactionRepo) UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transaction) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := tx.QueryRowContext(ctx, `
-		INSERT INTO transactions (chain, network, tx_hash, block_cursor, block_time, fee_amount, fee_payer, status, err, chain_data)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO transactions (chain, network, tx_hash, block_cursor, block_time, fee_amount, fee_payer, status, err, chain_data, block_hash, parent_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (chain, network, tx_hash) DO UPDATE SET
 			chain = transactions.chain
 		RETURNING id
 	`, t.Chain, t.Network, t.TxHash, t.BlockCursor, t.BlockTime,
 		t.FeeAmount, t.FeePayer, t.Status, t.Err, t.ChainData,
+		t.BlockHash, t.ParentHash,
 	).Scan(&id)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("upsert transaction: %w", err)
@@ -43,25 +44,27 @@ func (r *TransactionRepo) BulkUpsertTx(ctx context.Context, tx *sql.Tx, txns []*
 		return make(map[string]uuid.UUID), nil
 	}
 
-	const cols = 10 // number of columns per row
+	const cols = 12 // number of columns per row
 	args := make([]interface{}, 0, len(txns)*cols)
 	valuesClauses := make([]string, 0, len(txns))
 
 	for i, t := range txns {
 		base := i * cols
 		valuesClauses = append(valuesClauses, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
 			base+1, base+2, base+3, base+4, base+5,
 			base+6, base+7, base+8, base+9, base+10,
+			base+11, base+12,
 		))
 		args = append(args,
 			t.Chain, t.Network, t.TxHash, t.BlockCursor, t.BlockTime,
 			t.FeeAmount, t.FeePayer, t.Status, t.Err, t.ChainData,
+			t.BlockHash, t.ParentHash,
 		)
 	}
 
 	query := fmt.Sprintf(`
-		INSERT INTO transactions (chain, network, tx_hash, block_cursor, block_time, fee_amount, fee_payer, status, err, chain_data)
+		INSERT INTO transactions (chain, network, tx_hash, block_cursor, block_time, fee_amount, fee_payer, status, err, chain_data, block_hash, parent_hash)
 		VALUES %s
 		ON CONFLICT (chain, network, tx_hash) DO UPDATE SET
 			chain = transactions.chain

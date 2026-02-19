@@ -30,6 +30,8 @@ type NormalizedTransaction struct {
 	Status        model.TxStatus
 	Err           *string
 	ChainData     json.RawMessage
+	BlockHash     string
+	ParentHash    string
 	BalanceEvents []NormalizedBalanceEvent
 }
 

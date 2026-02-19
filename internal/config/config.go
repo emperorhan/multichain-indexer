@@ -130,7 +130,10 @@ type RuntimeConfig struct {
 }
 
 type PipelineConfig struct {
-	WatchedAddresses                              []string // legacy alias of SolanaWatchedAddresses
+	ReorgDetectorIntervalMs  int
+	FinalizerIntervalMs      int
+	BTCFinalityConfirmations int
+	WatchedAddresses         []string // legacy alias of SolanaWatchedAddresses
 	SolanaWatchedAddresses                        []string
 	BaseWatchedAddresses                          []string
 	EthereumWatchedAddresses                      []string
@@ -287,6 +290,9 @@ func Load() (*Config, error) {
 			LikeGroup:      strings.ToLower(getEnv("RUNTIME_LIKE_GROUP", "")),
 		},
 		Pipeline: PipelineConfig{
+			ReorgDetectorIntervalMs:  getEnvInt("REORG_DETECTOR_INTERVAL_MS", 30000),
+			FinalizerIntervalMs:      getEnvInt("FINALIZER_INTERVAL_MS", 60000),
+			BTCFinalityConfirmations: getEnvInt("BTC_FINALITY_CONFIRMATIONS", 6),
 			FetchWorkers:                                  getEnvInt("FETCH_WORKERS", 2),
 			NormalizerWorkers:                             getEnvInt("NORMALIZER_WORKERS", 2),
 			BatchSize:                                     pipelineBatchSize,

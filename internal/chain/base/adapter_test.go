@@ -68,6 +68,14 @@ func (f *fakeRPCClient) GetLogs(_ context.Context, filter rpc.LogFilter) ([]*rpc
 	return f.logs, nil
 }
 
+func (f *fakeRPCClient) GetBlockByTag(_ context.Context, _ string, _ bool) (*rpc.Block, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) GetFinalizedBlockNumber(_ context.Context) (int64, error) {
+	return 0, nil
+}
+
 func (f *fakeRPCClient) GetTransactionsByHash(_ context.Context, hashes []string) ([]*rpc.Transaction, error) {
 	f.batchTxCalls++
 	if f.batchTxErr != nil {

@@ -19,5 +19,7 @@ type Transaction struct {
 	Status      TxStatus        `db:"status"`
 	Err         *string         `db:"err"`
 	ChainData   json.RawMessage `db:"chain_data"`
+	BlockHash   string          `db:"block_hash"`
+	ParentHash  string          `db:"parent_hash"`
 	CreatedAt   time.Time       `db:"created_at"`
 }
