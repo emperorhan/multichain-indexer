@@ -1,0 +1,29 @@
+Thank you for installing {{ .Chart.Name }}.
+
+Your release is named: {{ .Release.Name }}
+
+To check the status of the deployment:
+
+  kubectl get pods -l "app.kubernetes.io/name={{ include "multichain-indexer.name" . }},app.kubernetes.io/instance={{ .Release.Name }}"
+
+To view the logs:
+
+  kubectl logs -l "app.kubernetes.io/name={{ include "multichain-indexer.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -f
+
+To access the health endpoint locally:
+
+  kubectl port-forward svc/{{ include "multichain-indexer.fullname" . }} {{ .Values.service.healthPort }}:{{ .Values.service.healthPort }}
+  curl http://localhost:{{ .Values.service.healthPort }}/healthz
+
+{{- if .Values.autoscaling.enabled }}
+
+HPA is enabled (min={{ .Values.autoscaling.minReplicas }}, max={{ .Values.autoscaling.maxReplicas }}).
+{{- end }}
+
+{{- if not .Values.secret.create }}
+{{- if not .Values.existingSecret }}
+
+WARNING: No Secret is being created and no existingSecret is specified.
+         Make sure DB_URL and REDIS_URL are provided via an external secret mechanism.
+{{- end }}
+{{- end }}

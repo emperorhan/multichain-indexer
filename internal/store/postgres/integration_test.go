@@ -23,18 +23,20 @@ import (
 func testDB(t *testing.T) *postgres.DB {
 	t.Helper()
 	url := os.Getenv("TEST_DB_URL")
-	if url == "" {
-		url = "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable"
+	if url != "" {
+		// Use provided external DB.
+		db, err := postgres.New(postgres.Config{
+			URL:             url,
+			MaxOpenConns:    5,
+			MaxIdleConns:    2,
+			ConnMaxLifetime: time.Minute,
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { db.Close() })
+		return db
 	}
-	db, err := postgres.New(postgres.Config{
-		URL:             url,
-		MaxOpenConns:    5,
-		MaxIdleConns:    2,
-		ConnMaxLifetime: time.Minute,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
-	return db
+	// Use testcontainers (Docker-based ephemeral PostgreSQL).
+	return setupTestContainer(t)
 }
 
 // ---------- CursorRepo ----------
@@ -223,7 +225,7 @@ func TestBalanceRepo_AdjustAndGet(t *testing.T) {
 	orgID := "org-1"
 	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
 		model.ChainSolana, model.NetworkDevnet, addr,
-		tokenID, &walletID, &orgID, "", "1000000000", 100, "tx-deposit"))
+		tokenID, &walletID, &orgID, "1000000000", 100, "tx-deposit", ""))
 
 	amount, err = balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID, "")
 	require.NoError(t, err)
@@ -232,7 +234,7 @@ func TestBalanceRepo_AdjustAndGet(t *testing.T) {
 	// Withdraw -500000000
 	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
 		model.ChainSolana, model.NetworkDevnet, addr,
-		tokenID, &walletID, &orgID, "", "-500000000", 101, "tx-withdraw"))
+		tokenID, &walletID, &orgID, "-500000000", 101, "tx-withdraw", ""))
 
 	amount, err = balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID, "")
 	require.NoError(t, err)
@@ -752,7 +754,7 @@ func TestBalanceRepo_ConcurrentAdjustBalance(t *testing.T) {
 	orgID := "org-1"
 	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, setupTx,
 		model.ChainSolana, model.NetworkDevnet, addr,
-		tokenID, &walletID, &orgID, "", "1000000000", 1, "tx-seed"))
+		tokenID, &walletID, &orgID, "1000000000", 1, "tx-seed", ""))
 	require.NoError(t, setupTx.Commit())
 
 	// 10 goroutines each adjust by +100.
@@ -770,7 +772,7 @@ func TestBalanceRepo_ConcurrentAdjustBalance(t *testing.T) {
 			}
 			_ = balanceRepo.AdjustBalanceTx(ctx, gTx,
 				model.ChainSolana, model.NetworkDevnet, addr,
-				tokenID, &walletID, &orgID, "", deltaPerGoroutine, int64(10+idx), fmt.Sprintf("tx-concurrent-%d", idx))
+				tokenID, &walletID, &orgID, deltaPerGoroutine, int64(10+idx), fmt.Sprintf("tx-concurrent-%d", idx), "")
 			_ = gTx.Commit()
 		}(i)
 	}
@@ -827,4 +829,396 @@ func TestIndexerConfigRepo_WatermarkOnlyAdvances(t *testing.T) {
 	).Scan(&ingestedSeq)
 	require.NoError(t, err)
 	assert.Equal(t, int64(200), ingestedSeq)
+}
+
+// ---------- Bulk Method Integration Tests ----------
+
+func TestBulkUpsertTx_Transactions(t *testing.T) {
+	db := testDB(t)
+	repo := postgres.NewTransactionRepo(db)
+	ctx := context.Background()
+
+	hash1 := "bulk-tx-1-" + uuid.NewString()[:8]
+	hash2 := "bulk-tx-2-" + uuid.NewString()[:8]
+	hash3 := "bulk-tx-3-" + uuid.NewString()[:8]
+
+	txns := []*model.Transaction{
+		{Chain: model.ChainSolana, Network: model.NetworkDevnet, TxHash: hash1, FeeAmount: "5000", FeePayer: "payer1", Status: model.TxStatusSuccess, ChainData: json.RawMessage("{}")},
+		{Chain: model.ChainSolana, Network: model.NetworkDevnet, TxHash: hash2, FeeAmount: "6000", FeePayer: "payer2", Status: model.TxStatusSuccess, ChainData: json.RawMessage("{}")},
+		{Chain: model.ChainSolana, Network: model.NetworkDevnet, TxHash: hash3, FeeAmount: "7000", FeePayer: "payer3", Status: model.TxStatusFailed, ChainData: json.RawMessage("{}")},
+	}
+
+	// First bulk insert.
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	result, err := repo.BulkUpsertTx(ctx, tx, txns)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	// Verify all 3 hashes are in the result map with non-nil UUIDs.
+	require.Len(t, result, 3)
+	assert.NotEqual(t, uuid.Nil, result[hash1])
+	assert.NotEqual(t, uuid.Nil, result[hash2])
+	assert.NotEqual(t, uuid.Nil, result[hash3])
+
+	// All IDs should be distinct.
+	assert.NotEqual(t, result[hash1], result[hash2])
+	assert.NotEqual(t, result[hash2], result[hash3])
+	assert.NotEqual(t, result[hash1], result[hash3])
+
+	// Idempotency: insert same 3 again, expect same IDs.
+	tx2, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	result2, err := repo.BulkUpsertTx(ctx, tx2, txns)
+	require.NoError(t, err)
+	require.NoError(t, tx2.Commit())
+
+	require.Len(t, result2, 3)
+	assert.Equal(t, result[hash1], result2[hash1])
+	assert.Equal(t, result[hash2], result2[hash2])
+	assert.Equal(t, result[hash3], result2[hash3])
+}
+
+func TestBulkUpsertTx_Tokens(t *testing.T) {
+	db := testDB(t)
+	repo := postgres.NewTokenRepo(db)
+	ctx := context.Background()
+
+	contract1 := "bulk-token-1-" + uuid.NewString()[:8]
+	contract2 := "bulk-token-2-" + uuid.NewString()[:8]
+	contract3 := "bulk-token-3-" + uuid.NewString()[:8]
+
+	tokens := []*model.Token{
+		{Chain: model.ChainSolana, Network: model.NetworkDevnet, ContractAddress: contract1, Symbol: "AAA", Name: "Token A", Decimals: 6, TokenType: model.TokenTypeFungible, ChainData: json.RawMessage("{}")},
+		{Chain: model.ChainSolana, Network: model.NetworkDevnet, ContractAddress: contract2, Symbol: "BBB", Name: "Token B", Decimals: 9, TokenType: model.TokenTypeNative, ChainData: json.RawMessage("{}")},
+		{Chain: model.ChainSolana, Network: model.NetworkDevnet, ContractAddress: contract3, Symbol: "CCC", Name: "Token C", Decimals: 18, TokenType: model.TokenTypeFungible, ChainData: json.RawMessage("{}")},
+	}
+
+	// First bulk insert.
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	result, err := repo.BulkUpsertTx(ctx, tx, tokens)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	// Verify all 3 contract addresses are in the result map.
+	require.Len(t, result, 3)
+	assert.NotEqual(t, uuid.Nil, result[contract1])
+	assert.NotEqual(t, uuid.Nil, result[contract2])
+	assert.NotEqual(t, uuid.Nil, result[contract3])
+
+	// All IDs should be distinct.
+	assert.NotEqual(t, result[contract1], result[contract2])
+	assert.NotEqual(t, result[contract2], result[contract3])
+	assert.NotEqual(t, result[contract1], result[contract3])
+
+	// Idempotency: insert same 3 again, expect same IDs.
+	tx2, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	result2, err := repo.BulkUpsertTx(ctx, tx2, tokens)
+	require.NoError(t, err)
+	require.NoError(t, tx2.Commit())
+
+	require.Len(t, result2, 3)
+	assert.Equal(t, result[contract1], result2[contract1])
+	assert.Equal(t, result[contract2], result2[contract2])
+	assert.Equal(t, result[contract3], result2[contract3])
+}
+
+func TestBulkIsDeniedTx(t *testing.T) {
+	db := testDB(t)
+	repo := postgres.NewTokenRepo(db)
+	ctx := context.Background()
+
+	contractDenied := "bulk-denied-" + uuid.NewString()[:8]
+	contractAllowed := "bulk-allowed-" + uuid.NewString()[:8]
+	contractMissing := "bulk-missing-" + uuid.NewString()[:8]
+
+	// Insert 2 tokens.
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = repo.UpsertTx(ctx, tx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contractDenied, Symbol: "DNY", Name: "Denied Token",
+		Decimals: 9, TokenType: model.TokenTypeFungible, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+	_, err = repo.UpsertTx(ctx, tx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contractAllowed, Symbol: "ALW", Name: "Allowed Token",
+		Decimals: 9, TokenType: model.TokenTypeFungible, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+
+	// Deny one token.
+	require.NoError(t, repo.DenyTokenTx(ctx, tx, model.ChainSolana, model.NetworkDevnet,
+		contractDenied, "scam token", "auto", 90, []string{"honeypot", "rugpull"}))
+	require.NoError(t, tx.Commit())
+
+	// BulkIsDeniedTx with 3 addresses: denied, allowed, and missing.
+	tx2, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	result, err := repo.BulkIsDeniedTx(ctx, tx2, model.ChainSolana, model.NetworkDevnet,
+		[]string{contractDenied, contractAllowed, contractMissing})
+	require.NoError(t, err)
+	require.NoError(t, tx2.Commit())
+
+	// Denied token should be true.
+	assert.True(t, result[contractDenied], "denied token should return true")
+	// Allowed token should be false.
+	assert.False(t, result[contractAllowed], "allowed token should return false")
+	// Missing token should not be in the map (not found in DB).
+	_, exists := result[contractMissing]
+	assert.False(t, exists, "missing token should not be in the result map")
+}
+
+func TestBulkGetAmountWithExistsTx(t *testing.T) {
+	db := testDB(t)
+	tokenRepo := postgres.NewTokenRepo(db)
+	balanceRepo := postgres.NewBalanceRepo(db)
+	ctx := context.Background()
+
+	addr1 := "bulk-bal-addr1-" + uuid.NewString()[:8]
+	addr2 := "bulk-bal-addr2-" + uuid.NewString()[:8]
+	addr3 := "bulk-bal-addr3-" + uuid.NewString()[:8] // no balance created for this one
+	contract1 := "bulk-bal-token1-" + uuid.NewString()[:8]
+	contract2 := "bulk-bal-token2-" + uuid.NewString()[:8]
+
+	// Create 2 tokens.
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	tokenID1, err := tokenRepo.UpsertTx(ctx, tx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contract1, Symbol: "T1", Name: "Token 1",
+		Decimals: 9, TokenType: model.TokenTypeNative, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+	tokenID2, err := tokenRepo.UpsertTx(ctx, tx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contract2, Symbol: "T2", Name: "Token 2",
+		Decimals: 6, TokenType: model.TokenTypeFungible, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+
+	// Adjust balances to create 2 existing balance records.
+	walletID := "wallet-bulk"
+	orgID := "org-bulk"
+	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
+		model.ChainSolana, model.NetworkDevnet, addr1,
+		tokenID1, &walletID, &orgID, "5000000", 10, "tx-bulk-1", ""))
+	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
+		model.ChainSolana, model.NetworkDevnet, addr2,
+		tokenID2, &walletID, &orgID, "3000000", 11, "tx-bulk-2", ""))
+	require.NoError(t, tx.Commit())
+
+	// BulkGetAmountWithExistsTx for 3 keys: 2 existing + 1 missing.
+	tx2, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+
+	keys := []store.BalanceKey{
+		{Address: addr1, TokenID: tokenID1, BalanceType: ""},
+		{Address: addr2, TokenID: tokenID2, BalanceType: ""},
+		{Address: addr3, TokenID: tokenID1, BalanceType: ""},
+	}
+	result, err := balanceRepo.BulkGetAmountWithExistsTx(ctx, tx2, model.ChainSolana, model.NetworkDevnet, keys)
+	require.NoError(t, err)
+	require.NoError(t, tx2.Commit())
+
+	// Existing key 1.
+	info1 := result[store.BalanceKey{Address: addr1, TokenID: tokenID1, BalanceType: ""}]
+	assert.Equal(t, "5000000", info1.Amount)
+	assert.True(t, info1.Exists, "addr1/tokenID1 should exist")
+
+	// Existing key 2.
+	info2 := result[store.BalanceKey{Address: addr2, TokenID: tokenID2, BalanceType: ""}]
+	assert.Equal(t, "3000000", info2.Amount)
+	assert.True(t, info2.Exists, "addr2/tokenID2 should exist")
+
+	// Missing key 3.
+	info3 := result[store.BalanceKey{Address: addr3, TokenID: tokenID1, BalanceType: ""}]
+	assert.Equal(t, "0", info3.Amount)
+	assert.False(t, info3.Exists, "addr3/tokenID1 should not exist")
+}
+
+func TestBulkAdjustBalanceTx(t *testing.T) {
+	db := testDB(t)
+	tokenRepo := postgres.NewTokenRepo(db)
+	balanceRepo := postgres.NewBalanceRepo(db)
+	ctx := context.Background()
+
+	addr1 := "bulk-adj-addr1-" + uuid.NewString()[:8]
+	addr2 := "bulk-adj-addr2-" + uuid.NewString()[:8]
+	addr3 := "bulk-adj-addr3-" + uuid.NewString()[:8]
+	contract := "bulk-adj-token-" + uuid.NewString()[:8]
+
+	// Create token.
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	tokenID, err := tokenRepo.UpsertTx(ctx, tx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contract, Symbol: "BLK", Name: "Bulk Token",
+		Decimals: 9, TokenType: model.TokenTypeNative, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	walletID := "wallet-bulk-adj"
+	orgID := "org-bulk-adj"
+
+	// First bulk adjust: create 3 balances.
+	tx2, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	items := []store.BulkAdjustItem{
+		{Address: addr1, TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: "1000000", Cursor: 100, TxHash: "tx-ba-1", BalanceType: ""},
+		{Address: addr2, TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: "2000000", Cursor: 101, TxHash: "tx-ba-2", BalanceType: ""},
+		{Address: addr3, TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: "3000000", Cursor: 102, TxHash: "tx-ba-3", BalanceType: ""},
+	}
+	require.NoError(t, balanceRepo.BulkAdjustBalanceTx(ctx, tx2, model.ChainSolana, model.NetworkDevnet, items))
+	require.NoError(t, tx2.Commit())
+
+	// Verify each balance.
+	tx3, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	amt1, err := balanceRepo.GetAmountTx(ctx, tx3, model.ChainSolana, model.NetworkDevnet, addr1, tokenID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "1000000", amt1)
+
+	amt2, err := balanceRepo.GetAmountTx(ctx, tx3, model.ChainSolana, model.NetworkDevnet, addr2, tokenID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "2000000", amt2)
+
+	amt3, err := balanceRepo.GetAmountTx(ctx, tx3, model.ChainSolana, model.NetworkDevnet, addr3, tokenID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "3000000", amt3)
+	require.NoError(t, tx3.Commit())
+
+	// Second bulk adjust with different deltas to verify cumulative effect.
+	tx4, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	items2 := []store.BulkAdjustItem{
+		{Address: addr1, TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: "500000", Cursor: 200, TxHash: "tx-ba-4", BalanceType: ""},
+		{Address: addr2, TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: "-1000000", Cursor: 201, TxHash: "tx-ba-5", BalanceType: ""},
+		{Address: addr3, TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: "7000000", Cursor: 202, TxHash: "tx-ba-6", BalanceType: ""},
+	}
+	require.NoError(t, balanceRepo.BulkAdjustBalanceTx(ctx, tx4, model.ChainSolana, model.NetworkDevnet, items2))
+	require.NoError(t, tx4.Commit())
+
+	// Verify cumulative balances.
+	tx5, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	amt1, err = balanceRepo.GetAmountTx(ctx, tx5, model.ChainSolana, model.NetworkDevnet, addr1, tokenID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "1500000", amt1) // 1000000 + 500000
+
+	amt2, err = balanceRepo.GetAmountTx(ctx, tx5, model.ChainSolana, model.NetworkDevnet, addr2, tokenID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "1000000", amt2) // 2000000 - 1000000
+
+	amt3, err = balanceRepo.GetAmountTx(ctx, tx5, model.ChainSolana, model.NetworkDevnet, addr3, tokenID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "10000000", amt3) // 3000000 + 7000000
+	require.NoError(t, tx5.Commit())
+}
+
+func TestBulkUpsertTx_BalanceEvents(t *testing.T) {
+	db := testDB(t)
+	txRepo := postgres.NewTransactionRepo(db)
+	tokenRepo := postgres.NewTokenRepo(db)
+	beRepo := postgres.NewBalanceEventRepo(db)
+	ctx := context.Background()
+
+	txHash1 := "bulk-be-tx1-" + uuid.NewString()[:8]
+	txHash2 := "bulk-be-tx2-" + uuid.NewString()[:8]
+	txHash3 := "bulk-be-tx3-" + uuid.NewString()[:8]
+	contract := "bulk-be-token-" + uuid.NewString()[:8]
+	eventID1 := "bulk-evt-1-" + uuid.NewString()[:8]
+	eventID2 := "bulk-evt-2-" + uuid.NewString()[:8]
+	eventID3 := "bulk-evt-3-" + uuid.NewString()[:8]
+	watchedAddr := "bulk-be-watched-" + uuid.NewString()[:8]
+
+	// Setup: create transactions and token.
+	setupTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+
+	txIDs, err := txRepo.BulkUpsertTx(ctx, setupTx, []*model.Transaction{
+		{Chain: model.ChainSolana, Network: model.NetworkDevnet, TxHash: txHash1, FeeAmount: "5000", FeePayer: "payer1", Status: model.TxStatusSuccess, ChainData: json.RawMessage("{}")},
+		{Chain: model.ChainSolana, Network: model.NetworkDevnet, TxHash: txHash2, FeeAmount: "5000", FeePayer: "payer2", Status: model.TxStatusSuccess, ChainData: json.RawMessage("{}")},
+		{Chain: model.ChainSolana, Network: model.NetworkDevnet, TxHash: txHash3, FeeAmount: "5000", FeePayer: "payer3", Status: model.TxStatusSuccess, ChainData: json.RawMessage("{}")},
+	})
+	require.NoError(t, err)
+
+	tokenID, err := tokenRepo.UpsertTx(ctx, setupTx, &model.Token{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		ContractAddress: contract, Symbol: "SOL", Name: "Solana",
+		Decimals: 9, TokenType: model.TokenTypeNative, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, setupTx.Commit())
+
+	events := []*model.BalanceEvent{
+		{
+			Chain: model.ChainSolana, Network: model.NetworkDevnet,
+			TransactionID: txIDs[txHash1], TxHash: txHash1, TokenID: tokenID,
+			ActivityType: model.ActivityDeposit, EventAction: "deposit",
+			Address: watchedAddr, Delta: "1000000",
+			WatchedAddress: &watchedAddr, BlockCursor: 100,
+			ChainData: json.RawMessage("{}"), EventID: eventID1,
+			FinalityState: "confirmed", BalanceBefore: strPtr("0"),
+			BalanceAfter: strPtr("1000000"), DecoderVersion: "v1", SchemaVersion: "v1",
+		},
+		{
+			Chain: model.ChainSolana, Network: model.NetworkDevnet,
+			TransactionID: txIDs[txHash2], TxHash: txHash2, TokenID: tokenID,
+			ActivityType: model.ActivityWithdrawal, EventAction: "withdrawal",
+			Address: watchedAddr, Delta: "-500000",
+			WatchedAddress: &watchedAddr, BlockCursor: 101,
+			ChainData: json.RawMessage("{}"), EventID: eventID2,
+			FinalityState: "confirmed", BalanceBefore: strPtr("1000000"),
+			BalanceAfter: strPtr("500000"), DecoderVersion: "v1", SchemaVersion: "v1",
+		},
+		{
+			Chain: model.ChainSolana, Network: model.NetworkDevnet,
+			TransactionID: txIDs[txHash3], TxHash: txHash3, TokenID: tokenID,
+			ActivityType: model.ActivityDeposit, EventAction: "deposit",
+			Address: watchedAddr, Delta: "2000000",
+			WatchedAddress: &watchedAddr, BlockCursor: 102,
+			ChainData: json.RawMessage("{}"), EventID: eventID3,
+			FinalityState: "confirmed", BalanceBefore: strPtr("500000"),
+			BalanceAfter: strPtr("2500000"), DecoderVersion: "v1", SchemaVersion: "v1",
+		},
+	}
+
+	// First bulk upsert.
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	result, err := beRepo.BulkUpsertTx(ctx, tx, events)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	assert.Equal(t, 3, result.InsertedCount, "all 3 events should be inserted")
+
+	// Verify each event exists in the DB.
+	for _, eid := range []string{eventID1, eventID2, eventID3} {
+		var count int
+		err = db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE event_id = $1", eid).Scan(&count)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count, "event %s should have exactly 1 row", eid)
+	}
+
+	// Idempotency: same events again, expect 0 new insertions.
+	tx2, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	result2, err := beRepo.BulkUpsertTx(ctx, tx2, events)
+	require.NoError(t, err)
+	require.NoError(t, tx2.Commit())
+
+	assert.Equal(t, 0, result2.InsertedCount, "duplicate events should not be inserted again")
+
+	// Verify still only 1 row per event.
+	for _, eid := range []string{eventID1, eventID2, eventID3} {
+		var count int
+		err = db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE event_id = $1", eid).Scan(&count)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count, "event %s should still have exactly 1 row after idempotent upsert", eid)
+	}
 }

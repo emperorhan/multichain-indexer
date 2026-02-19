@@ -1,0 +1,16 @@
+.git
+.gitignore
+.dockerignore
+Dockerfile
+*.md
+LICENSE
+bin/
+sidecar/node_modules/
+sidecar/dist/
+deployments/
+docs/
+test/
+indexer/
+.env
+.env.*
+*.log

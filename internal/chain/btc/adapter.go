@@ -13,6 +13,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/chain/btc/rpc"
+	"github.com/emperorhan/multichain-indexer/internal/chain/ratelimit"
 )
 
 const (
@@ -77,6 +78,13 @@ func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
 	return &Adapter{
 		client: rpc.NewClient(rpcURL, logger),
 		logger: logger.With("chain", "btc"),
+	}
+}
+
+// SetRateLimiter applies a rate limiter to the underlying RPC client.
+func (a *Adapter) SetRateLimiter(l *ratelimit.Limiter) {
+	if c, ok := a.client.(*rpc.Client); ok {
+		c.SetRateLimiter(l)
 	}
 }
 

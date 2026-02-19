@@ -1,9 +1,12 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +38,12 @@ func New(cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("resolve statement timeout: %w", err)
 	}
 
-	db, err := sql.Open("postgres", cfg.URL)
+	connURL := cfg.URL
+	if statementTimeoutMS > 0 {
+		connURL = appendStatementTimeout(connURL, statementTimeoutMS)
+	}
+
+	db, err := sql.Open("postgres", connURL)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -44,13 +52,6 @@ func New(cfg Config) (*DB, error) {
 	db.SetMaxIdleConns(cfg.MaxIdleConns)
 	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 
-	if statementTimeoutMS > 0 {
-		if _, err := db.Exec("SET statement_timeout = $1", statementTimeoutMS); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("set statement_timeout: %w", err)
-		}
-	}
-
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
@@ -58,8 +59,71 @@ func New(cfg Config) (*DB, error) {
 	return &DB{db}, nil
 }
 
+// appendStatementTimeout appends statement_timeout to the connection URL
+// so it applies to all connections in the pool, not just one session.
+func appendStatementTimeout(url string, timeoutMS int) string {
+	sep := "?"
+	if strings.Contains(url, "?") {
+		sep = "&"
+	}
+	return url + sep + "options=-c%20statement_timeout%3D" + strconv.Itoa(timeoutMS)
+}
+
 func (db *DB) Close() error {
 	return db.DB.Close()
+}
+
+// RunMigrations reads *.up.sql files from dir and executes them in sorted order.
+// It uses a schema_migrations table to track which migrations have been applied,
+// ensuring each migration runs at most once.
+func (db *DB) RunMigrations(dir string) error {
+	if _, err := db.ExecContext(context.Background(), `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version VARCHAR(255) PRIMARY KEY,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)
+	`); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+
+	files, err := filepath.Glob(filepath.Join(dir, "*.up.sql"))
+	if err != nil {
+		return fmt.Errorf("glob migrations: %w", err)
+	}
+	sort.Strings(files)
+
+	for _, f := range files {
+		version := filepath.Base(f)
+
+		var exists bool
+		if err := db.QueryRowContext(context.Background(),
+			"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)", version,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("check migration %s: %w", version, err)
+		}
+		if exists {
+			continue
+		}
+
+		content, err := os.ReadFile(f)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", version, err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		if _, err := db.ExecContext(ctx, string(content)); err != nil {
+			cancel()
+			return fmt.Errorf("exec migration %s: %w", version, err)
+		}
+		cancel()
+
+		if _, err := db.ExecContext(context.Background(),
+			"INSERT INTO schema_migrations (version) VALUES ($1)", version,
+		); err != nil {
+			return fmt.Errorf("record migration %s: %w", version, err)
+		}
+	}
+	return nil
 }
 
 func resolveStatementTimeoutMS(cfg Config) (int, error) {

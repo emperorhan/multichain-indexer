@@ -48,6 +48,7 @@ const (
 type AddressSource string
 
 const (
-	AddressSourceDB  AddressSource = "db"
-	AddressSourceEnv AddressSource = "env"
+	AddressSourceDB    AddressSource = "db"
+	AddressSourceEnv   AddressSource = "env"
+	AddressSourceAdmin AddressSource = "admin"
 )

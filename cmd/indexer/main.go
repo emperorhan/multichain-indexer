@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/admin"
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/chain/arbitrum"
 	"github.com/emperorhan/multichain-indexer/internal/chain/base"
@@ -20,6 +21,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/chain/btc"
 	"github.com/emperorhan/multichain-indexer/internal/chain/ethereum"
 	"github.com/emperorhan/multichain-indexer/internal/chain/polygon"
+	"github.com/emperorhan/multichain-indexer/internal/chain/ratelimit"
 	"github.com/emperorhan/multichain-indexer/internal/chain/solana"
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -109,7 +111,7 @@ func resolveStreamBackend(cfg *config.Config, streamSessionID string, logger *sl
 
 	logger.Info("redis stream transport enabled",
 		"redis_url",
-		cfg.Redis.URL,
+		maskCredentials(cfg.Redis.URL),
 		"stream_namespace",
 		cfg.Pipeline.StreamNamespace,
 		"stream_session_id",
@@ -140,9 +142,16 @@ func logSecurityWarnings(cfg *config.Config, logger *slog.Logger) {
 	if cfg.Server.MetricsAuthUser == "" {
 		logger.Warn("SECURITY: /metrics endpoint has no authentication — set METRICS_AUTH_USER and METRICS_AUTH_PASS in production")
 	}
+	if cfg.Server.AdminAddr != "" && cfg.Server.AdminAuthUser == "" {
+		logger.Warn("SECURITY: admin API has no authentication — set ADMIN_AUTH_USER and ADMIN_AUTH_PASS in production")
+	}
 }
 
 func maskCredentials(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	// Mask user:pass in URLs like postgres://user:pass@host/db
 	if idx := strings.Index(rawURL, "@"); idx > 0 {
 		schemeEnd := strings.Index(rawURL, "://")
 		if schemeEnd < 0 {
@@ -150,6 +159,20 @@ func maskCredentials(rawURL string) string {
 		}
 		scheme := rawURL[:schemeEnd+3]
 		return scheme + "***@" + rawURL[idx+1:]
+	}
+	// Mask API keys in RPC URLs like https://eth-mainnet.g.alchemy.com/v2/KEY
+	// or query-string keys like ?apikey=KEY
+	if strings.Contains(rawURL, "/v2/") || strings.Contains(rawURL, "/v3/") ||
+		strings.Contains(rawURL, "apikey=") || strings.Contains(rawURL, "api_key=") {
+		schemeEnd := strings.Index(rawURL, "://")
+		if schemeEnd < 0 {
+			return "***"
+		}
+		hostEnd := strings.Index(rawURL[schemeEnd+3:], "/")
+		if hostEnd < 0 {
+			return rawURL
+		}
+		return rawURL[:schemeEnd+3+hostEnd] + "/***"
 	}
 	return rawURL
 }
@@ -220,14 +243,37 @@ func startDBPoolStatsPump(ctx context.Context, db dbStatsProvider, targets []run
 	}()
 }
 
+// rateLimitSetter is implemented by adapters that support rate limiting.
+type rateLimitSetter interface {
+	SetRateLimiter(l *ratelimit.Limiter)
+}
+
+func applyRateLimit(adapter chain.ChainAdapter, rlCfg config.RPCRateLimitConfig, chainName string) {
+	if rlCfg.RPS <= 0 {
+		return
+	}
+	if setter, ok := adapter.(rateLimitSetter); ok {
+		setter.SetRateLimiter(ratelimit.NewLimiter(rlCfg.RPS, rlCfg.Burst, chainName))
+	}
+}
+
 func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarget {
+	solanaAdapter := solana.NewAdapter(cfg.Solana.RPCURL, logger)
+	applyRateLimit(solanaAdapter, cfg.Solana.RateLimit, "solana")
+
+	baseAdapter := base.NewAdapter(cfg.Base.RPCURL, logger)
+	applyRateLimit(baseAdapter, cfg.Base.RateLimit, "base")
+
+	btcAdapter := btc.NewAdapter(cfg.BTC.RPCURL, logger)
+	applyRateLimit(btcAdapter, cfg.BTC.RateLimit, "btc")
+
 	targets := []runtimeTarget{
 		{
 			chain:   model.ChainSolana,
 			network: model.Network(cfg.Solana.Network),
 			group:   config.RuntimeLikeGroupSolana,
 			watched: cfg.Pipeline.SolanaWatchedAddresses,
-			adapter: solana.NewAdapter(cfg.Solana.RPCURL, logger),
+			adapter: solanaAdapter,
 			rpcURL:  cfg.Solana.RPCURL,
 		},
 		{
@@ -235,7 +281,7 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 			network: model.Network(cfg.Base.Network),
 			group:   config.RuntimeLikeGroupEVM,
 			watched: cfg.Pipeline.BaseWatchedAddresses,
-			adapter: base.NewAdapter(cfg.Base.RPCURL, logger),
+			adapter: baseAdapter,
 			rpcURL:  cfg.Base.RPCURL,
 		},
 		{
@@ -243,51 +289,59 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 			network: model.Network(cfg.BTC.Network),
 			group:   config.RuntimeLikeGroupBTC,
 			watched: cfg.Pipeline.BTCWatchedAddresses,
-			adapter: btc.NewAdapter(cfg.BTC.RPCURL, logger),
+			adapter: btcAdapter,
 			rpcURL:  cfg.BTC.RPCURL,
 		},
 	}
 
 	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "ethereum") {
+		ethAdapter := ethereum.NewAdapter(cfg.Ethereum.RPCURL, logger)
+		applyRateLimit(ethAdapter, cfg.Ethereum.RateLimit, "ethereum")
 		targets = append(targets, runtimeTarget{
 			chain:   model.ChainEthereum,
 			network: model.NetworkMainnet,
 			group:   config.RuntimeLikeGroupEVM,
 			watched: cfg.Pipeline.EthereumWatchedAddresses,
-			adapter: ethereum.NewAdapter(cfg.Ethereum.RPCURL, logger),
+			adapter: ethAdapter,
 			rpcURL:  cfg.Ethereum.RPCURL,
 		})
 	}
 
 	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "polygon") {
+		polyAdapter := polygon.NewAdapter(cfg.Polygon.RPCURL, logger)
+		applyRateLimit(polyAdapter, cfg.Polygon.RateLimit, "polygon")
 		targets = append(targets, runtimeTarget{
 			chain:   model.ChainPolygon,
 			network: model.Network(cfg.Polygon.Network),
 			group:   config.RuntimeLikeGroupEVM,
 			watched: cfg.Pipeline.PolygonWatchedAddresses,
-			adapter: polygon.NewAdapter(cfg.Polygon.RPCURL, logger),
+			adapter: polyAdapter,
 			rpcURL:  cfg.Polygon.RPCURL,
 		})
 	}
 
 	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "arbitrum") {
+		arbAdapter := arbitrum.NewAdapter(cfg.Arbitrum.RPCURL, logger)
+		applyRateLimit(arbAdapter, cfg.Arbitrum.RateLimit, "arbitrum")
 		targets = append(targets, runtimeTarget{
 			chain:   model.ChainArbitrum,
 			network: model.Network(cfg.Arbitrum.Network),
 			group:   config.RuntimeLikeGroupEVM,
 			watched: cfg.Pipeline.ArbitrumWatchedAddresses,
-			adapter: arbitrum.NewAdapter(cfg.Arbitrum.RPCURL, logger),
+			adapter: arbAdapter,
 			rpcURL:  cfg.Arbitrum.RPCURL,
 		})
 	}
 
 	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "bsc") {
+		bscAdapter := bsc.NewAdapter(cfg.BSC.RPCURL, logger)
+		applyRateLimit(bscAdapter, cfg.BSC.RateLimit, "bsc")
 		targets = append(targets, runtimeTarget{
 			chain:   model.ChainBSC,
 			network: model.Network(cfg.BSC.Network),
 			group:   config.RuntimeLikeGroupEVM,
 			watched: cfg.Pipeline.BSCWatchedAddresses,
-			adapter: bsc.NewAdapter(cfg.BSC.RPCURL, logger),
+			adapter: bscAdapter,
 			rpcURL:  cfg.BSC.RPCURL,
 		})
 	}
@@ -327,19 +381,19 @@ func main() {
 	slog.SetDefault(logger)
 
 	logger.Info("starting multichain-indexer",
-		"solana_rpc", cfg.Solana.RPCURL,
+		"solana_rpc", maskCredentials(cfg.Solana.RPCURL),
 		"solana_network", cfg.Solana.Network,
-		"base_rpc", cfg.Base.RPCURL,
+		"base_rpc", maskCredentials(cfg.Base.RPCURL),
 		"base_network", cfg.Base.Network,
-		"ethereum_rpc", cfg.Ethereum.RPCURL,
+		"ethereum_rpc", maskCredentials(cfg.Ethereum.RPCURL),
 		"ethereum_network", cfg.Ethereum.Network,
-		"btc_rpc", cfg.BTC.RPCURL,
+		"btc_rpc", maskCredentials(cfg.BTC.RPCURL),
 		"btc_network", cfg.BTC.Network,
-		"polygon_rpc", cfg.Polygon.RPCURL,
+		"polygon_rpc", maskCredentials(cfg.Polygon.RPCURL),
 		"polygon_network", cfg.Polygon.Network,
-		"arbitrum_rpc", cfg.Arbitrum.RPCURL,
+		"arbitrum_rpc", maskCredentials(cfg.Arbitrum.RPCURL),
 		"arbitrum_network", cfg.Arbitrum.Network,
-		"bsc_rpc", cfg.BSC.RPCURL,
+		"bsc_rpc", maskCredentials(cfg.BSC.RPCURL),
 		"bsc_network", cfg.BSC.Network,
 		"sidecar_addr", cfg.Sidecar.Addr,
 		"solana_watched_addresses", len(cfg.Pipeline.SolanaWatchedAddresses),
@@ -358,7 +412,7 @@ func main() {
 	if cfg.Tracing.Enabled {
 		tracingEndpoint = cfg.Tracing.Endpoint
 	}
-	shutdownTracing, err := tracing.Init(context.Background(), "multichain-indexer", tracingEndpoint, cfg.Tracing.Insecure)
+	shutdownTracing, err := tracing.Init(context.Background(), "multichain-indexer", tracingEndpoint, cfg.Tracing.Insecure, cfg.Tracing.SampleRatio)
 	if err != nil {
 		logger.Error("failed to initialize tracing", "error", err)
 		os.Exit(1)
@@ -498,6 +552,18 @@ func main() {
 	g.Go(func() error {
 		return runHealthServer(gCtx, cfg.Server.HealthPort, cfg.Server.MetricsAuthUser, cfg.Server.MetricsAuthPass, checker, logger)
 	})
+
+	// Admin API server (optional)
+	if cfg.Server.AdminAddr != "" {
+		adminSrv := admin.NewServer(repos.WatchedAddr, repos.Config, logger)
+		var adminHandler http.Handler = adminSrv.Handler()
+		if cfg.Server.AdminAuthUser != "" && cfg.Server.AdminAuthPass != "" {
+			adminHandler = basicAuthMiddleware(cfg.Server.AdminAuthUser, cfg.Server.AdminAuthPass, adminHandler)
+		}
+		g.Go(func() error {
+			return runAdminServer(gCtx, cfg.Server.AdminAddr, adminHandler, logger)
+		})
+	}
 
 	// Pipelines
 	for _, p := range pipelines {
@@ -758,6 +824,28 @@ func runHealthServer(ctx context.Context, port int, metricsUser, metricsPass str
 	logger.Info("health server started", "port", port)
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		return fmt.Errorf("health server: %w", err)
+	}
+	return nil
+}
+
+func runAdminServer(ctx context.Context, addr string, handler http.Handler, logger *slog.Logger) error {
+	server := &http.Server{
+		Addr:    addr,
+		Handler: handler,
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil && err != http.ErrServerClosed {
+			logger.Warn("admin server shutdown error", "error", err)
+		}
+	}()
+
+	logger.Info("admin server started", "addr", addr)
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		return fmt.Errorf("admin server: %w", err)
 	}
 	return nil
 }

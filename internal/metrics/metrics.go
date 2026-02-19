@@ -30,6 +30,14 @@ var (
 		Help:      "Total coordinator tick errors",
 	}, []string{"chain", "network"})
 
+	CoordinatorTickLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "indexer",
+		Subsystem: "coordinator",
+		Name:      "tick_duration_seconds",
+		Help:      "Coordinator tick processing duration",
+		Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+	}, []string{"chain", "network"})
+
 	// Fetcher
 	FetcherBatchesProcessed = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "indexer",
@@ -57,7 +65,7 @@ var (
 		Subsystem: "fetcher",
 		Name:      "job_duration_seconds",
 		Help:      "Fetcher job processing duration",
-		Buckets:   prometheus.DefBuckets,
+		Buckets:   []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	}, []string{"chain", "network"})
 
 	// Normalizer
@@ -80,7 +88,7 @@ var (
 		Subsystem: "normalizer",
 		Name:      "batch_duration_seconds",
 		Help:      "Normalizer batch processing duration (including gRPC decode)",
-		Buckets:   prometheus.DefBuckets,
+		Buckets:   []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 	}, []string{"chain", "network"})
 
 	// Ingester
@@ -110,7 +118,7 @@ var (
 		Subsystem: "ingester",
 		Name:      "batch_duration_seconds",
 		Help:      "Ingester batch processing duration (DB transaction)",
-		Buckets:   prometheus.DefBuckets,
+		Buckets:   []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 	}, []string{"chain", "network"})
 
 	// Scam detection
@@ -178,4 +186,27 @@ var (
 		Name:      "db_pool_wait_duration_seconds",
 		Help:      "Latest PostgreSQL pool wait duration in seconds",
 	}, []string{"chain", "network"})
+
+	// Token deny list cache
+	DeniedCacheHits = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "cache",
+		Name:      "denied_token_hits_total",
+		Help:      "Total denied token cache hits",
+	}, []string{"chain", "network"})
+
+	DeniedCacheMisses = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "cache",
+		Name:      "denied_token_misses_total",
+		Help:      "Total denied token cache misses",
+	}, []string{"chain", "network"})
+
+	// RPC rate limiter
+	RPCRateLimitWaits = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "rpc",
+		Name:      "rate_limit_waits_total",
+		Help:      "Total times RPC calls waited for rate limiter",
+	}, []string{"chain"})
 )

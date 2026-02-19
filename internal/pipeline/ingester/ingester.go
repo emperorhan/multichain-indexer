@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/cache"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
@@ -28,6 +29,8 @@ const (
 	defaultProcessRetryMaxAttempts = 3
 	defaultRetryDelayInitial       = 100 * time.Millisecond
 	defaultRetryDelayMax           = 1 * time.Second
+	defaultDeniedCacheCapacity     = 10000
+	defaultDeniedCacheTTL          = 5 * time.Minute
 )
 
 // Ingester is a single-writer that processes NormalizedBatches into the database.
@@ -48,6 +51,7 @@ type Ingester struct {
 	retryDelayStart   time.Duration
 	retryDelayMax     time.Duration
 	sleepFn           func(context.Context, time.Duration) error
+	deniedCache       *cache.LRU[string, bool]
 }
 
 type Option func(*Ingester)
@@ -97,6 +101,7 @@ func New(
 		retryDelayStart:  defaultRetryDelayInitial,
 		retryDelayMax:    defaultRetryDelayMax,
 		sleepFn:          sleepContext,
+		deniedCache:      cache.NewLRU[string, bool](defaultDeniedCacheCapacity, defaultDeniedCacheTTL),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -382,8 +387,22 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		}
 	}
 
-	var totalEvents int
-	deniedCache := make(map[string]bool) // "chain:network:contract" → denied
+	// ========== PHASE 1: Memory Collect ==========
+	_, phase1Span := tracing.Tracer("ingester").Start(ctx, "ingester.phase1_collect")
+	// Deduplicate transactions and tokens, collect balance event metadata.
+
+	txModelsByHash := make(map[string]*model.Transaction, len(batch.Transactions))
+	var txModels []*model.Transaction
+	tokenModelsByContract := make(map[string]*model.Token)
+	var tokenModels []*model.Token
+	contractsToCheck := make(map[string]struct{})
+
+	type eventContext struct {
+		ntx             event.NormalizedTransaction
+		be              event.NormalizedBalanceEvent
+		canonicalTxHash string
+	}
+	var allEvents []eventContext
 
 	for _, ntx := range batch.Transactions {
 		canonicalTxHash := canonicalSignatureIdentity(batch.Chain, ntx.TxHash)
@@ -391,179 +410,393 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 			canonicalTxHash = strings.TrimSpace(ntx.TxHash)
 		}
 
-		// 1. Upsert transaction
-		txModel := &model.Transaction{
-			Chain:       batch.Chain,
-			Network:     batch.Network,
-			TxHash:      canonicalTxHash,
-			BlockCursor: ntx.BlockCursor,
-			BlockTime:   ntx.BlockTime,
-			FeeAmount:   ntx.FeeAmount,
-			FeePayer:    ntx.FeePayer,
-			Status:      ntx.Status,
-			Err:         ntx.Err,
-			ChainData:   ntx.ChainData,
-		}
-		if txModel.ChainData == nil {
-			txModel.ChainData = json.RawMessage("{}")
-		}
-
-		txID, err := ing.txRepo.UpsertTx(ctx, dbTx, txModel)
-		if err != nil {
-			return fmt.Errorf("upsert tx %s: %w", ntx.TxHash, err)
+		if _, exists := txModelsByHash[canonicalTxHash]; !exists {
+			txModel := &model.Transaction{
+				Chain:       batch.Chain,
+				Network:     batch.Network,
+				TxHash:      canonicalTxHash,
+				BlockCursor: ntx.BlockCursor,
+				BlockTime:   ntx.BlockTime,
+				FeeAmount:   ntx.FeeAmount,
+				FeePayer:    ntx.FeePayer,
+				Status:      ntx.Status,
+				Err:         ntx.Err,
+				ChainData:   ntx.ChainData,
+			}
+			if txModel.ChainData == nil {
+				txModel.ChainData = json.RawMessage("{}")
+			}
+			txModelsByHash[canonicalTxHash] = txModel
+			txModels = append(txModels, txModel)
 		}
 
-		// 2. Process balance events
 		for _, be := range ntx.BalanceEvents {
-			// 2a. Upsert token
-			tokenModel := &model.Token{
-				Chain:           batch.Chain,
-				Network:         batch.Network,
-				ContractAddress: be.ContractAddress,
-				Symbol:          defaultTokenSymbol(be),
-				Name:            defaultTokenName(be),
-				Decimals:        be.TokenDecimals,
-				TokenType:       be.TokenType,
-				ChainData:       json.RawMessage("{}"),
-			}
-			tokenID, err := ing.tokenRepo.UpsertTx(ctx, dbTx, tokenModel)
-			if err != nil {
-				return fmt.Errorf("upsert token %s: %w", be.ContractAddress, err)
-			}
-
-			// CHECK 1: Blacklist enforcement (with per-batch cache)
-			deniedKey := fmt.Sprintf("%s:%s:%s", batch.Chain, batch.Network, be.ContractAddress)
-			denied, cached := deniedCache[deniedKey]
-			if !cached {
-				denied, err = ing.tokenRepo.IsDeniedTx(ctx, dbTx, batch.Chain, batch.Network, be.ContractAddress)
-				if err != nil {
-					return fmt.Errorf("check token denied %s: %w", be.ContractAddress, err)
+			if _, exists := tokenModelsByContract[be.ContractAddress]; !exists {
+				tokenModel := &model.Token{
+					Chain:           batch.Chain,
+					Network:         batch.Network,
+					ContractAddress: be.ContractAddress,
+					Symbol:          defaultTokenSymbol(be),
+					Name:            defaultTokenName(be),
+					Decimals:        be.TokenDecimals,
+					TokenType:       be.TokenType,
+					ChainData:       json.RawMessage("{}"),
 				}
-				deniedCache[deniedKey] = denied
+				tokenModelsByContract[be.ContractAddress] = tokenModel
+				tokenModels = append(tokenModels, tokenModel)
 			}
-			if denied {
-				ing.logger.Debug("skipping denied token event",
-					"contract", be.ContractAddress,
-					"address", be.Address,
-					"delta", be.Delta,
-				)
-				metrics.IngesterDeniedEventsSkipped.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
-				continue
-			}
+			contractsToCheck[be.ContractAddress] = struct{}{}
+			allEvents = append(allEvents, eventContext{ntx: ntx, be: be, canonicalTxHash: canonicalTxHash})
+		}
+	}
 
-			balanceBefore, balanceExists, balanceAfter, err := ing.computeBalanceTransition(ctx, dbTx, batch, be, tokenID)
-			if err != nil {
-				return fmt.Errorf("compute balance transition: %w", err)
-			}
+	phase1Span.SetAttributes(
+		attribute.Int("unique_transactions", len(txModels)),
+		attribute.Int("unique_tokens", len(tokenModels)),
+		attribute.Int("total_events", len(allEvents)),
+	)
+	phase1Span.End()
 
-			// CHECK 2: Auto-detection of scam signals
-			if signal := detectScamSignal(batch.Chain, be, balanceBefore, balanceExists); signal != "" {
-				ing.logger.Warn("scam token detected, auto-denying",
-					"signal", signal,
-					"contract", be.ContractAddress,
-					"address", be.Address,
-					"delta", be.Delta,
-					"balance_before", balanceBefore,
-					"balance_exists", balanceExists,
-				)
-				if err := ing.tokenRepo.DenyTokenTx(
-					ctx, dbTx,
-					batch.Chain, batch.Network, be.ContractAddress,
-					fmt.Sprintf("auto-detected: %s", signal),
-					"ingester_auto",
-					100,
-					[]string{signal},
-				); err != nil {
-					return fmt.Errorf("deny scam token %s: %w", be.ContractAddress, err)
+	// ========== PHASE 2: Bulk Pre-fetch (2-3 DB queries) ==========
+	_, phase2Span := tracing.Tracer("ingester").Start(ctx, "ingester.phase2_prefetch")
+
+	// 2a. Bulk upsert transactions → txID map
+	txIDMap, err := ing.txRepo.BulkUpsertTx(ctx, dbTx, txModels)
+	if err != nil {
+		phase2Span.RecordError(err)
+		phase2Span.SetStatus(codes.Error, err.Error())
+		phase2Span.End()
+		return fmt.Errorf("bulk upsert transactions: %w", err)
+	}
+
+	// 2b. Bulk upsert tokens → tokenID map
+	tokenIDMap, err := ing.tokenRepo.BulkUpsertTx(ctx, dbTx, tokenModels)
+	if err != nil {
+		phase2Span.RecordError(err)
+		phase2Span.SetStatus(codes.Error, err.Error())
+		phase2Span.End()
+		return fmt.Errorf("bulk upsert tokens: %w", err)
+	}
+
+	// 2c. Bulk denied check (LRU cache first, then DB for misses)
+	uncachedContracts := make([]string, 0)
+	cachedDenied := make(map[string]bool)
+	for contract := range contractsToCheck {
+		deniedKey := fmt.Sprintf("%s:%s:%s", batch.Chain, batch.Network, contract)
+		if denied, ok := ing.deniedCache.Get(deniedKey); ok {
+			cachedDenied[contract] = denied
+			metrics.DeniedCacheHits.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+		} else {
+			uncachedContracts = append(uncachedContracts, contract)
+			metrics.DeniedCacheMisses.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+		}
+	}
+	var dbDenied map[string]bool
+	if len(uncachedContracts) > 0 {
+		dbDenied, err = ing.tokenRepo.BulkIsDeniedTx(ctx, dbTx, batch.Chain, batch.Network, uncachedContracts)
+		if err != nil {
+			phase2Span.RecordError(err)
+			phase2Span.SetStatus(codes.Error, err.Error())
+			phase2Span.End()
+			return fmt.Errorf("bulk check denied tokens: %w", err)
+		}
+		for _, contract := range uncachedContracts {
+			denied := dbDenied[contract]
+			deniedKey := fmt.Sprintf("%s:%s:%s", batch.Chain, batch.Network, contract)
+			ing.deniedCache.Put(deniedKey, denied)
+			cachedDenied[contract] = denied
+		}
+	}
+
+	// 2d. Bulk pre-fetch balances for all events
+	balanceKeys := make([]store.BalanceKey, 0, len(allEvents))
+	balanceKeySet := make(map[store.BalanceKey]struct{})
+	for _, ec := range allEvents {
+		tokenID, ok := tokenIDMap[ec.be.ContractAddress]
+		if !ok {
+			continue
+		}
+		bk := store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: ""}
+		if _, exists := balanceKeySet[bk]; !exists {
+			balanceKeySet[bk] = struct{}{}
+			balanceKeys = append(balanceKeys, bk)
+		}
+	}
+	var balanceMap map[store.BalanceKey]store.BalanceInfo
+	if len(balanceKeys) > 0 {
+		balanceMap, err = ing.balanceRepo.BulkGetAmountWithExistsTx(ctx, dbTx, batch.Chain, batch.Network, balanceKeys)
+		if err != nil {
+			phase2Span.RecordError(err)
+			phase2Span.SetStatus(codes.Error, err.Error())
+			phase2Span.End()
+			return fmt.Errorf("bulk get balances: %w", err)
+		}
+	} else {
+		balanceMap = make(map[store.BalanceKey]store.BalanceInfo)
+	}
+
+	phase2Span.SetAttributes(
+		attribute.Int("cached_denied", len(cachedDenied)),
+		attribute.Int("balance_keys", len(balanceKeys)),
+	)
+	phase2Span.End()
+
+	// ========== PHASE 3: In-Memory Processing (zero DB calls for normal path) ==========
+	_, phase3Span := tracing.Tracer("ingester").Start(ctx, "ingester.phase3_process")
+
+	// Track in-memory balance accumulation for accurate balance_before/after across events in same batch
+	type balanceAccum struct {
+		amount string
+		exists bool
+	}
+	inMemoryBalances := make(map[store.BalanceKey]*balanceAccum, len(balanceMap))
+	for bk, bi := range balanceMap {
+		inMemoryBalances[bk] = &balanceAccum{amount: bi.Amount, exists: bi.Exists}
+	}
+
+	type adjustmentKey struct {
+		store.BalanceKey
+		walletID *string
+		orgID    *string
+	}
+	type adjustmentAccum struct {
+		delta   *big.Int
+		cursor  int64
+		txHash  string
+	}
+	aggregatedDeltas := make(map[adjustmentKey]*adjustmentAccum)
+
+	var eventModels []*model.BalanceEvent
+	var totalEvents int
+
+	for _, ec := range allEvents {
+		tokenID, ok := tokenIDMap[ec.be.ContractAddress]
+		if !ok {
+			continue
+		}
+		txID, ok := txIDMap[ec.canonicalTxHash]
+		if !ok {
+			continue
+		}
+
+		// Check denied
+		if cachedDenied[ec.be.ContractAddress] {
+			ing.logger.Debug("skipping denied token event",
+				"contract", ec.be.ContractAddress,
+				"address", ec.be.Address,
+				"delta", ec.be.Delta,
+			)
+			metrics.IngesterDeniedEventsSkipped.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+			continue
+		}
+
+		// Get in-memory balance
+		bk := store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: ""}
+		accum, ok := inMemoryBalances[bk]
+		if !ok {
+			accum = &balanceAccum{amount: "0", exists: false}
+			inMemoryBalances[bk] = accum
+		}
+		balanceBefore := accum.amount
+		balanceExists := accum.exists
+
+		// Scam detection
+		if signal := detectScamSignal(batch.Chain, ec.be, balanceBefore, balanceExists); signal != "" {
+			ing.logger.Warn("scam token detected, auto-denying",
+				"signal", signal,
+				"contract", ec.be.ContractAddress,
+				"address", ec.be.Address,
+				"delta", ec.be.Delta,
+				"balance_before", balanceBefore,
+				"balance_exists", balanceExists,
+			)
+			if err := ing.tokenRepo.DenyTokenTx(
+				ctx, dbTx,
+				batch.Chain, batch.Network, ec.be.ContractAddress,
+				fmt.Sprintf("auto-detected: %s", signal),
+				"ingester_auto",
+				100,
+				[]string{signal},
+			); err != nil {
+				phase3Span.RecordError(err)
+				phase3Span.SetStatus(codes.Error, err.Error())
+				phase3Span.End()
+				return fmt.Errorf("deny scam token %s: %w", ec.be.ContractAddress, err)
+			}
+			deniedKey := fmt.Sprintf("%s:%s:%s", batch.Chain, batch.Network, ec.be.ContractAddress)
+			ing.deniedCache.Put(deniedKey, true)
+			cachedDenied[ec.be.ContractAddress] = true
+			metrics.IngesterScamTokensDetected.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+			metrics.IngesterDeniedEventsSkipped.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
+			continue
+		}
+
+		// Compute balance after
+		balanceAfter, calcErr := addDecimalStrings(balanceBefore, ec.be.Delta)
+		if calcErr != nil {
+			phase3Span.RecordError(calcErr)
+			phase3Span.SetStatus(codes.Error, calcErr.Error())
+			phase3Span.End()
+			return fmt.Errorf("apply delta %s to balance %s: %w", ec.be.Delta, balanceBefore, calcErr)
+		}
+
+		// Build balance event model
+		chainData := ec.be.ChainData
+		if chainData == nil {
+			chainData = json.RawMessage("{}")
+		}
+		beModel := &model.BalanceEvent{
+			Chain:                 batch.Chain,
+			Network:               batch.Network,
+			TransactionID:         txID,
+			TxHash:                ec.canonicalTxHash,
+			OuterInstructionIndex: ec.be.OuterInstructionIndex,
+			InnerInstructionIndex: ec.be.InnerInstructionIndex,
+			TokenID:               tokenID,
+			ActivityType:          ec.be.ActivityType,
+			EventAction:           ec.be.EventAction,
+			ProgramID:             ec.be.ProgramID,
+			Address:               ec.be.Address,
+			CounterpartyAddress:   ec.be.CounterpartyAddress,
+			Delta:                 ec.be.Delta,
+			WatchedAddress:        &batch.Address,
+			WalletID:              batch.WalletID,
+			OrganizationID:        batch.OrgID,
+			BlockCursor:           ec.ntx.BlockCursor,
+			BlockTime:             ec.ntx.BlockTime,
+			ChainData:             chainData,
+			EventID:               ec.be.EventID,
+			BlockHash:             ec.be.BlockHash,
+			TxIndex:               ec.be.TxIndex,
+			EventPath:             ec.be.EventPath,
+			EventPathType:         ec.be.EventPathType,
+			ActorAddress:          ec.be.ActorAddress,
+			AssetType:             ec.be.AssetType,
+			AssetID:               ec.be.AssetID,
+			FinalityState:         ec.be.FinalityState,
+			DecoderVersion:        ec.be.DecoderVersion,
+			SchemaVersion:         ec.be.SchemaVersion,
+		}
+		beModel.BalanceApplied = meetsBalanceThreshold(batch.Chain, beModel.FinalityState)
+		if beModel.BalanceApplied {
+			beModel.BalanceBefore = &balanceBefore
+			beModel.BalanceAfter = &balanceAfter
+		}
+		eventModels = append(eventModels, beModel)
+
+		// Update in-memory balance for subsequent events in same batch
+		if beModel.BalanceApplied {
+			accum.amount = balanceAfter
+			accum.exists = true
+
+			// Aggregate delta for bulk adjust
+			ak := adjustmentKey{
+				BalanceKey: store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: ""},
+				walletID:   batch.WalletID,
+				orgID:      batch.OrgID,
+			}
+			delta := new(big.Int)
+			if _, ok := delta.SetString(strings.TrimSpace(ec.be.Delta), 10); !ok {
+				err := fmt.Errorf("invalid delta value %q for event %s", ec.be.Delta, ec.be.EventID)
+				phase3Span.RecordError(err)
+				phase3Span.SetStatus(codes.Error, err.Error())
+				phase3Span.End()
+				return err
+			}
+			if existing, ok := aggregatedDeltas[ak]; ok {
+				existing.delta.Add(existing.delta, delta)
+				if ec.ntx.BlockCursor > existing.cursor {
+					existing.cursor = ec.ntx.BlockCursor
+					existing.txHash = ec.canonicalTxHash
 				}
-				deniedCache[deniedKey] = true
-				metrics.IngesterScamTokensDetected.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
-				metrics.IngesterDeniedEventsSkipped.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
-				continue
-			}
-
-			// 2b. Upsert balance event
-			chainData := be.ChainData
-			if chainData == nil {
-				chainData = json.RawMessage("{}")
-			}
-			beModel := &model.BalanceEvent{
-				Chain:                 batch.Chain,
-				Network:               batch.Network,
-				TransactionID:         txID,
-				TxHash:                canonicalTxHash,
-				OuterInstructionIndex: be.OuterInstructionIndex,
-				InnerInstructionIndex: be.InnerInstructionIndex,
-				TokenID:               tokenID,
-				ActivityType:          be.ActivityType,
-				EventAction:           be.EventAction,
-				ProgramID:             be.ProgramID,
-				Address:               be.Address,
-				CounterpartyAddress:   be.CounterpartyAddress,
-				Delta:                 be.Delta,
-				WatchedAddress:        &batch.Address,
-				WalletID:              batch.WalletID,
-				OrganizationID:        batch.OrgID,
-				BlockCursor:           ntx.BlockCursor,
-				BlockTime:             ntx.BlockTime,
-				ChainData:             chainData,
-				EventID:               be.EventID,
-				BlockHash:             be.BlockHash,
-				TxIndex:               be.TxIndex,
-				EventPath:             be.EventPath,
-				EventPathType:         be.EventPathType,
-				ActorAddress:          be.ActorAddress,
-				AssetType:             be.AssetType,
-				AssetID:               be.AssetID,
-				FinalityState:         be.FinalityState,
-				DecoderVersion:        be.DecoderVersion,
-				SchemaVersion:         be.SchemaVersion,
-			}
-			// Set balance_applied based on finality threshold
-			beModel.BalanceApplied = meetsBalanceThreshold(batch.Chain, beModel.FinalityState)
-
-			// Store balance snapshot when finality threshold is met
-			if beModel.BalanceApplied {
-				beModel.BalanceBefore = &balanceBefore
-				beModel.BalanceAfter = &balanceAfter
-			}
-
-			result, err := ing.balanceEventRepo.UpsertTx(ctx, dbTx, beModel)
-			if err != nil {
-				return fmt.Errorf("upsert balance event: %w", err)
-			}
-
-			shouldAdjust := (result.Inserted && beModel.BalanceApplied) || result.FinalityCrossed
-
-			if shouldAdjust {
-				// 2c. Update available balance (delta is already signed)
-				if err := ing.balanceRepo.AdjustBalanceTx(
-					ctx, dbTx,
-					batch.Chain, batch.Network, be.Address,
-					tokenID, batch.WalletID, batch.OrgID,
-					be.Delta, ntx.BlockCursor, canonicalTxHash, "",
-				); err != nil {
-					return fmt.Errorf("adjust balance: %w", err)
+			} else {
+				aggregatedDeltas[ak] = &adjustmentAccum{
+					delta:  delta,
+					cursor: ec.ntx.BlockCursor,
+					txHash: ec.canonicalTxHash,
 				}
+			}
 
-				// 2d. Staking balance tracking (STAKE/UNSTAKE)
-				if isStakingActivity(beModel.ActivityType) {
-					invertedDelta, negErr := negateDecimalString(be.Delta)
-					if negErr != nil {
-						return fmt.Errorf("negate staking delta: %w", negErr)
+			// Staking balance tracking
+			if isStakingActivity(beModel.ActivityType) {
+				invertedDelta, negErr := negateDecimalString(ec.be.Delta)
+				if negErr != nil {
+					phase3Span.RecordError(negErr)
+					phase3Span.SetStatus(codes.Error, negErr.Error())
+					phase3Span.End()
+					return fmt.Errorf("negate staking delta: %w", negErr)
+				}
+				sak := adjustmentKey{
+					BalanceKey: store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: "staked"},
+					walletID:   batch.WalletID,
+					orgID:      batch.OrgID,
+				}
+				stakeDelta := new(big.Int)
+				if _, ok := stakeDelta.SetString(strings.TrimSpace(invertedDelta), 10); !ok {
+					err := fmt.Errorf("invalid staking delta value %q for event %s", invertedDelta, ec.be.EventID)
+					phase3Span.RecordError(err)
+					phase3Span.SetStatus(codes.Error, err.Error())
+					phase3Span.End()
+					return err
+				}
+				if existing, ok := aggregatedDeltas[sak]; ok {
+					existing.delta.Add(existing.delta, stakeDelta)
+					if ec.ntx.BlockCursor > existing.cursor {
+						existing.cursor = ec.ntx.BlockCursor
+						existing.txHash = ec.canonicalTxHash
 					}
-					if err := ing.balanceRepo.AdjustBalanceTx(
-						ctx, dbTx,
-						batch.Chain, batch.Network, be.Address,
-						tokenID, batch.WalletID, batch.OrgID,
-						invertedDelta, ntx.BlockCursor, canonicalTxHash, "staked",
-					); err != nil {
-						return fmt.Errorf("adjust staked balance: %w", err)
+				} else {
+					aggregatedDeltas[sak] = &adjustmentAccum{
+						delta:  stakeDelta,
+						cursor: ec.ntx.BlockCursor,
+						txHash: ec.canonicalTxHash,
 					}
 				}
-
-				totalEvents++
 			}
+		}
+	}
+
+	phase3Span.SetAttributes(
+		attribute.Int("event_models_built", len(eventModels)),
+		attribute.Int("aggregated_deltas", len(aggregatedDeltas)),
+	)
+	phase3Span.End()
+
+	// ========== PHASE 4: Bulk Write ==========
+	_, phase4Span := tracing.Tracer("ingester").Start(ctx, "ingester.phase4_write")
+
+	// 4a. Bulk upsert balance events
+	if len(eventModels) > 0 {
+		bulkResult, err := ing.balanceEventRepo.BulkUpsertTx(ctx, dbTx, eventModels)
+		if err != nil {
+			phase4Span.RecordError(err)
+			phase4Span.SetStatus(codes.Error, err.Error())
+			phase4Span.End()
+			return fmt.Errorf("bulk upsert balance events: %w", err)
+		}
+		totalEvents = bulkResult.InsertedCount + bulkResult.FinalityCrossedCount
+	}
+
+	// 4b. Bulk adjust balances (aggregated deltas)
+	if len(aggregatedDeltas) > 0 {
+		adjustItems := make([]store.BulkAdjustItem, 0, len(aggregatedDeltas))
+		for ak, acc := range aggregatedDeltas {
+			adjustItems = append(adjustItems, store.BulkAdjustItem{
+				Address:     ak.Address,
+				TokenID:     ak.TokenID,
+				WalletID:    ak.walletID,
+				OrgID:       ak.orgID,
+				Delta:       acc.delta.String(),
+				Cursor:      acc.cursor,
+				TxHash:      acc.txHash,
+				BalanceType: ak.BalanceType,
+			})
+		}
+		if err := ing.balanceRepo.BulkAdjustBalanceTx(ctx, dbTx, batch.Chain, batch.Network, adjustItems); err != nil {
+			phase4Span.RecordError(err)
+			phase4Span.SetStatus(codes.Error, err.Error())
+			phase4Span.End()
+			return fmt.Errorf("bulk adjust balances: %w", err)
 		}
 	}
 
@@ -575,6 +808,9 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 			batch.NewCursorValue, batch.NewCursorSequence,
 			int64(len(batch.Transactions)),
 		); err != nil {
+			phase4Span.RecordError(err)
+			phase4Span.SetStatus(codes.Error, err.Error())
+			phase4Span.End()
 			return fmt.Errorf("update cursor: %w", err)
 		}
 	}
@@ -584,6 +820,9 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		ctx, dbTx,
 		batch.Chain, batch.Network, batch.NewCursorSequence,
 	); err != nil {
+		phase4Span.RecordError(err)
+		phase4Span.SetStatus(codes.Error, err.Error())
+		phase4Span.End()
 		return fmt.Errorf("update watermark: %w", err)
 	}
 
@@ -592,6 +831,9 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	if err := dbTx.Commit(); err != nil {
 		reconciled, reconcileErr := ing.reconcileAmbiguousCommitOutcome(ctx, batch, err)
 		if reconcileErr != nil {
+			phase4Span.RecordError(reconcileErr)
+			phase4Span.SetStatus(codes.Error, reconcileErr.Error())
+			phase4Span.End()
 			return reconcileErr
 		}
 		if reconciled {
@@ -605,12 +847,17 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				"cursor_value", batch.NewCursorValue,
 				"commit_error", err,
 			)
+			phase4Span.End()
 			return nil
 		}
+		phase4Span.RecordError(err)
+		phase4Span.SetStatus(codes.Error, err.Error())
+		phase4Span.End()
 		return fmt.Errorf("commit: %w", err)
 	}
 	ing.recordCommitLatencyMs(batch.Chain.String(), batch.Network.String(), time.Since(commitStart).Milliseconds())
 	committed = true
+	phase4Span.End()
 
 	metrics.IngesterBalanceEventsWritten.WithLabelValues(batch.Chain.String(), batch.Network.String()).Add(float64(totalEvents))
 	metrics.PipelineCursorSequence.WithLabelValues(batch.Chain.String(), batch.Network.String(), batch.Address).Set(float64(batch.NewCursorSequence))

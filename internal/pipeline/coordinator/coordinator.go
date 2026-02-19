@@ -13,6 +13,10 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	autotune "github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	"github.com/emperorhan/multichain-indexer/internal/store"
+	"github.com/emperorhan/multichain-indexer/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	otelTrace "go.opentelemetry.io/otel/trace"
 )
 
 // Coordinator iterates over watched addresses and creates FetchJobs.
@@ -262,10 +266,13 @@ func (c *Coordinator) Run(ctx context.Context) error {
 
 	runTick := func() error {
 		metrics.CoordinatorTicksTotal.WithLabelValues(chainLabel, networkLabel).Inc()
+		tickStart := time.Now()
 		if err := c.tick(ctx); err != nil {
 			metrics.CoordinatorTickErrors.WithLabelValues(chainLabel, networkLabel).Inc()
+			metrics.CoordinatorTickLatency.WithLabelValues(chainLabel, networkLabel).Observe(time.Since(tickStart).Seconds())
 			return fmt.Errorf("coordinator tick failed: %w", err)
 		}
+		metrics.CoordinatorTickLatency.WithLabelValues(chainLabel, networkLabel).Observe(time.Since(tickStart).Seconds())
 		return nil
 	}
 
@@ -290,8 +297,18 @@ func (c *Coordinator) Run(ctx context.Context) error {
 }
 
 func (c *Coordinator) tick(ctx context.Context) error {
+	ctx, span := tracing.Tracer("coordinator").Start(ctx, "coordinator.tick",
+		otelTrace.WithAttributes(
+			attribute.String("chain", string(c.chain)),
+			attribute.String("network", string(c.network)),
+		),
+	)
+	defer span.End()
+
 	addresses, err := c.watchedAddrRepo.GetActive(ctx, c.chain, c.network)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 	if len(addresses) == 0 {
@@ -302,7 +319,10 @@ func (c *Coordinator) tick(ctx context.Context) error {
 	if c.headProvider != nil {
 		fetchCutoffSeq, err = c.headProvider.GetHeadSequence(ctx)
 		if err != nil {
-			return fmt.Errorf("resolve tick cutoff head: %w", err)
+			err = fmt.Errorf("resolve tick cutoff head: %w", err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return err
 		}
 		if fetchCutoffSeq < 0 {
 			fetchCutoffSeq = 0
@@ -443,6 +463,11 @@ func (c *Coordinator) tick(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+
+	span.SetAttributes(
+		attribute.Int("address_count", len(addresses)),
+		attribute.Int("group_count", len(groups)),
+	)
 
 	return nil
 }

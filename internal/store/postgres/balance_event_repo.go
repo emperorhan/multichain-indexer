@@ -256,3 +256,27 @@ func (r *BalanceEventRepo) insertByCanonicalID(ctx context.Context, tx *sql.Tx, 
 	}
 	return inserted, nil
 }
+
+// BulkUpsertTx upserts multiple balance events by delegating to UpsertTx for each event
+// and aggregating the results.
+func (r *BalanceEventRepo) BulkUpsertTx(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+	if len(events) == 0 {
+		return store.BulkUpsertEventResult{}, nil
+	}
+
+	var result store.BulkUpsertEventResult
+	for _, ev := range events {
+		ur, err := r.UpsertTx(ctx, tx, ev)
+		if err != nil {
+			return result, fmt.Errorf("bulk upsert balance event (event_id=%s): %w", ev.EventID, err)
+		}
+		if ur.Inserted {
+			result.InsertedCount++
+		}
+		if ur.FinalityCrossed {
+			result.FinalityCrossedCount++
+		}
+	}
+
+	return result, nil
+}

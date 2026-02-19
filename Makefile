@@ -1,4 +1,4 @@
-.PHONY: build run test test-sidecar lint proto migrate migrate-down sidecar-build sidecar-run docker-up docker-down mock-gen
+.PHONY: build run test test-sidecar lint proto migrate migrate-down sidecar-build sidecar-run docker-up docker-down mock-gen docker-build-indexer
 
 # Go
 BINARY_NAME=multichain-indexer
@@ -67,3 +67,6 @@ docker-down:
 
 docker-logs:
 	docker-compose -f deployments/docker-compose.yaml logs -f
+
+docker-build-indexer:
+	docker build -t multichain-indexer:latest .

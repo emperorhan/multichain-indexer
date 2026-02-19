@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -57,39 +58,58 @@ type SidecarConfig struct {
 	TLSCA      string // CA cert to verify server (PEM path)
 }
 
+type RPCRateLimitConfig struct {
+	RPS   float64
+	Burst int
+}
+
 type SolanaConfig struct {
-	RPCURL  string
-	Network string
+	RPCURL    string
+	Network   string
+	RateLimit RPCRateLimitConfig
+	DBURL     string // optional chain-specific DB URL (env: SOLANA_DB_URL)
 }
 
 type BaseConfig struct {
-	RPCURL  string
-	Network string
+	RPCURL    string
+	Network   string
+	RateLimit RPCRateLimitConfig
+	DBURL     string // optional chain-specific DB URL (env: BASE_DB_URL)
 }
 
 type EthereumConfig struct {
-	RPCURL  string
-	Network string
+	RPCURL    string
+	Network   string
+	RateLimit RPCRateLimitConfig
+	DBURL     string // optional chain-specific DB URL (env: ETHEREUM_DB_URL)
 }
 
 type BTCConfig struct {
-	RPCURL  string
-	Network string
+	RPCURL    string
+	Network   string
+	RateLimit RPCRateLimitConfig
+	DBURL     string // optional chain-specific DB URL (env: BTC_DB_URL)
 }
 
 type PolygonConfig struct {
-	RPCURL  string
-	Network string
+	RPCURL    string
+	Network   string
+	RateLimit RPCRateLimitConfig
+	DBURL     string // optional chain-specific DB URL (env: POLYGON_DB_URL)
 }
 
 type ArbitrumConfig struct {
-	RPCURL  string
-	Network string
+	RPCURL    string
+	Network   string
+	RateLimit RPCRateLimitConfig
+	DBURL     string // optional chain-specific DB URL (env: ARBITRUM_DB_URL)
 }
 
 type BSCConfig struct {
-	RPCURL  string
-	Network string
+	RPCURL    string
+	Network   string
+	RateLimit RPCRateLimitConfig
+	DBURL     string // optional chain-specific DB URL (env: BSC_DB_URL)
 }
 
 const (
@@ -150,6 +170,9 @@ type ServerConfig struct {
 	HealthPort      int
 	MetricsAuthUser string
 	MetricsAuthPass string
+	AdminAddr       string
+	AdminAuthUser   string
+	AdminAuthPass   string
 }
 
 type LogConfig struct {
@@ -157,9 +180,10 @@ type LogConfig struct {
 }
 
 type TracingConfig struct {
-	Enabled  bool
-	Endpoint string // OTLP gRPC endpoint (e.g. "localhost:4317")
-	Insecure bool   // Use plaintext gRPC (true for local, false for TLS-enabled collectors)
+	Enabled     bool
+	Endpoint    string  // OTLP gRPC endpoint (e.g. "localhost:4317")
+	Insecure    bool    // Use plaintext gRPC (true for local, false for TLS-enabled collectors)
+	SampleRatio float64 // Fraction of traces to sample (0.0–1.0). 0 defaults to 0.1.
 }
 
 func Load() (*Config, error) {
@@ -178,8 +202,8 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		DB: DBConfig{
 			URL:                 getEnv("DB_URL", ""),
-			MaxOpenConns:        getEnvInt("DB_MAX_OPEN_CONNS", 25),
-			MaxIdleConns:        getEnvInt("DB_MAX_IDLE_CONNS", 5),
+			MaxOpenConns:        getEnvInt("DB_MAX_OPEN_CONNS", 50),
+			MaxIdleConns:        getEnvInt("DB_MAX_IDLE_CONNS", 10),
 			ConnMaxLifetime:     time.Duration(getEnvInt("DB_CONN_MAX_LIFETIME_MIN", 30)) * time.Minute,
 			StatementTimeoutMS:  statementTimeoutMS,
 			PoolStatsIntervalMS: poolStatsIntervalMS,
@@ -198,30 +222,65 @@ func Load() (*Config, error) {
 		Solana: SolanaConfig{
 			RPCURL:  getEnvAny([]string{"SOLANA_DEVNET_RPC_URL", "SOLANA_RPC_URL"}, "https://api.devnet.solana.com"),
 			Network: getEnv("SOLANA_NETWORK", "devnet"),
+			RateLimit: RPCRateLimitConfig{
+				RPS:   getEnvFloat("SOLANA_RPC_RATE_LIMIT", 10),
+				Burst: getEnvInt("SOLANA_RPC_BURST", 20),
+			},
+			DBURL: getEnv("SOLANA_DB_URL", ""),
 		},
 		Base: BaseConfig{
 			RPCURL:  getEnvAny([]string{"BASE_SEPOLIA_RPC_URL", "BASE_RPC_URL"}, ""),
 			Network: getEnv("BASE_NETWORK", "sepolia"),
+			RateLimit: RPCRateLimitConfig{
+				RPS:   getEnvFloat("BASE_RPC_RATE_LIMIT", 25),
+				Burst: getEnvInt("BASE_RPC_BURST", 50),
+			},
+			DBURL: getEnv("BASE_DB_URL", ""),
 		},
 		Ethereum: EthereumConfig{
 			RPCURL:  getEnvAny([]string{"ETH_MAINNET_RPC_URL", "ETHEREUM_RPC_URL"}, ""),
 			Network: getEnv("ETHEREUM_NETWORK", "mainnet"),
+			RateLimit: RPCRateLimitConfig{
+				RPS:   getEnvFloat("ETH_RPC_RATE_LIMIT", 25),
+				Burst: getEnvInt("ETH_RPC_BURST", 50),
+			},
+			DBURL: getEnv("ETHEREUM_DB_URL", ""),
 		},
 		BTC: BTCConfig{
 			RPCURL:  getEnvAny([]string{"BTC_TESTNET_RPC_URL", "BTC_RPC_URL"}, ""),
 			Network: getEnv("BTC_NETWORK", "testnet"),
+			RateLimit: RPCRateLimitConfig{
+				RPS:   getEnvFloat("BTC_RPC_RATE_LIMIT", 5),
+				Burst: getEnvInt("BTC_RPC_BURST", 10),
+			},
+			DBURL: getEnv("BTC_DB_URL", ""),
 		},
 		Polygon: PolygonConfig{
 			RPCURL:  getEnvAny([]string{"POLYGON_RPC_URL", "POLYGON_MAINNET_RPC_URL"}, ""),
 			Network: getEnv("POLYGON_NETWORK", "mainnet"),
+			RateLimit: RPCRateLimitConfig{
+				RPS:   getEnvFloat("POLYGON_RPC_RATE_LIMIT", 25),
+				Burst: getEnvInt("POLYGON_RPC_BURST", 50),
+			},
+			DBURL: getEnv("POLYGON_DB_URL", ""),
 		},
 		Arbitrum: ArbitrumConfig{
 			RPCURL:  getEnvAny([]string{"ARBITRUM_RPC_URL", "ARBITRUM_MAINNET_RPC_URL"}, ""),
 			Network: getEnv("ARBITRUM_NETWORK", "mainnet"),
+			RateLimit: RPCRateLimitConfig{
+				RPS:   getEnvFloat("ARBITRUM_RPC_RATE_LIMIT", 25),
+				Burst: getEnvInt("ARBITRUM_RPC_BURST", 50),
+			},
+			DBURL: getEnv("ARBITRUM_DB_URL", ""),
 		},
 		BSC: BSCConfig{
 			RPCURL:  getEnvAny([]string{"BSC_RPC_URL", "BSC_MAINNET_RPC_URL"}, ""),
 			Network: getEnv("BSC_NETWORK", "mainnet"),
+			RateLimit: RPCRateLimitConfig{
+				RPS:   getEnvFloat("BSC_RPC_RATE_LIMIT", 25),
+				Burst: getEnvInt("BSC_RPC_BURST", 50),
+			},
+			DBURL: getEnv("BSC_DB_URL", ""),
 		},
 		Runtime: RuntimeConfig{
 			DeploymentMode: strings.ToLower(getEnv("RUNTIME_DEPLOYMENT_MODE", RuntimeDeploymentModeLikeGroup)),
@@ -259,14 +318,18 @@ func Load() (*Config, error) {
 			HealthPort:      getEnvInt("HEALTH_PORT", 8080),
 			MetricsAuthUser: getEnv("METRICS_AUTH_USER", ""),
 			MetricsAuthPass: getEnv("METRICS_AUTH_PASS", ""),
+			AdminAddr:       getEnv("ADMIN_ADDR", ""),
+			AdminAuthUser:   getEnv("ADMIN_AUTH_USER", ""),
+			AdminAuthPass:   getEnv("ADMIN_AUTH_PASS", ""),
 		},
 		Log: LogConfig{
 			Level: getEnv("LOG_LEVEL", "info"),
 		},
 		Tracing: TracingConfig{
-			Enabled:  getEnvBool("OTEL_TRACING_ENABLED", false),
-			Endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-			Insecure: getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
+			Enabled:     getEnvBool("OTEL_TRACING_ENABLED", false),
+			Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+			Insecure:    getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
+			SampleRatio: getEnvFloat("OTEL_TRACE_SAMPLE_RATIO", 0.1),
 		},
 	}
 
@@ -354,6 +417,59 @@ func (c *Config) validate() error {
 	}
 	if requiredChains["bsc"] && c.BSC.RPCURL == "" {
 		return fmt.Errorf("BSC_RPC_URL is required for selected runtime targets")
+	}
+
+	if c.Server.AdminAddr != "" && !isValidAddr(c.Server.AdminAddr) {
+		return fmt.Errorf("ADMIN_ADDR %q must be in host:port or :port format", c.Server.AdminAddr)
+	}
+
+	if err := validateRateLimitConfig("SOLANA", c.Solana.RateLimit); err != nil {
+		return err
+	}
+	if err := validateRateLimitConfig("BASE", c.Base.RateLimit); err != nil {
+		return err
+	}
+	if err := validateRateLimitConfig("ETH", c.Ethereum.RateLimit); err != nil {
+		return err
+	}
+	if err := validateRateLimitConfig("BTC", c.BTC.RateLimit); err != nil {
+		return err
+	}
+	if err := validateRateLimitConfig("POLYGON", c.Polygon.RateLimit); err != nil {
+		return err
+	}
+	if err := validateRateLimitConfig("ARBITRUM", c.Arbitrum.RateLimit); err != nil {
+		return err
+	}
+	if err := validateRateLimitConfig("BSC", c.BSC.RateLimit); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func isValidAddr(addr string) bool {
+	if addr == "" {
+		return false
+	}
+	parts := strings.Split(addr, ":")
+	if len(parts) < 2 {
+		return false
+	}
+	portStr := parts[len(parts)-1]
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return false
+	}
+	return true
+}
+
+func validateRateLimitConfig(prefix string, rl RPCRateLimitConfig) error {
+	if rl.RPS < 0 {
+		return fmt.Errorf("%s_RPC_RATE_LIMIT must be non-negative, got %f", prefix, rl.RPS)
+	}
+	if rl.Burst < 0 {
+		return fmt.Errorf("%s_RPC_BURST must be non-negative, got %d", prefix, rl.Burst)
 	}
 	return nil
 }
@@ -523,12 +639,16 @@ func normalizeCSVValues(values []string) []string {
 }
 
 func getEnvInt(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			return i
-		}
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
 	}
-	return fallback
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		slog.Warn("invalid integer env var, using fallback", "key", key, "value", v, "fallback", fallback)
+		return fallback
+	}
+	return i
 }
 
 func getEnvIntBounded(key string, fallback int, min int, max int) (int, error) {
@@ -547,6 +667,19 @@ func getEnvIntBounded(key string, fallback int, min int, max int) (int, error) {
 	}
 
 	return value, nil
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		slog.Warn("invalid float env var, using fallback", "key", key, "value", v, "fallback", fallback)
+		return fallback
+	}
+	return f
 }
 
 func getEnvBool(key string, fallback bool) bool {

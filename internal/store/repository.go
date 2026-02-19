@@ -30,6 +30,7 @@ type CursorRepository interface {
 // TransactionRepository provides access to transaction data.
 type TransactionRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transaction) (uuid.UUID, error)
+	BulkUpsertTx(ctx context.Context, tx *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error)
 }
 
 // UpsertResult describes the outcome of a BalanceEvent upsert.
@@ -38,9 +39,41 @@ type UpsertResult struct {
 	FinalityCrossed bool // Finality threshold crossed (balance_applied false → true).
 }
 
+// BulkUpsertEventResult describes the outcome of a bulk balance event upsert.
+type BulkUpsertEventResult struct {
+	InsertedCount       int
+	FinalityCrossedCount int
+}
+
 // BalanceEventRepository provides access to balance event data.
 type BalanceEventRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (UpsertResult, error)
+	BulkUpsertTx(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (BulkUpsertEventResult, error)
+}
+
+// BalanceKey uniquely identifies a balance record.
+type BalanceKey struct {
+	Address     string
+	TokenID     uuid.UUID
+	BalanceType string
+}
+
+// BalanceInfo holds the balance amount and existence flag.
+type BalanceInfo struct {
+	Amount string
+	Exists bool
+}
+
+// BulkAdjustItem represents a single balance adjustment in a bulk operation.
+type BulkAdjustItem struct {
+	Address     string
+	TokenID     uuid.UUID
+	WalletID    *string
+	OrgID       *string
+	Delta       string
+	Cursor      int64
+	TxHash      string
+	BalanceType string
 }
 
 // BalanceRepository provides access to balance data.
@@ -49,13 +82,17 @@ type BalanceRepository interface {
 	GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, error)
 	GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (amount string, exists bool, err error)
 	GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error)
+	BulkGetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, keys []BalanceKey) (map[BalanceKey]BalanceInfo, error)
+	BulkAdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, items []BulkAdjustItem) error
 }
 
 // TokenRepository provides access to token data.
 type TokenRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Token) (uuid.UUID, error)
+	BulkUpsertTx(ctx context.Context, tx *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error)
 	FindByContractAddress(ctx context.Context, chain model.Chain, network model.Network, contractAddress string) (*model.Token, error)
 	IsDeniedTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string) (bool, error)
+	BulkIsDeniedTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddresses []string) (map[string]bool, error)
 	DenyTokenTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string, reason string, source string, score int16, signals []string) error
 	AllowTokenTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string, reason string) error
 }
@@ -65,6 +102,7 @@ type IndexerConfigRepository interface {
 	Get(ctx context.Context, chain model.Chain, network model.Network) (*model.IndexerConfig, error)
 	Upsert(ctx context.Context, c *model.IndexerConfig) error
 	UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
+	GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)
 }
 
 // RuntimeConfigRepository provides access to runtime-overridable configuration.

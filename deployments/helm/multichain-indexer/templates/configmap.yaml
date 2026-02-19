@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "multichain-indexer.configMapName" . }}
+  labels:
+    {{- include "multichain-indexer.labels" . | nindent 4 }}
+data:
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  SIDECAR_ADDR: {{ .Values.config.sidecarAddr | quote }}
+  HEALTH_PORT: {{ .Values.config.healthPort | quote }}
+  ADMIN_ADDR: {{ .Values.config.adminAddr | quote }}
+
+  # Solana
+  SOLANA_RPC_URL: {{ .Values.config.solanaRpcUrl | quote }}
+  SOLANA_NETWORK: {{ .Values.config.solanaNetwork | quote }}
+  SOLANA_WATCHED_ADDRESSES: {{ .Values.config.solanaWatchedAddresses | quote }}
+
+  # Runtime
+  RUNTIME_DEPLOYMENT_MODE: {{ .Values.config.runtimeDeploymentMode | quote }}
+  RUNTIME_LIKE_GROUP: {{ .Values.config.runtimeLikeGroup | quote }}
+  RUNTIME_CHAIN_TARGETS: {{ .Values.config.runtimeChainTargets | quote }}
+
+  # Pipeline
+  BATCH_SIZE: {{ .Values.config.batchSize | quote }}
+  FETCH_WORKERS: {{ .Values.config.fetchWorkers | quote }}
+  NORMALIZER_WORKERS: {{ .Values.config.normalizerWorkers | quote }}
+  INDEXING_INTERVAL_MS: {{ .Values.config.indexingIntervalMs | quote }}
+  CHANNEL_BUFFER_SIZE: {{ .Values.config.channelBufferSize | quote }}
+
+  # EVM chains
+  BASE_RPC_URL: {{ .Values.config.baseRpcUrl | quote }}
+  ETHEREUM_RPC_URL: {{ .Values.config.ethereumRpcUrl | quote }}
+  BTC_RPC_URL: {{ .Values.config.btcRpcUrl | quote }}
+  POLYGON_RPC_URL: {{ .Values.config.polygonRpcUrl | quote }}
+  ARBITRUM_RPC_URL: {{ .Values.config.arbitrumRpcUrl | quote }}
+  BSC_RPC_URL: {{ .Values.config.bscRpcUrl | quote }}
+
+  # Per-chain watched addresses
+  BASE_WATCHED_ADDRESSES: {{ .Values.config.baseWatchedAddresses | quote }}
+  ETH_WATCHED_ADDRESSES: {{ .Values.config.ethWatchedAddresses | quote }}
+  BTC_WATCHED_ADDRESSES: {{ .Values.config.btcWatchedAddresses | quote }}
+  POLYGON_WATCHED_ADDRESSES: {{ .Values.config.polygonWatchedAddresses | quote }}
+  ARBITRUM_WATCHED_ADDRESSES: {{ .Values.config.arbitrumWatchedAddresses | quote }}
+  BSC_WATCHED_ADDRESSES: {{ .Values.config.bscWatchedAddresses | quote }}
+
+  # Database tuning
+  DB_MAX_OPEN_CONNS: {{ .Values.config.dbMaxOpenConns | quote }}
+  DB_MAX_IDLE_CONNS: {{ .Values.config.dbMaxIdleConns | quote }}
+  DB_CONN_MAX_LIFETIME_MIN: {{ .Values.config.dbConnMaxLifetimeMin | quote }}
+  DB_STATEMENT_TIMEOUT_MS: {{ .Values.config.dbStatementTimeoutMs | quote }}
+
+  # Sidecar TLS
+  SIDECAR_TLS_ENABLED: {{ .Values.config.sidecarTlsEnabled | quote }}
+  {{- if .Values.config.sidecarTlsCa }}
+  SIDECAR_TLS_CA: {{ .Values.config.sidecarTlsCa | quote }}
+  {{- end }}
+  {{- if .Values.config.sidecarTlsCert }}
+  SIDECAR_TLS_CERT: {{ .Values.config.sidecarTlsCert | quote }}
+  {{- end }}
+  {{- if .Values.config.sidecarTlsKey }}
+  SIDECAR_TLS_KEY: {{ .Values.config.sidecarTlsKey | quote }}
+  {{- end }}
+
+  # Tracing
+  OTEL_TRACING_ENABLED: {{ .Values.config.otelTracingEnabled | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.otelExporterEndpoint | quote }}
+  OTEL_EXPORTER_OTLP_INSECURE: {{ .Values.config.otelExporterInsecure | quote }}
+  OTEL_TRACE_SAMPLE_RATIO: {{ .Values.config.otelTraceSampleRatio | quote }}

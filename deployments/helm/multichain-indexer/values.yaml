@@ -1,0 +1,218 @@
+# -- Number of indexer replicas
+replicaCount: 1
+
+image:
+  # -- Container image repository
+  repository: multichain-indexer
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag (default is the chart appVersion)
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+# -- Override the release name
+nameOverride: ""
+# -- Override the full release name
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Whether to create a ServiceAccount
+  create: true
+  # -- Annotations to add to the ServiceAccount
+  annotations: {}
+  # -- The name of the ServiceAccount (auto-generated if not set)
+  name: ""
+
+podAnnotations: {}
+
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  # -- Health/metrics port
+  healthPort: 8080
+  # -- Admin API port (set to 0 to disable)
+  adminPort: 9090
+
+# ---------------------------------------------------------------------------
+# Resource limits
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "250m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+# ---------------------------------------------------------------------------
+# Autoscaling (HPA)
+# ---------------------------------------------------------------------------
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+  targetMemoryUtilizationPercentage: 80
+
+# ---------------------------------------------------------------------------
+# Health probes
+# ---------------------------------------------------------------------------
+healthCheck:
+  # -- Port the indexer exposes health endpoints on
+  port: 8080
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: health
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 5
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# ---------------------------------------------------------------------------
+# Node scheduling
+# ---------------------------------------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ---------------------------------------------------------------------------
+# Environment: non-secret configuration (written to ConfigMap)
+# ---------------------------------------------------------------------------
+config:
+  # -- Log level (debug, info, warn, error)
+  logLevel: "info"
+
+  # -- Sidecar gRPC address
+  sidecarAddr: "sidecar:50051"
+
+  # -- Health server port
+  healthPort: "8080"
+
+  # -- Admin server address (leave empty to disable)
+  adminAddr: ""
+
+  # -- Solana RPC endpoint
+  solanaRpcUrl: "https://api.devnet.solana.com"
+
+  # -- Solana network name
+  solanaNetwork: "devnet"
+
+  # -- Runtime deployment mode (like-group | independent)
+  runtimeDeploymentMode: "like-group"
+
+  # -- Runtime like-group (solana-like | evm-like | btc-like, or empty for all)
+  runtimeLikeGroup: ""
+
+  # -- Runtime chain targets (comma-separated, e.g. "solana-devnet,base-sepolia")
+  runtimeChainTargets: ""
+
+  # -- Pipeline settings
+  batchSize: "100"
+  fetchWorkers: "2"
+  normalizerWorkers: "2"
+  indexingIntervalMs: "5000"
+  channelBufferSize: "10"
+
+  # -- Watched addresses (comma-separated per chain)
+  solanaWatchedAddresses: ""
+  baseWatchedAddresses: ""
+  ethWatchedAddresses: ""
+  btcWatchedAddresses: ""
+  polygonWatchedAddresses: ""
+  arbitrumWatchedAddresses: ""
+  bscWatchedAddresses: ""
+
+  # -- EVM chain RPC URLs (leave empty to skip)
+  baseRpcUrl: ""
+  ethereumRpcUrl: ""
+  btcRpcUrl: ""
+  polygonRpcUrl: ""
+  arbitrumRpcUrl: ""
+  bscRpcUrl: ""
+
+  # -- Database tuning
+  dbMaxOpenConns: "25"
+  dbMaxIdleConns: "5"
+  dbConnMaxLifetimeMin: "30"
+  dbStatementTimeoutMs: "30000"
+
+  # -- Sidecar TLS (enable by default in production)
+  sidecarTlsEnabled: "true"
+  sidecarTlsCa: ""
+  sidecarTlsCert: ""
+  sidecarTlsKey: ""
+
+  # -- OpenTelemetry tracing
+  otelTracingEnabled: "false"
+  otelExporterEndpoint: ""
+  otelExporterInsecure: "false"
+  otelTraceSampleRatio: "0.1"
+
+# -- Extra environment variables injected into the Deployment (list of {name, value})
+extraEnv: []
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+secret:
+  # -- If true, a Kubernetes Secret is created from the values below.
+  #    Set to false when you provide secrets via an external mechanism
+  #    (e.g. ExternalSecrets, Vault Agent).
+  create: true
+  # -- Database connection string (REQUIRED: must be set for production)
+  dbUrl: ""
+  # -- Redis connection string (REQUIRED: must be set for production)
+  redisUrl: ""
+  # -- Metrics endpoint Basic Auth credentials (leave empty to disable)
+  metricsAuthUser: ""
+  metricsAuthPass: ""
+
+# -- Name of an existing Secret to use instead of the auto-created one.
+#    The Secret must contain keys: DB_URL, REDIS_URL (and optionally
+#    METRICS_AUTH_USER, METRICS_AUTH_PASS).
+existingSecret: ""
+
+# ---------------------------------------------------------------------------
+# Network Policy
+# ---------------------------------------------------------------------------
+networkPolicy:
+  # -- Whether to create a NetworkPolicy
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Monitoring
+# ---------------------------------------------------------------------------
+metrics:
+  # -- Whether to add Prometheus scrape annotations to the pod
+  enabled: true
+  # -- Path for metrics endpoint
+  path: /metrics
+  # -- Port for metrics endpoint (uses healthCheck.port)
+  port: 8080

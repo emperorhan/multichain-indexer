@@ -14,8 +14,13 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 
+RUN addgroup -S app && adduser -S app -G app
+
 ENV PORT=50051
 ENV NODE_ENV=production
 
 EXPOSE 50051
+
+USER app
+
 CMD ["node", "dist/index.js"]

@@ -53,12 +53,31 @@ func (r *IndexerConfigRepo) Upsert(ctx context.Context, c *model.IndexerConfig) 
 	return nil
 }
 
+func (r *IndexerConfigRepo) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
+	var w model.PipelineWatermark
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, chain, network, head_sequence, ingested_sequence, last_heartbeat_at, created_at, updated_at
+		FROM pipeline_watermarks
+		WHERE chain = $1 AND network = $2
+	`, chain, network).Scan(
+		&w.ID, &w.Chain, &w.Network, &w.HeadSequence, &w.IngestedSequence,
+		&w.LastHeartbeatAt, &w.CreatedAt, &w.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get watermark: %w", err)
+	}
+	return &w, nil
+}
+
 func (r *IndexerConfigRepo) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO pipeline_watermarks (chain, network, ingested_sequence, last_heartbeat_at)
 		VALUES ($1, $2, $3, now())
 		ON CONFLICT (chain, network) DO UPDATE SET
-			ingested_sequence = GREATEST(pipeline_watermarks.ingested_sequence, $3),
+			ingested_sequence = $3,
 			last_heartbeat_at = now(),
 			updated_at = now()
 	`, chain, network, ingestedSequence)

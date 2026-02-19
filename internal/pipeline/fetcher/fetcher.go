@@ -258,6 +258,14 @@ func (f *Fetcher) fetchSignaturesWithRetry(
 	cursor *string,
 	batchSize int,
 ) ([]chain.SignatureInfo, int, error) {
+	ctx, span := tracing.Tracer("fetcher").Start(ctx, "fetcher.fetchSignatures",
+		otelTrace.WithAttributes(
+			attribute.String("address", job.Address),
+			attribute.Int("batch_size", batchSize),
+		),
+	)
+	defer span.End()
+
 	const stage = "fetcher.fetch_signatures"
 
 	currentBatch := batchSize
@@ -272,16 +280,22 @@ func (f *Fetcher) fetchSignaturesWithRetry(
 		sigs, err := f.fetchNewSignatures(ctx, job.Address, cursor, currentBatch, job.FetchCutoffSeq)
 		f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
 		if err == nil {
+			span.SetAttributes(attribute.Int("signatures_found", len(sigs)))
 			return sigs, currentBatch, nil
 		}
 		lastErr = err
 		lastDecision = retry.Classify(err)
 
 		if ctx.Err() != nil {
+			span.RecordError(ctx.Err())
+			span.SetStatus(codes.Error, ctx.Err().Error())
 			return nil, currentBatch, ctx.Err()
 		}
 		if !lastDecision.IsTransient() {
-			return nil, currentBatch, fmt.Errorf("terminal_failure stage=%s attempt=%d reason=%s: %w", stage, attempt, lastDecision.Reason, err)
+			termErr := fmt.Errorf("terminal_failure stage=%s attempt=%d reason=%s: %w", stage, attempt, lastDecision.Reason, err)
+			span.RecordError(termErr)
+			span.SetStatus(codes.Error, termErr.Error())
+			return nil, currentBatch, termErr
 		}
 		if attempt == attempts {
 			break
@@ -314,11 +328,16 @@ func (f *Fetcher) fetchSignaturesWithRetry(
 
 		delay := f.retryDelay(attempt)
 		if sleepErr := f.sleep(ctx, delay); sleepErr != nil {
+			span.RecordError(sleepErr)
+			span.SetStatus(codes.Error, sleepErr.Error())
 			return nil, currentBatch, sleepErr
 		}
 	}
 
-	return nil, currentBatch, fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, attempts, lastDecision.Reason, lastErr)
+	exhaustedErr := fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, attempts, lastDecision.Reason, lastErr)
+	span.RecordError(exhaustedErr)
+	span.SetStatus(codes.Error, exhaustedErr.Error())
+	return nil, currentBatch, exhaustedErr
 }
 
 func (f *Fetcher) fetchNewSignatures(
@@ -342,6 +361,14 @@ func (f *Fetcher) fetchTransactionsWithRetry(
 	job event.FetchJob,
 	sigs []chain.SignatureInfo,
 ) ([]chain.SignatureInfo, []json.RawMessage, int, error) {
+	ctx, span := tracing.Tracer("fetcher").Start(ctx, "fetcher.fetchTransactions",
+		otelTrace.WithAttributes(
+			attribute.String("address", job.Address),
+			attribute.Int("signature_count", len(sigs)),
+		),
+	)
+	defer span.End()
+
 	const stage = "fetcher.fetch_transactions"
 
 	currentBatch := len(sigs)
@@ -362,16 +389,22 @@ func (f *Fetcher) fetchTransactionsWithRetry(
 		rawTxs, err := f.adapter.FetchTransactions(ctx, sigHashes)
 		f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
 		if err == nil {
+			span.SetAttributes(attribute.Int("transactions_fetched", len(selected)))
 			return selected, rawTxs, currentBatch, nil
 		}
 		lastErr = err
 		lastDecision = retry.Classify(err)
 
 		if ctx.Err() != nil {
+			span.RecordError(ctx.Err())
+			span.SetStatus(codes.Error, ctx.Err().Error())
 			return nil, nil, currentBatch, ctx.Err()
 		}
 		if !lastDecision.IsTransient() {
-			return nil, nil, currentBatch, fmt.Errorf("terminal_failure stage=%s attempt=%d reason=%s: %w", stage, attempt, lastDecision.Reason, err)
+			termErr := fmt.Errorf("terminal_failure stage=%s attempt=%d reason=%s: %w", stage, attempt, lastDecision.Reason, err)
+			span.RecordError(termErr)
+			span.SetStatus(codes.Error, termErr.Error())
+			return nil, nil, currentBatch, termErr
 		}
 		if attempt == attempts {
 			break
@@ -402,11 +435,16 @@ func (f *Fetcher) fetchTransactionsWithRetry(
 
 		delay := f.retryDelay(attempt)
 		if sleepErr := f.sleep(ctx, delay); sleepErr != nil {
+			span.RecordError(sleepErr)
+			span.SetStatus(codes.Error, sleepErr.Error())
 			return nil, nil, currentBatch, sleepErr
 		}
 	}
 
-	return nil, nil, currentBatch, fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, attempts, lastDecision.Reason, lastErr)
+	exhaustedErr := fmt.Errorf("transient_recovery_exhausted stage=%s attempts=%d reason=%s: %w", stage, attempts, lastDecision.Reason, lastErr)
+	span.RecordError(exhaustedErr)
+	span.SetStatus(codes.Error, exhaustedErr.Error())
+	return nil, nil, currentBatch, exhaustedErr
 }
 
 func (f *Fetcher) recordRPCResult(chain, network string, isError bool) {

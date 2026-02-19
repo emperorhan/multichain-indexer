@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type TokenRepo struct {
@@ -140,4 +142,91 @@ func (r *TokenRepo) AllowTokenTx(ctx context.Context, tx *sql.Tx, chain model.Ch
 	}
 
 	return nil
+}
+
+// BulkUpsertTx inserts multiple tokens in a single multi-VALUES INSERT...ON CONFLICT RETURNING id.
+// Returns a map of contractAddress -> uuid.UUID for all upserted tokens.
+func (r *TokenRepo) BulkUpsertTx(ctx context.Context, tx *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+	if len(tokens) == 0 {
+		return make(map[string]uuid.UUID), nil
+	}
+
+	const cols = 8 // number of columns per row
+	args := make([]interface{}, 0, len(tokens)*cols)
+	valuesClauses := make([]string, 0, len(tokens))
+
+	for i, t := range tokens {
+		base := i * cols
+		valuesClauses = append(valuesClauses, fmt.Sprintf(
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5,
+			base+6, base+7, base+8,
+		))
+		args = append(args,
+			t.Chain, t.Network, t.ContractAddress, t.Symbol,
+			t.Name, t.Decimals, t.TokenType, t.ChainData,
+		)
+	}
+
+	query := fmt.Sprintf(`
+		INSERT INTO tokens (chain, network, contract_address, symbol, name, decimals, token_type, chain_data)
+		VALUES %s
+		ON CONFLICT (chain, network, contract_address) DO UPDATE SET
+			chain = tokens.chain
+		RETURNING contract_address, id
+	`, strings.Join(valuesClauses, ", "))
+
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("bulk upsert tokens: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]uuid.UUID, len(tokens))
+	for rows.Next() {
+		var contractAddr string
+		var id uuid.UUID
+		if err := rows.Scan(&contractAddr, &id); err != nil {
+			return nil, fmt.Errorf("bulk upsert tokens scan: %w", err)
+		}
+		result[contractAddr] = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("bulk upsert tokens rows: %w", err)
+	}
+
+	return result, nil
+}
+
+// BulkIsDeniedTx checks if multiple tokens are denied in a single query.
+// Returns a map of contractAddress -> isDenied for all found tokens.
+// Tokens not found in the DB are not included in the result map.
+func (r *TokenRepo) BulkIsDeniedTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddresses []string) (map[string]bool, error) {
+	if len(contractAddresses) == 0 {
+		return make(map[string]bool), nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT contract_address, is_denied FROM tokens
+		WHERE chain = $1 AND network = $2 AND contract_address = ANY($3)
+	`, chain, network, pq.Array(contractAddresses))
+	if err != nil {
+		return nil, fmt.Errorf("bulk check tokens denied: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]bool, len(contractAddresses))
+	for rows.Next() {
+		var addr string
+		var denied bool
+		if err := rows.Scan(&addr, &denied); err != nil {
+			return nil, fmt.Errorf("bulk check tokens denied scan: %w", err)
+		}
+		result[addr] = denied
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("bulk check tokens denied rows: %w", err)
+	}
+
+	return result, nil
 }

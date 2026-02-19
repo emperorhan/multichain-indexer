@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
+	"github.com/emperorhan/multichain-indexer/internal/chain/ratelimit"
 	"github.com/emperorhan/multichain-indexer/internal/chain/solana/rpc"
 )
 
@@ -28,6 +29,13 @@ func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
 	return &Adapter{
 		client: rpc.NewClient(rpcURL, logger),
 		logger: logger.With("chain", "solana"),
+	}
+}
+
+// SetRateLimiter applies a rate limiter to the underlying RPC client.
+func (a *Adapter) SetRateLimiter(l *ratelimit.Limiter) {
+	if c, ok := a.client.(*rpc.Client); ok {
+		c.SetRateLimiter(l)
 	}
 }
 

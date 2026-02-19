@@ -1,0 +1,13 @@
+apiVersion: v2
+name: multichain-indexer
+description: Multi-chain custody indexer with Go pipeline and Node.js gRPC decoder sidecar
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - blockchain
+  - indexer
+  - custody
+  - multichain
+maintainers:
+  - name: multichain-indexer-team

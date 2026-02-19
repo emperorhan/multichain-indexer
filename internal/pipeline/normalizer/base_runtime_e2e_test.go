@@ -211,14 +211,26 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	mockBERepo := storemocks.NewMockBalanceEventRepository(ctrl)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockBalanceRepo.EXPECT().
-		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		BulkGetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		AnyTimes().
-		Return("0", false, nil)
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, keys []store.BalanceKey) (map[store.BalanceKey]store.BalanceInfo, error) {
+			result := make(map[store.BalanceKey]store.BalanceInfo, len(keys))
+			for _, k := range keys {
+				result[k] = store.BalanceInfo{Amount: "0", Exists: false}
+			}
+			return result, nil
+		})
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
 	mockTokenRepo.EXPECT().
-		IsDeniedTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		BulkIsDeniedTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		AnyTimes().
-		Return(false, nil)
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, contracts []string) (map[string]bool, error) {
+			result := make(map[string]bool, len(contracts))
+			for _, c := range contracts {
+				result[c] = false
+			}
+			return result, nil
+		})
 	mockCursorRepo := storemocks.NewMockCursorRepository(ctrl)
 	mockConfigRepo := storemocks.NewMockIndexerConfigRepository(ctrl)
 
@@ -227,72 +239,73 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 		BeginTx(gomock.Any(), gomock.Nil()).
 		DoAndReturn(func(ctx context.Context, _ *sql.TxOptions) (*sql.Tx, error) {
 			return fakeDB.BeginTx(ctx, nil)
-		}).
-		Times(1)
+		}).Times(1)
 
 	txID := uuid.New()
 	mockTxRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, tx *model.Transaction) (uuid.UUID, error) {
-			assert.Equal(t, model.ChainBase, tx.Chain)
-			assert.Equal(t, model.NetworkSepolia, tx.Network)
-			assert.Equal(t, txHash, tx.TxHash)
-			assert.Equal(t, watchedAddress, tx.FeePayer)
-			assert.Equal(t, cursorSequence, tx.BlockCursor)
-			return txID, nil
-		}).
-		Times(1)
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			require.Len(t, txns, 1)
+			assert.Equal(t, model.ChainBase, txns[0].Chain)
+			assert.Equal(t, model.NetworkSepolia, txns[0].Network)
+			assert.Equal(t, txHash, txns[0].TxHash)
+			assert.Equal(t, watchedAddress, txns[0].FeePayer)
+			assert.Equal(t, cursorSequence, txns[0].BlockCursor)
+			return map[string]uuid.UUID{txHash: txID}, nil
+		}).Times(1)
 
 	tokenID := uuid.New()
 	mockTokenRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, token *model.Token) (uuid.UUID, error) {
-			assert.Equal(t, model.ChainBase, token.Chain)
-			assert.Equal(t, model.NetworkSepolia, token.Network)
-			assert.Equal(t, "ETH", token.ContractAddress)
-			return tokenID, nil
-		}).
-		Times(3)
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, token := range tokens {
+				assert.Equal(t, model.ChainBase, token.Chain)
+				assert.Equal(t, model.NetworkSepolia, token.Network)
+				result[token.ContractAddress] = tokenID
+			}
+			return result, nil
+		}).Times(1)
 
 	ingestedActivities := make(map[model.ActivityType]struct{}, 3)
 	mockBERepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
-			assert.Equal(t, model.ChainBase, be.Chain)
-			assert.Equal(t, model.NetworkSepolia, be.Network)
-			assert.Equal(t, txHash, be.TxHash)
-			if assert.NotNil(t, be.WatchedAddress) {
-				assert.Equal(t, watchedAddress, *be.WatchedAddress)
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+			require.Len(t, events, 3)
+			for _, be := range events {
+				assert.Equal(t, model.ChainBase, be.Chain)
+				assert.Equal(t, model.NetworkSepolia, be.Network)
+				assert.Equal(t, txHash, be.TxHash)
+				if assert.NotNil(t, be.WatchedAddress) {
+					assert.Equal(t, watchedAddress, *be.WatchedAddress)
+				}
+				assert.True(t, strings.HasPrefix(be.Delta, "-"))
+				assert.NotEmpty(t, be.EventID)
+				ingestedActivities[be.ActivityType] = struct{}{}
 			}
-			assert.True(t, strings.HasPrefix(be.Delta, "-"))
-			assert.NotEmpty(t, be.EventID)
-			ingestedActivities[be.ActivityType] = struct{}{}
-			return store.UpsertResult{Inserted: true}, nil
-		}).
-		Times(3)
+			return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
+		}).Times(1)
 
 	mockBalanceRepo.EXPECT().
-		AdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, watchedAddress, tokenID, &walletID, &orgID, gomock.Any(), cursorSequence, txHash, "").
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string, _ string) error {
-			assert.True(t, strings.HasPrefix(delta, "-"))
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, chain model.Chain, network model.Network, items []store.BulkAdjustItem) error {
+			assert.Equal(t, model.ChainBase, chain)
+			assert.Equal(t, model.NetworkSepolia, network)
+			require.NotEmpty(t, items)
+			for _, item := range items {
+				assert.Equal(t, watchedAddress, item.Address)
+				assert.Equal(t, tokenID, item.TokenID)
+			}
 			return nil
-		}).
-		Times(3)
+		}).Times(1)
 
 	mockCursorRepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, watchedAddress, gomock.Any(), cursorSequence, int64(1)).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, cursorValue *string, _ int64, _ int64) error {
-			if assert.NotNil(t, cursorValue) {
-				assert.Equal(t, txHash, *cursorValue)
-			}
-			return nil
-		}).
-		Times(1)
+		Return(nil).Times(1)
 
 	mockConfigRepo.EXPECT().
 		UpdateWatermarkTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, cursorSequence).
-		Return(nil).
-		Times(1)
+		Return(nil).Times(1)
 
 	ingestInputCh := make(chan event.NormalizedBatch, 1)
 	ing := ingester.New(

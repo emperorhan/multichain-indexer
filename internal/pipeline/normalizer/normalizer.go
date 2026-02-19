@@ -242,7 +242,14 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		}
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, n.sidecarTimeout)
+	grpcCtx, grpcSpan := tracing.Tracer("normalizer").Start(ctx, "normalizer.grpcDecode",
+		otelTrace.WithAttributes(
+			attribute.String("chain", batch.Chain.String()),
+			attribute.Int("tx_count", len(batch.RawTransactions)),
+		),
+	)
+
+	callCtx, cancel := context.WithTimeout(grpcCtx, n.sidecarTimeout)
 	defer cancel()
 
 	resp, err := client.DecodeSolanaTransactionBatch(callCtx, &sidecarv1.DecodeSolanaTransactionBatchRequest{
@@ -250,8 +257,13 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		WatchedAddresses: []string{batch.Address},
 	})
 	if err != nil {
+		grpcSpan.RecordError(err)
+		grpcSpan.SetStatus(codes.Error, err.Error())
+		grpcSpan.End()
 		return fmt.Errorf("sidecar decode: %w", err)
 	}
+	grpcSpan.SetAttributes(attribute.Int("results_count", len(resp.GetResults())))
+	grpcSpan.End()
 
 	terminalDecodeErrors, transientDecodeErrors := classifyDecodeErrors(batch.Chain, resp.Errors, log, decodeStage)
 	if len(transientDecodeErrors) > 0 {

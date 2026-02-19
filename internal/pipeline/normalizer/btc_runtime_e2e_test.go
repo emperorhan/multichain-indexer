@@ -224,13 +224,26 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	mockBERepo := storemocks.NewMockBalanceEventRepository(ctrl)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockBalanceRepo.EXPECT().
-		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		AnyTimes().Return("0", false, nil)
+		BulkGetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes().
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, keys []store.BalanceKey) (map[store.BalanceKey]store.BalanceInfo, error) {
+			result := make(map[store.BalanceKey]store.BalanceInfo, len(keys))
+			for _, k := range keys {
+				result[k] = store.BalanceInfo{Amount: "0", Exists: false}
+			}
+			return result, nil
+		})
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
 	mockTokenRepo.EXPECT().
-		IsDeniedTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		BulkIsDeniedTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		AnyTimes().
-		Return(false, nil)
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, contracts []string) (map[string]bool, error) {
+			result := make(map[string]bool, len(contracts))
+			for _, c := range contracts {
+				result[c] = false
+			}
+			return result, nil
+		})
 	mockCursorRepo := storemocks.NewMockCursorRepository(ctrl)
 	mockConfigRepo := storemocks.NewMockIndexerConfigRepository(ctrl)
 
@@ -243,34 +256,51 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 
 	txID := uuid.New()
 	mockTxRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, tx *model.Transaction) (uuid.UUID, error) {
-			assert.Equal(t, model.ChainBTC, tx.Chain)
-			assert.Equal(t, model.NetworkMainnet, tx.Network)
-			assert.Equal(t, cursorSequence, tx.BlockCursor)
-			return txID, nil
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			require.Len(t, txns, 1)
+			assert.Equal(t, model.ChainBTC, txns[0].Chain)
+			assert.Equal(t, model.NetworkMainnet, txns[0].Network)
+			assert.Equal(t, txHash, txns[0].TxHash)
+			assert.Equal(t, cursorSequence, txns[0].BlockCursor)
+			return map[string]uuid.UUID{txHash: txID}, nil
 		}).Times(1)
 
 	tokenID := uuid.New()
 	mockTokenRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, token *model.Token) (uuid.UUID, error) {
-			assert.Equal(t, model.ChainBTC, token.Chain)
-			assert.Equal(t, "BTC", token.ContractAddress)
-			return tokenID, nil
-		}).Times(3)
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, token := range tokens {
+				assert.Equal(t, model.ChainBTC, token.Chain)
+				result[token.ContractAddress] = tokenID
+			}
+			return result, nil
+		}).Times(1)
 
 	mockBERepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
-			assert.Equal(t, model.ChainBTC, be.Chain)
-			assert.NotEmpty(t, be.EventID)
-			return store.UpsertResult{Inserted: true}, nil
-		}).Times(3)
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+			require.Len(t, events, 3)
+			for _, be := range events {
+				assert.Equal(t, model.ChainBTC, be.Chain)
+				assert.NotEmpty(t, be.EventID)
+			}
+			return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
+		}).Times(1)
 
 	mockBalanceRepo.EXPECT().
-		AdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBTC, model.NetworkMainnet, watchedAddress, tokenID, &walletID, &orgID, gomock.Any(), cursorSequence, gomock.Any(), "").
-		Return(nil).Times(3)
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBTC, model.NetworkMainnet, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, chain model.Chain, network model.Network, items []store.BulkAdjustItem) error {
+			assert.Equal(t, model.ChainBTC, chain)
+			assert.Equal(t, model.NetworkMainnet, network)
+			require.NotEmpty(t, items)
+			for _, item := range items {
+				assert.Equal(t, watchedAddress, item.Address)
+				assert.Equal(t, tokenID, item.TokenID)
+			}
+			return nil
+		}).Times(1)
 
 	mockCursorRepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), model.ChainBTC, model.NetworkMainnet, watchedAddress, gomock.Any(), cursorSequence, int64(1)).

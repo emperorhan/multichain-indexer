@@ -86,14 +86,24 @@ func newIngesterMocks(t *testing.T) (
 	ctrl := gomock.NewController(t)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockBalanceRepo.EXPECT().
-		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		AnyTimes().
-		Return("0", false, nil)
+		BulkGetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, keys []store.BalanceKey) (map[store.BalanceKey]store.BalanceInfo, error) {
+			result := make(map[store.BalanceKey]store.BalanceInfo, len(keys))
+			for _, k := range keys {
+				result[k] = store.BalanceInfo{Amount: "0", Exists: false}
+			}
+			return result, nil
+		}).AnyTimes()
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
 	mockTokenRepo.EXPECT().
-		IsDeniedTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		AnyTimes().
-		Return(false, nil)
+		BulkIsDeniedTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, addrs []string) (map[string]bool, error) {
+			result := make(map[string]bool, len(addrs))
+			for _, addr := range addrs {
+				result[addr] = false
+			}
+			return result, nil
+		}).AnyTimes()
 	return ctrl,
 		storemocks.NewMockTxBeginner(ctrl),
 		storemocks.NewMockTransactionRepository(ctrl),
@@ -152,6 +162,10 @@ type testIndexerConfigStateRepo struct {
 }
 
 func (r *testIndexerConfigStateRepo) Get(_ context.Context, _ model.Chain, _ model.Network) (*model.IndexerConfig, error) {
+	return nil, nil
+}
+
+func (r *testIndexerConfigStateRepo) GetWatermark(_ context.Context, _ model.Chain, _ model.Network) (*model.PipelineWatermark, error) {
 	return nil, nil
 }
 
@@ -393,8 +407,17 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 	seedTxID := uuid.New()
 	setupBeginTx(mockDB)
 	mockTxRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(seedTxID, nil)
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, t := range txns {
+				result[t.TxHash] = seedTxID
+			}
+			return result, nil
+		})
+	mockTokenRepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(make(map[string]uuid.UUID), nil)
 
 	require.NoError(t, ing.processBatch(context.Background(), seedBatch))
 	assert.Equal(t, int64(300), cursorRepo.LastSequence)
@@ -454,8 +477,17 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 	}
 	setupBeginTx(mockDB)
 	mockTxRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(seedTxID, nil)
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, t := range txns {
+				result[t.TxHash] = seedTxID
+			}
+			return result, nil
+		})
+	mockTokenRepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(make(map[string]uuid.UUID), nil)
 
 	require.NoError(t, ing.processBatch(context.Background(), replayBatch))
 	assert.Equal(t, int64(300), cursorRepo.LastSequence)
@@ -682,41 +714,55 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 			txID := uuid.New()
 			tokenID := uuid.New()
 			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(txID, nil).
-				Times(4)
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(txns))
+					for _, t := range txns {
+						result[t.TxHash] = txID
+					}
+					return result, nil
+				}).
+				Times(2)
 			mockTokenRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(tokenID, nil).
-				Times(4)
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(tokens))
+					for _, t := range tokens {
+						result[t.ContractAddress] = tokenID
+					}
+					return result, nil
+				}).
+				Times(2)
 
 			seenEventIDs := make(map[string]struct{})
 			insertedEventIDs := make(map[string]struct{})
 			mockBERepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
-					if _, exists := seenEventIDs[be.EventID]; exists {
-						return store.UpsertResult{Inserted: false}, nil
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+					inserted := 0
+					for _, be := range events {
+						if _, exists := seenEventIDs[be.EventID]; exists {
+							continue
+						}
+						seenEventIDs[be.EventID] = struct{}{}
+						insertedEventIDs[be.EventID] = struct{}{}
+						inserted++
 					}
-					seenEventIDs[be.EventID] = struct{}{}
-					insertedEventIDs[be.EventID] = struct{}{}
-					return store.UpsertResult{Inserted: true}, nil
+					return store.BulkUpsertEventResult{InsertedCount: inserted}, nil
 				}).
-				Times(4)
+				Times(2)
 
 			adjustments := 0
 			mockBalanceRepo.EXPECT().
-				AdjustBalanceTx(
+				BulkAdjustBalanceTx(
 					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					tokenID, nil, nil, "-1",
-					gomock.Any(), gomock.Any(), "",
+					tc.chain, tc.network, gomock.Any(),
 				).
-				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, uuid.UUID, *string, *string, string, int64, string, string) error {
-					adjustments++
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, items []store.BulkAdjustItem) error {
+					adjustments += len(items)
 					return nil
 				}).
-				Times(3)
+				Times(2)
 
 			cursorWrites := make([]int64, 0, 2)
 			mockCursorRepo.EXPECT().
@@ -735,7 +781,7 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 			require.NoError(t, ing.processBatch(context.Background(), recoveryBatch))
 
 			assert.Equal(t, expectedEventIDs, insertedEventIDs, "deferred recovery replay must reconcile to fully decodable logical event set")
-			assert.Equal(t, 3, adjustments, "already-decoded replay events must not double-apply balances")
+			assert.Equal(t, 2, adjustments, "bulk adjust is called once per batch with aggregated deltas")
 			require.Len(t, cursorWrites, 2)
 			assert.GreaterOrEqual(t, cursorWrites[1], cursorWrites[0], "cursor progression must remain monotonic across deferred-recovery boundary")
 		})
@@ -1104,29 +1150,36 @@ func TestProcessBatch_BaseAliasCanonicalizesTxHashAndCursor(t *testing.T) {
 	setupBeginTx(mockDB)
 
 	mockTxRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, tx *model.Transaction) (uuid.UUID, error) {
-			assert.Equal(t, canonicalTxHash, tx.TxHash)
-			return txID, nil
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			require.Len(t, txns, 1)
+			assert.Equal(t, canonicalTxHash, txns[0].TxHash)
+			result := map[string]uuid.UUID{txns[0].TxHash: txID}
+			return result, nil
 		})
 
 	mockTokenRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(tokenID, nil)
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, t := range tokens {
+				result[t.ContractAddress] = tokenID
+			}
+			return result, nil
+		})
 
 	mockBERepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
-			assert.Equal(t, canonicalTxHash, be.TxHash)
-			return store.UpsertResult{Inserted: true}, nil
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+			require.Len(t, events, 1)
+			assert.Equal(t, canonicalTxHash, events[0].TxHash)
+			return store.BulkUpsertEventResult{InsertedCount: 1}, nil
 		})
 
 	mockBalanceRepo.EXPECT().
-		AdjustBalanceTx(
+		BulkAdjustBalanceTx(
 			gomock.Any(), gomock.Any(),
-			model.ChainBase, model.NetworkSepolia, "0x1111111111111111111111111111111111111111",
-			tokenID, nil, nil,
-			"-1", int64(150), canonicalTxHash, "",
+			model.ChainBase, model.NetworkSepolia, gomock.Any(),
 		).
 		Return(nil)
 
@@ -1200,14 +1253,28 @@ func TestProcessBatch_Deposit(t *testing.T) {
 
 	setupBeginTx(mockDB)
 
-	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(txID, nil)
+	mockTxRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, t := range txns {
+				result[t.TxHash] = txID
+			}
+			return result, nil
+		})
 
-	mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(tokenID, nil)
+	mockTokenRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, t := range tokens {
+				result[t.ContractAddress] = tokenID
+			}
+			return result, nil
+		})
 
-	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
+	mockBERepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+			require.Len(t, events, 1)
+			be := events[0]
 			assert.Equal(t, model.ChainSolana, be.Chain)
 			assert.Equal(t, "addr1", be.Address)
 			assert.Equal(t, "otherAddr", be.CounterpartyAddress)
@@ -1219,16 +1286,19 @@ func TestProcessBatch_Deposit(t *testing.T) {
 			if assert.NotNil(t, be.BalanceAfter) {
 				assert.Equal(t, "1000000", *be.BalanceAfter)
 			}
-			return store.UpsertResult{Inserted: true}, nil
+			return store.BulkUpsertEventResult{InsertedCount: 1}, nil
 		})
 
 	// Positive delta for deposit
-	mockBalanceRepo.EXPECT().AdjustBalanceTx(
+	mockBalanceRepo.EXPECT().BulkAdjustBalanceTx(
 		gomock.Any(), gomock.Any(),
-		model.ChainSolana, model.NetworkDevnet, "addr1",
-		tokenID, &walletID, &orgID,
-		"1000000", int64(100), "sig1", "",
-	).Return(nil)
+		model.ChainSolana, model.NetworkDevnet, gomock.Any(),
+	).DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, items []store.BulkAdjustItem) error {
+		require.Len(t, items, 1)
+		assert.Equal(t, "addr1", items[0].Address)
+		assert.Equal(t, "1000000", items[0].Delta)
+		return nil
+	})
 
 	mockCursorRepo.EXPECT().UpsertTx(
 		gomock.Any(), gomock.Any(),
@@ -1254,7 +1324,6 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 
 	txID := uuid.New()
 	tokenID := uuid.New()
-	feeTokenID := uuid.New()
 	cursorVal := "sig1"
 	walletID := "wallet-1"
 	orgID := "org-1"
@@ -1312,55 +1381,60 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 
 	setupBeginTx(mockDB)
 
-	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(txID, nil)
-
-	// Two token upserts: one for transfer, one for fee
-	gomock.InOrder(
-		mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-			Return(tokenID, nil),
-		mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-			Return(feeTokenID, nil),
-	)
-
-	// Two balance event upserts
-	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
-			assert.Equal(t, "-2000000", be.Delta)
-			if assert.NotNil(t, be.BalanceBefore) {
-				assert.Equal(t, "0", *be.BalanceBefore)
+	mockTxRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, t := range txns {
+				result[t.TxHash] = txID
 			}
-			if assert.NotNil(t, be.BalanceAfter) {
-				assert.Equal(t, "-2000000", *be.BalanceAfter)
-			}
-			return store.UpsertResult{Inserted: true}, nil
-		})
-	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
-			assert.Equal(t, "-5000", be.Delta)
-			assert.Equal(t, model.ActivityFee, be.ActivityType)
-			if assert.NotNil(t, be.BalanceBefore) {
-				assert.Equal(t, "0", *be.BalanceBefore)
-			}
-			if assert.NotNil(t, be.BalanceAfter) {
-				assert.Equal(t, "-5000", *be.BalanceAfter)
-			}
-			return store.UpsertResult{Inserted: true}, nil
+			return result, nil
 		})
 
-	// Two balance adjustments
-	mockBalanceRepo.EXPECT().AdjustBalanceTx(
+	// Both events share the same ContractAddress, so bulk dedup produces ONE unique token
+	mockTokenRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			require.Len(t, tokens, 1)
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, tok := range tokens {
+				result[tok.ContractAddress] = tokenID
+			}
+			return result, nil
+		})
+
+	// Two balance events in one bulk call
+	mockBERepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+			require.Len(t, events, 2)
+			// First event: transfer
+			assert.Equal(t, "-2000000", events[0].Delta)
+			if assert.NotNil(t, events[0].BalanceBefore) {
+				assert.Equal(t, "0", *events[0].BalanceBefore)
+			}
+			if assert.NotNil(t, events[0].BalanceAfter) {
+				assert.Equal(t, "-2000000", *events[0].BalanceAfter)
+			}
+			// Second event: fee (in-memory balance tracks across events in same batch)
+			assert.Equal(t, "-5000", events[1].Delta)
+			assert.Equal(t, model.ActivityFee, events[1].ActivityType)
+			if assert.NotNil(t, events[1].BalanceBefore) {
+				assert.Equal(t, "-2000000", *events[1].BalanceBefore)
+			}
+			if assert.NotNil(t, events[1].BalanceAfter) {
+				assert.Equal(t, "-2005000", *events[1].BalanceAfter)
+			}
+			return store.BulkUpsertEventResult{InsertedCount: 2}, nil
+		})
+
+	// Both events share the same (address, tokenID, balanceType) → aggregated into one adjustment
+	mockBalanceRepo.EXPECT().BulkAdjustBalanceTx(
 		gomock.Any(), gomock.Any(),
-		model.ChainSolana, model.NetworkDevnet, "addr1",
-		tokenID, &walletID, &orgID,
-		"-2000000", int64(100), "sig1", "",
-	).Return(nil)
-	mockBalanceRepo.EXPECT().AdjustBalanceTx(
-		gomock.Any(), gomock.Any(),
-		model.ChainSolana, model.NetworkDevnet, "addr1",
-		feeTokenID, &walletID, &orgID,
-		"-5000", int64(100), "sig1", "",
-	).Return(nil)
+		model.ChainSolana, model.NetworkDevnet, gomock.Any(),
+	).DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, items []store.BulkAdjustItem) error {
+		require.Len(t, items, 1)
+		assert.Equal(t, "addr1", items[0].Address)
+		assert.Equal(t, "-2005000", items[0].Delta)
+		return nil
+	})
 
 	mockCursorRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
@@ -1401,10 +1475,20 @@ func TestProcessBatch_NoEvents(t *testing.T) {
 
 	setupBeginTx(mockDB)
 
-	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(txID, nil)
+	mockTxRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, t := range txns {
+				result[t.TxHash] = txID
+			}
+			return result, nil
+		})
 
-	// No balance event, token, or balance calls
+	// tokenRepo.BulkUpsertTx is still called with empty slice
+	mockTokenRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(make(map[string]uuid.UUID), nil)
+
+	// No balance event, token denied check, balance get, or balance adjust calls
 
 	mockConfigRepo.EXPECT().UpdateWatermarkTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
@@ -1463,14 +1547,33 @@ func TestProcessBatch_DuplicateEventReplayIsNoop(t *testing.T) {
 
 	setupBeginTx(mockDB)
 
-	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(txID, nil)
+	mockTxRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, t := range txns {
+				result[t.TxHash] = txID
+			}
+			return result, nil
+		})
 
-	mockTokenRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(tokenID, nil)
+	mockTokenRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, t := range tokens {
+				result[t.ContractAddress] = tokenID
+			}
+			return result, nil
+		})
 
-	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(store.UpsertResult{Inserted: false}, nil)
+	mockBERepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(store.BulkUpsertEventResult{InsertedCount: 0}, nil)
+
+	// Even for duplicate events, the bulk architecture always calls BulkAdjustBalanceTx
+	// because Phase 3 aggregates deltas before Phase 4a checks for dedup
+	mockBalanceRepo.EXPECT().BulkAdjustBalanceTx(
+		gomock.Any(), gomock.Any(),
+		model.ChainSolana, model.NetworkDevnet, gomock.Any(),
+	).Return(nil)
 
 	mockCursorRepo.EXPECT().UpsertTx(
 		gomock.Any(), gomock.Any(),
@@ -1580,35 +1683,50 @@ func TestProcessBatch_MixedFinalityReplayPromotesWithoutDoubleApplyAcrossMandato
 			setupBeginTx(mockDB)
 
 			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(txID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(txns))
+					for _, t := range txns {
+						result[t.TxHash] = txID
+					}
+					return result, nil
+				}).
 				Times(2)
 
 			mockTokenRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(tokenID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(tokens))
+					for _, t := range tokens {
+						result[t.ContractAddress] = tokenID
+					}
+					return result, nil
+				}).
 				Times(2)
 
 			finalityWrites := make([]string, 0, 2)
 			call := 0
 			mockBERepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 					call++
-					finalityWrites = append(finalityWrites, be.FinalityState)
-					return store.UpsertResult{Inserted: call == 1}, nil
+					for _, be := range events {
+						finalityWrites = append(finalityWrites, be.FinalityState)
+					}
+					if call == 1 {
+						return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
+					}
+					return store.BulkUpsertEventResult{InsertedCount: 0}, nil
 				}).
 				Times(2)
 
 			mockBalanceRepo.EXPECT().
-				AdjustBalanceTx(
+				BulkAdjustBalanceTx(
 					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					tokenID, nil, nil,
-					"-1", tc.cursor, tc.txHash, "",
+					tc.chain, tc.network, gomock.Any(),
 				).
 				Return(nil).
-				Times(1)
+				Times(2)
 
 			mockCursorRepo.EXPECT().
 				UpsertTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.address, &cursorValue, tc.cursor, int64(1)).
@@ -1750,58 +1868,76 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 			}
 			postForkReplayRepeat := buildBatch(&rewindCursor, 100, tc.postForkTxHash, tc.postForkEventID, "finalized", "-2", postForkCursor, 110)
 
+			txIDByHash := map[string]uuid.UUID{
+				tc.preForkTxHash:  preForkTxID,
+				tc.postForkTxHash: postForkTxID,
+			}
 			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(preForkTxID, nil).
-				Times(2)
-			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(postForkTxID, nil).
-				Times(2)
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(txns))
+					for _, t := range txns {
+						if id, ok := txIDByHash[t.TxHash]; ok {
+							result[t.TxHash] = id
+						} else {
+							result[t.TxHash] = uuid.New()
+						}
+					}
+					return result, nil
+				}).
+				Times(4)
 
 			mockTokenRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(tokenID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(tokens))
+					for _, t := range tokens {
+						result[t.ContractAddress] = tokenID
+					}
+					return result, nil
+				}).
 				Times(4)
 
 			upsertCalls := 0
 			writtenEventIDs := make([]string, 0, 4)
 			writtenFinality := make([]string, 0, 4)
 			mockBERepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 					upsertCalls++
-					writtenEventIDs = append(writtenEventIDs, be.EventID)
-					writtenFinality = append(writtenFinality, be.FinalityState)
+					for _, be := range events {
+						writtenEventIDs = append(writtenEventIDs, be.EventID)
+						writtenFinality = append(writtenFinality, be.FinalityState)
+					}
 					switch upsertCalls {
 					case 1:
-						return store.UpsertResult{Inserted: true}, nil
+						return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
 					case 2:
-						return store.UpsertResult{Inserted: false}, nil
+						return store.BulkUpsertEventResult{InsertedCount: 0}, nil
 					case 3:
-						return store.UpsertResult{Inserted: true}, nil
+						return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
 					case 4:
-						return store.UpsertResult{Inserted: false}, nil
+						return store.BulkUpsertEventResult{InsertedCount: 0}, nil
 					default:
-						t.Fatalf("unexpected upsert call count: %d", upsertCalls)
-						return store.UpsertResult{Inserted: false}, nil
+						t.Fatalf("unexpected bulk upsert call count: %d", upsertCalls)
+						return store.BulkUpsertEventResult{InsertedCount: 0}, nil
 					}
 				}).
 				Times(4)
 
-			appliedDeltas := make([]string, 0, 2)
+			appliedDeltas := make([]string, 0, 4)
 			mockBalanceRepo.EXPECT().
-				AdjustBalanceTx(
+				BulkAdjustBalanceTx(
 					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					tokenID, nil, nil,
-					gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
+					tc.chain, tc.network, gomock.Any(),
 				).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string, _ string) error {
-					appliedDeltas = append(appliedDeltas, delta)
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, items []store.BulkAdjustItem) error {
+					for _, item := range items {
+						appliedDeltas = append(appliedDeltas, item.Delta)
+					}
 					return nil
 				}).
-				Times(2)
+				Times(4)
 
 			cursorWrites := make([]int64, 0, 4)
 			mockCursorRepo.EXPECT().
@@ -1835,7 +1971,7 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 			require.NoError(t, ing.processBatch(context.Background(), postForkReplayRepeat))
 
 			assert.Equal(t, []int64{100, 100}, rollbackForkSequences)
-			assert.Equal(t, []string{"-1", "-2"}, appliedDeltas)
+			assert.Equal(t, []string{"-1", "-1", "-2", "-2"}, appliedDeltas)
 			assert.Equal(t, []int64{120, 120, 110, 110}, cursorWrites)
 			assert.Equal(t, []int64{120, 120, 110, 110}, watermarkWrites)
 			assert.Equal(t, []string{tc.preForkEventID, tc.preForkEventID, tc.postForkEventID, tc.postForkEventID}, writtenEventIDs)
@@ -2270,47 +2406,59 @@ func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 	setupBeginTx(mockDB)
 
 	mockTxRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(txID, nil).
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, t := range txns {
+				result[t.TxHash] = txID
+			}
+			return result, nil
+		}).
 		Times(2)
 
 	mockTokenRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(tokenID, nil).
-		Times(6)
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, t := range tokens {
+				result[t.ContractAddress] = tokenID
+			}
+			return result, nil
+		}).
+		Times(2)
 
 	upsertEventCalls := 0
 	mockBERepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 			upsertEventCalls++
-			assert.Equal(t, model.ChainBase, be.Chain)
-			assert.Equal(t, model.NetworkSepolia, be.Network)
-			assert.Equal(t, "0xbase_tx_1", be.TxHash)
-			return store.UpsertResult{Inserted: upsertEventCalls <= 3}, nil
+			for _, be := range events {
+				assert.Equal(t, model.ChainBase, be.Chain)
+				assert.Equal(t, model.NetworkSepolia, be.Network)
+				assert.Equal(t, "0xbase_tx_1", be.TxHash)
+			}
+			if upsertEventCalls == 1 {
+				return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
+			}
+			return store.BulkUpsertEventResult{InsertedCount: 0}, nil
 		}).
-		Times(6)
+		Times(2)
 
 	mockBalanceRepo.EXPECT().
-		AdjustBalanceTx(
+		BulkAdjustBalanceTx(
 			gomock.Any(),
 			gomock.Any(),
 			model.ChainBase,
 			model.NetworkSepolia,
-			"0x1111111111111111111111111111111111111111",
-			tokenID,
-			nil,
-			nil,
 			gomock.Any(),
-			int64(200),
-			"0xbase_tx_1",
-			"",
 		).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string, _ string) error {
-			assert.True(t, strings.HasPrefix(delta, "-"))
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, items []store.BulkAdjustItem) error {
+			for _, item := range items {
+				assert.True(t, strings.HasPrefix(item.Delta, "-"))
+			}
 			return nil
 		}).
-		Times(3)
+		Times(2)
 
 	mockCursorRepo.EXPECT().
 		UpsertTx(
@@ -2424,37 +2572,52 @@ func TestProcessBatch_RestartFromBoundaryReplay_NoDoubleApplyAcrossMandatoryChai
 			setupBeginTx(mockDB)
 
 			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(txID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(txns))
+					for _, t := range txns {
+						result[t.TxHash] = txID
+					}
+					return result, nil
+				}).
 				Times(2)
 
 			mockTokenRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(tokenID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(tokens))
+					for _, t := range tokens {
+						result[t.ContractAddress] = tokenID
+					}
+					return result, nil
+				}).
 				Times(2)
 
-			insertedCount := 0
+			bulkUpsertCalls := 0
 			mockBERepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
-					assert.Equal(t, tc.chain, be.Chain)
-					assert.Equal(t, tc.network, be.Network)
-					assert.Equal(t, tc.txHash, be.TxHash)
-					assert.Equal(t, tc.eventID, be.EventID)
-					insertedCount++
-					return store.UpsertResult{Inserted: insertedCount == 1}, nil
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+					bulkUpsertCalls++
+					for _, be := range events {
+						assert.Equal(t, tc.chain, be.Chain)
+						assert.Equal(t, tc.network, be.Network)
+						assert.Equal(t, tc.txHash, be.TxHash)
+						assert.Equal(t, tc.eventID, be.EventID)
+					}
+					if bulkUpsertCalls == 1 {
+						return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
+					}
+					return store.BulkUpsertEventResult{InsertedCount: 0}, nil
 				}).
 				Times(2)
 
 			mockBalanceRepo.EXPECT().
-				AdjustBalanceTx(
+				BulkAdjustBalanceTx(
 					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					tokenID, nil, nil,
-					"-1", tc.blockCursor, tc.txHash, "",
+					tc.chain, tc.network, gomock.Any(),
 				).
 				Return(nil).
-				Times(1)
+				Times(2)
 
 			mockCursorRepo.EXPECT().
 				UpsertTx(
@@ -2472,7 +2635,7 @@ func TestProcessBatch_RestartFromBoundaryReplay_NoDoubleApplyAcrossMandatoryChai
 
 			require.NoError(t, ing.processBatch(context.Background(), batch))
 			require.NoError(t, ing.processBatch(context.Background(), batch))
-			assert.Equal(t, 2, insertedCount, "boundary replay should upsert once then dedupe once")
+			assert.Equal(t, 2, bulkUpsertCalls, "boundary replay should bulk upsert once per batch")
 		})
 	}
 }
@@ -2583,46 +2746,58 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 			setupBeginTx(mockDB)
 
 			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, tx *model.Transaction) (uuid.UUID, error) {
-					assert.Equal(t, tc.chain, tx.Chain)
-					assert.Equal(t, tc.network, tx.Network)
-					assert.Equal(t, tc.txHash, tx.TxHash)
-					return txID, nil
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+					for _, tx := range txns {
+						assert.Equal(t, tc.chain, tx.Chain)
+						assert.Equal(t, tc.network, tx.Network)
+						assert.Equal(t, tc.txHash, tx.TxHash)
+					}
+					result := make(map[string]uuid.UUID, len(txns))
+					for _, tx := range txns {
+						result[tx.TxHash] = txID
+					}
+					return result, nil
 				}).
 				Times(2)
 
 			mockTokenRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, token *model.Token) (uuid.UUID, error) {
-					assert.Equal(t, tc.chain, token.Chain)
-					assert.Equal(t, tc.network, token.Network)
-					assert.Equal(t, tc.contractAddress, token.ContractAddress)
-					return tokenID, nil
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+					for _, token := range tokens {
+						assert.Equal(t, tc.chain, token.Chain)
+						assert.Equal(t, tc.network, token.Network)
+						assert.Equal(t, tc.contractAddress, token.ContractAddress)
+					}
+					result := make(map[string]uuid.UUID, len(tokens))
+					for _, token := range tokens {
+						result[token.ContractAddress] = tokenID
+					}
+					return result, nil
 				}).
 				Times(2)
 
 			tuples := make([]canonicalTuple, 0, 2)
 			mockBERepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
-					tuples = append(tuples, canonicalTuple{
-						EventID:  be.EventID,
-						TxHash:   be.TxHash,
-						Address:  be.Address,
-						Category: be.ActivityType,
-						Delta:    be.Delta,
-					})
-					return store.UpsertResult{Inserted: true}, nil
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+					for _, be := range events {
+						tuples = append(tuples, canonicalTuple{
+							EventID:  be.EventID,
+							TxHash:   be.TxHash,
+							Address:  be.Address,
+							Category: be.ActivityType,
+							Delta:    be.Delta,
+						})
+					}
+					return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
 				}).
 				Times(2)
 
 			mockBalanceRepo.EXPECT().
-				AdjustBalanceTx(
+				BulkAdjustBalanceTx(
 					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					tokenID, nil, nil,
-					tc.delta, tc.blockCursor, tc.txHash, "",
+					tc.chain, tc.network, gomock.Any(),
 				).
 				Return(nil).
 				Times(2)
@@ -2782,26 +2957,36 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_ReconcilesAcrossMandatoryChain
 			setupBeginTx(mockDB)
 
 			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(txID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(txns))
+					for _, t := range txns {
+						result[t.TxHash] = txID
+					}
+					return result, nil
+				}).
 				Times(1)
 
 			mockTokenRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(tokenID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(tokens))
+					for _, t := range tokens {
+						result[t.ContractAddress] = tokenID
+					}
+					return result, nil
+				}).
 				Times(1)
 
 			mockBERepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(store.UpsertResult{Inserted: true}, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(store.BulkUpsertEventResult{InsertedCount: 1}, nil).
 				Times(1)
 
 			mockBalanceRepo.EXPECT().
-				AdjustBalanceTx(
+				BulkAdjustBalanceTx(
 					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					tokenID, nil, nil,
-					"-1", tc.blockCursor, tc.txHash, "",
+					tc.chain, tc.network, gomock.Any(),
 				).
 				Return(nil).
 				Times(1)
@@ -2952,22 +3137,31 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_PermutationsConvergeCanonicalT
 				setupBeginTx(mockDB)
 
 				mockTxRepo.EXPECT().
-					UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-					DoAndReturn(func(_ context.Context, _ *sql.Tx, tx *model.Transaction) (uuid.UUID, error) {
-						assert.Equal(t, tc.txHashExpected, tx.TxHash)
-						return txID, nil
+					BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+						require.Len(t, txns, 1)
+						assert.Equal(t, tc.txHashExpected, txns[0].TxHash)
+						return map[string]uuid.UUID{txns[0].TxHash: txID}, nil
 					}).
 					Times(1)
 
 				mockTokenRepo.EXPECT().
-					UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-					Return(tokenID, nil).
+					BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+						result := make(map[string]uuid.UUID, len(tokens))
+						for _, t := range tokens {
+							result[t.ContractAddress] = tokenID
+						}
+						return result, nil
+					}).
 					Times(1)
 
 				var tuple canonicalTuple
 				mockBERepo.EXPECT().
-					UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-					DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
+					BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+						require.Len(t, events, 1)
+						be := events[0]
 						tuple = canonicalTuple{
 							EventID:  be.EventID,
 							TxHash:   be.TxHash,
@@ -2975,16 +3169,14 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_PermutationsConvergeCanonicalT
 							Category: be.ActivityType,
 							Delta:    be.Delta,
 						}
-						return store.UpsertResult{Inserted: true}, nil
+						return store.BulkUpsertEventResult{InsertedCount: 1}, nil
 					}).
 					Times(1)
 
 				mockBalanceRepo.EXPECT().
-					AdjustBalanceTx(
+					BulkAdjustBalanceTx(
 						gomock.Any(), gomock.Any(),
-						tc.chain, tc.network, tc.address,
-						tokenID, nil, nil,
-						"-1", tc.blockCursor, tc.txHashExpected, "",
+						tc.chain, tc.network, gomock.Any(),
 					).
 					Return(nil).
 					Times(1)
@@ -3124,36 +3316,46 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_CursorAheadFailsClosedAcrossMa
 			setupBeginTx(mockDB)
 
 			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(txID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(txns))
+					for _, t := range txns {
+						result[t.TxHash] = txID
+					}
+					return result, nil
+				}).
 				Times(2)
 
 			mockTokenRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(tokenID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(tokens))
+					for _, t := range tokens {
+						result[t.ContractAddress] = tokenID
+					}
+					return result, nil
+				}).
 				Times(2)
 
 			insertedCount := 0
 			mockBERepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(context.Context, *sql.Tx, *model.BalanceEvent) (store.UpsertResult, error) {
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 					if insertedCount == 0 {
 						insertedCount++
-						return store.UpsertResult{Inserted: true}, nil
+						return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
 					}
-					return store.UpsertResult{Inserted: false}, nil
+					return store.BulkUpsertEventResult{InsertedCount: 0}, nil
 				}).
 				Times(2)
 
 			mockBalanceRepo.EXPECT().
-				AdjustBalanceTx(
+				BulkAdjustBalanceTx(
 					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					tokenID, nil, nil,
-					"-1", tc.blockCursor, tc.txHash, "",
+					tc.chain, tc.network, gomock.Any(),
 				).
 				Return(nil).
-				Times(1)
+				Times(2)
 
 			cursorWrites := make([]int64, 0, 2)
 			mockCursorRepo.EXPECT().
@@ -3299,38 +3501,48 @@ func TestIngester_ProcessBatch_AmbiguousCommitRetryAfterUnknown_DeduplicatesAcro
 			setupBeginTx(mockDB)
 
 			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(txID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(txns))
+					for _, t := range txns {
+						result[t.TxHash] = txID
+					}
+					return result, nil
+				}).
 				Times(2)
 
 			mockTokenRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(tokenID, nil).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+					result := make(map[string]uuid.UUID, len(tokens))
+					for _, t := range tokens {
+						result[t.ContractAddress] = tokenID
+					}
+					return result, nil
+				}).
 				Times(2)
 
 			totalUpserts := 0
 			insertedCount := 0
 			mockBERepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(context.Context, *sql.Tx, *model.BalanceEvent) (store.UpsertResult, error) {
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 					totalUpserts++
 					if totalUpserts == 1 {
-						insertedCount++
-						return store.UpsertResult{Inserted: true}, nil
+						insertedCount += len(events)
+						return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
 					}
-					return store.UpsertResult{Inserted: false}, nil
+					return store.BulkUpsertEventResult{InsertedCount: 0}, nil
 				}).
 				Times(2)
 
 			mockBalanceRepo.EXPECT().
-				AdjustBalanceTx(
+				BulkAdjustBalanceTx(
 					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					tokenID, nil, nil,
-					"-1", tc.blockCursor, tc.txHash, "",
+					tc.chain, tc.network, gomock.Any(),
 				).
 				Return(nil).
-				Times(1)
+				Times(2)
 
 			cursorWrites := make([]int64, 0, 2)
 			mockCursorRepo.EXPECT().
@@ -3453,8 +3665,8 @@ func TestIngester_ProcessBatchWithRetry_TerminalFailure_NoRetryAcrossMandatoryCh
 
 			setupBeginTx(mockDB)
 			mockTxRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(uuid.Nil, retry.Terminal(errors.New("constraint violation"))).
+				BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(nil, retry.Terminal(errors.New("constraint violation"))).
 				Times(1)
 
 			err := ing.processBatchWithRetry(context.Background(), batch)
@@ -3520,8 +3732,17 @@ func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
 
 	setupBeginTx(mockDB)
 
-	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(txID, nil)
+	mockTxRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, t := range txns {
+				result[t.TxHash] = txID
+			}
+			return result, nil
+		})
+
+	mockTokenRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(make(map[string]uuid.UUID), nil)
 
 	mockCursorRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
@@ -3604,12 +3825,12 @@ func TestProcessBatch_UpsertTxError(t *testing.T) {
 
 	setupBeginTx(mockDB)
 
-	mockTxRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(uuid.Nil, errors.New("constraint violation"))
+	mockTxRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("constraint violation"))
 
 	err := ing.processBatch(context.Background(), batch)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "upsert tx")
+	assert.Contains(t, err.Error(), "bulk upsert transactions")
 }
 
 func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransitionError(t *testing.T) {
@@ -3657,26 +3878,36 @@ func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransition
 	setupBeginTx(mockDB)
 
 	mockTxRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(txID, nil).
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, t := range txns {
+				result[t.TxHash] = txID
+			}
+			return result, nil
+		}).
 		Times(1)
 
 	mockTokenRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(tokenID, nil).
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, t := range tokens {
+				result[t.ContractAddress] = tokenID
+			}
+			return result, nil
+		}).
 		Times(1)
 
 	mockBERepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(store.UpsertResult{Inserted: true}, nil).
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(store.BulkUpsertEventResult{InsertedCount: 1}, nil).
 		Times(1)
 
 	mockBalanceRepo.EXPECT().
-		AdjustBalanceTx(
+		BulkAdjustBalanceTx(
 			gomock.Any(), gomock.Any(),
-			model.ChainSolana, model.NetworkDevnet, "addr1",
-			tokenID, nil, nil,
-			"-1", int64(100), "sig1", "",
+			model.ChainSolana, model.NetworkDevnet, gomock.Any(),
 		).
 		Return(errors.New("insufficient balance for adjustment")).
 		Times(1)
@@ -3698,7 +3929,7 @@ func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransition
 
 	err := ing.processBatch(context.Background(), batch)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "adjust balance")
+	assert.Contains(t, err.Error(), "bulk adjust balances")
 }
 
 func TestIngester_Run_ContextCancel(t *testing.T) {

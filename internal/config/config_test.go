@@ -20,8 +20,8 @@ func TestLoad_Defaults(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable", cfg.DB.URL)
-	assert.Equal(t, 25, cfg.DB.MaxOpenConns)
-	assert.Equal(t, 5, cfg.DB.MaxIdleConns)
+	assert.Equal(t, 50, cfg.DB.MaxOpenConns)
+	assert.Equal(t, 10, cfg.DB.MaxIdleConns)
 	assert.Equal(t, dbStatementTimeoutDefaultMS, cfg.DB.StatementTimeoutMS)
 	assert.Equal(t, dbPoolStatsIntervalDefaultMS, cfg.DB.PoolStatsIntervalMS)
 	assert.Equal(t, "redis://localhost:6380", cfg.Redis.URL)

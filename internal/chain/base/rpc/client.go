@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/emperorhan/multichain-indexer/internal/chain/ratelimit"
 )
 
 type RPCClient interface {
@@ -27,6 +29,7 @@ type Client struct {
 	rpcURL     string
 	requestID  atomic.Int64
 	logger     *slog.Logger
+	limiter    *ratelimit.Limiter
 }
 
 func NewClient(rpcURL string, logger *slog.Logger) *Client {
@@ -37,7 +40,18 @@ func NewClient(rpcURL string, logger *slog.Logger) *Client {
 	}
 }
 
+// SetRateLimiter sets the RPC rate limiter for this client.
+func (c *Client) SetRateLimiter(l *ratelimit.Limiter) {
+	c.limiter = l
+}
+
 func (c *Client) call(ctx context.Context, method string, params []interface{}) (json.RawMessage, error) {
+	if c.limiter != nil {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("rate limiter: %w", err)
+		}
+	}
+
 	req := c.newRequest(method, params)
 
 	body, err := json.Marshal(req)

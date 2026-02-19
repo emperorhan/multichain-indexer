@@ -9,7 +9,7 @@ import (
 )
 
 func TestInit_EmptyEndpoint_ReturnsNoOpProvider(t *testing.T) {
-	shutdown, err := Init(context.Background(), "test-svc", "", true)
+	shutdown, err := Init(context.Background(), "test-svc", "", true, 0.1)
 	require.NoError(t, err)
 	require.NotNil(t, shutdown)
 
@@ -18,7 +18,7 @@ func TestInit_EmptyEndpoint_ReturnsNoOpProvider(t *testing.T) {
 }
 
 func TestTracer_ReturnsNonNil(t *testing.T) {
-	shutdown, err := Init(context.Background(), "test-svc", "", true)
+	shutdown, err := Init(context.Background(), "test-svc", "", true, 0.1)
 	require.NoError(t, err)
 	defer shutdown(context.Background())
 
@@ -27,7 +27,7 @@ func TestTracer_ReturnsNonNil(t *testing.T) {
 }
 
 func TestInit_ShutdownIdempotent(t *testing.T) {
-	shutdown, err := Init(context.Background(), "test-svc", "", true)
+	shutdown, err := Init(context.Background(), "test-svc", "", true, 0.1)
 	require.NoError(t, err)
 
 	err = shutdown(context.Background())

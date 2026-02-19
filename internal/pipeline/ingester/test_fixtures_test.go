@@ -120,6 +120,18 @@ type interleaveTxRepo struct {
 	state *interleaveState
 }
 
+func (r *interleaveTxRepo) BulkUpsertTx(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+	result := make(map[string]uuid.UUID, len(txns))
+	for _, t := range txns {
+		id, err := r.UpsertTx(context.Background(), nil, t)
+		if err != nil {
+			return nil, err
+		}
+		result[t.TxHash] = id
+	}
+	return result, nil
+}
+
 func (r *interleaveTxRepo) UpsertTx(_ context.Context, _ *sql.Tx, t *model.Transaction) (uuid.UUID, error) {
 	chainKey := interleaveKey(t.Chain, t.Network)
 	primaryKey := fmt.Sprintf("%s|%s", chainKey, t.TxHash)
@@ -175,6 +187,26 @@ func (*interleaveTokenRepo) AllowTokenTx(context.Context, *sql.Tx, model.Chain, 
 	return nil
 }
 
+func (r *interleaveTokenRepo) BulkUpsertTx(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+	result := make(map[string]uuid.UUID, len(tokens))
+	for _, t := range tokens {
+		id, err := r.UpsertTx(context.Background(), nil, t)
+		if err != nil {
+			return nil, err
+		}
+		result[t.ContractAddress] = id
+	}
+	return result, nil
+}
+
+func (*interleaveTokenRepo) BulkIsDeniedTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, contractAddresses []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(contractAddresses))
+	for _, addr := range contractAddresses {
+		result[addr] = false
+	}
+	return result, nil
+}
+
 type interleaveBalanceEventRepo struct {
 	state *interleaveState
 }
@@ -209,6 +241,23 @@ func (r *interleaveBalanceEventRepo) UpsertTx(_ context.Context, _ *sql.Tx, be *
 	r.state.eventRecords[be.EventID] = interleaveStoredEvent{Tuple: tuple}
 	r.state.tuples = append(r.state.tuples, tuple)
 	return store.UpsertResult{Inserted: true}, nil
+}
+
+func (r *interleaveBalanceEventRepo) BulkUpsertTx(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+	var result store.BulkUpsertEventResult
+	for _, be := range events {
+		ur, err := r.UpsertTx(context.Background(), nil, be)
+		if err != nil {
+			return result, err
+		}
+		if ur.Inserted {
+			result.InsertedCount++
+		}
+		if ur.FinalityCrossed {
+			result.FinalityCrossedCount++
+		}
+	}
+	return result, nil
 }
 
 type interleaveBalanceRepo struct {
@@ -282,6 +331,40 @@ func (r *interleaveBalanceRepo) GetAmountWithExistsTx(
 
 func (*interleaveBalanceRepo) GetByAddress(context.Context, model.Chain, model.Network, string) ([]model.Balance, error) {
 	return nil, nil
+}
+
+func (r *interleaveBalanceRepo) BulkGetAmountWithExistsTx(
+	_ context.Context,
+	_ *sql.Tx,
+	chain model.Chain,
+	network model.Network,
+	keys []store.BalanceKey,
+) (map[store.BalanceKey]store.BalanceInfo, error) {
+	result := make(map[store.BalanceKey]store.BalanceInfo, len(keys))
+	for _, key := range keys {
+		amount, exists, err := r.GetAmountWithExistsTx(context.Background(), nil, chain, network, key.Address, key.TokenID, key.BalanceType)
+		if err != nil {
+			return nil, err
+		}
+		result[key] = store.BalanceInfo{Amount: amount, Exists: exists}
+	}
+	return result, nil
+}
+
+func (r *interleaveBalanceRepo) BulkAdjustBalanceTx(
+	_ context.Context,
+	_ *sql.Tx,
+	chain model.Chain,
+	network model.Network,
+	items []store.BulkAdjustItem,
+) error {
+	for _, item := range items {
+		err := r.AdjustBalanceTx(context.Background(), nil, chain, network, item.Address, item.TokenID, item.WalletID, item.OrgID, item.Delta, item.Cursor, item.TxHash, item.BalanceType)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type interleaveCursorRepo struct {
@@ -416,6 +499,10 @@ type interleaveConfigRepo struct {
 }
 
 func (*interleaveConfigRepo) Get(context.Context, model.Chain, model.Network) (*model.IndexerConfig, error) {
+	return nil, nil
+}
+
+func (*interleaveConfigRepo) GetWatermark(context.Context, model.Chain, model.Network) (*model.PipelineWatermark, error) {
 	return nil, nil
 }
 

@@ -218,6 +218,21 @@ func (m *MockTransactionRepository) EXPECT() *MockTransactionRepositoryMockRecor
 	return m.recorder
 }
 
+// BulkUpsertTx mocks base method.
+func (m *MockTransactionRepository) BulkUpsertTx(ctx context.Context, tx *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BulkUpsertTx", ctx, tx, txns)
+	ret0, _ := ret[0].(map[string]uuid.UUID)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BulkUpsertTx indicates an expected call of BulkUpsertTx.
+func (mr *MockTransactionRepositoryMockRecorder) BulkUpsertTx(ctx, tx, txns any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BulkUpsertTx", reflect.TypeOf((*MockTransactionRepository)(nil).BulkUpsertTx), ctx, tx, txns)
+}
+
 // UpsertTx mocks base method.
 func (m *MockTransactionRepository) UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transaction) (uuid.UUID, error) {
 	m.ctrl.T.Helper()
@@ -257,6 +272,21 @@ func (m *MockBalanceEventRepository) EXPECT() *MockBalanceEventRepositoryMockRec
 	return m.recorder
 }
 
+// BulkUpsertTx mocks base method.
+func (m *MockBalanceEventRepository) BulkUpsertTx(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BulkUpsertTx", ctx, tx, events)
+	ret0, _ := ret[0].(store.BulkUpsertEventResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BulkUpsertTx indicates an expected call of BulkUpsertTx.
+func (mr *MockBalanceEventRepositoryMockRecorder) BulkUpsertTx(ctx, tx, events any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BulkUpsertTx", reflect.TypeOf((*MockBalanceEventRepository)(nil).BulkUpsertTx), ctx, tx, events)
+}
+
 // UpsertTx mocks base method.
 func (m *MockBalanceEventRepository) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 	m.ctrl.T.Helper()
@@ -294,6 +324,35 @@ func NewMockBalanceRepository(ctrl *gomock.Controller) *MockBalanceRepository {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockBalanceRepository) EXPECT() *MockBalanceRepositoryMockRecorder {
 	return m.recorder
+}
+
+// BulkAdjustBalanceTx mocks base method.
+func (m *MockBalanceRepository) BulkAdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, items []store.BulkAdjustItem) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BulkAdjustBalanceTx", ctx, tx, chain, network, items)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// BulkAdjustBalanceTx indicates an expected call of BulkAdjustBalanceTx.
+func (mr *MockBalanceRepositoryMockRecorder) BulkAdjustBalanceTx(ctx, tx, chain, network, items any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BulkAdjustBalanceTx", reflect.TypeOf((*MockBalanceRepository)(nil).BulkAdjustBalanceTx), ctx, tx, chain, network, items)
+}
+
+// BulkGetAmountWithExistsTx mocks base method.
+func (m *MockBalanceRepository) BulkGetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, keys []store.BalanceKey) (map[store.BalanceKey]store.BalanceInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BulkGetAmountWithExistsTx", ctx, tx, chain, network, keys)
+	ret0, _ := ret[0].(map[store.BalanceKey]store.BalanceInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BulkGetAmountWithExistsTx indicates an expected call of BulkGetAmountWithExistsTx.
+func (mr *MockBalanceRepositoryMockRecorder) BulkGetAmountWithExistsTx(ctx, tx, chain, network, keys any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BulkGetAmountWithExistsTx", reflect.TypeOf((*MockBalanceRepository)(nil).BulkGetAmountWithExistsTx), ctx, tx, chain, network, keys)
 }
 
 // AdjustBalanceTx mocks base method.
@@ -378,6 +437,36 @@ func NewMockTokenRepository(ctrl *gomock.Controller) *MockTokenRepository {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockTokenRepository) EXPECT() *MockTokenRepositoryMockRecorder {
 	return m.recorder
+}
+
+// BulkIsDeniedTx mocks base method.
+func (m *MockTokenRepository) BulkIsDeniedTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddresses []string) (map[string]bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BulkIsDeniedTx", ctx, tx, chain, network, contractAddresses)
+	ret0, _ := ret[0].(map[string]bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BulkIsDeniedTx indicates an expected call of BulkIsDeniedTx.
+func (mr *MockTokenRepositoryMockRecorder) BulkIsDeniedTx(ctx, tx, chain, network, contractAddresses any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BulkIsDeniedTx", reflect.TypeOf((*MockTokenRepository)(nil).BulkIsDeniedTx), ctx, tx, chain, network, contractAddresses)
+}
+
+// BulkUpsertTx mocks base method.
+func (m *MockTokenRepository) BulkUpsertTx(ctx context.Context, tx *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BulkUpsertTx", ctx, tx, tokens)
+	ret0, _ := ret[0].(map[string]uuid.UUID)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BulkUpsertTx indicates an expected call of BulkUpsertTx.
+func (mr *MockTokenRepositoryMockRecorder) BulkUpsertTx(ctx, tx, tokens any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BulkUpsertTx", reflect.TypeOf((*MockTokenRepository)(nil).BulkUpsertTx), ctx, tx, tokens)
 }
 
 // FindByContractAddress mocks base method.
@@ -504,6 +593,21 @@ func (m *MockIndexerConfigRepository) UpdateWatermarkTx(ctx context.Context, tx 
 func (mr *MockIndexerConfigRepositoryMockRecorder) UpdateWatermarkTx(ctx, tx, chain, network, ingestedSequence any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateWatermarkTx", reflect.TypeOf((*MockIndexerConfigRepository)(nil).UpdateWatermarkTx), ctx, tx, chain, network, ingestedSequence)
+}
+
+// GetWatermark mocks base method.
+func (m *MockIndexerConfigRepository) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetWatermark", ctx, chain, network)
+	ret0, _ := ret[0].(*model.PipelineWatermark)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetWatermark indicates an expected call of GetWatermark.
+func (mr *MockIndexerConfigRepositoryMockRecorder) GetWatermark(ctx, chain, network any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWatermark", reflect.TypeOf((*MockIndexerConfigRepository)(nil).GetWatermark), ctx, chain, network)
 }
 
 // Upsert mocks base method.
