@@ -20,30 +20,30 @@ func NewBalanceRepo(db *DB) *BalanceRepo {
 
 // AdjustBalanceTx adjusts a balance by a delta amount within a transaction.
 // Positive delta = deposit, negative delta = withdrawal/fee.
-func (r *BalanceRepo) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID *string, orgID *string, delta string, cursor int64, txHash string) error {
+func (r *BalanceRepo) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID *string, orgID *string, delta string, cursor int64, txHash string, balanceType string) error {
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO balances (chain, network, address, token_id, wallet_id, organization_id, amount, last_updated_cursor, last_updated_tx_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9)
-		ON CONFLICT (chain, network, address, token_id) DO UPDATE SET
+		INSERT INTO balances (chain, network, address, token_id, wallet_id, organization_id, amount, last_updated_cursor, last_updated_tx_hash, balance_type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10)
+		ON CONFLICT (chain, network, address, token_id, balance_type) DO UPDATE SET
 			amount = balances.amount + $7::numeric,
 			last_updated_cursor = GREATEST(balances.last_updated_cursor, $8),
 			last_updated_tx_hash = $9,
 			updated_at = now()
-	`, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash)
+	`, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash, balanceType)
 	if err != nil {
 		return fmt.Errorf("adjust balance: %w", err)
 	}
 	return nil
 }
 
-func (r *BalanceRepo) GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (string, error) {
+func (r *BalanceRepo) GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, error) {
 	var amount string
 	err := tx.QueryRowContext(ctx, `
 		SELECT amount::text
 		FROM balances
-		WHERE chain = $1 AND network = $2 AND address = $3 AND token_id = $4
+		WHERE chain = $1 AND network = $2 AND address = $3 AND token_id = $4 AND balance_type = $5
 		FOR UPDATE
-	`, chain, network, address, tokenID).Scan(&amount)
+	`, chain, network, address, tokenID, balanceType).Scan(&amount)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "0", nil
@@ -61,14 +61,14 @@ func (r *BalanceRepo) GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.C
 // GetAmountWithExistsTx returns the balance amount and whether the record exists.
 // If no row exists (never held), returns ("0", false, nil).
 // If row exists with amount, returns (amount, true, nil).
-func (r *BalanceRepo) GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (string, bool, error) {
+func (r *BalanceRepo) GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, bool, error) {
 	var amount string
 	err := tx.QueryRowContext(ctx, `
 		SELECT amount::text
 		FROM balances
-		WHERE chain = $1 AND network = $2 AND address = $3 AND token_id = $4
+		WHERE chain = $1 AND network = $2 AND address = $3 AND token_id = $4 AND balance_type = $5
 		FOR UPDATE
-	`, chain, network, address, tokenID).Scan(&amount)
+	`, chain, network, address, tokenID, balanceType).Scan(&amount)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "0", false, nil
@@ -85,7 +85,7 @@ func (r *BalanceRepo) GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, cha
 
 func (r *BalanceRepo) GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, chain, network, address, token_id, wallet_id, organization_id,
+		SELECT id, chain, network, address, token_id, balance_type, wallet_id, organization_id,
 			   amount, pending_withdrawal_amount, last_updated_cursor, last_updated_tx_hash,
 			   created_at, updated_at
 		FROM balances
@@ -100,7 +100,7 @@ func (r *BalanceRepo) GetByAddress(ctx context.Context, chain model.Chain, netwo
 	for rows.Next() {
 		var b model.Balance
 		if err := rows.Scan(
-			&b.ID, &b.Chain, &b.Network, &b.Address, &b.TokenID,
+			&b.ID, &b.Chain, &b.Network, &b.Address, &b.TokenID, &b.BalanceType,
 			&b.WalletID, &b.OrganizationID, &b.Amount,
 			&b.PendingWithdrawalAmount, &b.LastUpdatedCursor,
 			&b.LastUpdatedTxHash, &b.CreatedAt, &b.UpdatedAt,

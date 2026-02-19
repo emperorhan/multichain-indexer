@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/google/uuid"
 )
 
@@ -18,39 +19,38 @@ func NewBalanceEventRepo(db *DB) *BalanceEventRepo {
 	return &BalanceEventRepo{db: db}
 }
 
-func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (bool, error) {
+func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 	if be.EventID == "" {
-		return false, fmt.Errorf("upsert balance event: event_id is required")
+		return store.UpsertResult{}, fmt.Errorf("upsert balance event: event_id is required")
 	}
 
 	canonicalID, err := r.stableCanonicalEventID(ctx, tx, be.Chain, be.Network, be.EventID)
 	if err != nil {
-		return false, fmt.Errorf("upsert balance event: canonical event id: %w", err)
+		return store.UpsertResult{}, fmt.Errorf("upsert balance event: canonical event id: %w", err)
 	}
 
-	updated, err := r.updateExistingByCanonicalID(ctx, tx, canonicalID, be)
+	updated, finalityCrossed, err := r.updateExistingByCanonicalID(ctx, tx, canonicalID, be)
 	if err != nil {
-		return false, fmt.Errorf("upsert balance event: update existing: %w", err)
+		return store.UpsertResult{}, fmt.Errorf("upsert balance event: update existing: %w", err)
 	}
 	if updated {
-		return false, nil
+		return store.UpsertResult{FinalityCrossed: finalityCrossed}, nil
 	}
 
 	exists, err := r.eventByCanonicalIDExists(ctx, tx, be.Chain, be.Network, be.EventID)
 	if err != nil {
-		return false, fmt.Errorf("upsert balance event: exists check: %w", err)
+		return store.UpsertResult{}, fmt.Errorf("upsert balance event: exists check: %w", err)
 	}
 	if exists {
-		// Canonical row already exists, but this upsert could not advance finality.
-		return false, nil
+		return store.UpsertResult{}, nil
 	}
 
 	inserted, err := r.insertByCanonicalID(ctx, tx, canonicalID, be)
 	if err != nil {
-		return false, err
+		return store.UpsertResult{}, err
 	}
 
-	return inserted, nil
+	return store.UpsertResult{Inserted: inserted}, nil
 }
 
 func (r *BalanceEventRepo) stableCanonicalEventID(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, eventID string) (uuid.UUID, error) {
@@ -86,18 +86,32 @@ func (r *BalanceEventRepo) stableCanonicalEventID(ctx context.Context, tx *sql.T
 	return canonicalID, nil
 }
 
-func (r *BalanceEventRepo) updateExistingByCanonicalID(ctx context.Context, tx *sql.Tx, canonicalID uuid.UUID, be *model.BalanceEvent) (bool, error) {
+func (r *BalanceEventRepo) updateExistingByCanonicalID(ctx context.Context, tx *sql.Tx, canonicalID uuid.UUID, be *model.BalanceEvent) (updated bool, finalityCrossed bool, err error) {
+	// First, check existing balance_applied state before update.
+	var existingBalanceApplied bool
+	checkErr := tx.QueryRowContext(ctx, `
+		SELECT balance_applied FROM balance_events
+		WHERE id = $1 AND chain = $2 AND network = $3
+	`, canonicalID, be.Chain, be.Network).Scan(&existingBalanceApplied)
+	if checkErr != nil && !errors.Is(checkErr, sql.ErrNoRows) {
+		return false, false, fmt.Errorf("check existing balance_applied: %w", checkErr)
+	}
+	existingRowFound := checkErr == nil
+
 	const sqlUpdate = `
 		UPDATE balance_events
 		SET
 			finality_state = $4,
+			balance_applied = CASE
+				WHEN $12::boolean AND NOT balance_events.balance_applied THEN true
+				ELSE balance_events.balance_applied
+			END,
 			block_hash = COALESCE(NULLIF($5, ''), balance_events.block_hash),
 			tx_index = CASE
 				WHEN $6 <> 0 THEN $6
 				ELSE balance_events.tx_index
 			END,
 			block_cursor = GREATEST(balance_events.block_cursor, $7),
-			-- Avoid moving canonical rows backward across partition boundaries under block-time perturbation.
 			block_time = GREATEST(balance_events.block_time, COALESCE($8, balance_events.block_time)),
 			chain_data = COALESCE($9, balance_events.chain_data),
 			decoder_version = COALESCE(NULLIF($10, ''), balance_events.decoder_version),
@@ -128,7 +142,7 @@ func (r *BalanceEventRepo) updateExistingByCanonicalID(ctx context.Context, tx *
 			END
 	`
 
-	result, err := tx.ExecContext(
+	result, execErr := tx.ExecContext(
 		ctx,
 		sqlUpdate,
 		canonicalID,
@@ -142,20 +156,22 @@ func (r *BalanceEventRepo) updateExistingByCanonicalID(ctx context.Context, tx *
 		be.ChainData,
 		be.DecoderVersion,
 		be.SchemaVersion,
+		be.BalanceApplied,
 	)
-	if err != nil {
-		return false, fmt.Errorf("update existing event by canonical id: %w", err)
+	if execErr != nil {
+		return false, false, fmt.Errorf("update existing event by canonical id: %w", execErr)
 	}
 
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("read update rows: %w", err)
+	rows, rowErr := result.RowsAffected()
+	if rowErr != nil {
+		return false, false, fmt.Errorf("read update rows: %w", rowErr)
 	}
 	if rows > 0 {
-		return true, nil
+		crossed := existingRowFound && !existingBalanceApplied && be.BalanceApplied
+		return true, crossed, nil
 	}
 
-	return false, nil
+	return false, false, nil
 }
 
 func (r *BalanceEventRepo) eventByCanonicalIDExists(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, eventID string) (bool, error) {
@@ -176,20 +192,20 @@ func (r *BalanceEventRepo) insertByCanonicalID(ctx context.Context, tx *sql.Tx, 
 		INSERT INTO balance_events (
 			id, chain, network, transaction_id, tx_hash,
 			outer_instruction_index, inner_instruction_index,
-			token_id, event_category, event_action, program_id,
+			token_id, activity_type, event_action, program_id,
 			address, counterparty_address, delta, balance_before, balance_after,
 			watched_address, wallet_id, organization_id,
-			block_cursor, block_time, chain_data,
+			block_cursor, block_time, chain_data, balance_applied,
 			event_id, block_hash, tx_index, event_path, event_path_type,
 			actor_address, asset_type, asset_id,
 			finality_state, decoder_version, schema_version
-		) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33
+		) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34
 		WHERE NOT EXISTS (
 			SELECT 1
 			FROM balance_events
 			WHERE chain = $2
 				AND network = $3
-				AND event_id = $23
+				AND event_id = $24
 		)
 		RETURNING (xmax = 0) AS inserted
 	`
@@ -205,7 +221,7 @@ func (r *BalanceEventRepo) insertByCanonicalID(ctx context.Context, tx *sql.Tx, 
 		be.OuterInstructionIndex,
 		be.InnerInstructionIndex,
 		be.TokenID,
-		be.EventCategory,
+		be.ActivityType,
 		be.EventAction,
 		be.ProgramID,
 		be.Address,
@@ -219,6 +235,7 @@ func (r *BalanceEventRepo) insertByCanonicalID(ctx context.Context, tx *sql.Tx, 
 		be.BlockCursor,
 		be.BlockTime,
 		be.ChainData,
+		be.BalanceApplied,
 		be.EventID,
 		be.BlockHash,
 		be.TxIndex,

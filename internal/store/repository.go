@@ -32,16 +32,22 @@ type TransactionRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transaction) (uuid.UUID, error)
 }
 
+// UpsertResult describes the outcome of a BalanceEvent upsert.
+type UpsertResult struct {
+	Inserted        bool // First insertion of this event.
+	FinalityCrossed bool // Finality threshold crossed (balance_applied false → true).
+}
+
 // BalanceEventRepository provides access to balance event data.
 type BalanceEventRepository interface {
-	UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (bool, error)
+	UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (UpsertResult, error)
 }
 
 // BalanceRepository provides access to balance data.
 type BalanceRepository interface {
-	AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID *string, orgID *string, delta string, cursor int64, txHash string) error
-	GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (string, error)
-	GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (amount string, exists bool, err error)
+	AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID *string, orgID *string, delta string, cursor int64, txHash string, balanceType string) error
+	GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, error)
+	GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (amount string, exists bool, err error)
 	GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error)
 }
 

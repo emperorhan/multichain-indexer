@@ -12,6 +12,7 @@ type Balance struct {
 	Network                 Network   `db:"network"`
 	Address                 string    `db:"address"`
 	TokenID                 uuid.UUID `db:"token_id"`
+	BalanceType             string    `db:"balance_type"`
 	WalletID                *string   `db:"wallet_id"`
 	OrganizationID          *string   `db:"organization_id"`
 	Amount                  string    `db:"amount"`

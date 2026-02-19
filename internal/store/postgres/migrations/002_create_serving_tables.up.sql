@@ -80,7 +80,8 @@ CREATE TABLE balances (
     last_updated_tx_hash        VARCHAR(128),
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_balance UNIQUE (chain, network, address, token_id)
+    balance_type             VARCHAR(40) NOT NULL DEFAULT '',
+    CONSTRAINT uq_balance UNIQUE (chain, network, address, token_id, balance_type)
 );
 
 CREATE INDEX idx_balances_wallet ON balances (wallet_id);

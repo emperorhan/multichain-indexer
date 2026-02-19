@@ -15,6 +15,7 @@ import (
 	reflect "reflect"
 
 	model "github.com/emperorhan/multichain-indexer/internal/domain/model"
+	store "github.com/emperorhan/multichain-indexer/internal/store"
 	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -257,10 +258,10 @@ func (m *MockBalanceEventRepository) EXPECT() *MockBalanceEventRepositoryMockRec
 }
 
 // UpsertTx mocks base method.
-func (m *MockBalanceEventRepository) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (bool, error) {
+func (m *MockBalanceEventRepository) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpsertTx", ctx, tx, be)
-	ret0, _ := ret[0].(bool)
+	ret0, _ := ret[0].(store.UpsertResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -296,38 +297,38 @@ func (m *MockBalanceRepository) EXPECT() *MockBalanceRepositoryMockRecorder {
 }
 
 // AdjustBalanceTx mocks base method.
-func (m *MockBalanceRepository) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID, orgID *string, delta string, cursor int64, txHash string) error {
+func (m *MockBalanceRepository) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID, orgID *string, delta string, cursor int64, txHash string, balanceType string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AdjustBalanceTx", ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash)
+	ret := m.ctrl.Call(m, "AdjustBalanceTx", ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash, balanceType)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AdjustBalanceTx indicates an expected call of AdjustBalanceTx.
-func (mr *MockBalanceRepositoryMockRecorder) AdjustBalanceTx(ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash any) *gomock.Call {
+func (mr *MockBalanceRepositoryMockRecorder) AdjustBalanceTx(ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash, balanceType any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AdjustBalanceTx", reflect.TypeOf((*MockBalanceRepository)(nil).AdjustBalanceTx), ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AdjustBalanceTx", reflect.TypeOf((*MockBalanceRepository)(nil).AdjustBalanceTx), ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash, balanceType)
 }
 
 // GetAmountTx mocks base method.
-func (m *MockBalanceRepository) GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (string, error) {
+func (m *MockBalanceRepository) GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetAmountTx", ctx, tx, chain, network, address, tokenID)
+	ret := m.ctrl.Call(m, "GetAmountTx", ctx, tx, chain, network, address, tokenID, balanceType)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetAmountTx indicates an expected call of GetAmountTx.
-func (mr *MockBalanceRepositoryMockRecorder) GetAmountTx(ctx, tx, chain, network, address, tokenID any) *gomock.Call {
+func (mr *MockBalanceRepositoryMockRecorder) GetAmountTx(ctx, tx, chain, network, address, tokenID, balanceType any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAmountTx", reflect.TypeOf((*MockBalanceRepository)(nil).GetAmountTx), ctx, tx, chain, network, address, tokenID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAmountTx", reflect.TypeOf((*MockBalanceRepository)(nil).GetAmountTx), ctx, tx, chain, network, address, tokenID, balanceType)
 }
 
 // GetAmountWithExistsTx mocks base method.
-func (m *MockBalanceRepository) GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID) (string, bool, error) {
+func (m *MockBalanceRepository) GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetAmountWithExistsTx", ctx, tx, chain, network, address, tokenID)
+	ret := m.ctrl.Call(m, "GetAmountWithExistsTx", ctx, tx, chain, network, address, tokenID, balanceType)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(bool)
 	ret2, _ := ret[2].(error)
@@ -335,9 +336,9 @@ func (m *MockBalanceRepository) GetAmountWithExistsTx(ctx context.Context, tx *s
 }
 
 // GetAmountWithExistsTx indicates an expected call of GetAmountWithExistsTx.
-func (mr *MockBalanceRepositoryMockRecorder) GetAmountWithExistsTx(ctx, tx, chain, network, address, tokenID any) *gomock.Call {
+func (mr *MockBalanceRepositoryMockRecorder) GetAmountWithExistsTx(ctx, tx, chain, network, address, tokenID, balanceType any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAmountWithExistsTx", reflect.TypeOf((*MockBalanceRepository)(nil).GetAmountWithExistsTx), ctx, tx, chain, network, address, tokenID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAmountWithExistsTx", reflect.TypeOf((*MockBalanceRepository)(nil).GetAmountWithExistsTx), ctx, tx, chain, network, address, tokenID, balanceType)
 }
 
 // GetByAddress mocks base method.

@@ -13,7 +13,7 @@ CREATE TABLE balance_events_partitioned (
     outer_instruction_index INT NOT NULL,
     inner_instruction_index INT NOT NULL DEFAULT -1,
     token_id                UUID NOT NULL,
-    event_category          VARCHAR(20) NOT NULL,
+    activity_type           VARCHAR(40) NOT NULL,
     event_action            VARCHAR(60) NOT NULL,
     program_id              VARCHAR(128) NOT NULL,
     address                 VARCHAR(128) NOT NULL,
@@ -27,6 +27,7 @@ CREATE TABLE balance_events_partitioned (
     block_cursor            BIGINT NOT NULL,
     block_time              TIMESTAMPTZ NOT NULL DEFAULT now(),
     chain_data              JSONB NOT NULL DEFAULT '{}',
+    balance_applied         BOOLEAN NOT NULL DEFAULT false,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     event_id                VARCHAR(512) NOT NULL DEFAULT '',
     block_hash              VARCHAR(128) NOT NULL DEFAULT '',
@@ -79,7 +80,8 @@ CREATE INDEX idx_bep_cursor ON balance_events_partitioned (chain, network, block
 CREATE INDEX idx_bep_address ON balance_events_partitioned (address);
 CREATE INDEX idx_bep_wallet ON balance_events_partitioned (wallet_id);
 CREATE INDEX idx_bep_token ON balance_events_partitioned (token_id);
-CREATE INDEX idx_bep_category ON balance_events_partitioned (event_category);
+CREATE INDEX idx_bep_activity ON balance_events_partitioned (chain, network, watched_address, activity_type, block_time DESC);
+CREATE INDEX idx_bep_wallet_activity ON balance_events_partitioned (wallet_id, activity_type, block_time DESC);
 
 -- Step 5: Migrate existing data with explicit column mapping.
 -- SELECT * is unsafe because column order differs between old and new tables
@@ -88,11 +90,11 @@ CREATE INDEX idx_bep_category ON balance_events_partitioned (event_category);
 INSERT INTO balance_events_partitioned (
     id, chain, network, transaction_id, tx_hash,
     outer_instruction_index, inner_instruction_index,
-    token_id, event_category, event_action, program_id,
+    token_id, activity_type, event_action, program_id,
     address, counterparty_address, delta,
     balance_before, balance_after,
     watched_address, wallet_id, organization_id,
-    block_cursor, block_time, chain_data, created_at,
+    block_cursor, block_time, chain_data, balance_applied, created_at,
     event_id, block_hash, tx_index,
     event_path, event_path_type,
     actor_address, asset_type, asset_id,
@@ -101,13 +103,13 @@ INSERT INTO balance_events_partitioned (
 SELECT
     id, chain, network, transaction_id, tx_hash,
     outer_instruction_index, inner_instruction_index,
-    token_id, event_category, event_action, program_id,
+    token_id, activity_type, event_action, program_id,
     address, counterparty_address, delta,
     balance_before, balance_after,
     watched_address, wallet_id, organization_id,
     block_cursor,
     COALESCE(block_time, now()),
-    chain_data, created_at,
+    chain_data, balance_applied, created_at,
     COALESCE(event_id, ''),
     COALESCE(block_hash, ''),
     COALESCE(tx_index, 0)::INT,

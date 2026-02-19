@@ -495,14 +495,12 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				OuterInstructionIndex: be.OuterInstructionIndex,
 				InnerInstructionIndex: be.InnerInstructionIndex,
 				TokenID:               tokenID,
-				EventCategory:         be.EventCategory,
+				ActivityType:          be.ActivityType,
 				EventAction:           be.EventAction,
 				ProgramID:             be.ProgramID,
 				Address:               be.Address,
 				CounterpartyAddress:   be.CounterpartyAddress,
 				Delta:                 be.Delta,
-				BalanceBefore:         &balanceBefore,
-				BalanceAfter:          &balanceAfter,
 				WatchedAddress:        &batch.Address,
 				WalletID:              batch.WalletID,
 				OrganizationID:        batch.OrgID,
@@ -521,20 +519,47 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				DecoderVersion:        be.DecoderVersion,
 				SchemaVersion:         be.SchemaVersion,
 			}
-			inserted, err := ing.balanceEventRepo.UpsertTx(ctx, dbTx, beModel)
+			// Set balance_applied based on finality threshold
+			beModel.BalanceApplied = meetsBalanceThreshold(batch.Chain, beModel.FinalityState)
+
+			// Store balance snapshot when finality threshold is met
+			if beModel.BalanceApplied {
+				beModel.BalanceBefore = &balanceBefore
+				beModel.BalanceAfter = &balanceAfter
+			}
+
+			result, err := ing.balanceEventRepo.UpsertTx(ctx, dbTx, beModel)
 			if err != nil {
 				return fmt.Errorf("upsert balance event: %w", err)
 			}
 
-			if inserted {
-				// 2c. Update balance (delta is already signed)
+			shouldAdjust := (result.Inserted && beModel.BalanceApplied) || result.FinalityCrossed
+
+			if shouldAdjust {
+				// 2c. Update available balance (delta is already signed)
 				if err := ing.balanceRepo.AdjustBalanceTx(
 					ctx, dbTx,
 					batch.Chain, batch.Network, be.Address,
 					tokenID, batch.WalletID, batch.OrgID,
-					be.Delta, ntx.BlockCursor, canonicalTxHash,
+					be.Delta, ntx.BlockCursor, canonicalTxHash, "",
 				); err != nil {
 					return fmt.Errorf("adjust balance: %w", err)
+				}
+
+				// 2d. Staking balance tracking (STAKE/UNSTAKE)
+				if isStakingActivity(beModel.ActivityType) {
+					invertedDelta, negErr := negateDecimalString(be.Delta)
+					if negErr != nil {
+						return fmt.Errorf("negate staking delta: %w", negErr)
+					}
+					if err := ing.balanceRepo.AdjustBalanceTx(
+						ctx, dbTx,
+						batch.Chain, batch.Network, be.Address,
+						tokenID, batch.WalletID, batch.OrgID,
+						invertedDelta, ntx.BlockCursor, canonicalTxHash, "staked",
+					); err != nil {
+						return fmt.Errorf("adjust staked balance: %w", err)
+					}
 				}
 
 				totalEvents++
@@ -607,7 +632,7 @@ func (ing *Ingester) computeBalanceTransition(
 	be event.NormalizedBalanceEvent,
 	tokenID uuid.UUID,
 ) (string, bool, string, error) {
-	beforeAmount, exists, err := ing.balanceRepo.GetAmountWithExistsTx(ctx, tx, batch.Chain, batch.Network, be.Address, tokenID)
+	beforeAmount, exists, err := ing.balanceRepo.GetAmountWithExistsTx(ctx, tx, batch.Chain, batch.Network, be.Address, tokenID, "")
 	if err != nil {
 		return "", false, "", fmt.Errorf("get current balance: %w", err)
 	}
@@ -679,6 +704,9 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 	}
 
 	for _, be := range rollbackEvents {
+		if !be.BalanceApplied {
+			continue
+		}
 		invertedDelta, err := negateDecimalString(be.Delta)
 		if err != nil {
 			return fmt.Errorf("negate delta for %s: %w", be.TxHash, err)
@@ -688,9 +716,21 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 			ctx, dbTx,
 			batch.Chain, batch.Network, be.Address,
 			be.TokenID, be.WalletID, be.OrganizationID,
-			invertedDelta, be.BlockCursor, be.TxHash,
+			invertedDelta, be.BlockCursor, be.TxHash, "",
 		); err != nil {
 			return fmt.Errorf("revert balance: %w", err)
+		}
+
+		// Reverse staking balance if applicable
+		if isStakingActivity(be.ActivityType) {
+			if err := ing.balanceRepo.AdjustBalanceTx(
+				ctx, dbTx,
+				batch.Chain, batch.Network, be.Address,
+				be.TokenID, be.WalletID, be.OrganizationID,
+				be.Delta, be.BlockCursor, be.TxHash, "staked",
+			); err != nil {
+				return fmt.Errorf("revert staked balance: %w", err)
+			}
 		}
 	}
 
@@ -735,6 +775,8 @@ type rollbackBalanceEvent struct {
 	TxHash         string
 	WalletID       *string
 	OrganizationID *string
+	ActivityType   model.ActivityType
+	BalanceApplied bool
 }
 
 func (ing *Ingester) fetchRollbackEvents(
@@ -746,7 +788,7 @@ func (ing *Ingester) fetchRollbackEvents(
 	forkCursor int64,
 ) ([]rollbackBalanceEvent, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT token_id, address, delta, block_cursor, tx_hash, wallet_id, organization_id
+		SELECT token_id, address, delta, block_cursor, tx_hash, wallet_id, organization_id, activity_type, balance_applied
 		FROM balance_events
 		WHERE chain = $1 AND network = $2 AND watched_address = $3 AND block_cursor >= $4
 		ORDER BY block_cursor DESC, id DESC
@@ -761,7 +803,7 @@ func (ing *Ingester) fetchRollbackEvents(
 		var be rollbackBalanceEvent
 		var walletID sql.NullString
 		var organizationID sql.NullString
-		if err := rows.Scan(&be.TokenID, &be.Address, &be.Delta, &be.BlockCursor, &be.TxHash, &walletID, &organizationID); err != nil {
+		if err := rows.Scan(&be.TokenID, &be.Address, &be.Delta, &be.BlockCursor, &be.TxHash, &walletID, &organizationID, &be.ActivityType, &be.BalanceApplied); err != nil {
 			return nil, fmt.Errorf("scan rollback event: %w", err)
 		}
 		if walletID.Valid {
@@ -1073,6 +1115,40 @@ func isHexString(v string) bool {
 		}
 	}
 	return true
+}
+
+// meetsBalanceThreshold checks whether the finality state is strong enough
+// to apply the balance adjustment for the given chain.
+func meetsBalanceThreshold(chain model.Chain, finality string) bool {
+	switch chain {
+	case model.ChainSolana:
+		return true // Solana events are delivered as finalized
+	default:
+		// EVM/BTC: require confirmed or stronger
+		return finalityStateRank(finality) >= 2
+	}
+}
+
+func finalityStateRank(state string) int {
+	s := strings.ToLower(strings.TrimSpace(state))
+	switch s {
+	case "":
+		return 4 // No finality tracking → treat as finalized
+	case "processed", "pending", "latest", "unsafe":
+		return 1
+	case "confirmed", "accepted":
+		return 2
+	case "safe":
+		return 3
+	case "finalized":
+		return 4
+	default:
+		return 0
+	}
+}
+
+func isStakingActivity(activityType model.ActivityType) bool {
+	return activityType == model.ActivityStake || activityType == model.ActivityUnstake
 }
 
 func defaultTokenSymbol(be event.NormalizedBalanceEvent) string {

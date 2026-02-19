@@ -9,7 +9,7 @@ CREATE TABLE balance_events (
     outer_instruction_index INT NOT NULL,
     inner_instruction_index INT NOT NULL DEFAULT -1,
     token_id                UUID NOT NULL REFERENCES tokens(id),
-    event_category          VARCHAR(20) NOT NULL,
+    activity_type           VARCHAR(40) NOT NULL,
     event_action            VARCHAR(60) NOT NULL,
     program_id              VARCHAR(128) NOT NULL,
     address                 VARCHAR(128) NOT NULL,
@@ -21,6 +21,7 @@ CREATE TABLE balance_events (
     block_cursor            BIGINT NOT NULL,
     block_time              TIMESTAMPTZ,
     chain_data              JSONB NOT NULL DEFAULT '{}',
+    balance_applied         BOOLEAN NOT NULL DEFAULT false,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT uq_balance_event
@@ -34,13 +35,13 @@ CREATE INDEX idx_balance_events_cursor ON balance_events (chain, network, block_
 CREATE INDEX idx_balance_events_address ON balance_events (address);
 CREATE INDEX idx_balance_events_wallet ON balance_events (wallet_id);
 CREATE INDEX idx_balance_events_token ON balance_events (token_id);
-CREATE INDEX idx_balance_events_category ON balance_events (event_category);
+CREATE INDEX idx_balance_events_activity ON balance_events (activity_type);
 
 -- Migrate existing data from transfers to balance_events
 INSERT INTO balance_events (
     chain, network, transaction_id, tx_hash,
     outer_instruction_index, inner_instruction_index,
-    token_id, event_category, event_action, program_id,
+    token_id, activity_type, event_action, program_id,
     address, counterparty_address, delta,
     watched_address, wallet_id, organization_id,
     block_cursor, block_time, chain_data, created_at
@@ -48,7 +49,7 @@ INSERT INTO balance_events (
 SELECT
     t.chain, t.network, t.transaction_id, t.tx_hash,
     t.instruction_index, -1,
-    t.token_id, 'TRANSFER', 'legacy_transfer', '',
+    t.token_id, 'DEPOSIT', 'legacy_transfer', '',
     CASE
         WHEN t.direction = 'DEPOSIT' THEN t.to_address
         WHEN t.direction = 'WITHDRAWAL' THEN t.from_address
