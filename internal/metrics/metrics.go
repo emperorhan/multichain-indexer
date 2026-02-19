@@ -209,4 +209,87 @@ var (
 		Name:      "rate_limit_waits_total",
 		Help:      "Total times RPC calls waited for rate limiter",
 	}, []string{"chain"})
+
+	// Reorg detector
+	ReorgDetectedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "reorg_detector",
+		Name:      "reorg_detected_total",
+		Help:      "Total block reorgs detected",
+	}, []string{"chain", "network"})
+
+	ReorgDetectorCheckLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "indexer",
+		Subsystem: "reorg_detector",
+		Name:      "check_duration_seconds",
+		Help:      "Reorg detector check duration",
+		Buckets:   []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+	}, []string{"chain", "network"})
+
+	ReorgDetectorUnfinalizedBlocks = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "reorg_detector",
+		Name:      "unfinalized_blocks",
+		Help:      "Current number of unfinalized indexed blocks",
+	}, []string{"chain", "network"})
+
+	// Finalizer
+	FinalizerPromotionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "finalizer",
+		Name:      "promotions_total",
+		Help:      "Total finality promotions sent",
+	}, []string{"chain", "network"})
+
+	FinalizerLatestFinalizedBlock = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "finalizer",
+		Name:      "latest_finalized_block",
+		Help:      "Latest finalized block number",
+	}, []string{"chain", "network"})
+
+	// Ingester reorg/finality
+	IngesterReorgRollbacksTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "ingester",
+		Name:      "reorg_rollbacks_total",
+		Help:      "Total reorg rollbacks processed by ingester",
+	}, []string{"chain", "network"})
+
+	IngesterFinalityPromotionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "ingester",
+		Name:      "finality_promotions_total",
+		Help:      "Total finality promotions processed by ingester",
+	}, []string{"chain", "network"})
+
+	// Replay / re-indexing
+	ReplayPurgesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "replay",
+		Name:      "purges_total",
+		Help:      "Total replay purge operations executed",
+	}, []string{"chain", "network"})
+
+	ReplayPurgedEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "replay",
+		Name:      "purged_events_total",
+		Help:      "Total balance events purged by replay operations",
+	}, []string{"chain", "network"})
+
+	ReplayPurgeDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "indexer",
+		Subsystem: "replay",
+		Name:      "purge_duration_seconds",
+		Help:      "Replay purge operation duration",
+		Buckets:   []float64{0.1, 0.5, 1, 2.5, 5, 10, 30, 60},
+	}, []string{"chain", "network"})
+
+	ReplayDryRunsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "replay",
+		Name:      "dry_runs_total",
+		Help:      "Total replay dry run operations executed",
+	}, []string{"chain", "network"})
 )

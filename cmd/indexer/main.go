@@ -28,6 +28,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
 	redispkg "github.com/emperorhan/multichain-indexer/internal/store/redis"
@@ -462,6 +463,7 @@ func main() {
 		Token:         postgres.NewTokenRepo(db),
 		Config:        postgres.NewIndexerConfigRepo(db),
 		RuntimeConfig: postgres.NewRuntimeConfigRepo(db),
+		IndexedBlock:  postgres.NewIndexedBlockRepo(db.DB),
 	}
 
 	allTargets := buildRuntimeTargets(cfg, logger)
@@ -492,6 +494,10 @@ func main() {
 		}
 	}
 
+	// Create shared replay service
+	replayService := replay.NewService(db, repos.Balance, repos.Config, repos.IndexedBlock, logger)
+
+	registry := pipeline.NewRegistry()
 	pipelines := make([]*pipeline.Pipeline, 0, len(targets))
 	commitInterleaver := ingester.NewDeterministicMandatoryChainInterleaver(deterministicInterleaveMaxSkew)
 	for _, target := range targets {
@@ -534,8 +540,13 @@ func main() {
 			StreamNamespace:        cfg.Pipeline.StreamNamespace,
 			StreamSessionID:        streamSessionID,
 			CommitInterleaver:      commitInterleaver,
+			ReorgDetectorInterval:  time.Duration(cfg.Pipeline.ReorgDetectorIntervalMs) * time.Millisecond,
+			FinalizerInterval:      time.Duration(cfg.Pipeline.FinalizerIntervalMs) * time.Millisecond,
 		}
-		pipelines = append(pipelines, pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL)))
+		p := pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL))
+		p.SetReplayService(replayService)
+		registry.Register(p)
+		pipelines = append(pipelines, p)
 	}
 
 	// Context with signal handling
@@ -555,7 +566,8 @@ func main() {
 
 	// Admin API server (optional)
 	if cfg.Server.AdminAddr != "" {
-		adminSrv := admin.NewServer(repos.WatchedAddr, repos.Config, logger)
+		replayAdapter := pipeline.NewRegistryReplayAdapter(registry, replayService, repos.Config)
+		adminSrv := admin.NewServer(repos.WatchedAddr, repos.Config, logger, admin.WithReplayRequester(replayAdapter))
 		var adminHandler http.Handler = adminSrv.Handler()
 		if cfg.Server.AdminAuthUser != "" && cfg.Server.AdminAuthPass != "" {
 			adminHandler = basicAuthMiddleware(cfg.Server.AdminAuthUser, cfg.Server.AdminAuthPass, adminHandler)

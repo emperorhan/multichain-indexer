@@ -16,8 +16,11 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/fetcher"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/finalizer"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/normalizer"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/reorgdetector"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	redisstream "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	"golang.org/x/sync/errgroup"
@@ -43,6 +46,8 @@ type Config struct {
 	StreamNamespace        string
 	StreamSessionID        string
 	CommitInterleaver      ingester.CommitInterleaver
+	ReorgDetectorInterval  time.Duration
+	FinalizerInterval      time.Duration
 }
 
 const streamBoundaryFetchToNormal = "fetcher-normalizer"
@@ -72,12 +77,25 @@ type CoordinatorAutoTuneConfig struct {
 	PolicyActivationHoldTicks  int
 }
 
+// replayOp represents a pending replay operation sent via replayCh.
+type replayOp struct {
+	req      replay.PurgeRequest
+	resultCh chan replayOpResult
+}
+
+type replayOpResult struct {
+	result *replay.PurgeResult
+	err    error
+}
+
 type Pipeline struct {
-	cfg     Config
-	adapter chain.ChainAdapter
-	db      store.TxBeginner
-	repos   *Repos
-	logger  *slog.Logger
+	cfg           Config
+	adapter       chain.ChainAdapter
+	db            store.TxBeginner
+	repos         *Repos
+	logger        *slog.Logger
+	replayService *replay.Service
+	replayCh      chan replayOp
 }
 
 type streamCheckpointManager interface {
@@ -94,6 +112,7 @@ type Repos struct {
 	Token         store.TokenRepository
 	Config        store.IndexerConfigRepository
 	RuntimeConfig store.RuntimeConfigRepository
+	IndexedBlock  store.IndexedBlockRepository
 }
 
 func New(
@@ -109,10 +128,102 @@ func New(
 		db:      db,
 		repos:   repos,
 		logger:  logger.With("component", "pipeline"),
+		replayCh: make(chan replayOp, 1),
+	}
+}
+
+// SetReplayService sets the replay service on the pipeline. This must be
+// called before Run().
+func (p *Pipeline) SetReplayService(svc *replay.Service) {
+	p.replayService = svc
+}
+
+// ReplayService returns the pipeline's replay service (may be nil).
+func (p *Pipeline) ReplayService() *replay.Service {
+	return p.replayService
+}
+
+// RequestReplay is a synchronous method called by the Admin API. It sends
+// a replay request to the pipeline's restart loop, which will stop all workers,
+// execute the purge, and restart the pipeline.
+func (p *Pipeline) RequestReplay(ctx context.Context, req replay.PurgeRequest) (*replay.PurgeResult, error) {
+	resultCh := make(chan replayOpResult, 1)
+	select {
+	case p.replayCh <- replayOp{req: req, resultCh: resultCh}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case res := <-resultCh:
+		return res.result, res.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		// Each iteration creates a fresh context, channels, and errgroup.
+		runCtx, runCancel := context.WithCancel(ctx)
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- p.runPipeline(runCtx)
+		}()
+
+		select {
+		case err := <-errCh:
+			// Pipeline terminated normally or with error.
+			runCancel()
+			if err != nil && !errors.Is(err, context.Canceled) {
+				return err
+			}
+			return nil
+
+		case op := <-p.replayCh:
+			// 1. Graceful stop: cancel all workers and wait for completion.
+			p.logger.Warn("stopping pipeline for replay",
+				"chain", p.cfg.Chain,
+				"network", p.cfg.Network,
+				"from_block", op.req.FromBlock,
+			)
+			runCancel()
+			<-errCh // wait for full shutdown
+
+			// 2. Execute purge while workers are stopped.
+			result, err := p.replayService.PurgeFromBlock(ctx, op.req)
+			op.resultCh <- replayOpResult{result: result, err: err}
+
+			if err != nil {
+				p.logger.Error("replay purge failed, restarting pipeline",
+					"error", err,
+					"chain", p.cfg.Chain,
+					"network", p.cfg.Network,
+				)
+			} else {
+				p.logger.Info("pipeline restarting after replay",
+					"chain", p.cfg.Chain,
+					"network", p.cfg.Network,
+					"new_watermark", result.NewWatermark,
+				)
+			}
+			// 3. Loop continues → pipeline restarts with fresh channels.
+			continue
+
+		case <-ctx.Done():
+			runCancel()
+			<-errCh
+			return ctx.Err()
+		}
+	}
+}
+
+// runPipeline contains the original Run() body. All channels and stages are
+// created fresh on each invocation so a restart starts clean.
+func (p *Pipeline) runPipeline(ctx context.Context) error {
 	bufSize := p.cfg.ChannelBufferSize
 	if p.cfg.StreamTransportEnabled && p.cfg.StreamBackend == nil {
 		return fmt.Errorf("stream transport enabled but stream backend is not configured")
@@ -171,14 +282,30 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		normalizer.WithTLS(p.cfg.SidecarTLSEnabled, p.cfg.SidecarTLSCA, p.cfg.SidecarTLSCert, p.cfg.SidecarTLSKey),
 	)
 
+	// Reorg/finality channels (nil-safe if not used)
+	reorgCh := make(chan event.ReorgEvent, 1)
+	finalityCh := make(chan event.FinalityPromotion, 1)
+
+	ingesterOpts := []ingester.Option{
+		ingester.WithCommitInterleaver(p.cfg.CommitInterleaver),
+		ingester.WithAutoTuneSignalSink(autoTuneSignalCollector),
+		ingester.WithReorgChannel(reorgCh),
+		ingester.WithFinalityChannel(finalityCh),
+	}
+	if p.repos.IndexedBlock != nil {
+		ingesterOpts = append(ingesterOpts, ingester.WithIndexedBlockRepo(p.repos.IndexedBlock))
+	}
+	if p.replayService != nil {
+		ingesterOpts = append(ingesterOpts, ingester.WithReplayService(p.replayService))
+	}
+
 	ingest := ingester.New(
 		p.db,
 		p.repos.Transaction, p.repos.BalanceEvent,
 		p.repos.Balance, p.repos.Token,
 		p.repos.Cursor, p.repos.Config,
 		normalizedCh, p.logger,
-		ingester.WithCommitInterleaver(p.cfg.CommitInterleaver),
-		ingester.WithAutoTuneSignalSink(autoTuneSignalCollector),
+		ingesterOpts...,
 	)
 
 	p.logger.Info("pipeline starting",
@@ -245,6 +372,34 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	g.Go(func() error {
 		return ingest.Run(gCtx)
 	})
+
+	// Start ReorgDetector + Finalizer if adapter supports reorg detection
+	if reorgAdapter, ok := p.adapter.(chain.ReorgAwareAdapter); ok && p.repos.IndexedBlock != nil {
+		detector := reorgdetector.New(
+			p.cfg.Chain, p.cfg.Network,
+			reorgAdapter, p.repos.IndexedBlock,
+			reorgCh, p.cfg.ReorgDetectorInterval,
+			p.logger,
+		)
+		g.Go(func() error {
+			return detector.Run(gCtx)
+		})
+
+		fin := finalizer.New(
+			p.cfg.Chain, p.cfg.Network,
+			reorgAdapter, p.repos.IndexedBlock,
+			finalityCh, p.cfg.FinalizerInterval,
+			p.logger,
+		)
+		g.Go(func() error {
+			return fin.Run(gCtx)
+		})
+
+		p.logger.Info("reorg detector and finalizer started",
+			"reorg_interval", p.cfg.ReorgDetectorInterval,
+			"finalizer_interval", p.cfg.FinalizerInterval,
+		)
+	}
 
 	return g.Wait()
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
 )
 
 // --- Mock repositories ---
@@ -56,11 +57,39 @@ func (m *mockIndexerConfigRepo) GetWatermark(ctx context.Context, chain model.Ch
 	return m.getWatermarkFunc(ctx, chain, network)
 }
 
+// --- Mock replay requester ---
+
+type mockReplayRequester struct {
+	hasPipeline    bool
+	requestResult  *replay.PurgeResult
+	requestErr     error
+	dryRunResult   *replay.PurgeResult
+	dryRunErr      error
+	watermark      *model.PipelineWatermark
+	watermarkErr   error
+}
+
+func (m *mockReplayRequester) HasPipeline(_ model.Chain, _ model.Network) bool {
+	return m.hasPipeline
+}
+
+func (m *mockReplayRequester) RequestReplay(_ context.Context, _ replay.PurgeRequest) (*replay.PurgeResult, error) {
+	return m.requestResult, m.requestErr
+}
+
+func (m *mockReplayRequester) DryRunPurge(_ context.Context, _ replay.PurgeRequest) (*replay.PurgeResult, error) {
+	return m.dryRunResult, m.dryRunErr
+}
+
+func (m *mockReplayRequester) GetWatermark(_ context.Context, _ model.Chain, _ model.Network) (*model.PipelineWatermark, error) {
+	return m.watermark, m.watermarkErr
+}
+
 // --- Helper ---
 
-func newTestServer(watchedRepo *mockWatchedAddressRepo, configRepo *mockIndexerConfigRepo) *Server {
+func newTestServer(watchedRepo *mockWatchedAddressRepo, configRepo *mockIndexerConfigRepo, opts ...ServerOption) *Server {
 	logger := slog.Default()
-	return NewServer(watchedRepo, configRepo, logger)
+	return NewServer(watchedRepo, configRepo, logger, opts...)
 }
 
 // --- Tests: ListWatchedAddresses ---
@@ -358,5 +387,242 @@ func TestHandleGetStatus_InvalidChain(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+// --- Tests: Replay ---
+
+func TestHandleReplay_NoReplayRequester(t *testing.T) {
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+
+	body := `{"chain":"base","network":"mainnet","from_block":100}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+}
+
+func TestHandleReplay_Success(t *testing.T) {
+	rr := &mockReplayRequester{
+		hasPipeline: true,
+		requestResult: &replay.PurgeResult{
+			PurgedEvents:       450,
+			PurgedTransactions: 120,
+			PurgedBlocks:       50,
+			ReversedBalances:   380,
+			NewWatermark:       99,
+			CursorsRewound:     3,
+			DurationMs:         1234,
+		},
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+
+	body := `{"chain":"base","network":"mainnet","from_block":100,"reason":"test"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp replay.PurgeResult
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.PurgedEvents != 450 {
+		t.Errorf("expected 450 purged events, got %d", resp.PurgedEvents)
+	}
+	if resp.NewWatermark != 99 {
+		t.Errorf("expected watermark 99, got %d", resp.NewWatermark)
+	}
+}
+
+func TestHandleReplay_DryRun(t *testing.T) {
+	rr := &mockReplayRequester{
+		hasPipeline: true,
+		dryRunResult: &replay.PurgeResult{
+			PurgedEvents:       10,
+			PurgedTransactions: 5,
+			DryRun:             true,
+		},
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+
+	body := `{"chain":"base","network":"mainnet","from_block":100,"dry_run":true}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp replay.PurgeResult
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if !resp.DryRun {
+		t.Error("expected dry_run=true in response")
+	}
+}
+
+func TestHandleReplay_MissingFields(t *testing.T) {
+	rr := &mockReplayRequester{hasPipeline: true}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"missing chain", `{"network":"mainnet","from_block":100}`},
+		{"missing network", `{"chain":"base","from_block":100}`},
+		{"missing from_block", `{"chain":"base","network":"mainnet"}`},
+		{"all empty", `{}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(tc.body))
+			rec := httptest.NewRecorder()
+
+			srv.Handler().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d; body: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandleReplay_PipelineNotFound(t *testing.T) {
+	rr := &mockReplayRequester{hasPipeline: false}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+
+	body := `{"chain":"base","network":"mainnet","from_block":100}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestHandleReplay_FinalizedConflict(t *testing.T) {
+	rr := &mockReplayRequester{
+		hasPipeline: true,
+		requestErr:  replay.ErrFinalizedBlock,
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+
+	body := `{"chain":"base","network":"mainnet","from_block":100}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleReplay_NegativeFromBlock(t *testing.T) {
+	rr := &mockReplayRequester{hasPipeline: true}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+
+	body := `{"chain":"base","network":"mainnet","from_block":-1}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleReplay_InvalidChainNetwork(t *testing.T) {
+	rr := &mockReplayRequester{hasPipeline: true}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+
+	body := `{"chain":"dogecoin","network":"mainnet","from_block":100}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+// --- Tests: Replay Status ---
+
+func TestHandleReplayStatus_Success(t *testing.T) {
+	rr := &mockReplayRequester{
+		hasPipeline: true,
+		watermark: &model.PipelineWatermark{
+			HeadSequence:     8000,
+			IngestedSequence: 5234,
+		},
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/replay/status?chain=base&network=mainnet", nil)
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp replayStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.CurrentWatermark != 5234 {
+		t.Errorf("expected watermark 5234, got %d", resp.CurrentWatermark)
+	}
+	if resp.HeadSequence != 8000 {
+		t.Errorf("expected head_sequence 8000, got %d", resp.HeadSequence)
+	}
+	if resp.Lag != 2766 {
+		t.Errorf("expected lag 2766, got %d", resp.Lag)
+	}
+}
+
+func TestHandleReplayStatus_NoRequester(t *testing.T) {
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/replay/status?chain=base&network=mainnet", nil)
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+}
+
+func TestHandleReplayStatus_PipelineNotFound(t *testing.T) {
+	rr := &mockReplayRequester{hasPipeline: false}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/replay/status?chain=base&network=mainnet", nil)
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }

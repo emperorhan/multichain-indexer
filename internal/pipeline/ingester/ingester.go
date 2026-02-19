@@ -16,6 +16,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/tracing"
@@ -43,6 +44,9 @@ type Ingester struct {
 	cursorRepo        store.CursorRepository
 	configRepo        store.IndexerConfigRepository
 	normalizedCh      <-chan event.NormalizedBatch
+	reorgCh           <-chan event.ReorgEvent
+	finalityCh        <-chan event.FinalityPromotion
+	blockRepo         store.IndexedBlockRepository
 	logger            *slog.Logger
 	autoTuneSignals   autotune.AutoTuneSignalSink
 	commitInterleaver CommitInterleaver
@@ -52,6 +56,7 @@ type Ingester struct {
 	retryDelayMax     time.Duration
 	sleepFn           func(context.Context, time.Duration) error
 	deniedCache       *cache.LRU[string, bool]
+	replayService     *replay.Service
 }
 
 type Option func(*Ingester)
@@ -71,6 +76,30 @@ func WithAutoTuneSignalSink(sink autotune.AutoTuneSignalSink) Option {
 func WithReorgHandler(handler func(context.Context, *sql.Tx, event.NormalizedBatch) error) Option {
 	return func(ing *Ingester) {
 		ing.reorgHandler = handler
+	}
+}
+
+func WithReorgChannel(ch <-chan event.ReorgEvent) Option {
+	return func(ing *Ingester) {
+		ing.reorgCh = ch
+	}
+}
+
+func WithFinalityChannel(ch <-chan event.FinalityPromotion) Option {
+	return func(ing *Ingester) {
+		ing.finalityCh = ch
+	}
+}
+
+func WithIndexedBlockRepo(repo store.IndexedBlockRepository) Option {
+	return func(ing *Ingester) {
+		ing.blockRepo = repo
+	}
+}
+
+func WithReplayService(svc *replay.Service) Option {
+	return func(ing *Ingester) {
+		ing.replayService = svc
 	}
 }
 
@@ -114,6 +143,10 @@ func New(
 func (ing *Ingester) Run(ctx context.Context) error {
 	ing.logger.Info("ingester started")
 
+	// Use nil channels if not configured (select will never match nil channels)
+	reorgCh := ing.reorgCh
+	finalityCh := ing.finalityCh
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -149,6 +182,34 @@ func (ing *Ingester) Run(ctx context.Context) error {
 			span.End()
 			metrics.IngesterBatchesProcessed.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
 			metrics.IngesterLatency.WithLabelValues(batch.Chain.String(), batch.Network.String()).Observe(time.Since(start).Seconds())
+		case reorg, ok := <-reorgCh:
+			if !ok {
+				reorgCh = nil
+				continue
+			}
+			if err := ing.handleReorg(ctx, reorg); err != nil {
+				ing.logger.Error("handle reorg failed",
+					"chain", reorg.Chain,
+					"network", reorg.Network,
+					"fork_block", reorg.ForkBlockNumber,
+					"error", err,
+				)
+				return fmt.Errorf("ingester handle reorg failed: %w", err)
+			}
+		case promo, ok := <-finalityCh:
+			if !ok {
+				finalityCh = nil
+				continue
+			}
+			if err := ing.handleFinalityPromotion(ctx, promo); err != nil {
+				ing.logger.Error("handle finality promotion failed",
+					"chain", promo.Chain,
+					"network", promo.Network,
+					"new_finalized_block", promo.NewFinalizedBlock,
+					"error", err,
+				)
+				return fmt.Errorf("ingester handle finality promotion failed: %w", err)
+			}
 		}
 	}
 }
@@ -422,6 +483,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				Status:      ntx.Status,
 				Err:         ntx.Err,
 				ChainData:   ntx.ChainData,
+				BlockHash:   ntx.BlockHash,
+				ParentHash:  ntx.ParentHash,
 			}
 			if txModel.ChainData == nil {
 				txModel.ChainData = json.RawMessage("{}")
@@ -800,6 +863,43 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		}
 	}
 
+	// 4c. Bulk upsert indexed blocks (for reorg detection)
+	if ing.blockRepo != nil && len(batch.Transactions) > 0 {
+		blockMap := make(map[int64]*model.IndexedBlock)
+		for _, ntx := range batch.Transactions {
+			if ntx.BlockHash == "" {
+				continue
+			}
+			if _, exists := blockMap[ntx.BlockCursor]; !exists {
+				finalityState := "pending"
+				if len(ntx.BalanceEvents) > 0 && ntx.BalanceEvents[0].FinalityState != "" {
+					finalityState = ntx.BalanceEvents[0].FinalityState
+				}
+				blockMap[ntx.BlockCursor] = &model.IndexedBlock{
+					Chain:         batch.Chain,
+					Network:       batch.Network,
+					BlockNumber:   ntx.BlockCursor,
+					BlockHash:     ntx.BlockHash,
+					ParentHash:    ntx.ParentHash,
+					FinalityState: finalityState,
+					BlockTime:     ntx.BlockTime,
+				}
+			}
+		}
+		if len(blockMap) > 0 {
+			blocks := make([]*model.IndexedBlock, 0, len(blockMap))
+			for _, b := range blockMap {
+				blocks = append(blocks, b)
+			}
+			if err := ing.blockRepo.BulkUpsertTx(ctx, dbTx, blocks); err != nil {
+				phase4Span.RecordError(err)
+				phase4Span.SetStatus(codes.Error, err.Error())
+				phase4Span.End()
+				return fmt.Errorf("bulk upsert indexed blocks: %w", err)
+			}
+		}
+	}
+
 	// 3. Update cursor
 	if batch.NewCursorValue != nil {
 		if err := ing.cursorRepo.UpsertTx(
@@ -870,6 +970,362 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	)
 
 	return nil
+}
+
+// handleReorg processes a ReorgEvent by rolling back all data from the fork block onward.
+// If a replayService is configured, the rollback is delegated to it; otherwise the
+// inline implementation is used as a fallback.
+func (ing *Ingester) handleReorg(ctx context.Context, reorg event.ReorgEvent) error {
+	ing.logger.Warn("processing reorg rollback",
+		"chain", reorg.Chain,
+		"network", reorg.Network,
+		"fork_block", reorg.ForkBlockNumber,
+		"expected_hash", reorg.ExpectedHash,
+		"actual_hash", reorg.ActualHash,
+	)
+
+	// Delegate to replay.Service when available
+	if ing.replayService != nil {
+		_, err := ing.replayService.PurgeFromBlock(ctx, replay.PurgeRequest{
+			Chain:     reorg.Chain,
+			Network:   reorg.Network,
+			FromBlock: reorg.ForkBlockNumber,
+			Force:     true, // reorg bypasses finality check
+			Reason:    fmt.Sprintf("reorg: expected=%s actual=%s", reorg.ExpectedHash, reorg.ActualHash),
+		})
+		if err != nil {
+			return fmt.Errorf("reorg via replay service: %w", err)
+		}
+		metrics.IngesterReorgRollbacksTotal.WithLabelValues(reorg.Chain.String(), reorg.Network.String()).Inc()
+		return nil
+	}
+
+	// Fallback: inline rollback (kept for backward compatibility)
+	dbTx, err := ing.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reorg tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if rbErr := dbTx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+				ing.logger.Warn("reorg rollback tx rollback failed", "error", rbErr)
+			}
+		}
+	}()
+
+	// 1. Fetch balance events that will be rolled back
+	rollbackEvents, err := ing.fetchReorgRollbackEvents(ctx, dbTx, reorg.Chain, reorg.Network, reorg.ForkBlockNumber)
+	if err != nil {
+		return fmt.Errorf("fetch reorg rollback events: %w", err)
+	}
+
+	// 2. Reverse applied balance deltas
+	for _, be := range rollbackEvents {
+		if !be.BalanceApplied {
+			continue
+		}
+		invertedDelta, err := negateDecimalString(be.Delta)
+		if err != nil {
+			return fmt.Errorf("negate delta for %s: %w", be.TxHash, err)
+		}
+		if err := ing.balanceRepo.AdjustBalanceTx(
+			ctx, dbTx,
+			reorg.Chain, reorg.Network, be.Address,
+			be.TokenID, be.WalletID, be.OrganizationID,
+			invertedDelta, be.BlockCursor, be.TxHash, "",
+		); err != nil {
+			return fmt.Errorf("revert balance: %w", err)
+		}
+		if isStakingActivity(be.ActivityType) {
+			if err := ing.balanceRepo.AdjustBalanceTx(
+				ctx, dbTx,
+				reorg.Chain, reorg.Network, be.Address,
+				be.TokenID, be.WalletID, be.OrganizationID,
+				be.Delta, be.BlockCursor, be.TxHash, "staked",
+			); err != nil {
+				return fmt.Errorf("revert staked balance: %w", err)
+			}
+		}
+	}
+
+	// 3. Delete balance events from fork block onward
+	if _, err := dbTx.ExecContext(ctx, `
+		DELETE FROM balance_events
+		WHERE chain = $1 AND network = $2 AND block_cursor >= $3
+	`, reorg.Chain, reorg.Network, reorg.ForkBlockNumber); err != nil {
+		return fmt.Errorf("delete reorg balance events: %w", err)
+	}
+
+	// 4. Delete transactions from fork block onward
+	if _, err := dbTx.ExecContext(ctx, `
+		DELETE FROM transactions
+		WHERE chain = $1 AND network = $2 AND block_cursor >= $3
+	`, reorg.Chain, reorg.Network, reorg.ForkBlockNumber); err != nil {
+		return fmt.Errorf("delete reorg transactions: %w", err)
+	}
+
+	// 5. Delete indexed blocks from fork block onward
+	if ing.blockRepo != nil {
+		if err := ing.blockRepo.DeleteFromBlockTx(ctx, dbTx, reorg.Chain, reorg.Network, reorg.ForkBlockNumber); err != nil {
+			return fmt.Errorf("delete reorg indexed blocks: %w", err)
+		}
+	}
+
+	// 6. Rewind cursors for affected addresses
+	if err := ing.rewindCursorsForReorg(ctx, dbTx, reorg.Chain, reorg.Network, reorg.ForkBlockNumber); err != nil {
+		return fmt.Errorf("rewind cursors: %w", err)
+	}
+
+	// 7. Rewind watermark
+	rewindSequence := reorg.ForkBlockNumber - 1
+	if rewindSequence < 0 {
+		rewindSequence = 0
+	}
+	if err := ing.configRepo.UpdateWatermarkTx(ctx, dbTx, reorg.Chain, reorg.Network, rewindSequence); err != nil {
+		return fmt.Errorf("rewind watermark: %w", err)
+	}
+
+	if err := dbTx.Commit(); err != nil {
+		return fmt.Errorf("commit reorg rollback: %w", err)
+	}
+	committed = true
+
+	metrics.IngesterReorgRollbacksTotal.WithLabelValues(reorg.Chain.String(), reorg.Network.String()).Inc()
+
+	ing.logger.Info("reorg rollback completed",
+		"chain", reorg.Chain,
+		"network", reorg.Network,
+		"fork_block", reorg.ForkBlockNumber,
+		"events_rolled_back", len(rollbackEvents),
+	)
+	return nil
+}
+
+// fetchReorgRollbackEvents fetches all balance events from fork block onward across all addresses.
+func (ing *Ingester) fetchReorgRollbackEvents(
+	ctx context.Context,
+	tx *sql.Tx,
+	chain model.Chain,
+	network model.Network,
+	forkBlock int64,
+) ([]rollbackBalanceEvent, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT token_id, address, delta, block_cursor, tx_hash, wallet_id, organization_id, activity_type, balance_applied
+		FROM balance_events
+		WHERE chain = $1 AND network = $2 AND block_cursor >= $3
+		ORDER BY block_cursor DESC, id DESC
+	`, chain, network, forkBlock)
+	if err != nil {
+		return nil, fmt.Errorf("query reorg rollback events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []rollbackBalanceEvent
+	for rows.Next() {
+		var be rollbackBalanceEvent
+		var walletID sql.NullString
+		var organizationID sql.NullString
+		if err := rows.Scan(&be.TokenID, &be.Address, &be.Delta, &be.BlockCursor, &be.TxHash, &walletID, &organizationID, &be.ActivityType, &be.BalanceApplied); err != nil {
+			return nil, fmt.Errorf("scan reorg rollback event: %w", err)
+		}
+		if walletID.Valid {
+			be.WalletID = &walletID.String
+		}
+		if organizationID.Valid {
+			be.OrganizationID = &organizationID.String
+		}
+		events = append(events, be)
+	}
+	return events, rows.Err()
+}
+
+// rewindCursorsForReorg rewinds all address cursors that point at or beyond forkBlock.
+func (ing *Ingester) rewindCursorsForReorg(
+	ctx context.Context,
+	tx *sql.Tx,
+	chain model.Chain,
+	network model.Network,
+	forkBlock int64,
+) error {
+	rewindSequence := forkBlock - 1
+	if rewindSequence < 0 {
+		rewindSequence = 0
+	}
+
+	_, err := tx.ExecContext(ctx, `
+		UPDATE address_cursors
+		SET cursor_sequence = $4, items_processed = 0, updated_at = now()
+		WHERE chain = $1 AND network = $2 AND cursor_sequence >= $3
+	`, chain, network, forkBlock, rewindSequence)
+	if err != nil {
+		return fmt.Errorf("rewind cursors for reorg: %w", err)
+	}
+	return nil
+}
+
+// handleFinalityPromotion promotes balance events and indexed blocks to finalized state.
+func (ing *Ingester) handleFinalityPromotion(ctx context.Context, promo event.FinalityPromotion) error {
+	ing.logger.Info("processing finality promotion",
+		"chain", promo.Chain,
+		"network", promo.Network,
+		"new_finalized_block", promo.NewFinalizedBlock,
+	)
+
+	dbTx, err := ing.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin finality tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if rbErr := dbTx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+				ing.logger.Warn("finality rollback failed", "error", rbErr)
+			}
+		}
+	}()
+
+	// 1. Update indexed_blocks finality state
+	if ing.blockRepo != nil {
+		if err := ing.blockRepo.UpdateFinalityTx(ctx, dbTx, promo.Chain, promo.Network, promo.NewFinalizedBlock, "finalized"); err != nil {
+			return fmt.Errorf("update indexed blocks finality: %w", err)
+		}
+	}
+
+	// 2. Update balance_events finality_state and promote balance_applied
+	promotedEvents, err := ing.promoteBalanceEvents(ctx, dbTx, promo.Chain, promo.Network, promo.NewFinalizedBlock)
+	if err != nil {
+		return fmt.Errorf("promote balance events: %w", err)
+	}
+
+	// 3. Apply newly promoted deltas to balances
+	if len(promotedEvents) > 0 {
+		adjustItems := make([]store.BulkAdjustItem, 0, len(promotedEvents))
+		for _, pe := range promotedEvents {
+			adjustItems = append(adjustItems, store.BulkAdjustItem{
+				Address:     pe.Address,
+				TokenID:     pe.TokenID,
+				WalletID:    pe.WalletID,
+				OrgID:       pe.OrganizationID,
+				Delta:       pe.Delta,
+				Cursor:      pe.BlockCursor,
+				TxHash:      pe.TxHash,
+				BalanceType: "",
+			})
+
+			if isStakingActivity(pe.ActivityType) {
+				invertedDelta, err := negateDecimalString(pe.Delta)
+				if err != nil {
+					return fmt.Errorf("negate staking delta: %w", err)
+				}
+				adjustItems = append(adjustItems, store.BulkAdjustItem{
+					Address:     pe.Address,
+					TokenID:     pe.TokenID,
+					WalletID:    pe.WalletID,
+					OrgID:       pe.OrganizationID,
+					Delta:       invertedDelta,
+					Cursor:      pe.BlockCursor,
+					TxHash:      pe.TxHash,
+					BalanceType: "staked",
+				})
+			}
+		}
+		if err := ing.balanceRepo.BulkAdjustBalanceTx(ctx, dbTx, promo.Chain, promo.Network, adjustItems); err != nil {
+			return fmt.Errorf("bulk adjust balances for finality promotion: %w", err)
+		}
+	}
+
+	if err := dbTx.Commit(); err != nil {
+		return fmt.Errorf("commit finality promotion: %w", err)
+	}
+	committed = true
+
+	metrics.IngesterFinalityPromotionsTotal.WithLabelValues(promo.Chain.String(), promo.Network.String()).Inc()
+
+	ing.logger.Info("finality promotion completed",
+		"chain", promo.Chain,
+		"network", promo.Network,
+		"new_finalized_block", promo.NewFinalizedBlock,
+		"events_promoted", len(promotedEvents),
+	)
+	return nil
+}
+
+type promotedEvent struct {
+	TokenID        uuid.UUID
+	Address        string
+	Delta          string
+	BlockCursor    int64
+	TxHash         string
+	WalletID       *string
+	OrganizationID *string
+	ActivityType   model.ActivityType
+}
+
+// promoteBalanceEvents updates finality_state and balance_applied for events
+// that are now finalized, and returns the events that were newly promoted.
+func (ing *Ingester) promoteBalanceEvents(
+	ctx context.Context,
+	tx *sql.Tx,
+	chain model.Chain,
+	network model.Network,
+	upToBlock int64,
+) ([]promotedEvent, error) {
+	// Update finality_state for all events up to the finalized block
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE balance_events
+		SET finality_state = 'finalized'
+		WHERE chain = $1 AND network = $2 AND block_cursor <= $3
+		  AND finality_state != 'finalized' AND finality_state != ''
+	`, chain, network, upToBlock); err != nil {
+		return nil, fmt.Errorf("update balance events finality: %w", err)
+	}
+
+	// Find events that need balance_applied promotion (were pending, now finalized)
+	rows, err := tx.QueryContext(ctx, `
+		SELECT token_id, address, delta, block_cursor, tx_hash, wallet_id, organization_id, activity_type
+		FROM balance_events
+		WHERE chain = $1 AND network = $2 AND block_cursor <= $3
+		  AND balance_applied = false AND finality_state = 'finalized'
+	`, chain, network, upToBlock)
+	if err != nil {
+		return nil, fmt.Errorf("query promotable events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []promotedEvent
+	for rows.Next() {
+		var pe promotedEvent
+		var walletID sql.NullString
+		var orgID sql.NullString
+		if err := rows.Scan(&pe.TokenID, &pe.Address, &pe.Delta, &pe.BlockCursor, &pe.TxHash, &walletID, &orgID, &pe.ActivityType); err != nil {
+			return nil, fmt.Errorf("scan promotable event: %w", err)
+		}
+		if walletID.Valid {
+			pe.WalletID = &walletID.String
+		}
+		if orgID.Valid {
+			pe.OrganizationID = &orgID.String
+		}
+		events = append(events, pe)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read promotable events: %w", err)
+	}
+
+	// Set balance_applied=true for promoted events
+	if len(events) > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE balance_events
+			SET balance_applied = true
+			WHERE chain = $1 AND network = $2 AND block_cursor <= $3
+			  AND balance_applied = false AND finality_state = 'finalized'
+		`, chain, network, upToBlock); err != nil {
+			return nil, fmt.Errorf("update balance_applied: %w", err)
+		}
+	}
+
+	return events, nil
 }
 
 func (ing *Ingester) computeBalanceTransition(

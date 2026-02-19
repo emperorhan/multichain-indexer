@@ -1,11 +1,14 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 )
 
@@ -31,24 +34,49 @@ var allowedNetworks = map[model.Network]bool{
 	model.NetworkAmoy:    true,
 }
 
+// ReplayRequester is the interface that the admin server uses to interact
+// with pipeline instances for replay operations. In production this is
+// satisfied by *pipeline.Registry, but tests can provide a simple mock.
+type ReplayRequester interface {
+	RequestReplay(ctx context.Context, req replay.PurgeRequest) (*replay.PurgeResult, error)
+	DryRunPurge(ctx context.Context, req replay.PurgeRequest) (*replay.PurgeResult, error)
+	GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)
+	HasPipeline(chain model.Chain, network model.Network) bool
+}
+
 // Server provides an HTTP-based admin API for operational management.
 type Server struct {
 	watchedAddrRepo store.WatchedAddressRepository
 	configRepo      store.IndexerConfigRepository
+	replayReq       ReplayRequester
 	logger          *slog.Logger
 }
 
-// NewServer creates a new admin API server.
+// NewServer creates a new admin API server. replayReq may be nil if replay
+// functionality is not needed.
 func NewServer(
 	watchedAddrRepo store.WatchedAddressRepository,
 	configRepo store.IndexerConfigRepository,
 	logger *slog.Logger,
+	opts ...ServerOption,
 ) *Server {
-	return &Server{
+	s := &Server{
 		watchedAddrRepo: watchedAddrRepo,
 		configRepo:      configRepo,
 		logger:          logger.With("component", "admin"),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// ServerOption configures optional dependencies for the admin server.
+type ServerOption func(*Server)
+
+// WithReplayRequester sets the replay requester on the admin server.
+func WithReplayRequester(rr ReplayRequester) ServerOption {
+	return func(s *Server) { s.replayReq = rr }
 }
 
 // Handler returns the HTTP handler for the admin API.
@@ -57,6 +85,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/v1/watched-addresses", s.handleListWatchedAddresses)
 	mux.HandleFunc("POST /admin/v1/watched-addresses", s.handleAddWatchedAddress)
 	mux.HandleFunc("GET /admin/v1/status", s.handleGetStatus)
+	mux.HandleFunc("POST /admin/v1/replay", s.handleReplay)
+	mux.HandleFunc("GET /admin/v1/replay/status", s.handleReplayStatus)
 	return mux
 }
 
@@ -196,6 +226,142 @@ func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if watermark != nil {
 		resp.Watermark = watermark.IngestedSequence
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// --- Replay endpoints ---
+
+type replayRequest struct {
+	Chain     string `json:"chain"`
+	Network   string `json:"network"`
+	FromBlock *int64 `json:"from_block"`
+	DryRun    bool   `json:"dry_run"`
+	Force     bool   `json:"force"`
+	Reason    string `json:"reason"`
+}
+
+func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
+	if s.replayReq == nil {
+		http.Error(w, `{"error":"replay not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+
+	var req replayRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Chain == "" || req.Network == "" || req.FromBlock == nil {
+		http.Error(w, `{"error":"chain, network, and from_block are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if *req.FromBlock < 0 {
+		http.Error(w, `{"error":"from_block must be >= 0"}`, http.StatusBadRequest)
+		return
+	}
+
+	chain := model.Chain(req.Chain)
+	network := model.Network(req.Network)
+
+	if !validateChainNetwork(chain, network) {
+		http.Error(w, `{"error":"invalid chain or network value"}`, http.StatusBadRequest)
+		return
+	}
+
+	if !s.replayReq.HasPipeline(chain, network) {
+		http.Error(w, `{"error":"pipeline not found for chain/network"}`, http.StatusNotFound)
+		return
+	}
+
+	purgeReq := replay.PurgeRequest{
+		Chain:     chain,
+		Network:   network,
+		FromBlock: *req.FromBlock,
+		DryRun:    req.DryRun,
+		Force:     req.Force,
+		Reason:    req.Reason,
+	}
+
+	var result *replay.PurgeResult
+	var err error
+
+	if req.DryRun {
+		result, err = s.replayReq.DryRunPurge(r.Context(), purgeReq)
+	} else {
+		result, err = s.replayReq.RequestReplay(r.Context(), purgeReq)
+	}
+
+	if err != nil {
+		if errors.Is(err, replay.ErrFinalizedBlock) {
+			http.Error(w, `{"error":"target block is finalized; set force=true to override"}`, http.StatusConflict)
+			return
+		}
+		s.logger.Error("replay failed", "error", err, "chain", req.Chain, "network", req.Network)
+		http.Error(w, `{"error":"replay operation failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+type replayStatusResponse struct {
+	Chain            string `json:"chain"`
+	Network          string `json:"network"`
+	CurrentWatermark int64  `json:"current_watermark"`
+	HeadSequence     int64  `json:"head_sequence"`
+	Lag              int64  `json:"lag"`
+}
+
+func (s *Server) handleReplayStatus(w http.ResponseWriter, r *http.Request) {
+	if s.replayReq == nil {
+		http.Error(w, `{"error":"replay not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	chain := model.Chain(r.URL.Query().Get("chain"))
+	network := model.Network(r.URL.Query().Get("network"))
+
+	if chain == "" || network == "" {
+		http.Error(w, `{"error":"chain and network query params required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if !validateChainNetwork(chain, network) {
+		http.Error(w, `{"error":"invalid chain or network value"}`, http.StatusBadRequest)
+		return
+	}
+
+	if !s.replayReq.HasPipeline(chain, network) {
+		http.Error(w, `{"error":"pipeline not found for chain/network"}`, http.StatusNotFound)
+		return
+	}
+
+	watermark, err := s.replayReq.GetWatermark(r.Context(), chain, network)
+	if err != nil {
+		s.logger.Error("replay status failed", "error", err)
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	resp := replayStatusResponse{
+		Chain:   string(chain),
+		Network: string(network),
+	}
+	if watermark != nil {
+		resp.CurrentWatermark = watermark.IngestedSequence
+		resp.HeadSequence = watermark.HeadSequence
+		resp.Lag = watermark.HeadSequence - watermark.IngestedSequence
+		if resp.Lag < 0 {
+			resp.Lag = 0
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
