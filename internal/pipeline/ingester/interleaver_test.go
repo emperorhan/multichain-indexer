@@ -66,9 +66,9 @@ func TestTriChainInterleaving_CompletionOrderPermutationsConvergeDeterministical
 	assert.Equal(t, permutationA.watermarks, permutationB.watermarks)
 
 	assert.Equal(t, 8, len(permutationA.eventIDs))
-	assert.Equal(t, 1, permutationA.categoryCounts[chainCategoryKey(model.ChainSolana, model.EventCategoryFee)])
-	assert.Equal(t, 1, permutationA.categoryCounts[chainCategoryKey(model.ChainBase, model.EventCategoryFeeExecutionL2)])
-	assert.Equal(t, 1, permutationA.categoryCounts[chainCategoryKey(model.ChainBase, model.EventCategoryFeeDataL1)])
+	assert.Equal(t, 1, permutationA.categoryCounts[chainCategoryKey(model.ChainSolana, model.ActivityFee)])
+	assert.Equal(t, 1, permutationA.categoryCounts[chainCategoryKey(model.ChainBase, model.ActivityFeeExecutionL2)])
+	assert.Equal(t, 1, permutationA.categoryCounts[chainCategoryKey(model.ChainBase, model.ActivityFeeDataL1)])
 	assert.Equal(t, "-1", permutationA.btcTotalDelta)
 
 	solKey := fmt.Sprintf("%s|%s", interleaveKey(model.ChainSolana, model.NetworkDevnet), triChainAddress(model.ChainSolana))
@@ -106,9 +106,9 @@ func TestTriChainInterleaving_BacklogRetryPressurePreservesIsolationAndReplayDet
 
 	first := snapshotTriChainState(state)
 	assert.Equal(t, 5, len(first.eventIDs), "btc failure should not remove solana/base logical events")
-	assert.Equal(t, 1, first.categoryCounts[chainCategoryKey(model.ChainSolana, model.EventCategoryFee)])
-	assert.Equal(t, 1, first.categoryCounts[chainCategoryKey(model.ChainBase, model.EventCategoryFeeExecutionL2)])
-	assert.Equal(t, 1, first.categoryCounts[chainCategoryKey(model.ChainBase, model.EventCategoryFeeDataL1)])
+	assert.Equal(t, 1, first.categoryCounts[chainCategoryKey(model.ChainSolana, model.ActivityFee)])
+	assert.Equal(t, 1, first.categoryCounts[chainCategoryKey(model.ChainBase, model.ActivityFeeExecutionL2)])
+	assert.Equal(t, 1, first.categoryCounts[chainCategoryKey(model.ChainBase, model.ActivityFeeDataL1)])
 
 	btcCursorKey := fmt.Sprintf("%s|%s", btcChainKey, triChainAddress(model.ChainBTC))
 	_, btcCursorWritten := first.cursorSeq[btcCursorKey]
@@ -226,9 +226,9 @@ func TestTriChainInterleaving_LateArrivalPermutationsConvergeDeterministically(t
 	assert.Equal(t, onTime.btcTotalDelta, delayed.btcTotalDelta)
 
 	assert.Equal(t, 8, len(delayed.eventIDs))
-	assert.Equal(t, 1, delayed.categoryCounts[chainCategoryKey(model.ChainSolana, model.EventCategoryFee)])
-	assert.Equal(t, 1, delayed.categoryCounts[chainCategoryKey(model.ChainBase, model.EventCategoryFeeExecutionL2)])
-	assert.Equal(t, 1, delayed.categoryCounts[chainCategoryKey(model.ChainBase, model.EventCategoryFeeDataL1)])
+	assert.Equal(t, 1, delayed.categoryCounts[chainCategoryKey(model.ChainSolana, model.ActivityFee)])
+	assert.Equal(t, 1, delayed.categoryCounts[chainCategoryKey(model.ChainBase, model.ActivityFeeExecutionL2)])
+	assert.Equal(t, 1, delayed.categoryCounts[chainCategoryKey(model.ChainBase, model.ActivityFeeDataL1)])
 	assert.Equal(t, "-1", delayed.btcTotalDelta)
 
 	assertNoDuplicateEventIDs(t, delayed.eventIDCounts)
@@ -741,7 +741,7 @@ func buildTriChainInterleaveBatch(chainID model.Chain) event.NormalizedBatch {
 					Status:      model.TxStatusSuccess,
 					BalanceEvents: []event.NormalizedBalanceEvent{
 						{
-							EventCategory:       model.EventCategoryTransfer,
+							ActivityType:         model.ActivityWithdrawal,
 							EventAction:         "system_transfer",
 							ProgramID:           "11111111111111111111111111111111",
 							ContractAddress:     "11111111111111111111111111111111",
@@ -752,7 +752,7 @@ func buildTriChainInterleaveBatch(chainID model.Chain) event.NormalizedBatch {
 							TokenType:           model.TokenTypeNative,
 						},
 						{
-							EventCategory:       model.EventCategoryFee,
+							ActivityType:         model.ActivityFee,
 							EventAction:         "transaction_fee",
 							ProgramID:           "11111111111111111111111111111111",
 							ContractAddress:     "11111111111111111111111111111111",
@@ -785,7 +785,7 @@ func buildTriChainInterleaveBatch(chainID model.Chain) event.NormalizedBatch {
 					Status:      model.TxStatusSuccess,
 					BalanceEvents: []event.NormalizedBalanceEvent{
 						{
-							EventCategory:       model.EventCategoryTransfer,
+							ActivityType:         model.ActivityWithdrawal,
 							EventAction:         "native_transfer",
 							ProgramID:           "0xbase-program-tri",
 							ContractAddress:     "ETH",
@@ -796,7 +796,7 @@ func buildTriChainInterleaveBatch(chainID model.Chain) event.NormalizedBatch {
 							TokenType:           model.TokenTypeNative,
 						},
 						{
-							EventCategory:       model.EventCategoryFeeExecutionL2,
+							ActivityType:         model.ActivityFeeExecutionL2,
 							EventAction:         "fee_execution_l2",
 							ProgramID:           "0xbase-program-tri",
 							ContractAddress:     "ETH",
@@ -807,7 +807,7 @@ func buildTriChainInterleaveBatch(chainID model.Chain) event.NormalizedBatch {
 							TokenType:           model.TokenTypeNative,
 						},
 						{
-							EventCategory:       model.EventCategoryFeeDataL1,
+							ActivityType:         model.ActivityFeeDataL1,
 							EventAction:         "fee_data_l1",
 							ProgramID:           "0xbase-program-tri",
 							ContractAddress:     "ETH",
@@ -840,7 +840,7 @@ func buildTriChainInterleaveBatch(chainID model.Chain) event.NormalizedBatch {
 					Status:      model.TxStatusSuccess,
 					BalanceEvents: []event.NormalizedBalanceEvent{
 						{
-							EventCategory:       model.EventCategoryTransfer,
+							ActivityType:         model.ActivityWithdrawal,
 							EventAction:         "vin_spend",
 							ProgramID:           "btc",
 							ContractAddress:     "BTC",
@@ -851,7 +851,7 @@ func buildTriChainInterleaveBatch(chainID model.Chain) event.NormalizedBatch {
 							TokenType:           model.TokenTypeNative,
 						},
 						{
-							EventCategory:       model.EventCategoryTransfer,
+							ActivityType:         model.ActivityWithdrawal,
 							EventAction:         "vout_receive",
 							ProgramID:           "btc",
 							ContractAddress:     "BTC",
@@ -862,7 +862,7 @@ func buildTriChainInterleaveBatch(chainID model.Chain) event.NormalizedBatch {
 							TokenType:           model.TokenTypeNative,
 						},
 						{
-							EventCategory:       model.EventCategoryFee,
+							ActivityType:         model.ActivityFee,
 							EventAction:         "miner_fee",
 							ProgramID:           "btc",
 							ContractAddress:     "BTC",
@@ -994,7 +994,7 @@ func triChainNetwork(chainID model.Chain) model.Network {
 	}
 }
 
-func chainCategoryKey(chainID model.Chain, category model.EventCategory) string {
+func chainCategoryKey(chainID model.Chain, category model.ActivityType) string {
 	return fmt.Sprintf("%s|%s", chainID, category)
 }
 

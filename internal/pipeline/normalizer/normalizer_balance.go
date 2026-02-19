@@ -20,6 +20,7 @@ func buildCanonicalSolanaBalanceEvents(
 	network model.Network,
 	txHash, txStatus, feePayer, feeAmount, finalityState string,
 	rawEvents []*sidecarv1.BalanceEventInfo,
+	watchedAddress string,
 ) []event.NormalizedBalanceEvent {
 	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
 	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+1)
@@ -28,12 +29,41 @@ func buildCanonicalSolanaBalanceEvents(
 		if be == nil {
 			continue
 		}
+		// Filter: only events for the watched address
+		if be.Address != watchedAddress {
+			continue
+		}
+		category := model.EventCategory(be.EventCategory)
+		// Self-transfer: from == to → delta=0 SELF_TRANSFER 이벤트로 변환 (거래 이력 보존).
+		// SPL token 단방향 bug도 여기서 해결됨.
+		if category == model.EventCategoryTransfer && be.CounterpartyAddress == watchedAddress {
+			chainData, _ := json.Marshal(be.Metadata)
+			normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
+				OuterInstructionIndex: int(be.OuterInstructionIndex),
+				InnerInstructionIndex: int(be.InnerInstructionIndex),
+				ActivityType:          model.ActivitySelfTransfer,
+				EventAction:           "self_transfer",
+				ProgramID:             be.ProgramId,
+				ContractAddress:       be.ContractAddress,
+				Address:               be.Address,
+				CounterpartyAddress:   be.CounterpartyAddress,
+				Delta:                 "0",
+				ChainData:             chainData,
+				TokenSymbol:           be.TokenSymbol,
+				TokenName:             be.TokenName,
+				TokenDecimals:         int(be.TokenDecimals),
+				TokenType:             model.TokenType(be.TokenType),
+				AssetID:               be.ContractAddress,
+			})
+			continue
+		}
+		activityType := model.ClassifyActivity(category, be.Delta, be.Address == watchedAddress)
 		chainData, _ := json.Marshal(be.Metadata)
 
 		normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
 			OuterInstructionIndex: int(be.OuterInstructionIndex),
 			InnerInstructionIndex: int(be.InnerInstructionIndex),
-			EventCategory:         model.EventCategory(be.EventCategory),
+			ActivityType:          activityType,
 			EventAction:           be.EventAction,
 			ProgramID:             be.ProgramId,
 			ContractAddress:       be.ContractAddress,
@@ -49,7 +79,8 @@ func buildCanonicalSolanaBalanceEvents(
 		})
 	}
 
-	if shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount) && !hasSolanaFeeEvent(normalizedEvents, feePayer) {
+	// Fee events: only emit if feePayer is the watched address
+	if feePayer == watchedAddress && shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount) && !hasSolanaFeeEvent(normalizedEvents, feePayer) {
 		normalizedEvents = append(normalizedEvents, buildSolanaFeeBalanceEvent(feePayer, feeAmount))
 	}
 
@@ -61,6 +92,7 @@ func buildCanonicalBaseBalanceEvents(
 	network model.Network,
 	txHash, txStatus, feePayer, feeAmount, finalityState string,
 	rawEvents []*sidecarv1.BalanceEventInfo,
+	watchedAddress string,
 ) []event.NormalizedBalanceEvent {
 	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
 	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+2)
@@ -72,12 +104,40 @@ func buildCanonicalBaseBalanceEvents(
 		if be == nil {
 			continue
 		}
+		// Filter: only events for the watched address
+		if be.Address != watchedAddress {
+			continue
+		}
+		category := model.EventCategory(be.EventCategory)
+		// Self-transfer: EVM native/ERC-20 → delta=0 SELF_TRANSFER 이벤트로 변환 (거래 이력 보존).
+		if category == model.EventCategoryTransfer && be.CounterpartyAddress == watchedAddress {
+			chainData, _ := json.Marshal(be.Metadata)
+			normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
+				OuterInstructionIndex: int(be.OuterInstructionIndex),
+				InnerInstructionIndex: int(be.InnerInstructionIndex),
+				ActivityType:          model.ActivitySelfTransfer,
+				EventAction:           "self_transfer",
+				ProgramID:             be.ProgramId,
+				ContractAddress:       be.ContractAddress,
+				Address:               be.Address,
+				CounterpartyAddress:   be.CounterpartyAddress,
+				Delta:                 "0",
+				ChainData:             chainData,
+				TokenSymbol:           be.TokenSymbol,
+				TokenName:             be.TokenName,
+				TokenDecimals:         int(be.TokenDecimals),
+				TokenType:             model.TokenType(be.TokenType),
+				AssetID:               be.ContractAddress,
+			})
+			continue
+		}
+		activityType := model.ClassifyActivity(category, be.Delta, be.Address == watchedAddress)
 		chainData, _ := json.Marshal(be.Metadata)
 
 		normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
 			OuterInstructionIndex: int(be.OuterInstructionIndex),
 			InnerInstructionIndex: int(be.InnerInstructionIndex),
-			EventCategory:         model.EventCategory(be.EventCategory),
+			ActivityType:          activityType,
 			EventAction:           be.EventAction,
 			ProgramID:             be.ProgramId,
 			ContractAddress:       be.ContractAddress,
@@ -93,7 +153,7 @@ func buildCanonicalBaseBalanceEvents(
 		})
 	}
 
-	if shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount) {
+	if feePayer == watchedAddress && shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount) {
 		nativeToken := evmNativeToken(chain)
 		if isEVML1Chain(chain) {
 			// L1: single FEE event (no execution/data split)
@@ -104,7 +164,7 @@ func buildCanonicalBaseBalanceEvents(
 			dataFee, hasDataFee := deriveBaseDataFee(meta)
 
 			executionEvent := buildBaseFeeBalanceEvent(
-				model.EventCategoryFeeExecutionL2,
+				model.ActivityFeeExecutionL2,
 				feePayer,
 				executionFee.String(),
 				eventPath,
@@ -138,7 +198,7 @@ func buildCanonicalBaseBalanceEvents(
 				normalizedEvents = append(
 					normalizedEvents,
 					buildBaseFeeBalanceEvent(
-						model.EventCategoryFeeDataL1,
+						model.ActivityFeeDataL1,
 						feePayer,
 						dataFee.String(),
 						eventPath,
@@ -157,6 +217,7 @@ func buildCanonicalBTCBalanceEvents(
 	network model.Network,
 	txHash, txStatus, feePayer, feeAmount, finalityState string,
 	rawEvents []*sidecarv1.BalanceEventInfo,
+	watchedAddress string,
 ) []event.NormalizedBalanceEvent {
 	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
 	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+1)
@@ -165,11 +226,17 @@ func buildCanonicalBTCBalanceEvents(
 		if be == nil {
 			continue
 		}
+		// Filter: only events for the watched address
+		if be.Address != watchedAddress {
+			continue
+		}
+		category := model.EventCategory(be.EventCategory)
+		activityType := model.ClassifyActivity(category, be.Delta, be.Address == watchedAddress)
 		chainData, _ := json.Marshal(be.Metadata)
 		normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
 			OuterInstructionIndex: int(be.OuterInstructionIndex),
 			InnerInstructionIndex: int(be.InnerInstructionIndex),
-			EventCategory:         model.EventCategory(be.EventCategory),
+			ActivityType:          activityType,
 			EventAction:           be.EventAction,
 			ProgramID:             be.ProgramId,
 			ContractAddress:       be.ContractAddress,
@@ -185,7 +252,8 @@ func buildCanonicalBTCBalanceEvents(
 		})
 	}
 
-	if shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount, normalizedEvents) && !hasBTCFeeEvent(normalizedEvents, feePayer) {
+	// Fee events: only emit if feePayer is the watched address
+	if feePayer == watchedAddress && shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount, normalizedEvents) && !hasBTCFeeEvent(normalizedEvents, feePayer) {
 		normalizedEvents = append(normalizedEvents, buildBTCFeeBalanceEvent(feePayer, feeAmount))
 	}
 
@@ -410,7 +478,7 @@ func buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath string, token evmN
 	return event.NormalizedBalanceEvent{
 		OuterInstructionIndex: -1,
 		InnerInstructionIndex: -1,
-		EventCategory:         model.EventCategoryFee,
+		ActivityType:          model.ActivityFee,
 		EventAction:           "net_eth",
 		ProgramID:             "0x0000000000000000000000000000000000000000000000000000000000000000",
 		ContractAddress:       token.Symbol,
@@ -428,14 +496,14 @@ func buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath string, token evmN
 }
 
 func buildBaseFeeBalanceEvent(
-	category model.EventCategory,
+	activityType model.ActivityType,
 	feePayer, feeAmount string,
 	eventPath, eventAction string,
 ) event.NormalizedBalanceEvent {
 	return event.NormalizedBalanceEvent{
 		OuterInstructionIndex: -1,
 		InnerInstructionIndex: -1,
-		EventCategory:         category,
+		ActivityType:          activityType,
 		EventAction:           eventAction,
 		ProgramID:             "0x0000000000000000000000000000000000000000000000000000000000000000",
 		ContractAddress:       "ETH",
@@ -611,10 +679,10 @@ func canonicalizeBaseBalanceEvents(
 	decoderVersion := evmDecoderVersion(chain)
 
 	for _, be := range normalizedEvents {
-		if be.EventCategory == model.EventCategoryFeeExecutionL2 || be.EventCategory == model.EventCategoryFeeDataL1 {
-			be.EventAction = string(be.EventCategory)
+		if be.ActivityType == model.ActivityFeeExecutionL2 || be.ActivityType == model.ActivityFeeDataL1 {
+			be.EventAction = string(be.ActivityType)
 			be.Delta = canonicalFeeDelta(be.Delta)
-		} else if be.EventCategory == model.EventCategoryFee {
+		} else if be.ActivityType == model.ActivityFee {
 			be.Delta = canonicalFeeDelta(be.Delta)
 		}
 		if metadataPath := resolveBaseMetadataEventPath(metadataFromChainData(be.ChainData)); metadataPath != "" {
@@ -634,7 +702,7 @@ func canonicalizeBaseBalanceEvents(
 		}
 
 		assetType := mapTokenTypeToAssetType(be.TokenType)
-		if isBaseFeeCategory(be.EventCategory) || be.EventCategory == model.EventCategoryFee {
+		if isBaseFeeActivity(be.ActivityType) || be.ActivityType == model.ActivityFee {
 			assetType = "fee"
 		}
 
@@ -647,7 +715,7 @@ func canonicalizeBaseBalanceEvents(
 		be.EventID = buildCanonicalEventID(
 			chain, network,
 			txHash, be.EventPath,
-			be.ActorAddress, be.AssetID, be.EventCategory,
+			be.ActorAddress, be.AssetID, be.ActivityType,
 		)
 
 		existing, ok := eventsByID[be.EventID]
@@ -668,9 +736,9 @@ func canonicalizeBaseBalanceEvents(
 	return events
 }
 
-func isBaseFeeCategory(category model.EventCategory) bool {
-	switch category {
-	case model.EventCategoryFeeExecutionL2, model.EventCategoryFeeDataL1:
+func isBaseFeeActivity(activityType model.ActivityType) bool {
+	switch activityType {
+	case model.ActivityFeeExecutionL2, model.ActivityFeeDataL1:
 		return true
 	default:
 		return false
@@ -703,13 +771,13 @@ func canonicalizeBTCBalanceEvents(
 		}
 
 		assetType := mapTokenTypeToAssetType(be.TokenType)
-		if be.EventCategory == model.EventCategoryFee {
+		if be.ActivityType == model.ActivityFee {
 			assetType = "fee"
 		}
 
 		be.ActorAddress = canonicalizeAddressIdentity(chain, be.Address)
 		be.AssetType = assetType
-		if be.EventCategory == model.EventCategoryFee {
+		if be.ActivityType == model.ActivityFee {
 			be.EventPathType = "btc_fee"
 		} else {
 			be.EventPathType = "btc_utxo"
@@ -720,7 +788,7 @@ func canonicalizeBTCBalanceEvents(
 		be.EventID = buildCanonicalEventID(
 			chain, network,
 			txHash, be.EventPath,
-			be.ActorAddress, be.AssetID, be.EventCategory,
+			be.ActorAddress, be.AssetID, be.ActivityType,
 		)
 
 		existing, ok := eventsByID[be.EventID]
@@ -804,7 +872,7 @@ func hasBTCFeeRepresentedAsChangeOutput(events []event.NormalizedBalanceEvent, f
 	hasEqualFeeChangeOutput := false
 
 	for _, be := range events {
-		if be.EventCategory != model.EventCategoryTransfer {
+		if be.ActivityType != model.ActivityDeposit && be.ActivityType != model.ActivityWithdrawal {
 			continue
 		}
 		action := strings.TrimSpace(be.EventAction)
@@ -841,7 +909,7 @@ func hasBTCFeeEvent(events []event.NormalizedBalanceEvent, feePayer string) bool
 		return false
 	}
 	for _, be := range events {
-		if be.EventCategory != model.EventCategoryFee {
+		if be.ActivityType != model.ActivityFee {
 			continue
 		}
 		if strings.TrimSpace(be.Address) == feePayer {
@@ -856,7 +924,7 @@ func buildBTCFeeBalanceEvent(feePayer, feeAmount string) event.NormalizedBalance
 	return event.NormalizedBalanceEvent{
 		OuterInstructionIndex: -1,
 		InnerInstructionIndex: -1,
-		EventCategory:         model.EventCategoryFee,
+		ActivityType:          model.ActivityFee,
 		EventAction:           "miner_fee",
 		ProgramID:             "btc",
 		ContractAddress:       "BTC",
@@ -898,7 +966,7 @@ func hasSolanaFeeEvent(events []event.NormalizedBalanceEvent, feePayer string) b
 		return false
 	}
 	for _, be := range events {
-		if !strings.EqualFold(string(be.EventCategory), string(model.EventCategoryFee)) {
+		if be.ActivityType != model.ActivityFee {
 			continue
 		}
 		if strings.TrimSpace(be.Address) == feePayer {
@@ -934,7 +1002,7 @@ func buildSolanaFeeBalanceEvent(feePayer, feeAmount string) event.NormalizedBala
 	return event.NormalizedBalanceEvent{
 		OuterInstructionIndex: -1,
 		InnerInstructionIndex: -1,
-		EventCategory:         model.EventCategoryFee,
+		ActivityType:          model.ActivityFee,
 		EventAction:           "transaction_fee",
 		ProgramID:             "11111111111111111111111111111111",
 		ContractAddress:       "11111111111111111111111111111111",
@@ -967,7 +1035,7 @@ func canonicalizeSolanaBalanceEvents(
 		OuterInstruction int
 		Address          string
 		AssetID          string
-		Category         model.EventCategory
+		ActivityType     model.ActivityType
 	}
 
 	for idx := range normalizedEvents {
@@ -978,7 +1046,7 @@ func canonicalizeSolanaBalanceEvents(
 		if normalizedEvents[idx].AssetID == "" {
 			normalizedEvents[idx].AssetID = normalizedEvents[idx].ContractAddress
 		}
-		if normalizedEvents[idx].EventCategory == model.EventCategoryFee {
+		if normalizedEvents[idx].ActivityType == model.ActivityFee {
 			continue
 		}
 		if outer, inner, ok := solanaInstructionPathFromChainData(normalizedEvents[idx].ChainData); ok {
@@ -989,19 +1057,19 @@ func canonicalizeSolanaBalanceEvents(
 
 	outerHasOwner := make(map[solanaInstructionOwnerKey]struct{})
 	for _, be := range normalizedEvents {
-		if be.EventCategory != model.EventCategoryFee && be.OuterInstructionIndex >= 0 && be.InnerInstructionIndex == -1 {
+		if be.ActivityType != model.ActivityFee && be.OuterInstructionIndex >= 0 && be.InnerInstructionIndex == -1 {
 			outerHasOwner[solanaInstructionOwnerKey{
 				OuterInstruction: be.OuterInstructionIndex,
 				Address:          be.Address,
 				AssetID:          be.AssetID,
-				Category:         be.EventCategory,
+				ActivityType:     be.ActivityType,
 			}] = struct{}{}
 		}
 	}
 
 	sort.SliceStable(normalizedEvents, func(i, j int) bool {
-		if normalizedEvents[i].EventCategory != normalizedEvents[j].EventCategory {
-			return normalizedEvents[i].EventCategory < normalizedEvents[j].EventCategory
+		if normalizedEvents[i].ActivityType != normalizedEvents[j].ActivityType {
+			return normalizedEvents[i].ActivityType < normalizedEvents[j].ActivityType
 		}
 		if normalizedEvents[i].OuterInstructionIndex != normalizedEvents[j].OuterInstructionIndex {
 			return normalizedEvents[i].OuterInstructionIndex < normalizedEvents[j].OuterInstructionIndex
@@ -1018,7 +1086,7 @@ func canonicalizeSolanaBalanceEvents(
 	eventsByID := make(map[string]event.NormalizedBalanceEvent, len(normalizedEvents))
 	selectionByEventID := make(map[string]solanaCanonicalSelection, len(normalizedEvents))
 	for _, be := range normalizedEvents {
-		if be.EventCategory == model.EventCategoryFee {
+		if be.ActivityType == model.ActivityFee {
 			be.OuterInstructionIndex = -1
 			be.InnerInstructionIndex = -1
 			be.Delta = canonicalFeeDelta(be.Delta)
@@ -1028,12 +1096,12 @@ func canonicalizeSolanaBalanceEvents(
 			FromOuterInstruction: be.InnerInstructionIndex == -1,
 			OriginalInnerIndex:   int32(be.InnerInstructionIndex),
 		}
-		if be.EventCategory != model.EventCategoryFee && be.OuterInstructionIndex >= 0 && be.InnerInstructionIndex > -1 {
+		if be.ActivityType != model.ActivityFee && be.OuterInstructionIndex >= 0 && be.InnerInstructionIndex > -1 {
 			key := solanaInstructionOwnerKey{
 				OuterInstruction: be.OuterInstructionIndex,
 				Address:          be.Address,
 				AssetID:          be.AssetID,
-				Category:         be.EventCategory,
+				ActivityType:     be.ActivityType,
 			}
 			if _, ok := outerHasOwner[key]; ok {
 				be.InnerInstructionIndex = -1
@@ -1042,7 +1110,7 @@ func canonicalizeSolanaBalanceEvents(
 		}
 
 		assetType := mapTokenTypeToAssetType(be.TokenType)
-		if be.EventCategory == model.EventCategoryFee {
+		if be.ActivityType == model.ActivityFee {
 			assetType = "fee"
 		}
 
@@ -1056,7 +1124,7 @@ func canonicalizeSolanaBalanceEvents(
 		be.EventID = buildCanonicalEventID(
 			chain, network,
 			txHash, be.EventPath,
-			be.ActorAddress, be.AssetID, be.EventCategory,
+			be.ActorAddress, be.AssetID, be.ActivityType,
 		)
 
 		existing, ok := eventsByID[be.EventID]
@@ -1090,7 +1158,7 @@ func shouldReplaceCanonicalSolanaEvent(
 	if cmp := compareFinalityStateStrength(existing.FinalityState, incoming.FinalityState); cmp != 0 {
 		return cmp < 0
 	}
-	if existing.EventCategory == model.EventCategoryFee || incoming.EventCategory == model.EventCategoryFee {
+	if existing.ActivityType == model.ActivityFee || incoming.ActivityType == model.ActivityFee {
 		if existing.EventAction != incoming.EventAction {
 			return incoming.EventAction < existing.EventAction
 		}
@@ -1111,13 +1179,13 @@ func shouldReplaceCanonicalSolanaEvent(
 	return compareCanonicalDeltas(existing.Delta, incoming.Delta) > 0
 }
 
-func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, category model.EventCategory) string {
+func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, activityType model.ActivityType) string {
 	canonicalTxHash := strings.TrimSpace(txHash)
 	canonicalTxHash = canonicalSignatureIdentity(chain, canonicalTxHash)
 	if canonicalTxHash == "" {
 		canonicalTxHash = strings.TrimSpace(txHash)
 	}
-	canonical := fmt.Sprintf("chain=%s|network=%s|tx=%s|path=%s|actor=%s|asset=%s|category=%s", chain, network, canonicalTxHash, eventPath, actorAddress, assetID, category)
+	canonical := fmt.Sprintf("chain=%s|network=%s|tx=%s|path=%s|actor=%s|asset=%s|activity=%s", chain, network, canonicalTxHash, eventPath, actorAddress, assetID, activityType)
 	sum := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(sum[:])
 }

@@ -110,7 +110,7 @@ func makeBalanceEvent(action string, address string, delta string, contractAddre
 	return event.NormalizedBalanceEvent{
 		OuterInstructionIndex: 0,
 		InnerInstructionIndex: -1,
-		EventCategory:         model.EventCategoryTransfer,
+		ActivityType:           model.ActivityWithdrawal,
 		EventAction:           action,
 		ProgramID:             "test",
 		ContractAddress:       contractAddress,

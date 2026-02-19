@@ -15,6 +15,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/fetcher"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	normalizermocks "github.com/emperorhan/multichain-indexer/internal/pipeline/normalizer/mocks"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 	"github.com/google/uuid"
@@ -202,7 +203,7 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 			vinEvent = be
 		} else if be.EventAction == "vout_receive" {
 			voutEvent = be
-		} else if be.EventCategory == model.EventCategoryFee {
+		} else if be.ActivityType == model.ActivityFee {
 			feeEvent = be
 		}
 	}
@@ -223,7 +224,7 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	mockBERepo := storemocks.NewMockBalanceEventRepository(ctrl)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockBalanceRepo.EXPECT().
-		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		AnyTimes().Return("0", false, nil)
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
 	mockTokenRepo.EXPECT().
@@ -261,14 +262,14 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 
 	mockBERepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 			assert.Equal(t, model.ChainBTC, be.Chain)
 			assert.NotEmpty(t, be.EventID)
-			return true, nil
+			return store.UpsertResult{Inserted: true}, nil
 		}).Times(3)
 
 	mockBalanceRepo.EXPECT().
-		AdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBTC, model.NetworkMainnet, watchedAddress, tokenID, &walletID, &orgID, gomock.Any(), cursorSequence, gomock.Any()).
+		AdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBTC, model.NetworkMainnet, watchedAddress, tokenID, &walletID, &orgID, gomock.Any(), cursorSequence, gomock.Any(), "").
 		Return(nil).Times(3)
 
 	mockCursorRepo.EXPECT().

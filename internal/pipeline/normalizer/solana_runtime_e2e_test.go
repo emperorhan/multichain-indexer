@@ -16,6 +16,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/fetcher"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	normalizermocks "github.com/emperorhan/multichain-indexer/internal/pipeline/normalizer/mocks"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 	"github.com/google/uuid"
@@ -185,7 +186,7 @@ func TestSolanaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	mockBERepo := storemocks.NewMockBalanceEventRepository(ctrl)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockBalanceRepo.EXPECT().
-		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		AnyTimes().Return("0", false, nil)
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
 	mockTokenRepo.EXPECT().
@@ -222,15 +223,15 @@ func TestSolanaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 
 	mockBERepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 			assert.Equal(t, model.ChainSolana, be.Chain)
 			assert.Equal(t, txSig, be.TxHash)
 			assert.NotEmpty(t, be.EventID)
-			return true, nil
+			return store.UpsertResult{Inserted: true}, nil
 		}).Times(2)
 
 	mockBalanceRepo.EXPECT().
-		AdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainSolana, model.NetworkDevnet, watchedAddress, tokenID, &walletID, &orgID, gomock.Any(), cursorSequence, txSig).
+		AdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainSolana, model.NetworkDevnet, watchedAddress, tokenID, &walletID, &orgID, gomock.Any(), cursorSequence, txSig, "").
 		Return(nil).Times(2)
 
 	mockCursorRepo.EXPECT().

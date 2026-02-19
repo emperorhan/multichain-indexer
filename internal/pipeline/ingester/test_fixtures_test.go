@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
@@ -20,7 +21,7 @@ type interleaveTuple struct {
 	TxHash         string
 	Address        string
 	WatchedAddress string
-	Category       model.EventCategory
+	Category       model.ActivityType
 	Delta          string
 	BlockCursor    int64
 	TokenID        uuid.UUID
@@ -178,13 +179,13 @@ type interleaveBalanceEventRepo struct {
 	state *interleaveState
 }
 
-func (r *interleaveBalanceEventRepo) UpsertTx(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+func (r *interleaveBalanceEventRepo) UpsertTx(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 	r.state.mu.Lock()
 	defer r.state.mu.Unlock()
 
 	r.state.upsertAttempts++
 	if _, exists := r.state.insertedEvents[be.EventID]; exists {
-		return false, nil
+		return store.UpsertResult{Inserted: false}, nil
 	}
 
 	watchedAddress := be.Address
@@ -199,7 +200,7 @@ func (r *interleaveBalanceEventRepo) UpsertTx(_ context.Context, _ *sql.Tx, be *
 		TxHash:         be.TxHash,
 		Address:        be.Address,
 		WatchedAddress: watchedAddress,
-		Category:       be.EventCategory,
+		Category:       be.ActivityType,
 		Delta:          be.Delta,
 		BlockCursor:    be.BlockCursor,
 		TokenID:        be.TokenID,
@@ -207,7 +208,7 @@ func (r *interleaveBalanceEventRepo) UpsertTx(_ context.Context, _ *sql.Tx, be *
 	r.state.insertedEvents[be.EventID] = struct{}{}
 	r.state.eventRecords[be.EventID] = interleaveStoredEvent{Tuple: tuple}
 	r.state.tuples = append(r.state.tuples, tuple)
-	return true, nil
+	return store.UpsertResult{Inserted: true}, nil
 }
 
 type interleaveBalanceRepo struct {
@@ -225,6 +226,7 @@ func (r *interleaveBalanceRepo) AdjustBalanceTx(
 	_ *string,
 	delta string,
 	_ int64,
+	_ string,
 	_ string,
 ) error {
 	primaryKey := interleaveBalanceKey(chain, network, address, tokenID)
@@ -247,6 +249,7 @@ func (r *interleaveBalanceRepo) GetAmountTx(
 	network model.Network,
 	address string,
 	tokenID uuid.UUID,
+	_ string,
 ) (string, error) {
 	primaryKey := interleaveBalanceKey(chain, network, address, tokenID)
 	r.state.mu.Lock()
@@ -265,6 +268,7 @@ func (r *interleaveBalanceRepo) GetAmountWithExistsTx(
 	network model.Network,
 	address string,
 	tokenID uuid.UUID,
+	_ string,
 ) (string, bool, error) {
 	primaryKey := interleaveBalanceKey(chain, network, address, tokenID)
 	r.state.mu.Lock()

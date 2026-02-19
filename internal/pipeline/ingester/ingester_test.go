@@ -15,6 +15,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -85,7 +86,7 @@ func newIngesterMocks(t *testing.T) (
 	ctrl := gomock.NewController(t)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockBalanceRepo.EXPECT().
-		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		AnyTimes().
 		Return("0", false, nil)
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
@@ -543,7 +544,7 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 					"outer:0|inner:-1",
 					tc.address,
 					tc.contractAddress,
-					string(model.EventCategoryTransfer),
+					string(model.ActivityDeposit),
 				}, "|")
 			}
 			firstEventID := eventIDFor(canonicalFirst)
@@ -579,7 +580,7 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 							{
 								OuterInstructionIndex: 0,
 								InnerInstructionIndex: -1,
-								EventCategory:         model.EventCategoryTransfer,
+								ActivityType:         model.ActivityDeposit,
 								EventAction:           "transfer",
 								ProgramID:             tc.programID,
 								ContractAddress:       tc.contractAddress,
@@ -602,7 +603,7 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 							{
 								OuterInstructionIndex: 0,
 								InnerInstructionIndex: -1,
-								EventCategory:         model.EventCategoryTransfer,
+								ActivityType:         model.ActivityDeposit,
 								EventAction:           "transfer",
 								ProgramID:             tc.programID,
 								ContractAddress:       tc.contractAddress,
@@ -637,7 +638,7 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 							{
 								OuterInstructionIndex: 0,
 								InnerInstructionIndex: -1,
-								EventCategory:         model.EventCategoryTransfer,
+								ActivityType:         model.ActivityDeposit,
 								EventAction:           "transfer",
 								ProgramID:             tc.programID,
 								ContractAddress:       tc.contractAddress,
@@ -660,7 +661,7 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 							{
 								OuterInstructionIndex: 0,
 								InnerInstructionIndex: -1,
-								EventCategory:         model.EventCategoryTransfer,
+								ActivityType:         model.ActivityDeposit,
 								EventAction:           "transfer",
 								ProgramID:             tc.programID,
 								ContractAddress:       tc.contractAddress,
@@ -693,13 +694,13 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 			insertedEventIDs := make(map[string]struct{})
 			mockBERepo.EXPECT().
 				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 					if _, exists := seenEventIDs[be.EventID]; exists {
-						return false, nil
+						return store.UpsertResult{Inserted: false}, nil
 					}
 					seenEventIDs[be.EventID] = struct{}{}
 					insertedEventIDs[be.EventID] = struct{}{}
-					return true, nil
+					return store.UpsertResult{Inserted: true}, nil
 				}).
 				Times(4)
 
@@ -709,9 +710,9 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 					gomock.Any(), gomock.Any(),
 					tc.chain, tc.network, tc.address,
 					tokenID, nil, nil, "-1",
-					gomock.Any(), gomock.Any(),
+					gomock.Any(), gomock.Any(), "",
 				).
-				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, uuid.UUID, *string, *string, string, int64, string) error {
+				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, uuid.UUID, *string, *string, string, int64, string, string) error {
 					adjustments++
 					return nil
 				}).
@@ -743,7 +744,7 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 
 func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChains(t *testing.T) {
 	type eventBlueprint struct {
-		category model.EventCategory
+		category model.ActivityType
 		action   string
 		delta    string
 	}
@@ -776,7 +777,7 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 	type overlapResult struct {
 		tupleKeys      map[string]struct{}
 		eventIDs       map[string]struct{}
-		categoryCounts map[model.EventCategory]int
+		categoryCounts map[model.ActivityType]int
 		balanceByActor map[string]string
 
 		cursorValue    string
@@ -811,8 +812,8 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 			tx2BPrimary:     "sol-lb-902-b",
 			tx2BAlias:       "sol-lb-902-b",
 			events: []eventBlueprint{
-				{category: model.EventCategoryTransfer, action: "transfer", delta: "-10"},
-				{category: model.EventCategoryFee, action: "fee", delta: "-1"},
+				{category: model.ActivityDeposit, action: "transfer", delta: "-10"},
+				{category: model.ActivityFee, action: "fee", delta: "-1"},
 			},
 		},
 		{
@@ -835,9 +836,9 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 			tx2BPrimary:     "0xCCC1202",
 			tx2BAlias:       "ccc1202",
 			events: []eventBlueprint{
-				{category: model.EventCategoryTransfer, action: "native_transfer", delta: "-100"},
-				{category: model.EventCategoryFeeExecutionL2, action: "fee_execution_l2", delta: "-3"},
-				{category: model.EventCategoryFeeDataL1, action: "fee_data_l1", delta: "-1"},
+				{category: model.ActivityDeposit, action: "native_transfer", delta: "-100"},
+				{category: model.ActivityFeeExecutionL2, action: "fee_execution_l2", delta: "-3"},
+				{category: model.ActivityFeeDataL1, action: "fee_data_l1", delta: "-1"},
 			},
 		},
 	}
@@ -866,7 +867,7 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 					events = append(events, event.NormalizedBalanceEvent{
 						OuterInstructionIndex: 0,
 						InnerInstructionIndex: -1,
-						EventCategory:         spec.category,
+						ActivityType:         spec.category,
 						EventAction:           spec.action,
 						ProgramID:             tc.programID,
 						ContractAddress:       tc.contractAddress,
@@ -932,7 +933,7 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 				tuples := state.snapshotTuples()
 				tupleKeys := make(map[string]struct{}, len(tuples))
 				eventIDs := make(map[string]struct{}, len(tuples))
-				categoryCounts := make(map[model.EventCategory]int)
+				categoryCounts := make(map[model.ActivityType]int)
 				balanceByActor := make(map[string]string)
 				for _, tuple := range tuples {
 					tupleKeys[interleaveTupleKey(tuple)] = struct{}{}
@@ -1083,7 +1084,7 @@ func TestProcessBatch_BaseAliasCanonicalizesTxHashAndCursor(t *testing.T) {
 					{
 						OuterInstructionIndex: 0,
 						InnerInstructionIndex: -1,
-						EventCategory:         model.EventCategoryTransfer,
+						ActivityType:         model.ActivityDeposit,
 						EventAction:           "transfer",
 						ProgramID:             "0xbase-program",
 						ContractAddress:       "ETH",
@@ -1115,9 +1116,9 @@ func TestProcessBatch_BaseAliasCanonicalizesTxHashAndCursor(t *testing.T) {
 
 	mockBERepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 			assert.Equal(t, canonicalTxHash, be.TxHash)
-			return true, nil
+			return store.UpsertResult{Inserted: true}, nil
 		})
 
 	mockBalanceRepo.EXPECT().
@@ -1125,7 +1126,7 @@ func TestProcessBatch_BaseAliasCanonicalizesTxHashAndCursor(t *testing.T) {
 			gomock.Any(), gomock.Any(),
 			model.ChainBase, model.NetworkSepolia, "0x1111111111111111111111111111111111111111",
 			tokenID, nil, nil,
-			"-1", int64(150), canonicalTxHash,
+			"-1", int64(150), canonicalTxHash, "",
 		).
 		Return(nil)
 
@@ -1177,7 +1178,7 @@ func TestProcessBatch_Deposit(t *testing.T) {
 					{
 						OuterInstructionIndex: 0,
 						InnerInstructionIndex: -1,
-						EventCategory:         model.EventCategoryTransfer,
+						ActivityType:         model.ActivityDeposit,
 						EventAction:           "system_transfer",
 						ProgramID:             "11111111111111111111111111111111",
 						ContractAddress:       "11111111111111111111111111111111",
@@ -1206,19 +1207,19 @@ func TestProcessBatch_Deposit(t *testing.T) {
 		Return(tokenID, nil)
 
 	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 			assert.Equal(t, model.ChainSolana, be.Chain)
 			assert.Equal(t, "addr1", be.Address)
 			assert.Equal(t, "otherAddr", be.CounterpartyAddress)
 			assert.Equal(t, "1000000", be.Delta)
-			assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
+			assert.Equal(t, model.ActivityDeposit, be.ActivityType)
 			if assert.NotNil(t, be.BalanceBefore) {
 				assert.Equal(t, "0", *be.BalanceBefore)
 			}
 			if assert.NotNil(t, be.BalanceAfter) {
 				assert.Equal(t, "1000000", *be.BalanceAfter)
 			}
-			return true, nil
+			return store.UpsertResult{Inserted: true}, nil
 		})
 
 	// Positive delta for deposit
@@ -1226,7 +1227,7 @@ func TestProcessBatch_Deposit(t *testing.T) {
 		gomock.Any(), gomock.Any(),
 		model.ChainSolana, model.NetworkDevnet, "addr1",
 		tokenID, &walletID, &orgID,
-		"1000000", int64(100), "sig1",
+		"1000000", int64(100), "sig1", "",
 	).Return(nil)
 
 	mockCursorRepo.EXPECT().UpsertTx(
@@ -1276,7 +1277,7 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 					{
 						OuterInstructionIndex: 0,
 						InnerInstructionIndex: -1,
-						EventCategory:         model.EventCategoryTransfer,
+						ActivityType:         model.ActivityDeposit,
 						EventAction:           "system_transfer",
 						ProgramID:             "11111111111111111111111111111111",
 						ContractAddress:       "11111111111111111111111111111111",
@@ -1289,7 +1290,7 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 					{
 						OuterInstructionIndex: -1,
 						InnerInstructionIndex: -1,
-						EventCategory:         model.EventCategoryFee,
+						ActivityType:         model.ActivityFee,
 						EventAction:           "transaction_fee",
 						ProgramID:             "11111111111111111111111111111111",
 						ContractAddress:       "11111111111111111111111111111111",
@@ -1324,7 +1325,7 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 
 	// Two balance event upserts
 	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 			assert.Equal(t, "-2000000", be.Delta)
 			if assert.NotNil(t, be.BalanceBefore) {
 				assert.Equal(t, "0", *be.BalanceBefore)
@@ -1332,19 +1333,19 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 			if assert.NotNil(t, be.BalanceAfter) {
 				assert.Equal(t, "-2000000", *be.BalanceAfter)
 			}
-			return true, nil
+			return store.UpsertResult{Inserted: true}, nil
 		})
 	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 			assert.Equal(t, "-5000", be.Delta)
-			assert.Equal(t, model.EventCategoryFee, be.EventCategory)
+			assert.Equal(t, model.ActivityFee, be.ActivityType)
 			if assert.NotNil(t, be.BalanceBefore) {
 				assert.Equal(t, "0", *be.BalanceBefore)
 			}
 			if assert.NotNil(t, be.BalanceAfter) {
 				assert.Equal(t, "-5000", *be.BalanceAfter)
 			}
-			return true, nil
+			return store.UpsertResult{Inserted: true}, nil
 		})
 
 	// Two balance adjustments
@@ -1352,13 +1353,13 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 		gomock.Any(), gomock.Any(),
 		model.ChainSolana, model.NetworkDevnet, "addr1",
 		tokenID, &walletID, &orgID,
-		"-2000000", int64(100), "sig1",
+		"-2000000", int64(100), "sig1", "",
 	).Return(nil)
 	mockBalanceRepo.EXPECT().AdjustBalanceTx(
 		gomock.Any(), gomock.Any(),
 		model.ChainSolana, model.NetworkDevnet, "addr1",
 		feeTokenID, &walletID, &orgID,
-		"-5000", int64(100), "sig1",
+		"-5000", int64(100), "sig1", "",
 	).Return(nil)
 
 	mockCursorRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -1443,7 +1444,7 @@ func TestProcessBatch_DuplicateEventReplayIsNoop(t *testing.T) {
 					{
 						OuterInstructionIndex: 0,
 						InnerInstructionIndex: -1,
-						EventCategory:         model.EventCategoryTransfer,
+						ActivityType:         model.ActivityDeposit,
 						EventAction:           "system_transfer",
 						ProgramID:             "11111111111111111111111111111111",
 						ContractAddress:       "11111111111111111111111111111111",
@@ -1469,7 +1470,7 @@ func TestProcessBatch_DuplicateEventReplayIsNoop(t *testing.T) {
 		Return(tokenID, nil)
 
 	mockBERepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(false, nil)
+		Return(store.UpsertResult{Inserted: false}, nil)
 
 	mockCursorRepo.EXPECT().UpsertTx(
 		gomock.Any(), gomock.Any(),
@@ -1553,7 +1554,7 @@ func TestProcessBatch_MixedFinalityReplayPromotesWithoutDoubleApplyAcrossMandato
 								{
 									OuterInstructionIndex: 0,
 									InnerInstructionIndex: -1,
-									EventCategory:         model.EventCategoryTransfer,
+									ActivityType:         model.ActivityDeposit,
 									EventAction:           "transfer",
 									ProgramID:             tc.programID,
 									ContractAddress:       tc.contractAddr,
@@ -1592,10 +1593,10 @@ func TestProcessBatch_MixedFinalityReplayPromotesWithoutDoubleApplyAcrossMandato
 			call := 0
 			mockBERepo.EXPECT().
 				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 					call++
 					finalityWrites = append(finalityWrites, be.FinalityState)
-					return call == 1, nil
+					return store.UpsertResult{Inserted: call == 1}, nil
 				}).
 				Times(2)
 
@@ -1604,7 +1605,7 @@ func TestProcessBatch_MixedFinalityReplayPromotesWithoutDoubleApplyAcrossMandato
 					gomock.Any(), gomock.Any(),
 					tc.chain, tc.network, tc.address,
 					tokenID, nil, nil,
-					"-1", tc.cursor, tc.txHash,
+					"-1", tc.cursor, tc.txHash, "",
 				).
 				Return(nil).
 				Times(1)
@@ -1707,7 +1708,7 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 								{
 									OuterInstructionIndex: 0,
 									InnerInstructionIndex: -1,
-									EventCategory:         model.EventCategoryTransfer,
+									ActivityType:         model.ActivityDeposit,
 									EventAction:           "transfer",
 									ProgramID:             tc.programID,
 									ContractAddress:       tc.contractAddr,
@@ -1768,22 +1769,22 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 			writtenFinality := make([]string, 0, 4)
 			mockBERepo.EXPECT().
 				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 					upsertCalls++
 					writtenEventIDs = append(writtenEventIDs, be.EventID)
 					writtenFinality = append(writtenFinality, be.FinalityState)
 					switch upsertCalls {
 					case 1:
-						return true, nil
+						return store.UpsertResult{Inserted: true}, nil
 					case 2:
-						return false, nil
+						return store.UpsertResult{Inserted: false}, nil
 					case 3:
-						return true, nil
+						return store.UpsertResult{Inserted: true}, nil
 					case 4:
-						return false, nil
+						return store.UpsertResult{Inserted: false}, nil
 					default:
 						t.Fatalf("unexpected upsert call count: %d", upsertCalls)
-						return false, nil
+						return store.UpsertResult{Inserted: false}, nil
 					}
 				}).
 				Times(4)
@@ -1794,9 +1795,9 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 					gomock.Any(), gomock.Any(),
 					tc.chain, tc.network, tc.address,
 					tokenID, nil, nil,
-					gomock.Any(), gomock.Any(), gomock.Any(),
+					gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
 				).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string) error {
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string, _ string) error {
 					appliedDeltas = append(appliedDeltas, delta)
 					return nil
 				}).
@@ -1845,7 +1846,7 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 
 func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministically(t *testing.T) {
 	type eventBlueprint struct {
-		category model.EventCategory
+		category model.ActivityType
 		action   string
 		path     string
 		delta    string
@@ -1897,7 +1898,7 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 		return true
 	}
 
-	eventIDFor := func(txHash, path string, category model.EventCategory) string {
+	eventIDFor := func(txHash, path string, category model.ActivityType) string {
 		canonicalTx := canonicalSignatureIdentity(model.ChainBTC, txHash)
 		return strings.Join([]string{
 			string(model.ChainBTC),
@@ -1916,7 +1917,7 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 			normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
 				OuterInstructionIndex: 0,
 				InnerInstructionIndex: -1,
-				EventCategory:         spec.category,
+				ActivityType:         spec.category,
 				EventAction:           spec.action,
 				ProgramID:             "btc",
 				ContractAddress:       "BTC",
@@ -2044,28 +2045,28 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 	}
 
 	stable100 := buildTx("btc-stable-100", 100, []eventBlueprint{
-		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:0", delta: "10"},
-		{category: model.EventCategoryFee, action: "miner_fee", path: "fee", delta: "-2"},
+		{category: model.ActivityDeposit, action: "vout_credit", path: "vout:0", delta: "10"},
+		{category: model.ActivityFee, action: "miner_fee", path: "fee", delta: "-2"},
 	})
 	stable101 := buildTx("btc-stable-101", 101, []eventBlueprint{
-		{category: model.EventCategoryTransfer, action: "vin_debit", path: "vin:0", delta: "-6"},
-		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:1", delta: "4"},
+		{category: model.ActivityDeposit, action: "vin_debit", path: "vin:0", delta: "-6"},
+		{category: model.ActivityDeposit, action: "vout_credit", path: "vout:1", delta: "4"},
 	})
 	new102 := buildTx("btc-new-102", 102, []eventBlueprint{
-		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:0", delta: "3"},
-		{category: model.EventCategoryFee, action: "miner_fee", path: "fee", delta: "-1"},
+		{category: model.ActivityDeposit, action: "vout_credit", path: "vout:0", delta: "3"},
+		{category: model.ActivityFee, action: "miner_fee", path: "fee", delta: "-1"},
 	})
 	old100 := buildTx("btc-old-100", 100, []eventBlueprint{
-		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:0", delta: "7"},
-		{category: model.EventCategoryFee, action: "miner_fee", path: "fee", delta: "-1"},
+		{category: model.ActivityDeposit, action: "vout_credit", path: "vout:0", delta: "7"},
+		{category: model.ActivityFee, action: "miner_fee", path: "fee", delta: "-1"},
 	})
 	old101 := buildTx("btc-old-101", 101, []eventBlueprint{
-		{category: model.EventCategoryTransfer, action: "vin_debit", path: "vin:0", delta: "-4"},
-		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:1", delta: "1"},
+		{category: model.ActivityDeposit, action: "vin_debit", path: "vin:0", delta: "-4"},
+		{category: model.ActivityDeposit, action: "vout_credit", path: "vout:1", delta: "1"},
 	})
 	old102 := buildTx("btc-old-102", 102, []eventBlueprint{
-		{category: model.EventCategoryTransfer, action: "vout_credit", path: "vout:0", delta: "9"},
-		{category: model.EventCategoryFee, action: "miner_fee", path: "fee", delta: "-4"},
+		{category: model.ActivityDeposit, action: "vout_credit", path: "vout:0", delta: "9"},
+		{category: model.ActivityFee, action: "miner_fee", path: "fee", delta: "-4"},
 	})
 
 	cursor99 := "btc-cursor-99"
@@ -2121,26 +2122,26 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 	assert.Equal(t, baseline.totalDelta, restartFromRollbackAnchor.totalDelta)
 
 	// Orphaned branch events must not survive rollback.
-	assert.NotContains(t, oneBlockReorg.eventIDs, eventIDFor("btc-old-102", "vout:0", model.EventCategoryTransfer))
-	assert.NotContains(t, oneBlockReorg.eventIDs, eventIDFor("btc-old-102", "fee", model.EventCategoryFee))
-	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-100", "vout:0", model.EventCategoryTransfer))
-	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-101", "vin:0", model.EventCategoryTransfer))
-	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-102", "vout:0", model.EventCategoryTransfer))
-	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-100", "vout:0", model.EventCategoryTransfer))
-	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-101", "vin:0", model.EventCategoryTransfer))
-	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-102", "vout:0", model.EventCategoryTransfer))
-	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-102", "fee", model.EventCategoryFee))
+	assert.NotContains(t, oneBlockReorg.eventIDs, eventIDFor("btc-old-102", "vout:0", model.ActivityDeposit))
+	assert.NotContains(t, oneBlockReorg.eventIDs, eventIDFor("btc-old-102", "fee", model.ActivityFee))
+	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-100", "vout:0", model.ActivityDeposit))
+	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-101", "vin:0", model.ActivityDeposit))
+	assert.NotContains(t, multiBlockReorg.eventIDs, eventIDFor("btc-old-102", "vout:0", model.ActivityDeposit))
+	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-100", "vout:0", model.ActivityDeposit))
+	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-101", "vin:0", model.ActivityDeposit))
+	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-102", "vout:0", model.ActivityDeposit))
+	assert.NotContains(t, restartFromRollbackAnchor.eventIDs, eventIDFor("btc-old-102", "fee", model.ActivityFee))
 
 	// Replacement-branch emissions are one-time even across rollback + replay.
-	assert.Equal(t, 1, oneBlockReorg.eventIDCounts[eventIDFor("btc-stable-101", "vin:0", model.EventCategoryTransfer)])
-	assert.Equal(t, 1, oneBlockReorg.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.EventCategoryTransfer)])
-	assert.Equal(t, 1, multiBlockReorg.eventIDCounts[eventIDFor("btc-stable-100", "vout:0", model.EventCategoryTransfer)])
-	assert.Equal(t, 1, multiBlockReorg.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.EventCategoryTransfer)])
-	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-stable-100", "vout:0", model.EventCategoryTransfer)])
-	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-stable-101", "vin:0", model.EventCategoryTransfer)])
-	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.EventCategoryTransfer)])
-	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-stable-100", "fee", model.EventCategoryFee)])
-	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-new-102", "fee", model.EventCategoryFee)])
+	assert.Equal(t, 1, oneBlockReorg.eventIDCounts[eventIDFor("btc-stable-101", "vin:0", model.ActivityDeposit)])
+	assert.Equal(t, 1, oneBlockReorg.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.ActivityDeposit)])
+	assert.Equal(t, 1, multiBlockReorg.eventIDCounts[eventIDFor("btc-stable-100", "vout:0", model.ActivityDeposit)])
+	assert.Equal(t, 1, multiBlockReorg.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.ActivityDeposit)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-stable-100", "vout:0", model.ActivityDeposit)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-stable-101", "vin:0", model.ActivityDeposit)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-new-102", "vout:0", model.ActivityDeposit)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-stable-100", "fee", model.ActivityFee)])
+	assert.Equal(t, 1, restartFromRollbackAnchor.eventIDCounts[eventIDFor("btc-new-102", "fee", model.ActivityFee)])
 
 	canonicalEventIDUniqueOK := eventIDCountsUnique(baseline.eventIDCounts) &&
 		eventIDCountsUnique(oneBlockReorg.eventIDCounts) &&
@@ -2227,7 +2228,7 @@ func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 					{
 						OuterInstructionIndex: 7,
 						InnerInstructionIndex: -1,
-						EventCategory:         model.EventCategoryTransfer,
+						ActivityType:         model.ActivityDeposit,
 						EventAction:           "native_transfer",
 						ContractAddress:       "ETH",
 						Address:               "0x1111111111111111111111111111111111111111",
@@ -2239,7 +2240,7 @@ func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 					{
 						OuterInstructionIndex: 7,
 						InnerInstructionIndex: -1,
-						EventCategory:         model.EventCategoryFeeExecutionL2,
+						ActivityType:         model.ActivityFeeExecutionL2,
 						EventAction:           "fee_execution_l2",
 						ContractAddress:       "ETH",
 						Address:               "0x1111111111111111111111111111111111111111",
@@ -2250,7 +2251,7 @@ func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 					{
 						OuterInstructionIndex: 7,
 						InnerInstructionIndex: -1,
-						EventCategory:         model.EventCategoryFeeDataL1,
+						ActivityType:         model.ActivityFeeDataL1,
 						EventAction:           "fee_data_l1",
 						ContractAddress:       "ETH",
 						Address:               "0x1111111111111111111111111111111111111111",
@@ -2281,12 +2282,12 @@ func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 	upsertEventCalls := 0
 	mockBERepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 			upsertEventCalls++
 			assert.Equal(t, model.ChainBase, be.Chain)
 			assert.Equal(t, model.NetworkSepolia, be.Network)
 			assert.Equal(t, "0xbase_tx_1", be.TxHash)
-			return upsertEventCalls <= 3, nil
+			return store.UpsertResult{Inserted: upsertEventCalls <= 3}, nil
 		}).
 		Times(6)
 
@@ -2303,8 +2304,9 @@ func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 			gomock.Any(),
 			int64(200),
 			"0xbase_tx_1",
+			"",
 		).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string) error {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string, _ string) error {
 			assert.True(t, strings.HasPrefix(delta, "-"))
 			return nil
 		}).
@@ -2401,7 +2403,7 @@ func TestProcessBatch_RestartFromBoundaryReplay_NoDoubleApplyAcrossMandatoryChai
 							{
 								OuterInstructionIndex: 0,
 								InnerInstructionIndex: -1,
-								EventCategory:         model.EventCategoryTransfer,
+								ActivityType:         model.ActivityDeposit,
 								EventAction:           "transfer",
 								ProgramID:             tc.programID,
 								ContractAddress:       tc.contractAddress,
@@ -2434,13 +2436,13 @@ func TestProcessBatch_RestartFromBoundaryReplay_NoDoubleApplyAcrossMandatoryChai
 			insertedCount := 0
 			mockBERepo.EXPECT().
 				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 					assert.Equal(t, tc.chain, be.Chain)
 					assert.Equal(t, tc.network, be.Network)
 					assert.Equal(t, tc.txHash, be.TxHash)
 					assert.Equal(t, tc.eventID, be.EventID)
 					insertedCount++
-					return insertedCount == 1, nil
+					return store.UpsertResult{Inserted: insertedCount == 1}, nil
 				}).
 				Times(2)
 
@@ -2449,7 +2451,7 @@ func TestProcessBatch_RestartFromBoundaryReplay_NoDoubleApplyAcrossMandatoryChai
 					gomock.Any(), gomock.Any(),
 					tc.chain, tc.network, tc.address,
 					tokenID, nil, nil,
-					"-1", tc.blockCursor, tc.txHash,
+					"-1", tc.blockCursor, tc.txHash, "",
 				).
 				Return(nil).
 				Times(1)
@@ -2524,7 +2526,7 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 		EventID  string
 		TxHash   string
 		Address  string
-		Category model.EventCategory
+		Category model.ActivityType
 		Delta    string
 	}
 
@@ -2560,7 +2562,7 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 							{
 								OuterInstructionIndex: 0,
 								InnerInstructionIndex: -1,
-								EventCategory:         model.EventCategoryTransfer,
+								ActivityType:         model.ActivityDeposit,
 								EventAction:           "transfer",
 								ProgramID:             tc.programID,
 								ContractAddress:       tc.contractAddress,
@@ -2603,15 +2605,15 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 			tuples := make([]canonicalTuple, 0, 2)
 			mockBERepo.EXPECT().
 				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 					tuples = append(tuples, canonicalTuple{
 						EventID:  be.EventID,
 						TxHash:   be.TxHash,
 						Address:  be.Address,
-						Category: be.EventCategory,
+						Category: be.ActivityType,
 						Delta:    be.Delta,
 					})
-					return true, nil
+					return store.UpsertResult{Inserted: true}, nil
 				}).
 				Times(2)
 
@@ -2620,7 +2622,7 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 					gomock.Any(), gomock.Any(),
 					tc.chain, tc.network, tc.address,
 					tokenID, nil, nil,
-					tc.delta, tc.blockCursor, tc.txHash,
+					tc.delta, tc.blockCursor, tc.txHash, "",
 				).
 				Return(nil).
 				Times(2)
@@ -2760,7 +2762,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_ReconcilesAcrossMandatoryChain
 							{
 								OuterInstructionIndex: 0,
 								InnerInstructionIndex: -1,
-								EventCategory:         model.EventCategoryTransfer,
+								ActivityType:         model.ActivityDeposit,
 								EventAction:           "transfer",
 								ProgramID:             tc.programID,
 								ContractAddress:       tc.contractAddress,
@@ -2791,7 +2793,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_ReconcilesAcrossMandatoryChain
 
 			mockBERepo.EXPECT().
 				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(true, nil).
+				Return(store.UpsertResult{Inserted: true}, nil).
 				Times(1)
 
 			mockBalanceRepo.EXPECT().
@@ -2799,7 +2801,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_ReconcilesAcrossMandatoryChain
 					gomock.Any(), gomock.Any(),
 					tc.chain, tc.network, tc.address,
 					tokenID, nil, nil,
-					"-1", tc.blockCursor, tc.txHash,
+					"-1", tc.blockCursor, tc.txHash, "",
 				).
 				Return(nil).
 				Times(1)
@@ -2839,7 +2841,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_PermutationsConvergeCanonicalT
 		EventID  string
 		TxHash   string
 		Address  string
-		Category model.EventCategory
+		Category model.ActivityType
 		Delta    string
 	}
 	type permutation struct {
@@ -2930,7 +2932,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_PermutationsConvergeCanonicalT
 								{
 									OuterInstructionIndex: 0,
 									InnerInstructionIndex: -1,
-									EventCategory:         model.EventCategoryTransfer,
+									ActivityType:         model.ActivityDeposit,
 									EventAction:           "transfer",
 									ProgramID:             tc.programID,
 									ContractAddress:       tc.contractAddress,
@@ -2965,15 +2967,15 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_PermutationsConvergeCanonicalT
 				var tuple canonicalTuple
 				mockBERepo.EXPECT().
 					UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-					DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+					DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 						tuple = canonicalTuple{
 							EventID:  be.EventID,
 							TxHash:   be.TxHash,
 							Address:  be.Address,
-							Category: be.EventCategory,
+							Category: be.ActivityType,
 							Delta:    be.Delta,
 						}
-						return true, nil
+						return store.UpsertResult{Inserted: true}, nil
 					}).
 					Times(1)
 
@@ -2982,7 +2984,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_PermutationsConvergeCanonicalT
 						gomock.Any(), gomock.Any(),
 						tc.chain, tc.network, tc.address,
 						tokenID, nil, nil,
-						"-1", tc.blockCursor, tc.txHashExpected,
+						"-1", tc.blockCursor, tc.txHashExpected, "",
 					).
 					Return(nil).
 					Times(1)
@@ -3101,7 +3103,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_CursorAheadFailsClosedAcrossMa
 							{
 								OuterInstructionIndex: 0,
 								InnerInstructionIndex: -1,
-								EventCategory:         model.EventCategoryTransfer,
+								ActivityType:         model.ActivityDeposit,
 								EventAction:           "transfer",
 								ProgramID:             tc.programID,
 								ContractAddress:       tc.contractAddress,
@@ -3134,12 +3136,12 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_CursorAheadFailsClosedAcrossMa
 			insertedCount := 0
 			mockBERepo.EXPECT().
 				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(context.Context, *sql.Tx, *model.BalanceEvent) (bool, error) {
+				DoAndReturn(func(context.Context, *sql.Tx, *model.BalanceEvent) (store.UpsertResult, error) {
 					if insertedCount == 0 {
 						insertedCount++
-						return true, nil
+						return store.UpsertResult{Inserted: true}, nil
 					}
-					return false, nil
+					return store.UpsertResult{Inserted: false}, nil
 				}).
 				Times(2)
 
@@ -3148,7 +3150,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_CursorAheadFailsClosedAcrossMa
 					gomock.Any(), gomock.Any(),
 					tc.chain, tc.network, tc.address,
 					tokenID, nil, nil,
-					"-1", tc.blockCursor, tc.txHash,
+					"-1", tc.blockCursor, tc.txHash, "",
 				).
 				Return(nil).
 				Times(1)
@@ -3276,7 +3278,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitRetryAfterUnknown_DeduplicatesAcro
 							{
 								OuterInstructionIndex: 0,
 								InnerInstructionIndex: -1,
-								EventCategory:         model.EventCategoryTransfer,
+								ActivityType:         model.ActivityDeposit,
 								EventAction:           "transfer",
 								ProgramID:             tc.programID,
 								ContractAddress:       tc.contractAddress,
@@ -3310,13 +3312,13 @@ func TestIngester_ProcessBatch_AmbiguousCommitRetryAfterUnknown_DeduplicatesAcro
 			insertedCount := 0
 			mockBERepo.EXPECT().
 				UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(context.Context, *sql.Tx, *model.BalanceEvent) (bool, error) {
+				DoAndReturn(func(context.Context, *sql.Tx, *model.BalanceEvent) (store.UpsertResult, error) {
 					totalUpserts++
 					if totalUpserts == 1 {
 						insertedCount++
-						return true, nil
+						return store.UpsertResult{Inserted: true}, nil
 					}
-					return false, nil
+					return store.UpsertResult{Inserted: false}, nil
 				}).
 				Times(2)
 
@@ -3325,7 +3327,7 @@ func TestIngester_ProcessBatch_AmbiguousCommitRetryAfterUnknown_DeduplicatesAcro
 					gomock.Any(), gomock.Any(),
 					tc.chain, tc.network, tc.address,
 					tokenID, nil, nil,
-					"-1", tc.blockCursor, tc.txHash,
+					"-1", tc.blockCursor, tc.txHash, "",
 				).
 				Return(nil).
 				Times(1)
@@ -3636,7 +3638,7 @@ func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransition
 					{
 						OuterInstructionIndex: 0,
 						InnerInstructionIndex: -1,
-						EventCategory:         model.EventCategoryTransfer,
+						ActivityType:         model.ActivityDeposit,
 						EventAction:           "transfer",
 						ProgramID:             "11111111111111111111111111111111",
 						ContractAddress:       "11111111111111111111111111111111",
@@ -3666,7 +3668,7 @@ func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransition
 
 	mockBERepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(true, nil).
+		Return(store.UpsertResult{Inserted: true}, nil).
 		Times(1)
 
 	mockBalanceRepo.EXPECT().
@@ -3674,7 +3676,7 @@ func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransition
 			gomock.Any(), gomock.Any(),
 			model.ChainSolana, model.NetworkDevnet, "addr1",
 			tokenID, nil, nil,
-			"-1", int64(100), "sig1",
+			"-1", int64(100), "sig1", "",
 		).
 		Return(errors.New("insufficient balance for adjustment")).
 		Times(1)

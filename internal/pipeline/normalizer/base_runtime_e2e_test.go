@@ -20,6 +20,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/fetcher"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	normalizermocks "github.com/emperorhan/multichain-indexer/internal/pipeline/normalizer/mocks"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 	"github.com/google/uuid"
@@ -210,7 +211,7 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	mockBERepo := storemocks.NewMockBalanceEventRepository(ctrl)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockBalanceRepo.EXPECT().
-		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		GetAmountWithExistsTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		AnyTimes().
 		Return("0", false, nil)
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
@@ -253,10 +254,10 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 		}).
 		Times(3)
 
-	ingestedCategories := make(map[model.EventCategory]struct{}, 3)
+	ingestedActivities := make(map[model.ActivityType]struct{}, 3)
 	mockBERepo.EXPECT().
 		UpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (bool, error) {
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 			assert.Equal(t, model.ChainBase, be.Chain)
 			assert.Equal(t, model.NetworkSepolia, be.Network)
 			assert.Equal(t, txHash, be.TxHash)
@@ -265,14 +266,14 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 			}
 			assert.True(t, strings.HasPrefix(be.Delta, "-"))
 			assert.NotEmpty(t, be.EventID)
-			ingestedCategories[be.EventCategory] = struct{}{}
-			return true, nil
+			ingestedActivities[be.ActivityType] = struct{}{}
+			return store.UpsertResult{Inserted: true}, nil
 		}).
 		Times(3)
 
 	mockBalanceRepo.EXPECT().
-		AdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, watchedAddress, tokenID, &walletID, &orgID, gomock.Any(), cursorSequence, txHash).
-		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string) error {
+		AdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, watchedAddress, tokenID, &walletID, &orgID, gomock.Any(), cursorSequence, txHash, "").
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, delta string, _ int64, _ string, _ string) error {
 			assert.True(t, strings.HasPrefix(delta, "-"))
 			return nil
 		}).
@@ -310,8 +311,8 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	close(ingestInputCh)
 
 	require.NoError(t, ing.Run(context.Background()))
-	assert.Len(t, ingestedCategories, 3)
-	assert.Contains(t, ingestedCategories, model.EventCategoryTransfer)
-	assert.Contains(t, ingestedCategories, model.EventCategoryFeeExecutionL2)
-	assert.Contains(t, ingestedCategories, model.EventCategoryFeeDataL1)
+	assert.Len(t, ingestedActivities, 3)
+	assert.Contains(t, ingestedActivities, model.ActivityWithdrawal)
+	assert.Contains(t, ingestedActivities, model.ActivityFeeExecutionL2)
+	assert.Contains(t, ingestedActivities, model.ActivityFeeDataL1)
 }

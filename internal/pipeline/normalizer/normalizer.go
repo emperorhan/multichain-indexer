@@ -462,6 +462,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			result.FeeAmount,
 			finalityState,
 			result.BalanceEvents,
+			batch.Address,
 		)
 	} else if isBTCChain {
 		tx.BalanceEvents = buildCanonicalBTCBalanceEvents(
@@ -473,6 +474,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			result.FeeAmount,
 			finalityState,
 			result.BalanceEvents,
+			batch.Address,
 		)
 	} else {
 		tx.BalanceEvents = buildCanonicalSolanaBalanceEvents(
@@ -484,6 +486,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			result.FeeAmount,
 			finalityState,
 			result.BalanceEvents,
+			batch.Address,
 		)
 	}
 

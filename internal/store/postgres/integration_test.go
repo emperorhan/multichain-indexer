@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -213,7 +214,7 @@ func TestBalanceRepo_AdjustAndGet(t *testing.T) {
 	require.NoError(t, err)
 
 	// GetAmountTx returns "0" for non-existent balance.
-	amount, err := balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID)
+	amount, err := balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "0", amount)
 
@@ -222,18 +223,18 @@ func TestBalanceRepo_AdjustAndGet(t *testing.T) {
 	orgID := "org-1"
 	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
 		model.ChainSolana, model.NetworkDevnet, addr,
-		tokenID, &walletID, &orgID, "1000000000", 100, "tx-deposit"))
+		tokenID, &walletID, &orgID, "", "1000000000", 100, "tx-deposit"))
 
-	amount, err = balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID)
+	amount, err = balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "1000000000", amount)
 
 	// Withdraw -500000000
 	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
 		model.ChainSolana, model.NetworkDevnet, addr,
-		tokenID, &walletID, &orgID, "-500000000", 101, "tx-withdraw"))
+		tokenID, &walletID, &orgID, "", "-500000000", 101, "tx-withdraw"))
 
-	amount, err = balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID)
+	amount, err = balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "500000000", amount)
 
@@ -291,7 +292,7 @@ func TestBalanceEventRepo_UpsertIdempotent(t *testing.T) {
 		TransactionID:   txID,
 		TxHash:          txHash,
 		TokenID:         tokenID,
-		EventCategory:   "transfer",
+		ActivityType:    model.ActivityDeposit,
 		EventAction:     "deposit",
 		Address:         watchedAddr,
 		Delta:           "1000000",
@@ -306,20 +307,20 @@ func TestBalanceEventRepo_UpsertIdempotent(t *testing.T) {
 		SchemaVersion:   "v1",
 	}
 
-	inserted, err := beRepo.UpsertTx(ctx, tx, be)
+	result, err := beRepo.UpsertTx(ctx, tx, be)
 	require.NoError(t, err)
-	assert.True(t, inserted, "first insert should return true")
+	assert.True(t, result.Inserted, "first insert should return true")
 
 	// Same event_id with same finality → no update (WHERE clause rejects equal rank).
-	inserted2, err := beRepo.UpsertTx(ctx, tx, be)
+	result2, err := beRepo.UpsertTx(ctx, tx, be)
 	require.NoError(t, err)
-	assert.False(t, inserted2, "duplicate insert with same finality should return false")
+	assert.False(t, result2.Inserted, "duplicate insert with same finality should return false")
 
 	// Same event_id with higher finality → update succeeds.
 	be.FinalityState = "finalized"
-	inserted3, err := beRepo.UpsertTx(ctx, tx, be)
+	result3, err := beRepo.UpsertTx(ctx, tx, be)
 	require.NoError(t, err)
-	assert.False(t, inserted3, "finality upgrade should update but return false (xmax != 0)")
+	assert.False(t, result3.Inserted, "finality upgrade should update but return false (xmax != 0)")
 
 	require.NoError(t, tx.Commit())
 }
@@ -401,7 +402,7 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 				TransactionID: txID,
 				TxHash:        txHash,
 				TokenID:       tokenID,
-				EventCategory: model.EventCategoryTransfer,
+				ActivityType:  model.ActivityDeposit,
 				EventAction:   "replay",
 				Address:       watchedAddr,
 				Delta:         "1000000",
@@ -419,10 +420,10 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 
 			txA, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
-			insertedBefore, err := beRepo.UpsertTx(ctx, txA, event)
+			resultBefore, err := beRepo.UpsertTx(ctx, txA, event)
 			require.NoError(t, err)
 			require.NoError(t, txA.Commit())
-			assert.True(t, insertedBefore)
+			assert.True(t, resultBefore.Inserted)
 
 			var upsertCountBefore int
 			err = db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3", tc.chain, tc.network, eventID).Scan(&upsertCountBefore)
@@ -437,10 +438,10 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 
 			txB, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
-			insertedAfter, err := beRepo.UpsertTx(ctx, txB, event)
+			resultAfter, err := beRepo.UpsertTx(ctx, txB, event)
 			require.NoError(t, err)
 			require.NoError(t, txB.Commit())
-			assert.False(t, insertedAfter)
+			assert.False(t, resultAfter.Inserted)
 
 			var storedState string
 			var storedCursor int64
@@ -462,10 +463,10 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 
 			txC, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
-			insertedReplayHigherCursor, err := beRepo.UpsertTx(ctx, txC, event)
+			resultReplayHigherCursor, err := beRepo.UpsertTx(ctx, txC, event)
 			require.NoError(t, err)
 			require.NoError(t, txC.Commit())
-			assert.False(t, insertedReplayHigherCursor)
+			assert.False(t, resultReplayHigherCursor.Inserted)
 
 			err = db.QueryRow(
 				"SELECT finality_state, block_cursor, block_time FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3",
@@ -486,10 +487,10 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 
 			txD, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
-			insertedRewind, err := beRepo.UpsertTx(ctx, txD, event)
+			resultRewind, err := beRepo.UpsertTx(ctx, txD, event)
 			require.NoError(t, err)
 			require.NoError(t, txD.Commit())
-			assert.False(t, insertedRewind)
+			assert.False(t, resultRewind.Inserted)
 
 			err = db.QueryRow(
 				"SELECT finality_state, block_cursor, block_time FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3",
@@ -508,10 +509,10 @@ func TestBalanceEventRepo_ReplayStableCanonicalIDAcrossBlockTimeShift(t *testing
 
 			txE, err := db.BeginTx(ctx, nil)
 			require.NoError(t, err)
-			insertedFinalized, err := beRepo.UpsertTx(ctx, txE, event)
+			resultFinalized, err := beRepo.UpsertTx(ctx, txE, event)
 			require.NoError(t, err)
 			require.NoError(t, txE.Commit())
-			assert.False(t, insertedFinalized)
+			assert.False(t, resultFinalized.Inserted)
 
 			var upsertCountAfter int
 			err = db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE chain = $1 AND network = $2 AND event_id = $3", tc.chain, tc.network, eventID).Scan(&upsertCountAfter)
@@ -582,20 +583,20 @@ func TestBalanceEventRepo_ConcurrentUpsertSameEventID(t *testing.T) {
 			be := &model.BalanceEvent{
 				Chain: model.ChainSolana, Network: model.NetworkDevnet,
 				TransactionID: txID, TxHash: txHash, TokenID: tokenID,
-				EventCategory: "transfer", EventAction: "deposit",
+				ActivityType: model.ActivityDeposit, EventAction: "deposit",
 				Address: watchedAddr, Delta: "1000000",
 				WatchedAddress: &watchedAddr, BlockCursor: 100,
 				ChainData: json.RawMessage("{}"), EventID: eventID,
 				FinalityState: "confirmed", BalanceBefore: strPtr("0"),
 				BalanceAfter: strPtr("1000000"), DecoderVersion: "v1", SchemaVersion: "v1",
 			}
-			inserted, uErr := beRepo.UpsertTx(ctx, gTx, be)
+			uResult, uErr := beRepo.UpsertTx(ctx, gTx, be)
 			if uErr != nil {
 				_ = gTx.Rollback()
 				atomic.AddInt32(&errCount, 1)
 				return
 			}
-			if inserted {
+			if uResult.Inserted {
 				atomic.AddInt32(&insertedCount, 1)
 			}
 			_ = gTx.Commit()
@@ -640,7 +641,7 @@ func TestBalanceEventRepo_FinalityUpgradePath(t *testing.T) {
 	baseBE := &model.BalanceEvent{
 		Chain: model.ChainSolana, Network: model.NetworkDevnet,
 		TransactionID: txID, TxHash: txHash, TokenID: tokenID,
-		EventCategory: "transfer", EventAction: "deposit",
+		ActivityType: model.ActivityDeposit, EventAction: "deposit",
 		Address: watchedAddr, Delta: "1000000",
 		WatchedAddress: &watchedAddr, BlockCursor: 100,
 		ChainData: json.RawMessage("{}"), EventID: eventID,
@@ -698,7 +699,7 @@ func TestBalanceEventRepo_RollbackDeleteByCursor(t *testing.T) {
 		_, uErr := beRepo.UpsertTx(ctx, setupTx, &model.BalanceEvent{
 			Chain: model.ChainSolana, Network: model.NetworkDevnet,
 			TransactionID: txID, TxHash: txHash, TokenID: tokenID,
-			EventCategory: "transfer", EventAction: "deposit",
+			ActivityType: model.ActivityDeposit, EventAction: "deposit",
 			Address: watchedAddr, Delta: "100000",
 			WatchedAddress: &watchedAddr, BlockCursor: cursor,
 			ChainData: json.RawMessage("{}"),
@@ -751,7 +752,7 @@ func TestBalanceRepo_ConcurrentAdjustBalance(t *testing.T) {
 	orgID := "org-1"
 	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, setupTx,
 		model.ChainSolana, model.NetworkDevnet, addr,
-		tokenID, &walletID, &orgID, "1000000000", 1, "tx-seed"))
+		tokenID, &walletID, &orgID, "", "1000000000", 1, "tx-seed"))
 	require.NoError(t, setupTx.Commit())
 
 	// 10 goroutines each adjust by +100.
@@ -769,7 +770,7 @@ func TestBalanceRepo_ConcurrentAdjustBalance(t *testing.T) {
 			}
 			_ = balanceRepo.AdjustBalanceTx(ctx, gTx,
 				model.ChainSolana, model.NetworkDevnet, addr,
-				tokenID, &walletID, &orgID, deltaPerGoroutine, int64(10+idx), fmt.Sprintf("tx-concurrent-%d", idx))
+				tokenID, &walletID, &orgID, "", deltaPerGoroutine, int64(10+idx), fmt.Sprintf("tx-concurrent-%d", idx))
 			_ = gTx.Commit()
 		}(i)
 	}
@@ -778,7 +779,7 @@ func TestBalanceRepo_ConcurrentAdjustBalance(t *testing.T) {
 	// Final balance should be 1_000_000_000 + (10 * 100) = 1_000_001_000.
 	readTx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	amount, err := balanceRepo.GetAmountTx(ctx, readTx, model.ChainSolana, model.NetworkDevnet, addr, tokenID)
+	amount, err := balanceRepo.GetAmountTx(ctx, readTx, model.ChainSolana, model.NetworkDevnet, addr, tokenID, "")
 	require.NoError(t, err)
 	require.NoError(t, readTx.Commit())
 	assert.Equal(t, "1000001000", amount)

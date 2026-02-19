@@ -99,10 +99,10 @@ func loadSolanaFixture(t *testing.T, fixture string) *sidecarv1.TransactionResul
 }
 
 type tupleSignature struct {
-	TxHash        string
-	EventID       string
-	EventCategory string
-	Delta         string
+	TxHash       string
+	EventID      string
+	ActivityType string
+	Delta        string
 }
 
 func orderedCanonicalTuples(batch event.NormalizedBatch) []tupleSignature {
@@ -110,10 +110,10 @@ func orderedCanonicalTuples(batch event.NormalizedBatch) []tupleSignature {
 	for _, tx := range batch.Transactions {
 		for _, be := range tx.BalanceEvents {
 			tuples = append(tuples, tupleSignature{
-				TxHash:        tx.TxHash,
-				EventID:       be.EventID,
-				EventCategory: string(be.EventCategory),
-				Delta:         be.Delta,
+				TxHash:       tx.TxHash,
+				EventID:      be.EventID,
+				ActivityType: string(be.ActivityType),
+				Delta:        be.Delta,
 			})
 		}
 	}
@@ -132,10 +132,10 @@ func orderedCanonicalEventIDs(batches []event.NormalizedBatch) []string {
 	return ids
 }
 
-func fixtureBaseFeeEventsByCategory(events []event.NormalizedBalanceEvent, category model.EventCategory) []event.NormalizedBalanceEvent {
+func fixtureBaseFeeEventsByActivity(events []event.NormalizedBalanceEvent, activity model.ActivityType) []event.NormalizedBalanceEvent {
 	out := make([]event.NormalizedBalanceEvent, 0, len(events))
 	for _, be := range events {
-		if be.EventCategory == category {
+		if be.ActivityType == activity {
 			out = append(out, be)
 		}
 	}
@@ -254,17 +254,17 @@ func TestProcessBatch_HappyPath(t *testing.T) {
 	foundTransferEvent := false
 	for i := range tx1.BalanceEvents {
 		be := tx1.BalanceEvents[i]
-		if be.EventCategory == model.EventCategoryFee {
+		if be.ActivityType == model.ActivityFee {
 			feeEvent1 = be
 			foundFeeEvent = true
 		}
-		if be.EventCategory == model.EventCategoryTransfer {
+		if be.ActivityType == model.ActivityWithdrawal {
 			transferEvent1 = be
 			foundTransferEvent = true
 		}
 	}
 	require.True(t, foundFeeEvent)
-	assert.Equal(t, model.EventCategoryFee, feeEvent1.EventCategory)
+	assert.Equal(t, model.ActivityFee, feeEvent1.ActivityType)
 	assert.Equal(t, "transaction_fee", feeEvent1.EventAction)
 	assert.Equal(t, "addr1", feeEvent1.Address)
 	assert.Equal(t, "-5000", feeEvent1.Delta)
@@ -273,7 +273,7 @@ func TestProcessBatch_HappyPath(t *testing.T) {
 	require.True(t, foundTransferEvent)
 	assert.Equal(t, 0, transferEvent1.OuterInstructionIndex)
 	assert.Equal(t, -1, transferEvent1.InnerInstructionIndex)
-	assert.Equal(t, model.EventCategoryTransfer, transferEvent1.EventCategory)
+	assert.Equal(t, model.ActivityWithdrawal, transferEvent1.ActivityType)
 	assert.Equal(t, "system_transfer", transferEvent1.EventAction)
 	assert.NotEmpty(t, transferEvent1.EventID)
 	assert.Equal(t, "addr1", transferEvent1.Address)
@@ -281,13 +281,10 @@ func TestProcessBatch_HappyPath(t *testing.T) {
 	assert.Equal(t, "-1000000", transferEvent1.Delta)
 	assert.Equal(t, model.TokenTypeNative, transferEvent1.TokenType)
 
-	// Second tx - no block time
+	// Second tx - no block time, no fee event because feePayer != watchedAddress
 	tx2 := result.Transactions[1]
 	assert.Nil(t, tx2.BlockTime)
-	require.Len(t, tx2.BalanceEvents, 1)
-	assert.Equal(t, model.EventCategoryFee, tx2.BalanceEvents[0].EventCategory)
-	assert.Equal(t, "addr2", tx2.BalanceEvents[0].Address)
-	assert.Equal(t, "-5000", tx2.BalanceEvents[0].Delta)
+	require.Len(t, tx2.BalanceEvents, 0)
 }
 
 func TestProcessBatch_EventIDDeterminism(t *testing.T) {
@@ -1372,7 +1369,7 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_DeterministicComponents(t *tes
 	batch := event.RawBatch{
 		Chain:   model.ChainBase,
 		Network: model.NetworkSepolia,
-		Address: "base_addr_1",
+		Address: "0x1111111111111111111111111111111111111111",
 		RawTransactions: []json.RawMessage{
 			json.RawMessage(`{"tx":"base-1"}`),
 		},
@@ -1397,8 +1394,8 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_DeterministicComponents(t *tes
 	require.Len(t, result.Transactions, 1)
 
 	tx := result.Transactions[0]
-	execEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
-	dataEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+	execEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeExecutionL2)
+	dataEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeDataL1)
 
 	require.Len(t, execEvents, 1)
 	require.Len(t, dataEvents, 1)
@@ -1406,14 +1403,14 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_DeterministicComponents(t *tes
 	execEvent := execEvents[0]
 	dataEvent := dataEvents[0]
 
-	assert.Equal(t, model.EventCategoryFeeExecutionL2, execEvent.EventCategory)
-	assert.Equal(t, "fee_execution_l2", execEvent.EventAction)
+	assert.Equal(t, model.ActivityFeeExecutionL2, execEvent.ActivityType)
+	assert.Equal(t, string(model.ActivityFeeExecutionL2), execEvent.EventAction)
 	assert.Equal(t, "-600", execEvent.Delta)
 	assert.Equal(t, "log:42", execEvent.EventPath)
 	assert.Equal(t, "base_log", execEvent.EventPathType)
 
-	assert.Equal(t, model.EventCategoryFeeDataL1, dataEvent.EventCategory)
-	assert.Equal(t, "fee_data_l1", dataEvent.EventAction)
+	assert.Equal(t, model.ActivityFeeDataL1, dataEvent.ActivityType)
+	assert.Equal(t, string(model.ActivityFeeDataL1), dataEvent.EventAction)
 	assert.Equal(t, "-400", dataEvent.Delta)
 
 	dataChainData := map[string]string{}
@@ -1439,7 +1436,7 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_MissingL1DataFee(t *testing.T)
 	batch := event.RawBatch{
 		Chain:   model.ChainBase,
 		Network: model.NetworkSepolia,
-		Address: "base_addr_1",
+		Address: "0x1111111111111111111111111111111111111111",
 		RawTransactions: []json.RawMessage{
 			json.RawMessage(`{"tx":"base-2"}`),
 		},
@@ -1463,8 +1460,8 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_MissingL1DataFee(t *testing.T)
 	require.Len(t, result.Transactions, 1)
 	tx := result.Transactions[0]
 
-	execEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
-	dataEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+	execEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeExecutionL2)
+	dataEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeDataL1)
 	require.Len(t, execEvents, 1)
 	require.Len(t, dataEvents, 0)
 
@@ -1472,7 +1469,7 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_MissingL1DataFee(t *testing.T)
 	chainData := map[string]string{}
 	require.NoError(t, json.Unmarshal(execEvent.ChainData, &chainData))
 	assert.Equal(t, "true", chainData["data_fee_l1_unavailable"])
-	assert.Equal(t, "fee_execution_l2", execEvent.EventAction)
+	assert.Equal(t, string(model.ActivityFeeExecutionL2), execEvent.EventAction)
 	assert.Equal(t, "-1000", execEvent.Delta)
 }
 
@@ -1490,7 +1487,7 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_TotalMismatchMarker(t *testing
 	batch := event.RawBatch{
 		Chain:   model.ChainBase,
 		Network: model.NetworkSepolia,
-		Address: "base_addr_1",
+		Address: "0x1111111111111111111111111111111111111111",
 		RawTransactions: []json.RawMessage{
 			json.RawMessage(`{"tx":"base-4"}`),
 		},
@@ -1513,7 +1510,7 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_TotalMismatchMarker(t *testing
 	result := <-normalizedCh
 	require.Len(t, result.Transactions, 1)
 
-	execEvents := fixtureBaseFeeEventsByCategory(result.Transactions[0].BalanceEvents, model.EventCategoryFeeExecutionL2)
+	execEvents := fixtureBaseFeeEventsByActivity(result.Transactions[0].BalanceEvents, model.ActivityFeeExecutionL2)
 	require.Len(t, execEvents, 1)
 	execEvent := execEvents[0]
 
@@ -1539,7 +1536,7 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_ReplayProducesNoDuplicateFeeEv
 	batch := event.RawBatch{
 		Chain:   model.ChainBase,
 		Network: model.NetworkSepolia,
-		Address: "base_addr_1",
+		Address: "0x1111111111111111111111111111111111111111",
 		RawTransactions: []json.RawMessage{
 			json.RawMessage(`{"tx":"base-3"}`),
 		},
@@ -1570,10 +1567,10 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_ReplayProducesNoDuplicateFeeEv
 	require.Len(t, first.Transactions, 1)
 	require.Len(t, second.Transactions, 1)
 
-	firstExec := fixtureBaseFeeEventsByCategory(first.Transactions[0].BalanceEvents, model.EventCategoryFeeExecutionL2)
-	firstData := fixtureBaseFeeEventsByCategory(first.Transactions[0].BalanceEvents, model.EventCategoryFeeDataL1)
-	secondExec := fixtureBaseFeeEventsByCategory(second.Transactions[0].BalanceEvents, model.EventCategoryFeeExecutionL2)
-	secondData := fixtureBaseFeeEventsByCategory(second.Transactions[0].BalanceEvents, model.EventCategoryFeeDataL1)
+	firstExec := fixtureBaseFeeEventsByActivity(first.Transactions[0].BalanceEvents, model.ActivityFeeExecutionL2)
+	firstData := fixtureBaseFeeEventsByActivity(first.Transactions[0].BalanceEvents, model.ActivityFeeDataL1)
+	secondExec := fixtureBaseFeeEventsByActivity(second.Transactions[0].BalanceEvents, model.ActivityFeeExecutionL2)
+	secondData := fixtureBaseFeeEventsByActivity(second.Transactions[0].BalanceEvents, model.ActivityFeeDataL1)
 
 	assert.Len(t, firstExec, 1)
 	assert.Len(t, firstData, 1)
@@ -1703,8 +1700,8 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_AvailabilityOrderConverges(t *
 		require.Len(t, batch.Transactions, 1)
 		tx := batch.Transactions[0]
 
-		execEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
-		dataEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+		execEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeExecutionL2)
+		dataEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeDataL1)
 		require.Len(t, execEvents, 1)
 		require.Len(t, dataEvents, 1)
 
@@ -1821,8 +1818,8 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_AvailabilityFlapReplayPermutat
 		t.Helper()
 		require.Len(t, batch.Transactions, 1)
 		tx := batch.Transactions[0]
-		execEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
-		dataEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+		execEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeExecutionL2)
+		dataEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeDataL1)
 		require.Len(t, execEvents, 1)
 		require.Len(t, dataEvents, 1)
 		return execEvents[0], dataEvents[0]
@@ -1983,8 +1980,8 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_AvailabilityFlapReplayPermutat
 
 			require.Len(t, degraded.Transactions, 1)
 			degradedTx := degraded.Transactions[0]
-			degradedExec := fixtureBaseFeeEventsByCategory(degradedTx.BalanceEvents, model.EventCategoryFeeExecutionL2)
-			degradedData := fixtureBaseFeeEventsByCategory(degradedTx.BalanceEvents, model.EventCategoryFeeDataL1)
+			degradedExec := fixtureBaseFeeEventsByActivity(degradedTx.BalanceEvents, model.ActivityFeeExecutionL2)
+			degradedData := fixtureBaseFeeEventsByActivity(degradedTx.BalanceEvents, model.ActivityFeeDataL1)
 			require.Len(t, degradedExec, 1)
 			require.Len(t, degradedData, 0)
 
@@ -2051,7 +2048,7 @@ func TestProcessBatch_SolanaFailedTransaction_EmitsFeeWithCompleteMetadata(t *te
 	require.NotNil(t, tx.Err)
 	assert.Equal(t, errMsg, *tx.Err)
 
-	feeEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFee)
+	feeEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFee)
 	require.Len(t, feeEvents, 1)
 	assert.Equal(t, "transaction_fee", feeEvents[0].EventAction)
 	assert.Equal(t, "sol-fee-payer-1", feeEvents[0].Address)
@@ -2122,7 +2119,7 @@ func TestProcessBatch_SolanaFailedTransaction_IncompleteFeeMetadata_NoSyntheticF
 			result := <-normalizedCh
 			require.Len(t, result.Transactions, 1)
 			assert.Equal(t, model.TxStatusFailed, result.Transactions[0].Status)
-			assert.Len(t, fixtureBaseFeeEventsByCategory(result.Transactions[0].BalanceEvents, model.EventCategoryFee), 0)
+			assert.Len(t, fixtureBaseFeeEventsByActivity(result.Transactions[0].BalanceEvents, model.ActivityFee), 0)
 			assert.Len(t, result.Transactions[0].BalanceEvents, 0)
 		})
 	}
@@ -2169,17 +2166,17 @@ func TestProcessBatch_BaseFailedTransaction_EmitsDeterministicFeeEventsWithCompl
 	tx := result.Transactions[0]
 	assert.Equal(t, model.TxStatusFailed, tx.Status)
 
-	execEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
-	dataEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+	execEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeExecutionL2)
+	dataEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeDataL1)
 	require.Len(t, execEvents, 1)
 	require.Len(t, dataEvents, 1)
 
-	assert.Equal(t, "fee_execution_l2", execEvents[0].EventAction)
+	assert.Equal(t, string(model.ActivityFeeExecutionL2), execEvents[0].EventAction)
 	assert.Equal(t, "-600", execEvents[0].Delta)
 	assert.Equal(t, "log:42", execEvents[0].EventPath)
 	assert.NotEmpty(t, execEvents[0].EventID)
 
-	assert.Equal(t, "fee_data_l1", dataEvents[0].EventAction)
+	assert.Equal(t, string(model.ActivityFeeDataL1), dataEvents[0].EventAction)
 	assert.Equal(t, "-400", dataEvents[0].Delta)
 	assert.Equal(t, "log:42", dataEvents[0].EventPath)
 	assert.NotEmpty(t, dataEvents[0].EventID)
@@ -2246,8 +2243,8 @@ func TestProcessBatch_BaseFailedTransaction_IncompleteFeeMetadata_NoSyntheticFee
 
 			tx := result.Transactions[0]
 			assert.Equal(t, model.TxStatusFailed, tx.Status)
-			assert.Len(t, fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2), 0)
-			assert.Len(t, fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1), 0)
+			assert.Len(t, fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeExecutionL2), 0)
+			assert.Len(t, fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeDataL1), 0)
 		})
 	}
 }
@@ -2293,16 +2290,16 @@ func TestProcessBatch_EthereumL1_SingleFeeEvent(t *testing.T) {
 	tx := result.Transactions[0]
 
 	// L1: should emit single FEE event, NOT fee_execution_l2 or fee_data_l1
-	feeEvents := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFee)
-	execL2Events := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeExecutionL2)
-	dataL1Events := fixtureBaseFeeEventsByCategory(tx.BalanceEvents, model.EventCategoryFeeDataL1)
+	feeEvents := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFee)
+	execL2Events := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeExecutionL2)
+	dataL1Events := fixtureBaseFeeEventsByActivity(tx.BalanceEvents, model.ActivityFeeDataL1)
 
 	require.Len(t, feeEvents, 1, "L1 should emit exactly one FEE event")
 	require.Len(t, execL2Events, 0, "L1 should NOT emit fee_execution_l2")
 	require.Len(t, dataL1Events, 0, "L1 should NOT emit fee_data_l1")
 
 	feeEvent := feeEvents[0]
-	assert.Equal(t, model.EventCategoryFee, feeEvent.EventCategory)
+	assert.Equal(t, model.ActivityFee, feeEvent.ActivityType)
 	assert.Equal(t, "net_eth", feeEvent.EventAction)
 	assert.Equal(t, "-21000000000000", feeEvent.Delta)
 	assert.Equal(t, "fee", feeEvent.AssetType)
@@ -2328,11 +2325,11 @@ func TestProcessBatch_M94S3_MintBurnClassCoverage_AndReplayStability(t *testing.
 		}
 	}
 
-	countCategory := func(batch event.NormalizedBatch, category model.EventCategory) int {
+	countActivity := func(batch event.NormalizedBatch, activity model.ActivityType) int {
 		count := 0
 		for _, tx := range batch.Transactions {
 			for _, be := range tx.BalanceEvents {
-				if be.EventCategory == category {
+				if be.ActivityType == activity {
 					count++
 				}
 			}
@@ -2496,8 +2493,8 @@ func TestProcessBatch_M94S3_MintBurnClassCoverage_AndReplayStability(t *testing.
 			assert.Equal(t, tc.network, first.Network)
 			require.Len(t, first.Transactions, 1)
 
-			assert.Equal(t, 1, countCategory(first, model.EventCategoryMint))
-			assert.Equal(t, 1, countCategory(first, model.EventCategoryBurn))
+			assert.Equal(t, 1, countActivity(first, model.ActivityMint))
+			assert.Equal(t, 1, countActivity(first, model.ActivityBurn))
 
 			replayBatch := batch
 			replayBatch.PreviousCursorValue = first.NewCursorValue
@@ -2536,11 +2533,11 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		}
 	}
 
-	countCategory := func(batch event.NormalizedBatch, category model.EventCategory) int {
+	countActivity := func(batch event.NormalizedBatch, activity model.ActivityType) int {
 		count := 0
 		for _, tx := range batch.Transactions {
 			for _, be := range tx.BalanceEvents {
-				if be.EventCategory == category {
+				if be.ActivityType == activity {
 					count++
 				}
 			}
@@ -2598,7 +2595,7 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		for _, tx := range batch.Transactions {
 			in, out := big.NewInt(0), big.NewInt(0)
 			for _, be := range tx.BalanceEvents {
-				if be.EventCategory != model.EventCategoryTransfer {
+				if be.ActivityType != model.ActivityDeposit && be.ActivityType != model.ActivityWithdrawal {
 					continue
 				}
 				switch be.EventAction {
@@ -2622,11 +2619,11 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		feeEvents := 0
 		for _, tx := range batch.Transactions {
 			for _, be := range tx.BalanceEvents {
-				if be.EventCategory != model.EventCategoryFee {
+				if be.ActivityType != model.ActivityFee {
 					continue
 				}
 				feeEvents++
-				assert.Equal(t, model.EventCategoryFee, be.EventCategory)
+				assert.Equal(t, model.ActivityFee, be.ActivityType)
 				assert.Equal(t, "miner_fee", be.EventAction)
 				assert.Equal(t, "btc", be.ProgramID)
 				assert.Equal(t, "BTC", be.AssetID)
@@ -2793,10 +2790,10 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		assertNoDuplicateCanonicalIDs(t, swap)
 		assertNoDuplicateCanonicalIDs(t, recovered)
 
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryTransfer))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryMint))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryBurn))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFee))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityDeposit)+countActivity(canonical, model.ActivityWithdrawal))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityMint))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityBurn))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityFee))
 
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(replay))
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(swap))
@@ -2982,11 +2979,11 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		assertNoDuplicateCanonicalIDs(t, swap)
 		assertNoDuplicateCanonicalIDs(t, recovered)
 
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryTransfer))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryMint))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryBurn))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFeeExecutionL2))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFeeDataL1))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityDeposit)+countActivity(canonical, model.ActivityWithdrawal))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityMint))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityBurn))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityFeeExecutionL2))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityFeeDataL1))
 
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(replay))
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(swap))
@@ -3173,13 +3170,13 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		assertNoDuplicateCanonicalIDs(t, swap)
 		assertNoDuplicateCanonicalIDs(t, recovered)
 
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryTransfer))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryMint))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryBurn))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityDeposit)+countActivity(canonical, model.ActivityWithdrawal))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityMint))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityBurn))
 		// Ethereum L1: single FEE event (no L2 execution/data split)
-		assert.Equal(t, 0, countCategory(canonical, model.EventCategoryFeeExecutionL2))
-		assert.Equal(t, 0, countCategory(canonical, model.EventCategoryFeeDataL1))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFee))
+		assert.Equal(t, 0, countActivity(canonical, model.ActivityFeeExecutionL2))
+		assert.Equal(t, 0, countActivity(canonical, model.ActivityFeeDataL1))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityFee))
 
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(replay))
 		assert.Equal(t, orderedCanonicalTuples(canonical), orderedCanonicalTuples(swap))
@@ -3388,8 +3385,8 @@ func TestProcessBatch_M96S1_RequiredClassCoverageAndReplayPermutationGates(t *te
 		assertNoDuplicateCanonicalIDs(t, swap)
 		assertNoDuplicateCanonicalIDs(t, recovered)
 
-		assert.Equal(t, 4, countCategory(canonical, model.EventCategoryTransfer))
-		assert.Equal(t, 1, countCategory(canonical, model.EventCategoryFee))
+		assert.Equal(t, 4, countActivity(canonical, model.ActivityDeposit)+countActivity(canonical, model.ActivityWithdrawal))
+		assert.Equal(t, 1, countActivity(canonical, model.ActivityFee))
 		assertBTCMinerFeeConservation(t, canonical)
 		assertBTCMinerFeeConservation(t, replay)
 		assertBTCMinerFeeConservation(t, swap)
@@ -3568,11 +3565,11 @@ func TestProcessBatch_DualChainReplaySmoke_MixedSuccessFailed_NoDuplicateCanonic
 func TestBuildCanonicalEventID_Stable(t *testing.T) {
 	id1 := buildCanonicalEventID(
 		model.ChainSolana, model.NetworkDevnet,
-		"sig1", "outer:0|inner:-1", "addr1", "So11111111111111111111111111111111111111112", model.EventCategoryTransfer,
+		"sig1", "outer:0|inner:-1", "addr1", "So11111111111111111111111111111111111111112", model.ActivityWithdrawal,
 	)
 	id2 := buildCanonicalEventID(
 		model.ChainSolana, model.NetworkDevnet,
-		"sig1", "outer:0|inner:-1", "addr1", "So11111111111111111111111111111111111111112", model.EventCategoryTransfer,
+		"sig1", "outer:0|inner:-1", "addr1", "So11111111111111111111111111111111111111112", model.ActivityWithdrawal,
 	)
 
 	assert.Equal(t, id1, id2)
@@ -3580,21 +3577,21 @@ func TestBuildCanonicalEventID_Stable(t *testing.T) {
 
 	baseIdCanonical := buildCanonicalEventID(
 		model.ChainBase, model.NetworkSepolia,
-		"0xABCDEF0123456789", "log:10", "0xabc", "0xtoken", model.EventCategoryTransfer,
+		"0xABCDEF0123456789", "log:10", "0xabc", "0xtoken", model.ActivityWithdrawal,
 	)
 	baseIdMixedCase := buildCanonicalEventID(
 		model.ChainBase, model.NetworkSepolia,
-		"abcdef0123456789", "log:10", "0xabc", "0xtoken", model.EventCategoryTransfer,
+		"abcdef0123456789", "log:10", "0xabc", "0xtoken", model.ActivityWithdrawal,
 	)
 	assert.Equal(t, baseIdCanonical, baseIdMixedCase)
 
 	btcIdWithPrefix := buildCanonicalEventID(
 		model.ChainBTC, model.NetworkTestnet,
-		"0xABCD1234", "vout:0", "tb1receiver", "BTC", model.EventCategoryFee,
+		"0xABCD1234", "vout:0", "tb1receiver", "BTC", model.ActivityFee,
 	)
 	btcIdWithoutPrefix := buildCanonicalEventID(
 		model.ChainBTC, model.NetworkTestnet,
-		"abcd1234", "vout:0", "tb1receiver", "BTC", model.EventCategoryFee,
+		"abcd1234", "vout:0", "tb1receiver", "BTC", model.ActivityFee,
 	)
 	assert.Equal(t, btcIdWithPrefix, btcIdWithoutPrefix)
 }
@@ -3602,7 +3599,7 @@ func TestBuildCanonicalEventID_Stable(t *testing.T) {
 func TestShouldReplaceCanonicalDeltaComparison_IsNumericAndSignAware(t *testing.T) {
 	existing := event.NormalizedBalanceEvent{
 		FinalityState:       "finalized",
-		EventCategory:       model.EventCategoryTransfer,
+		ActivityType:        model.ActivityWithdrawal,
 		EventAction:         "xfer",
 		ContractAddress:     "contract",
 		CounterpartyAddress: "peer",
@@ -3610,7 +3607,7 @@ func TestShouldReplaceCanonicalDeltaComparison_IsNumericAndSignAware(t *testing.
 	}
 	incoming := event.NormalizedBalanceEvent{
 		FinalityState:       "finalized",
-		EventCategory:       model.EventCategoryTransfer,
+		ActivityType:        model.ActivityWithdrawal,
 		EventAction:         "xfer",
 		ContractAddress:     "contract",
 		CounterpartyAddress: "peer",
@@ -3711,10 +3708,10 @@ func TestProcessBatch_SolInstructionOwnershipDedup(t *testing.T) {
 	require.Len(t, result.Transactions[0].BalanceEvents, 2)
 
 	transferEvent := result.Transactions[0].BalanceEvents[0]
-	if transferEvent.EventCategory == model.EventCategoryFee {
+	if transferEvent.ActivityType == model.ActivityFee {
 		transferEvent = result.Transactions[0].BalanceEvents[1]
 	}
-	assert.Equal(t, model.EventCategoryTransfer, transferEvent.EventCategory)
+	assert.Equal(t, model.ActivityWithdrawal, transferEvent.ActivityType)
 	assert.Equal(t, "outer_owner_transfer", transferEvent.EventAction)
 	assert.Equal(t, "outer:0|inner:-1", transferEvent.EventPath)
 }
@@ -3733,7 +3730,7 @@ func TestProcessBatch_SolInstructionOwnershipDedupByAddressAsset(t *testing.T) {
 	batch := event.RawBatch{
 		Chain:   model.ChainSolana,
 		Network: model.NetworkDevnet,
-		Address: "addr_owner",
+		Address: "owner_addr",
 		RawTransactions: []json.RawMessage{
 			json.RawMessage(`{"tx":1}`),
 		},
@@ -3758,10 +3755,17 @@ func TestProcessBatch_SolInstructionOwnershipDedupByAddressAsset(t *testing.T) {
 	tx := result.Transactions[0]
 	assert.Equal(t, model.TxStatusSuccess, tx.Status)
 
+	// After watched-address filtering, only events for "owner_addr" remain:
+	// - outer_owner_transfer (outer:0, inner:-1) and inner_owner_transfer (outer:0, inner:2)
+	//   are deduped by ownership: same outer instruction, address, asset, activity →
+	//   the outer instruction event wins → 1 transfer event.
+	// - inner_non_owner_transfer (address: "other_owner_addr") is filtered out.
+	// - Fee event for feePayer "owner_addr" is generated.
+	// Total: 1 transfer + 1 fee = 2 events.
 	transferByAction := map[string]event.NormalizedBalanceEvent{}
 	eventPaths := map[string]struct{}{}
 	for _, be := range tx.BalanceEvents {
-		if be.EventCategory == model.EventCategoryTransfer {
+		if be.ActivityType == model.ActivityDeposit || be.ActivityType == model.ActivityWithdrawal {
 			transferByAction[be.EventAction] = be
 			_, dup := eventPaths[be.EventPath]
 			require.False(t, dup, "duplicate event path %s", be.EventPath)
@@ -3769,20 +3773,18 @@ func TestProcessBatch_SolInstructionOwnershipDedupByAddressAsset(t *testing.T) {
 		}
 	}
 	assert.Equal(t, "outer:0|inner:-1", transferByAction["outer_owner_transfer"].EventPath)
-	assert.Equal(t, "outer:0|inner:1", transferByAction["inner_non_owner_transfer"].EventPath)
-	assert.Equal(t, model.EventCategoryTransfer, transferByAction["inner_non_owner_transfer"].EventCategory)
+	assert.Equal(t, model.ActivityWithdrawal, transferByAction["outer_owner_transfer"].ActivityType)
 	assert.Equal(t, "-500", transferByAction["outer_owner_transfer"].Delta)
-	assert.Equal(t, "-250", transferByAction["inner_non_owner_transfer"].Delta)
-	assert.Equal(t, 3, len(tx.BalanceEvents))
+	assert.Equal(t, 2, len(tx.BalanceEvents))
 
 	var feeEvent event.NormalizedBalanceEvent
 	for _, be := range tx.BalanceEvents {
-		if be.EventCategory == model.EventCategoryFee {
+		if be.ActivityType == model.ActivityFee {
 			feeEvent = be
 			break
 		}
 	}
-	assert.Equal(t, model.EventCategoryFee, feeEvent.EventCategory)
+	assert.Equal(t, model.ActivityFee, feeEvent.ActivityType)
 	assert.Equal(t, "outer:-1|inner:-1", feeEvent.EventPath)
 	assert.NotEmpty(t, feeEvent.EventID)
 }
@@ -3799,10 +3801,13 @@ func TestProcessBatch_SolAddressCanonicalizationForDuplicateSuppression(t *testi
 	}
 
 	fixtureAddress := "sol-address-dup-1"
+	// Use the trailing-space variant as the watched address so the first event
+	// passes the watched-address filter. The second event (leading space) is
+	// filtered out. After canonicalization the ActorAddress is trimmed.
 	batch := event.RawBatch{
 		Chain:   model.ChainSolana,
 		Network: model.NetworkDevnet,
-		Address: fixtureAddress,
+		Address: fixtureAddress + " ",
 		RawTransactions: []json.RawMessage{
 			json.RawMessage(`{"tx":"sol-address-canonicalization"}`),
 		},
@@ -3864,7 +3869,7 @@ func TestProcessBatch_SolAddressCanonicalizationForDuplicateSuppression(t *testi
 	require.Len(t, result.Transactions[0].BalanceEvents, 1)
 
 	event := result.Transactions[0].BalanceEvents[0]
-	assert.Equal(t, model.EventCategoryTransfer, event.EventCategory)
+	assert.Equal(t, model.ActivityWithdrawal, event.ActivityType)
 	assert.Equal(t, fixtureAddress, event.ActorAddress)
 	assert.Equal(t, "outer:0|inner:-1", event.EventPath)
 	assert.NotEmpty(t, event.EventID)
@@ -3918,7 +3923,7 @@ func TestProcessBatch_SolanaReplayTuplesStableForCPIDedupFixture(t *testing.T) {
 	eventTuple := func(tx event.NormalizedTransaction) [][3]string {
 		out := make([][3]string, len(tx.BalanceEvents))
 		for i, be := range tx.BalanceEvents {
-			out[i] = [3]string{be.EventID, be.Delta, string(be.EventCategory)}
+			out[i] = [3]string{be.EventID, be.Delta, string(be.ActivityType)}
 		}
 		return out
 	}
@@ -3990,7 +3995,7 @@ func TestProcessBatch_SolanaFeeEventIsSignedDebit(t *testing.T) {
 	require.Len(t, result.Transactions[0].BalanceEvents, 1)
 
 	feeEvent := result.Transactions[0].BalanceEvents[0]
-	assert.Equal(t, model.EventCategoryFee, feeEvent.EventCategory)
+	assert.Equal(t, model.ActivityFee, feeEvent.ActivityType)
 	assert.Equal(t, "addr1", feeEvent.Address)
 	assert.Equal(t, "-5000", feeEvent.Delta)
 	assert.Equal(t, "outer:-1|inner:-1", feeEvent.EventPath)
@@ -4091,7 +4096,7 @@ func TestProcessBatch_ReplayTuplesStableForSCPersistentOrdering(t *testing.T) {
 			out[i] = [3]string{
 				be.EventID,
 				be.Delta,
-				string(be.EventCategory),
+				string(be.ActivityType),
 			}
 		}
 		return out
@@ -5396,7 +5401,7 @@ func TestProcessBatch_DecoderVersionPermutationsConvergeAcrossMandatoryChains(t 
 			name:           "base-sepolia",
 			chain:          model.ChainBase,
 			network:        model.NetworkSepolia,
-			address:        "0xABCD000000000000000000000000000000000001",
+			address:        "0xabcd000000000000000000000000000000000001",
 			signature:      "A0B1C2D4",
 			expectedTxHash: "0xa0b1c2d4",
 			buildLegacy: func() *sidecarv1.TransactionResult {
@@ -5404,7 +5409,7 @@ func TestProcessBatch_DecoderVersionPermutationsConvergeAcrossMandatoryChains(t 
 					TxHash:      "A0B1C2D4",
 					BlockCursor: 9101,
 					FeeAmount:   "1000",
-					FeePayer:    "0xABCD000000000000000000000000000000000001",
+					FeePayer:    "0xabcd000000000000000000000000000000000001",
 					Status:      "SUCCESS",
 					BalanceEvents: []*sidecarv1.BalanceEventInfo{
 						{
@@ -5413,7 +5418,7 @@ func TestProcessBatch_DecoderVersionPermutationsConvergeAcrossMandatoryChains(t 
 							EventCategory:         string(model.EventCategoryTransfer),
 							EventAction:           "legacy_erc20_transfer",
 							ProgramId:             "0xABCDEF0000000000000000000000000000000000",
-							Address:               "0xABCD000000000000000000000000000000000001",
+							Address:               "0xabcd000000000000000000000000000000000001",
 							ContractAddress:       "0xABCDEF0000000000000000000000000000000000",
 							Delta:                 "-25",
 							CounterpartyAddress:   "0xDCBA000000000000000000000000000000000001",
@@ -5857,11 +5862,11 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 			}
 		}
 	}
-	countCategory := func(batch event.NormalizedBatch, category model.EventCategory) int {
+	countActivity := func(batch event.NormalizedBatch, activity model.ActivityType) int {
 		count := 0
 		for _, tx := range batch.Transactions {
 			for _, be := range tx.BalanceEvents {
-				if be.EventCategory == category {
+				if be.ActivityType == activity {
 					count++
 				}
 			}
@@ -6118,7 +6123,7 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 			name:                   "base-sepolia",
 			chain:                  model.ChainBase,
 			network:                model.NetworkSepolia,
-			address:                "0xABCD0000000000000000000000000000000000CC",
+			address:                "0xabcd0000000000000000000000000000000000cc",
 			signature:              "ABCD1201",
 			sequence:               2201,
 			expectedCursor:         "0xabcd1201",
@@ -6128,7 +6133,7 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 					TxHash:      signature,
 					BlockCursor: sequence,
 					FeeAmount:   "100",
-					FeePayer:    "0xABCD0000000000000000000000000000000000CC",
+					FeePayer:    "0xabcd0000000000000000000000000000000000cc",
 					Status:      "SUCCESS",
 					BalanceEvents: []*sidecarv1.BalanceEventInfo{
 						{
@@ -6137,7 +6142,7 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 							EventCategory:         string(model.EventCategoryTransfer),
 							EventAction:           "sparse_transfer_1",
 							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
-							Address:               "0xABCD0000000000000000000000000000000000CC",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
 							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
 							Delta:                 "-7",
 							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CC",
@@ -6156,7 +6161,7 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 							EventCategory:         string(model.EventCategoryTransfer),
 							EventAction:           "sparse_transfer_2",
 							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
-							Address:               "0xABCD0000000000000000000000000000000000CC",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
 							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
 							Delta:                 "3",
 							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CD",
@@ -6175,7 +6180,7 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 							EventCategory:         string(model.EventCategoryTransfer),
 							EventAction:           "sparse_transfer_3",
 							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
-							Address:               "0xABCD0000000000000000000000000000000000CC",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
 							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
 							Delta:                 "-1",
 							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CE",
@@ -6267,7 +6272,7 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 					TxHash:      signature,
 					BlockCursor: sequence,
 					FeeAmount:   "100",
-					FeePayer:    "0xABCD0000000000000000000000000000000000CC",
+					FeePayer:    "0xabcd0000000000000000000000000000000000cc",
 					Status:      "SUCCESS",
 					BalanceEvents: []*sidecarv1.BalanceEventInfo{
 						{
@@ -6276,7 +6281,7 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 							EventCategory:         string(model.EventCategoryTransfer),
 							EventAction:           "sparse_transfer_1",
 							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
-							Address:               "0xABCD0000000000000000000000000000000000CC",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
 							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
 							Delta:                 "-7",
 							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CC",
@@ -6295,7 +6300,7 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 							EventCategory:         string(model.EventCategoryTransfer),
 							EventAction:           "sparse_transfer_2",
 							ProgramId:             "0xABCDEF00000000000000000000000000000000CC",
-							Address:               "0xABCD0000000000000000000000000000000000CC",
+							Address:               "0xabcd0000000000000000000000000000000000cc",
 							ContractAddress:       "0xABCDEF00000000000000000000000000000000CC",
 							Delta:                 "3",
 							CounterpartyAddress:   "0xDCBA0000000000000000000000000000000000CD",
@@ -6509,17 +6514,17 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 			assertNoDuplicateCanonicalIDs(t, convergedRun)
 			assertNoDuplicateCanonicalIDs(t, replayConvergedRun)
 
-			assert.Equal(t, tc.expectedTransferEvents, countCategory(convergedRun, model.EventCategoryTransfer))
-			assert.Equal(t, tc.expectedTransferEvents, countCategory(replayConvergedRun, model.EventCategoryTransfer))
+			assert.Equal(t, tc.expectedTransferEvents, countActivity(convergedRun, model.ActivityDeposit)+countActivity(convergedRun, model.ActivityWithdrawal))
+			assert.Equal(t, tc.expectedTransferEvents, countActivity(replayConvergedRun, model.ActivityDeposit)+countActivity(replayConvergedRun, model.ActivityWithdrawal))
 
 			if tc.chain == model.ChainSolana {
-				assert.Equal(t, 1, countCategory(convergedRun, model.EventCategoryFee))
-				assert.Equal(t, 1, countCategory(replayConvergedRun, model.EventCategoryFee))
+				assert.Equal(t, 1, countActivity(convergedRun, model.ActivityFee))
+				assert.Equal(t, 1, countActivity(replayConvergedRun, model.ActivityFee))
 			} else {
-				assert.Equal(t, 1, countCategory(convergedRun, model.EventCategoryFeeExecutionL2))
-				assert.Equal(t, 1, countCategory(convergedRun, model.EventCategoryFeeDataL1))
-				assert.Equal(t, 1, countCategory(replayConvergedRun, model.EventCategoryFeeExecutionL2))
-				assert.Equal(t, 1, countCategory(replayConvergedRun, model.EventCategoryFeeDataL1))
+				assert.Equal(t, 1, countActivity(convergedRun, model.ActivityFeeExecutionL2))
+				assert.Equal(t, 1, countActivity(convergedRun, model.ActivityFeeDataL1))
+				assert.Equal(t, 1, countActivity(replayConvergedRun, model.ActivityFeeExecutionL2))
+				assert.Equal(t, 1, countActivity(replayConvergedRun, model.ActivityFeeDataL1))
 			}
 
 			require.NotNil(t, sparseRun.NewCursorValue)
@@ -6538,7 +6543,7 @@ func TestProcessBatch_IncrementalDecodeCoverageConvergenceAndReplayAcrossMandato
 
 func TestProcessBatch_TriChainDelayedEnrichmentIsolationConvergesWithEnrichedFirstBaseline(t *testing.T) {
 	const (
-		baseAddress          = "0xABCD000000000000000000000000000000003301"
+		baseAddress          = "0xabcd000000000000000000000000000000003301"
 		baseSignature        = "ABCD3301"
 		baseSequence   int64 = 3301
 		baseCursorPrev       = "ABCD3300"
@@ -6580,11 +6585,11 @@ func TestProcessBatch_TriChainDelayedEnrichmentIsolationConvergesWithEnrichedFir
 			}
 		}
 	}
-	countCategory := func(batch event.NormalizedBatch, category model.EventCategory) int {
+	countActivity := func(batch event.NormalizedBatch, activity model.ActivityType) int {
 		count := 0
 		for _, tx := range batch.Transactions {
 			for _, be := range tx.BalanceEvents {
-				if be.EventCategory == category {
+				if be.ActivityType == activity {
 					count++
 				}
 			}
@@ -6882,11 +6887,11 @@ func TestProcessBatch_TriChainDelayedEnrichmentIsolationConvergesWithEnrichedFir
 		len(canonicalEventIDSet(partialFirst.baseConverged)),
 		"delayed base enrichment should add only previously missing logical events",
 	)
-	assert.Equal(t, 2, countCategory(partialFirst.baseConverged, model.EventCategoryTransfer))
-	assert.Equal(t, 1, countCategory(partialFirst.baseConverged, model.EventCategoryFeeExecutionL2))
-	assert.Equal(t, 1, countCategory(partialFirst.baseConverged, model.EventCategoryFeeDataL1))
-	assert.Equal(t, 1, countCategory(partialFirst.solana, model.EventCategoryFee))
-	assert.Equal(t, 2, countCategory(partialFirst.btc, model.EventCategoryTransfer))
+	assert.Equal(t, 2, countActivity(partialFirst.baseConverged, model.ActivityDeposit)+countActivity(partialFirst.baseConverged, model.ActivityWithdrawal))
+	assert.Equal(t, 1, countActivity(partialFirst.baseConverged, model.ActivityFeeExecutionL2))
+	assert.Equal(t, 1, countActivity(partialFirst.baseConverged, model.ActivityFeeDataL1))
+	assert.Equal(t, 1, countActivity(partialFirst.solana, model.ActivityFee))
+	assert.Equal(t, 2, countActivity(partialFirst.btc, model.ActivityDeposit)+countActivity(partialFirst.btc, model.ActivityWithdrawal))
 
 	require.NotNil(t, partialFirst.baseConverged.NewCursorValue)
 	require.NotNil(t, partialFirst.solana.NewCursorValue)
@@ -6931,11 +6936,11 @@ func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMa
 			}
 		}
 	}
-	countCategory := func(batch event.NormalizedBatch, category model.EventCategory) int {
+	countActivity := func(batch event.NormalizedBatch, activity model.ActivityType) int {
 		count := 0
 		for _, tx := range batch.Transactions {
 			for _, be := range tx.BalanceEvents {
-				if be.EventCategory == category {
+				if be.ActivityType == activity {
 					count++
 				}
 			}
@@ -7035,7 +7040,7 @@ func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMa
 			name:           "base-sepolia",
 			chain:          model.ChainBase,
 			network:        model.NetworkSepolia,
-			address:        "0xABCD000000000000000000000000000000009001",
+			address:        "0xabcd000000000000000000000000000000009001",
 			signature:      "ABCD9001",
 			sequence:       9101,
 			expectedCursor: "0xabcd9001",
@@ -7095,7 +7100,7 @@ func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMa
 					TxHash:      signature,
 					BlockCursor: sequence,
 					FeeAmount:   "100",
-					FeePayer:    "0xABCD000000000000000000000000000000009001",
+					FeePayer:    "0xabcd000000000000000000000000000000009001",
 					Status:      "SUCCESS",
 					BalanceEvents: []*sidecarv1.BalanceEventInfo{
 						{
@@ -7104,7 +7109,7 @@ func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMa
 							EventCategory:         string(model.EventCategoryTransfer),
 							EventAction:           "sparse_transfer_1",
 							ProgramId:             "0xABCDEF0000000000000000000000000000009001",
-							Address:               "0xABCD000000000000000000000000000000009001",
+							Address:               "0xabcd000000000000000000000000000000009001",
 							ContractAddress:       "0xABCDEF0000000000000000000000000000009001",
 							Delta:                 "-6",
 							CounterpartyAddress:   "0xDCBA000000000000000000000000000000009001",
@@ -7204,16 +7209,16 @@ func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMa
 			assertNoDuplicateCanonicalIDs(t, sparseRun)
 			assertNoDuplicateCanonicalIDs(t, reEnrichedRun)
 
-			assert.Equal(t, 2, countCategory(sparseRun, model.EventCategoryTransfer))
-			assert.Equal(t, 2, countCategory(reEnrichedRun, model.EventCategoryTransfer))
+			assert.Equal(t, 2, countActivity(sparseRun, model.ActivityDeposit)+countActivity(sparseRun, model.ActivityWithdrawal))
+			assert.Equal(t, 2, countActivity(reEnrichedRun, model.ActivityDeposit)+countActivity(reEnrichedRun, model.ActivityWithdrawal))
 			if tc.chain == model.ChainSolana {
-				assert.Equal(t, 1, countCategory(sparseRun, model.EventCategoryFee))
-				assert.Equal(t, 1, countCategory(reEnrichedRun, model.EventCategoryFee))
+				assert.Equal(t, 1, countActivity(sparseRun, model.ActivityFee))
+				assert.Equal(t, 1, countActivity(reEnrichedRun, model.ActivityFee))
 			} else {
-				assert.Equal(t, 1, countCategory(sparseRun, model.EventCategoryFeeExecutionL2))
-				assert.Equal(t, 1, countCategory(sparseRun, model.EventCategoryFeeDataL1))
-				assert.Equal(t, 1, countCategory(reEnrichedRun, model.EventCategoryFeeExecutionL2))
-				assert.Equal(t, 1, countCategory(reEnrichedRun, model.EventCategoryFeeDataL1))
+				assert.Equal(t, 1, countActivity(sparseRun, model.ActivityFeeExecutionL2))
+				assert.Equal(t, 1, countActivity(sparseRun, model.ActivityFeeDataL1))
+				assert.Equal(t, 1, countActivity(reEnrichedRun, model.ActivityFeeExecutionL2))
+				assert.Equal(t, 1, countActivity(reEnrichedRun, model.ActivityFeeDataL1))
 			}
 
 			require.NotNil(t, sparseRun.NewCursorValue)
@@ -7505,11 +7510,11 @@ func TestProcessBatch_BTCSignedDeltaConservation_CoinbaseMultiInputOutputChangeA
 					},
 				},
 			},
-			expectedNetDelta:   "-50",
+			expectedNetDelta:   "-1100",
 			expectedFee:        "50",
 			expectedFeePayer:   "tb1-spender",
-			expectedEventPaths: []string{"vin:0", "vin:1", "vout:0", "vout:1"},
-			expectFeeConserves: true,
+			expectedEventPaths: []string{"vin:0", "vin:1", "vout:1"},
+			expectFeeConserves: false,
 		},
 	}
 
@@ -7572,7 +7577,7 @@ func TestProcessBatch_BTCSignedDeltaConservation_CoinbaseMultiInputOutputChangeA
 			totalVoutReceive := big.NewInt(0)
 
 			for _, be := range tx.BalanceEvents {
-				assert.Equal(t, model.EventCategoryTransfer, be.EventCategory)
+				assert.True(t, be.ActivityType == model.ActivityDeposit || be.ActivityType == model.ActivityWithdrawal || be.ActivityType == model.ActivityFee, "expected DEPOSIT, WITHDRAWAL, or FEE, got %s", be.ActivityType)
 				seenPaths[be.EventPath] = struct{}{}
 				_, exists := seenEventIDs[be.EventID]
 				require.False(t, exists, "duplicate canonical event id found: %s", be.EventID)
@@ -7749,7 +7754,7 @@ func TestProcessBatch_BTCTopologyParityLikeGroupVsIndependent_CanonicalTupleEqui
 			require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockClient, batch))
 			normalized := <-normalizedCh
 			for _, tuple := range orderedCanonicalTuples(normalized) {
-				key := strings.Join([]string{tuple.EventID, tuple.TxHash, tuple.EventCategory, tuple.Delta}, "|")
+				key := strings.Join([]string{tuple.EventID, tuple.TxHash, tuple.ActivityType, tuple.Delta}, "|")
 				tupleSet[key] = struct{}{}
 
 				_, exists := eventIDs[tuple.EventID]
@@ -7846,7 +7851,7 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 			be.EventPath,
 			be.ActorAddress,
 			be.AssetID,
-			string(be.EventCategory),
+			string(be.ActivityType),
 		}, "|")
 	}
 	canonicalTupleKey := func(mode string, batch event.NormalizedBatch, tx event.NormalizedTransaction, be event.NormalizedBalanceEvent) string {
@@ -7859,7 +7864,7 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 			be.EventPath,
 			be.ActorAddress,
 			be.AssetID,
-			string(be.EventCategory),
+			string(be.ActivityType),
 		}, "|")
 	}
 	topologyModes := []string{"A", "B", "C"}
@@ -8308,6 +8313,7 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMine
 	batch := event.RawBatch{
 		Chain:   model.ChainBTC,
 		Network: model.NetworkTestnet,
+		Address: "tb1payer",
 	}
 	result := &sidecarv1.TransactionResult{
 		TxHash:      "ABCDEF001122",
@@ -8374,11 +8380,11 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMine
 		seenIDs[be.EventID] = struct{}{}
 		seenPaths[be.EventPath] = struct{}{}
 
-		if be.EventCategory == model.EventCategoryTransfer {
+		if be.ActivityType == model.ActivityDeposit || be.ActivityType == model.ActivityWithdrawal {
 			foundTransfers++
 			assert.NotEmpty(t, be.EventPath)
 			assert.Equal(t, "btc_utxo", be.EventPathType)
-		} else if be.EventCategory == model.EventCategoryFee {
+		} else if be.ActivityType == model.ActivityFee {
 			feeEvents++
 		}
 	}
@@ -8397,4 +8403,265 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMine
 		replayIDs[be.EventID] = struct{}{}
 	}
 	assert.Equal(t, seenIDs, replayIDs)
+}
+
+// --- Self-transfer (자전거래) filtering tests ---
+
+func TestBuildCanonicalSolanaBalanceEvents_SelfTransfer_NativeSOL(t *testing.T) {
+	t.Parallel()
+
+	watched := "SoLAddr1111111111111111111111111111111111111"
+	rawEvents := []*sidecarv1.BalanceEventInfo{
+		{
+			OuterInstructionIndex: 0,
+			InnerInstructionIndex: -1,
+			EventCategory:        string(model.EventCategoryTransfer),
+			EventAction:           "sol_transfer",
+			ProgramId:             "11111111111111111111111111111111",
+			Address:               watched,
+			ContractAddress:       "11111111111111111111111111111111",
+			CounterpartyAddress:   watched, // self-transfer
+			Delta:                 "-1000000000",
+			TokenSymbol:           "SOL",
+			TokenName:             "Solana",
+			TokenDecimals:         9,
+			TokenType:             string(model.TokenTypeNative),
+			Metadata:              map[string]string{},
+		},
+		{
+			OuterInstructionIndex: 0,
+			InnerInstructionIndex: -1,
+			EventCategory:        string(model.EventCategoryTransfer),
+			EventAction:           "sol_transfer",
+			ProgramId:             "11111111111111111111111111111111",
+			Address:               watched,
+			ContractAddress:       "11111111111111111111111111111111",
+			CounterpartyAddress:   watched, // self-transfer
+			Delta:                 "1000000000",
+			TokenSymbol:           "SOL",
+			TokenName:             "Solana",
+			TokenDecimals:         9,
+			TokenType:             string(model.TokenTypeNative),
+			Metadata:              map[string]string{},
+		},
+	}
+
+	events := buildCanonicalSolanaBalanceEvents(
+		model.ChainSolana, model.NetworkDevnet,
+		"tx_self_sol", "SUCCESS", watched, "5000", "finalized",
+		rawEvents, watched,
+	)
+
+	// Both raw events become SELF_TRANSFER(delta=0); dedup merges them into 1. Plus 1 fee = 2 events.
+	activityTypes := map[model.ActivityType]int{}
+	for _, e := range events {
+		activityTypes[e.ActivityType]++
+		if e.ActivityType == model.ActivitySelfTransfer {
+			assert.Equal(t, "0", e.Delta, "self-transfer delta should be 0")
+			assert.Equal(t, "self_transfer", e.EventAction)
+		}
+	}
+	assert.Len(t, events, 2)
+	assert.Equal(t, 1, activityTypes[model.ActivitySelfTransfer], "should have 1 SELF_TRANSFER event")
+	assert.Equal(t, 1, activityTypes[model.ActivityFee], "should have 1 fee event")
+}
+
+func TestBuildCanonicalSolanaBalanceEvents_SelfTransfer_SPLToken(t *testing.T) {
+	t.Parallel()
+
+	watched := "SoLAddr1111111111111111111111111111111111111"
+	// SPL token bug: sidecar only emits withdrawal (-delta) when from == to
+	rawEvents := []*sidecarv1.BalanceEventInfo{
+		{
+			OuterInstructionIndex: 1,
+			InnerInstructionIndex: 0,
+			EventCategory:        string(model.EventCategoryTransfer),
+			EventAction:           "spl_transfer",
+			ProgramId:             "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+			Address:               watched,
+			ContractAddress:       "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+			CounterpartyAddress:   watched, // self-transfer
+			Delta:                 "-500000",
+			TokenSymbol:           "USDC",
+			TokenName:             "USD Coin",
+			TokenDecimals:         6,
+			TokenType:             string(model.TokenTypeFungible),
+			Metadata:              map[string]string{},
+		},
+	}
+
+	events := buildCanonicalSolanaBalanceEvents(
+		model.ChainSolana, model.NetworkDevnet,
+		"tx_self_spl", "SUCCESS", watched, "5000", "finalized",
+		rawEvents, watched,
+	)
+
+	// The single withdrawal self-transfer event becomes SELF_TRANSFER(delta=0). Plus 1 fee = 2 events.
+	activityTypes := map[model.ActivityType]int{}
+	for _, e := range events {
+		activityTypes[e.ActivityType]++
+		if e.ActivityType == model.ActivitySelfTransfer {
+			assert.Equal(t, "0", e.Delta, "self-transfer delta should be 0")
+			assert.Equal(t, "self_transfer", e.EventAction)
+		}
+	}
+	assert.Len(t, events, 2)
+	assert.Equal(t, 1, activityTypes[model.ActivitySelfTransfer], "should have 1 SELF_TRANSFER event")
+	assert.Equal(t, 1, activityTypes[model.ActivityFee], "should have 1 fee event")
+}
+
+func TestBuildCanonicalBTCBalanceEvents_SameAddressVinVout_NotFiltered(t *testing.T) {
+	t.Parallel()
+
+	watched := "bc1qexampleaddress"
+	rawEvents := []*sidecarv1.BalanceEventInfo{
+		{
+			OuterInstructionIndex: 0,
+			InnerInstructionIndex: -1,
+			EventCategory:        string(model.EventCategoryTransfer),
+			EventAction:           "vin_spend",
+			ProgramId:             "btc",
+			Address:               watched,
+			ContractAddress:       "BTC",
+			CounterpartyAddress:   watched, // change output looks like self
+			Delta:                 "-50000",
+			TokenSymbol:           "BTC",
+			TokenName:             "Bitcoin",
+			TokenDecimals:         8,
+			TokenType:             string(model.TokenTypeNative),
+			Metadata:              map[string]string{"utxo_path_type": "vin"},
+		},
+		{
+			OuterInstructionIndex: 1,
+			InnerInstructionIndex: -1,
+			EventCategory:        string(model.EventCategoryTransfer),
+			EventAction:           "vout_receive",
+			ProgramId:             "btc",
+			Address:               watched,
+			ContractAddress:       "BTC",
+			CounterpartyAddress:   watched,
+			Delta:                 "40000",
+			TokenSymbol:           "BTC",
+			TokenName:             "Bitcoin",
+			TokenDecimals:         8,
+			TokenType:             string(model.TokenTypeNative),
+			Metadata:              map[string]string{"utxo_path_type": "vout"},
+		},
+	}
+
+	events := buildCanonicalBTCBalanceEvents(
+		model.ChainBTC, model.NetworkMainnet,
+		"tx_btc_change", "SUCCESS", watched, "10000", "confirmed",
+		rawEvents, watched,
+	)
+
+	// BTC should NOT filter these events — UTXO change outputs are valid.
+	transferEvents := 0
+	for _, e := range events {
+		if e.ActivityType == model.ActivityDeposit || e.ActivityType == model.ActivityWithdrawal {
+			transferEvents++
+		}
+	}
+	assert.GreaterOrEqual(t, transferEvents, 1, "BTC vin/vout with same address should NOT be filtered")
+}
+
+func TestBuildCanonicalSolanaBalanceEvents_SelfAddress_NonTransferCategory_NotFiltered(t *testing.T) {
+	t.Parallel()
+
+	watched := "SoLAddr1111111111111111111111111111111111111"
+	rawEvents := []*sidecarv1.BalanceEventInfo{
+		{
+			OuterInstructionIndex: 0,
+			InnerInstructionIndex: -1,
+			EventCategory:        string(model.EventCategoryStake),
+			EventAction:           "stake_delegate",
+			ProgramId:             "Stake11111111111111111111111111111111111111",
+			Address:               watched,
+			ContractAddress:       "11111111111111111111111111111111",
+			CounterpartyAddress:   watched, // same address but STAKE category
+			Delta:                 "-2000000000",
+			TokenSymbol:           "SOL",
+			TokenName:             "Solana",
+			TokenDecimals:         9,
+			TokenType:             string(model.TokenTypeNative),
+			Metadata:              map[string]string{},
+		},
+	}
+
+	events := buildCanonicalSolanaBalanceEvents(
+		model.ChainSolana, model.NetworkDevnet,
+		"tx_self_stake", "SUCCESS", watched, "5000", "finalized",
+		rawEvents, watched,
+	)
+
+	// STAKE category should NOT be filtered even when counterparty == watched.
+	hasStake := false
+	for _, e := range events {
+		if e.ActivityType == model.ActivityStake {
+			hasStake = true
+		}
+	}
+	assert.True(t, hasStake, "non-TRANSFER category events should not be filtered by self-transfer guard")
+}
+
+func TestBuildCanonicalSolanaBalanceEvents_SelfTransfer_MixedWithRealTransfer(t *testing.T) {
+	t.Parallel()
+
+	watched := "SoLAddr1111111111111111111111111111111111111"
+	other := "OtherAddr222222222222222222222222222222222222"
+	rawEvents := []*sidecarv1.BalanceEventInfo{
+		// Self-transfer (should be filtered)
+		{
+			OuterInstructionIndex: 0,
+			InnerInstructionIndex: -1,
+			EventCategory:        string(model.EventCategoryTransfer),
+			EventAction:           "sol_transfer",
+			ProgramId:             "11111111111111111111111111111111",
+			Address:               watched,
+			ContractAddress:       "11111111111111111111111111111111",
+			CounterpartyAddress:   watched,
+			Delta:                 "-500000000",
+			TokenSymbol:           "SOL",
+			TokenName:             "Solana",
+			TokenDecimals:         9,
+			TokenType:             string(model.TokenTypeNative),
+			Metadata:              map[string]string{},
+		},
+		// Real transfer to other address (should survive)
+		{
+			OuterInstructionIndex: 1,
+			InnerInstructionIndex: -1,
+			EventCategory:        string(model.EventCategoryTransfer),
+			EventAction:           "sol_transfer",
+			ProgramId:             "11111111111111111111111111111111",
+			Address:               watched,
+			ContractAddress:       "11111111111111111111111111111111",
+			CounterpartyAddress:   other,
+			Delta:                 "-1000000000",
+			TokenSymbol:           "SOL",
+			TokenName:             "Solana",
+			TokenDecimals:         9,
+			TokenType:             string(model.TokenTypeNative),
+			Metadata:              map[string]string{},
+		},
+	}
+
+	events := buildCanonicalSolanaBalanceEvents(
+		model.ChainSolana, model.NetworkDevnet,
+		"tx_mixed", "SUCCESS", watched, "5000", "finalized",
+		rawEvents, watched,
+	)
+
+	// Should have: 1 SELF_TRANSFER + 1 real withdrawal + 1 fee = 3 events
+	activityTypes := map[model.ActivityType]int{}
+	for _, e := range events {
+		activityTypes[e.ActivityType]++
+		if e.ActivityType == model.ActivitySelfTransfer {
+			assert.Equal(t, "0", e.Delta, "self-transfer delta should be 0")
+		}
+	}
+	assert.Equal(t, 1, activityTypes[model.ActivitySelfTransfer], "self-transfer should be preserved")
+	assert.Equal(t, 1, activityTypes[model.ActivityWithdrawal], "real transfer should survive")
+	assert.Equal(t, 1, activityTypes[model.ActivityFee], "fee should survive")
+	assert.Len(t, events, 3)
 }
