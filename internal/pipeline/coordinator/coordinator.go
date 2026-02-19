@@ -223,6 +223,34 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 	return c
 }
 
+// UpdateBatchSize updates the base batch size at runtime.
+// This takes effect on the next tick.
+func (c *Coordinator) UpdateBatchSize(newBatchSize int) {
+	if newBatchSize <= 0 {
+		return
+	}
+	old := c.batchSize
+	c.batchSize = newBatchSize
+	if old != newBatchSize {
+		c.logger.Info("coordinator batch size updated", "old", old, "new", newBatchSize)
+	}
+}
+
+// UpdateInterval updates the indexing interval at runtime.
+// Returns true if the caller should reset the ticker.
+func (c *Coordinator) UpdateInterval(newInterval time.Duration) bool {
+	if newInterval <= 0 {
+		return false
+	}
+	old := c.interval
+	c.interval = newInterval
+	if old != newInterval {
+		c.logger.Info("coordinator interval updated", "old", old, "new", newInterval)
+		return true
+	}
+	return false
+}
+
 func (c *Coordinator) Run(ctx context.Context) error {
 	c.logger.Info("coordinator started", "chain", c.chain, "network", c.network, "interval", c.interval)
 
@@ -788,7 +816,12 @@ func canonicalSignatureIdentity(chain model.Chain, hash string) string {
 }
 
 func isEVMChain(chain model.Chain) bool {
-	return chain == model.ChainBase || chain == model.ChainEthereum
+	switch chain {
+	case model.ChainBase, model.ChainEthereum, model.ChainPolygon, model.ChainArbitrum, model.ChainBSC:
+		return true
+	default:
+		return false
+	}
 }
 
 func isHexString(v string) bool {

@@ -94,9 +94,10 @@ func buildCanonicalBaseBalanceEvents(
 	}
 
 	if shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount) {
-		if chain == model.ChainEthereum {
+		nativeToken := evmNativeToken(chain)
+		if isEVML1Chain(chain) {
 			// L1: single FEE event (no execution/data split)
-			normalizedEvents = append(normalizedEvents, buildEthL1FeeBalanceEvent(feePayer, feeAmount, eventPath))
+			normalizedEvents = append(normalizedEvents, buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath, nativeToken))
 		} else {
 			// L2: dual fee events (fee_execution_l2 + fee_data_l1)
 			executionFee := deriveBaseExecutionFee(feeAmount, meta)
@@ -368,23 +369,60 @@ func reconcileBaseFeeComponentMetadata(out map[string]string, rawEvents []*sidec
 	applyBasePathMetadata(out, pathSource.metadata)
 }
 
+type evmNativeTokenInfo struct {
+	Symbol   string
+	Name     string
+	Decimals int
+}
+
+func evmNativeToken(chain model.Chain) evmNativeTokenInfo {
+	switch chain {
+	case model.ChainPolygon:
+		return evmNativeTokenInfo{Symbol: "POL", Name: "POL", Decimals: 18}
+	case model.ChainBSC:
+		return evmNativeTokenInfo{Symbol: "BNB", Name: "BNB", Decimals: 18}
+	default:
+		return evmNativeTokenInfo{Symbol: "ETH", Name: "Ether", Decimals: 18}
+	}
+}
+
+func isEVML1Chain(chain model.Chain) bool {
+	switch chain {
+	case model.ChainEthereum, model.ChainPolygon, model.ChainBSC:
+		return true
+	default:
+		return false
+	}
+}
+
+func evmDecoderVersion(chain model.Chain) string {
+	if isEVML1Chain(chain) {
+		return "evm-l1-decoder-v1"
+	}
+	return "base-decoder-v1"
+}
+
 func buildEthL1FeeBalanceEvent(feePayer, feeAmount, eventPath string) event.NormalizedBalanceEvent {
+	return buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath, evmNativeToken(model.ChainEthereum))
+}
+
+func buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath string, token evmNativeTokenInfo) event.NormalizedBalanceEvent {
 	return event.NormalizedBalanceEvent{
 		OuterInstructionIndex: -1,
 		InnerInstructionIndex: -1,
 		EventCategory:         model.EventCategoryFee,
 		EventAction:           "net_eth",
 		ProgramID:             "0x0000000000000000000000000000000000000000000000000000000000000000",
-		ContractAddress:       "ETH",
+		ContractAddress:       token.Symbol,
 		Address:               feePayer,
 		CounterpartyAddress:   "",
 		Delta:                 canonicalFeeDelta(feeAmount),
 		ChainData:             json.RawMessage("{}"),
-		TokenSymbol:           "ETH",
-		TokenName:             "Ether",
-		TokenDecimals:         18,
+		TokenSymbol:           token.Symbol,
+		TokenName:             token.Name,
+		TokenDecimals:         token.Decimals,
 		TokenType:             model.TokenTypeNative,
-		AssetID:               "ETH",
+		AssetID:               token.Symbol,
 		EventPath:             eventPath,
 	}
 }
@@ -570,10 +608,7 @@ func canonicalizeBaseBalanceEvents(
 ) []event.NormalizedBalanceEvent {
 	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
 	eventsByID := make(map[string]event.NormalizedBalanceEvent, len(normalizedEvents))
-	decoderVersion := "base-decoder-v1"
-	if chain == model.ChainEthereum {
-		decoderVersion = "evm-l1-decoder-v1"
-	}
+	decoderVersion := evmDecoderVersion(chain)
 
 	for _, be := range normalizedEvents {
 		if be.EventCategory == model.EventCategoryFeeExecutionL2 || be.EventCategory == model.EventCategoryFeeDataL1 {

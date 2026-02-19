@@ -86,13 +86,14 @@ type streamCheckpointManager interface {
 }
 
 type Repos struct {
-	WatchedAddr  store.WatchedAddressRepository
-	Cursor       store.CursorRepository
-	Transaction  store.TransactionRepository
-	BalanceEvent store.BalanceEventRepository
-	Balance      store.BalanceRepository
-	Token        store.TokenRepository
-	Config       store.IndexerConfigRepository
+	WatchedAddr   store.WatchedAddressRepository
+	Cursor        store.CursorRepository
+	Transaction   store.TransactionRepository
+	BalanceEvent  store.BalanceEventRepository
+	Balance       store.BalanceRepository
+	Token         store.TokenRepository
+	Config        store.IndexerConfigRepository
+	RuntimeConfig store.RuntimeConfigRepository
 }
 
 func New(
@@ -217,6 +218,18 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		})
 		g.Go(func() error {
 			return p.runRawBatchStreamConsumer(gCtx, rawBatchInputCh, p.cfg.StreamBackend, streamName)
+		})
+	}
+
+	// Start config watcher if runtime config repository is available.
+	if p.repos.RuntimeConfig != nil {
+		watcher := NewConfigWatcher(
+			p.cfg.Chain, p.cfg.Network,
+			p.repos.RuntimeConfig, coord,
+			p.logger,
+		)
+		g.Go(func() error {
+			return watcher.Run(gCtx)
 		})
 	}
 

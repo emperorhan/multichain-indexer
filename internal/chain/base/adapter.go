@@ -33,10 +33,12 @@ func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
 }
 
 func inferEVMLayer(chainName string) string {
-	if chainName == "ethereum" {
+	switch chainName {
+	case "ethereum", "polygon", "bsc":
 		return "l1"
+	default:
+		return "l2"
 	}
-	return "l2"
 }
 
 // NewAdapterWithChain creates an EVM adapter for any chain name.

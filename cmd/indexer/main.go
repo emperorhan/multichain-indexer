@@ -13,9 +13,12 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
+	"github.com/emperorhan/multichain-indexer/internal/chain/arbitrum"
 	"github.com/emperorhan/multichain-indexer/internal/chain/base"
+	"github.com/emperorhan/multichain-indexer/internal/chain/bsc"
 	"github.com/emperorhan/multichain-indexer/internal/chain/btc"
 	"github.com/emperorhan/multichain-indexer/internal/chain/ethereum"
+	"github.com/emperorhan/multichain-indexer/internal/chain/polygon"
 	"github.com/emperorhan/multichain-indexer/internal/chain/solana"
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -188,7 +191,7 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 		},
 	}
 
-	if shouldBuildEthereumRuntimeTarget(cfg.Runtime.ChainTargets) {
+	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "ethereum") {
 		targets = append(targets, runtimeTarget{
 			chain:   model.ChainEthereum,
 			network: model.NetworkMainnet,
@@ -199,12 +202,46 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 		})
 	}
 
+	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "polygon") {
+		targets = append(targets, runtimeTarget{
+			chain:   model.ChainPolygon,
+			network: model.Network(cfg.Polygon.Network),
+			group:   config.RuntimeLikeGroupEVM,
+			watched: cfg.Pipeline.PolygonWatchedAddresses,
+			adapter: polygon.NewAdapter(cfg.Polygon.RPCURL, logger),
+			rpcURL:  cfg.Polygon.RPCURL,
+		})
+	}
+
+	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "arbitrum") {
+		targets = append(targets, runtimeTarget{
+			chain:   model.ChainArbitrum,
+			network: model.Network(cfg.Arbitrum.Network),
+			group:   config.RuntimeLikeGroupEVM,
+			watched: cfg.Pipeline.ArbitrumWatchedAddresses,
+			adapter: arbitrum.NewAdapter(cfg.Arbitrum.RPCURL, logger),
+			rpcURL:  cfg.Arbitrum.RPCURL,
+		})
+	}
+
+	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "bsc") {
+		targets = append(targets, runtimeTarget{
+			chain:   model.ChainBSC,
+			network: model.Network(cfg.BSC.Network),
+			group:   config.RuntimeLikeGroupEVM,
+			watched: cfg.Pipeline.BSCWatchedAddresses,
+			adapter: bsc.NewAdapter(cfg.BSC.RPCURL, logger),
+			rpcURL:  cfg.BSC.RPCURL,
+		})
+	}
+
 	return targets
 }
 
-func shouldBuildEthereumRuntimeTarget(targets []string) bool {
+func shouldBuildChainRuntimeTarget(targets []string, chainName string) bool {
 	for _, target := range targets {
-		if strings.EqualFold(strings.TrimSpace(target), "ethereum-mainnet") {
+		normalized := strings.ToLower(strings.TrimSpace(target))
+		if strings.HasPrefix(normalized, chainName+"-") {
 			return true
 		}
 	}
@@ -241,11 +278,20 @@ func main() {
 		"ethereum_network", cfg.Ethereum.Network,
 		"btc_rpc", cfg.BTC.RPCURL,
 		"btc_network", cfg.BTC.Network,
+		"polygon_rpc", cfg.Polygon.RPCURL,
+		"polygon_network", cfg.Polygon.Network,
+		"arbitrum_rpc", cfg.Arbitrum.RPCURL,
+		"arbitrum_network", cfg.Arbitrum.Network,
+		"bsc_rpc", cfg.BSC.RPCURL,
+		"bsc_network", cfg.BSC.Network,
 		"sidecar_addr", cfg.Sidecar.Addr,
 		"solana_watched_addresses", len(cfg.Pipeline.SolanaWatchedAddresses),
 		"base_watched_addresses", len(cfg.Pipeline.BaseWatchedAddresses),
 		"ethereum_watched_addresses", len(cfg.Pipeline.EthereumWatchedAddresses),
 		"btc_watched_addresses", len(cfg.Pipeline.BTCWatchedAddresses),
+		"polygon_watched_addresses", len(cfg.Pipeline.PolygonWatchedAddresses),
+		"arbitrum_watched_addresses", len(cfg.Pipeline.ArbitrumWatchedAddresses),
+		"bsc_watched_addresses", len(cfg.Pipeline.BSCWatchedAddresses),
 	)
 
 	// Initialize OpenTelemetry tracing
@@ -295,13 +341,14 @@ func main() {
 
 	// Create repositories
 	repos := &pipeline.Repos{
-		WatchedAddr:  postgres.NewWatchedAddressRepo(db),
-		Cursor:       postgres.NewCursorRepo(db),
-		Transaction:  postgres.NewTransactionRepo(db),
-		BalanceEvent: postgres.NewBalanceEventRepo(db),
-		Balance:      postgres.NewBalanceRepo(db),
-		Token:        postgres.NewTokenRepo(db),
-		Config:       postgres.NewIndexerConfigRepo(db),
+		WatchedAddr:   postgres.NewWatchedAddressRepo(db),
+		Cursor:        postgres.NewCursorRepo(db),
+		Transaction:   postgres.NewTransactionRepo(db),
+		BalanceEvent:  postgres.NewBalanceEventRepo(db),
+		Balance:       postgres.NewBalanceRepo(db),
+		Token:         postgres.NewTokenRepo(db),
+		Config:        postgres.NewIndexerConfigRepo(db),
+		RuntimeConfig: postgres.NewRuntimeConfigRepo(db),
 	}
 
 	allTargets := buildRuntimeTargets(cfg, logger)
@@ -471,7 +518,7 @@ func runtimeLikeGroupForChain(chain model.Chain) string {
 	switch chain {
 	case model.ChainSolana:
 		return config.RuntimeLikeGroupSolana
-	case model.ChainBase, model.ChainEthereum:
+	case model.ChainBase, model.ChainEthereum, model.ChainPolygon, model.ChainArbitrum, model.ChainBSC:
 		return config.RuntimeLikeGroupEVM
 	case model.ChainBTC:
 		return config.RuntimeLikeGroupBTC

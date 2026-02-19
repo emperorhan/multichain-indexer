@@ -450,7 +450,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 		tx.Err = result.Error
 	}
 
-	isBaseChain := batch.Chain == model.ChainBase || batch.Chain == model.ChainEthereum
+	isBaseChain := isEVMChain(batch.Chain)
 	isBTCChain := batch.Chain == model.ChainBTC
 	if isBaseChain {
 		tx.BalanceEvents = buildCanonicalBaseBalanceEvents(

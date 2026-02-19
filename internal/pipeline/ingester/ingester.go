@@ -1054,7 +1054,12 @@ func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
 }
 
 func isEVMChain(chainID model.Chain) bool {
-	return chainID == model.ChainBase || chainID == model.ChainEthereum
+	switch chainID {
+	case model.ChainBase, model.ChainEthereum, model.ChainPolygon, model.ChainArbitrum, model.ChainBSC:
+		return true
+	default:
+		return false
+	}
 }
 
 func isHexString(v string) bool {

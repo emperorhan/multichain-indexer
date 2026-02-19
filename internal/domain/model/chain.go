@@ -7,6 +7,9 @@ const (
 	ChainEthereum Chain = "ethereum"
 	ChainBase     Chain = "base"
 	ChainBTC      Chain = "btc"
+	ChainPolygon  Chain = "polygon"
+	ChainArbitrum Chain = "arbitrum"
+	ChainBSC      Chain = "bsc"
 )
 
 func (c Chain) String() string {
@@ -20,6 +23,7 @@ const (
 	NetworkDevnet  Network = "devnet"
 	NetworkTestnet Network = "testnet"
 	NetworkSepolia Network = "sepolia"
+	NetworkAmoy    Network = "amoy"
 )
 
 func (n Network) String() string {

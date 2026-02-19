@@ -646,3 +646,94 @@ func TestGetEnvInt_EmptyValue(t *testing.T) {
 	result := getEnvInt("TEST_INT", 42)
 	assert.Equal(t, 42, result)
 }
+
+func TestParseRuntimeTargetKey_NewChains(t *testing.T) {
+	tests := []struct {
+		target          string
+		expectedChain   string
+		expectedNetwork string
+		expectErr       bool
+	}{
+		{"polygon-mainnet", "polygon", "mainnet", false},
+		{"polygon-amoy", "polygon", "amoy", false},
+		{"polygon-goerli", "", "", true},
+		{"arbitrum-mainnet", "arbitrum", "mainnet", false},
+		{"arbitrum-sepolia", "arbitrum", "sepolia", false},
+		{"arbitrum-goerli", "", "", true},
+		{"bsc-mainnet", "bsc", "mainnet", false},
+		{"bsc-testnet", "bsc", "testnet", false},
+		{"bsc-devnet", "", "", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.target, func(t *testing.T) {
+			chain, network, err := parseRuntimeTargetKey(tc.target)
+			if tc.expectErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.expectedChain, chain)
+				assert.Equal(t, tc.expectedNetwork, network)
+			}
+		})
+	}
+}
+
+func TestLoad_NewChainConfig(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://test@localhost/test")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+	t.Setenv("SOLANA_RPC_URL", "https://solana.example")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("POLYGON_RPC_URL", "https://polygon.example")
+	t.Setenv("POLYGON_NETWORK", "amoy")
+	t.Setenv("ARBITRUM_RPC_URL", "https://arbitrum.example")
+	t.Setenv("BSC_RPC_URL", "https://bsc.example")
+	t.Setenv("POLYGON_WATCHED_ADDRESSES", "0xaaa,0xbbb")
+	t.Setenv("ARBITRUM_WATCHED_ADDRESSES", "0xccc")
+	t.Setenv("BSC_WATCHED_ADDRESSES", "0xddd,0xeee,0xfff")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "https://polygon.example", cfg.Polygon.RPCURL)
+	assert.Equal(t, "amoy", cfg.Polygon.Network)
+	assert.Equal(t, "https://arbitrum.example", cfg.Arbitrum.RPCURL)
+	assert.Equal(t, "mainnet", cfg.Arbitrum.Network)
+	assert.Equal(t, "https://bsc.example", cfg.BSC.RPCURL)
+	assert.Equal(t, "mainnet", cfg.BSC.Network)
+	assert.Equal(t, []string{"0xaaa", "0xbbb"}, cfg.Pipeline.PolygonWatchedAddresses)
+	assert.Equal(t, []string{"0xccc"}, cfg.Pipeline.ArbitrumWatchedAddresses)
+	assert.Equal(t, []string{"0xddd", "0xeee", "0xfff"}, cfg.Pipeline.BSCWatchedAddresses)
+}
+
+func TestValidate_NewChainRPCRequired(t *testing.T) {
+	tests := []struct {
+		name       string
+		chainTarget string
+		envKey     string
+		errContains string
+	}{
+		{"polygon requires RPC", "polygon-mainnet", "POLYGON_RPC_URL", "POLYGON_RPC_URL is required"},
+		{"arbitrum requires RPC", "arbitrum-mainnet", "ARBITRUM_RPC_URL", "ARBITRUM_RPC_URL is required"},
+		{"bsc requires RPC", "bsc-mainnet", "BSC_RPC_URL", "BSC_RPC_URL is required"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DB_URL", "postgres://test@localhost/test")
+			t.Setenv("SIDECAR_ADDR", "localhost:50051")
+			t.Setenv("SOLANA_RPC_URL", "https://solana.example")
+			t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+			t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+			t.Setenv("RUNTIME_DEPLOYMENT_MODE", "independent")
+			t.Setenv("RUNTIME_CHAIN_TARGET", tc.chainTarget)
+			// Ensure the target chain RPC is empty
+			t.Setenv(tc.envKey, "")
+
+			_, err := Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
+}

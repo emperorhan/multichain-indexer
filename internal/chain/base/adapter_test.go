@@ -462,3 +462,48 @@ func parseFilterRange(filter rpc.LogFilter) (int64, int64, error) {
 	}
 	return from, to, nil
 }
+
+func TestInferEVMLayer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		chainName string
+		expected  string
+	}{
+		{"ethereum", "l1"},
+		{"polygon", "l1"},
+		{"bsc", "l1"},
+		{"base", "l2"},
+		{"arbitrum", "l2"},
+		{"unknown", "l2"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.chainName, func(t *testing.T) {
+			assert.Equal(t, tc.expected, inferEVMLayer(tc.chainName))
+		})
+	}
+}
+
+func TestNewAdapterWithChain_SetsCorrectFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		chainName     string
+		expectedLayer string
+	}{
+		{"base", "l2"},
+		{"ethereum", "l1"},
+		{"polygon", "l1"},
+		{"arbitrum", "l2"},
+		{"bsc", "l1"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.chainName, func(t *testing.T) {
+			adapter := NewAdapterWithChain(tc.chainName, "https://rpc.example.com", slog.Default())
+			assert.Equal(t, tc.chainName, adapter.Chain())
+			assert.Equal(t, tc.expectedLayer, adapter.evmLayer)
+		})
+	}
+}

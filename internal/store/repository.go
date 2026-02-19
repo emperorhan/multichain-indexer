@@ -60,3 +60,8 @@ type IndexerConfigRepository interface {
 	Upsert(ctx context.Context, c *model.IndexerConfig) error
 	UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
 }
+
+// RuntimeConfigRepository provides access to runtime-overridable configuration.
+type RuntimeConfigRepository interface {
+	GetActive(ctx context.Context, chain model.Chain, network model.Network) (map[string]string, error)
+}

@@ -25,6 +25,9 @@ type Config struct {
 	Base     BaseConfig
 	Ethereum EthereumConfig
 	BTC      BTCConfig
+	Polygon  PolygonConfig
+	Arbitrum ArbitrumConfig
+	BSC      BSCConfig
 	Runtime  RuntimeConfig
 	Pipeline PipelineConfig
 	Server   ServerConfig
@@ -74,6 +77,21 @@ type BTCConfig struct {
 	Network string
 }
 
+type PolygonConfig struct {
+	RPCURL  string
+	Network string
+}
+
+type ArbitrumConfig struct {
+	RPCURL  string
+	Network string
+}
+
+type BSCConfig struct {
+	RPCURL  string
+	Network string
+}
+
 const (
 	RuntimeDeploymentModeLikeGroup   = "like-group"
 	RuntimeDeploymentModeIndependent = "independent"
@@ -97,6 +115,9 @@ type PipelineConfig struct {
 	BaseWatchedAddresses                          []string
 	EthereumWatchedAddresses                      []string
 	BTCWatchedAddresses                           []string
+	PolygonWatchedAddresses                       []string
+	ArbitrumWatchedAddresses                      []string
+	BSCWatchedAddresses                           []string
 	FetchWorkers                                  int
 	NormalizerWorkers                             int
 	BatchSize                                     int
@@ -188,6 +209,18 @@ func Load() (*Config, error) {
 			RPCURL:  getEnvAny([]string{"BTC_TESTNET_RPC_URL", "BTC_RPC_URL"}, ""),
 			Network: getEnv("BTC_NETWORK", "testnet"),
 		},
+		Polygon: PolygonConfig{
+			RPCURL:  getEnvAny([]string{"POLYGON_RPC_URL", "POLYGON_MAINNET_RPC_URL"}, ""),
+			Network: getEnv("POLYGON_NETWORK", "mainnet"),
+		},
+		Arbitrum: ArbitrumConfig{
+			RPCURL:  getEnvAny([]string{"ARBITRUM_RPC_URL", "ARBITRUM_MAINNET_RPC_URL"}, ""),
+			Network: getEnv("ARBITRUM_NETWORK", "mainnet"),
+		},
+		BSC: BSCConfig{
+			RPCURL:  getEnvAny([]string{"BSC_RPC_URL", "BSC_MAINNET_RPC_URL"}, ""),
+			Network: getEnv("BSC_NETWORK", "mainnet"),
+		},
 		Runtime: RuntimeConfig{
 			DeploymentMode: strings.ToLower(getEnv("RUNTIME_DEPLOYMENT_MODE", RuntimeDeploymentModeLikeGroup)),
 			LikeGroup:      strings.ToLower(getEnv("RUNTIME_LIKE_GROUP", "")),
@@ -239,6 +272,9 @@ func Load() (*Config, error) {
 	cfg.Pipeline.BaseWatchedAddresses = parseAddressCSV(getEnv("BASE_WATCHED_ADDRESSES", ""))
 	cfg.Pipeline.EthereumWatchedAddresses = parseAddressCSV(getEnv("ETH_WATCHED_ADDRESSES", ""))
 	cfg.Pipeline.BTCWatchedAddresses = parseAddressCSV(getEnv("BTC_WATCHED_ADDRESSES", ""))
+	cfg.Pipeline.PolygonWatchedAddresses = parseAddressCSV(getEnv("POLYGON_WATCHED_ADDRESSES", ""))
+	cfg.Pipeline.ArbitrumWatchedAddresses = parseAddressCSV(getEnv("ARBITRUM_WATCHED_ADDRESSES", ""))
+	cfg.Pipeline.BSCWatchedAddresses = parseAddressCSV(getEnv("BSC_WATCHED_ADDRESSES", ""))
 	cfg.Runtime.ChainTargets = normalizeCSVValues(parseAddressCSV(
 		getEnvAny([]string{"RUNTIME_CHAIN_TARGETS", "RUNTIME_CHAIN_TARGET"}, ""),
 	))
@@ -306,6 +342,15 @@ func (c *Config) validate() error {
 	if requiredChains["btc"] && c.BTC.RPCURL == "" {
 		return fmt.Errorf("BTC_TESTNET_RPC_URL is required for selected runtime targets")
 	}
+	if requiredChains["polygon"] && c.Polygon.RPCURL == "" {
+		return fmt.Errorf("POLYGON_RPC_URL is required for selected runtime targets")
+	}
+	if requiredChains["arbitrum"] && c.Arbitrum.RPCURL == "" {
+		return fmt.Errorf("ARBITRUM_RPC_URL is required for selected runtime targets")
+	}
+	if requiredChains["bsc"] && c.BSC.RPCURL == "" {
+		return fmt.Errorf("BSC_RPC_URL is required for selected runtime targets")
+	}
 	return nil
 }
 
@@ -315,6 +360,9 @@ func requiredRuntimeChains(runtime RuntimeConfig) (map[string]bool, error) {
 		"base":     false,
 		"ethereum": false,
 		"btc":      false,
+		"polygon":  false,
+		"arbitrum": false,
+		"bsc":      false,
 	}
 
 	addChainTargets := func(targets []string) error {
@@ -380,25 +428,22 @@ func parseRuntimeTargetKey(target string) (string, string, error) {
 
 	chain := strings.TrimSpace(parts[0])
 	network := strings.TrimSpace(parts[1])
-	switch chain {
-	case "solana":
-		if network != "devnet" {
-			return "", "", fmt.Errorf("runtime chain target %q has unsupported network %q for chain %q", target, network, chain)
-		}
-	case "base":
-		if network != "sepolia" {
-			return "", "", fmt.Errorf("runtime chain target %q has unsupported network %q for chain %q", target, network, chain)
-		}
-	case "ethereum":
-		if network != "mainnet" {
-			return "", "", fmt.Errorf("runtime chain target %q has unsupported network %q for chain %q", target, network, chain)
-		}
-	case "btc":
-		if network != "testnet" {
-			return "", "", fmt.Errorf("runtime chain target %q has unsupported network %q for chain %q", target, network, chain)
-		}
-	default:
+	supportedNetworks := map[string]map[string]bool{
+		"solana":   {"devnet": true},
+		"base":     {"sepolia": true},
+		"ethereum": {"mainnet": true},
+		"btc":      {"testnet": true},
+		"polygon":  {"mainnet": true, "amoy": true},
+		"arbitrum": {"mainnet": true, "sepolia": true},
+		"bsc":      {"mainnet": true, "testnet": true},
+	}
+
+	networks, chainSupported := supportedNetworks[chain]
+	if !chainSupported {
 		return "", "", fmt.Errorf("runtime chain target %q has unsupported chain %q", target, chain)
+	}
+	if !networks[network] {
+		return "", "", fmt.Errorf("runtime chain target %q has unsupported network %q for chain %q", target, network, chain)
 	}
 
 	return chain, network, nil

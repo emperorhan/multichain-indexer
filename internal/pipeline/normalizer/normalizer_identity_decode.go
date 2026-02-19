@@ -846,7 +846,12 @@ func formatDecodeDiagnostics(errorBySignature map[string]string) string {
 }
 
 func isEVMChain(chainID model.Chain) bool {
-	return chainID == model.ChainBase || chainID == model.ChainEthereum
+	switch chainID {
+	case model.ChainBase, model.ChainEthereum, model.ChainPolygon, model.ChainArbitrum, model.ChainBSC:
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldReplaceCanonicalBaseEvent(existing, incoming event.NormalizedBalanceEvent) bool {
