@@ -51,3 +51,18 @@ func (a *RegistryReplayAdapter) DryRunPurge(ctx context.Context, req replay.Purg
 func (a *RegistryReplayAdapter) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
 	return a.configRepo.GetWatermark(ctx, chain, network)
 }
+
+// RegistryHealthAdapter adapts the Registry to satisfy admin.HealthProvider.
+type RegistryHealthAdapter struct {
+	registry *Registry
+}
+
+// NewRegistryHealthAdapter creates a new health adapter.
+func NewRegistryHealthAdapter(registry *Registry) *RegistryHealthAdapter {
+	return &RegistryHealthAdapter{registry: registry}
+}
+
+// HealthSnapshots returns health snapshots from all registered pipelines.
+func (a *RegistryHealthAdapter) HealthSnapshots() any {
+	return a.registry.HealthSnapshots()
+}

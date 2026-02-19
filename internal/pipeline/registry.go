@@ -33,3 +33,25 @@ func (r *Registry) Get(chain model.Chain, network model.Network) *Pipeline {
 	defer r.mu.RUnlock()
 	return r.pipelines[key]
 }
+
+// HealthSnapshots returns health snapshots for all registered pipelines.
+func (r *Registry) HealthSnapshots() []HealthSnapshot {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	snapshots := make([]HealthSnapshot, 0, len(r.pipelines))
+	for _, p := range r.pipelines {
+		snapshots = append(snapshots, p.health.Snapshot())
+	}
+	return snapshots
+}
+
+// AllPipelines returns all registered pipelines.
+func (r *Registry) AllPipelines() []*Pipeline {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]*Pipeline, 0, len(r.pipelines))
+	for _, p := range r.pipelines {
+		result = append(result, p)
+	}
+	return result
+}

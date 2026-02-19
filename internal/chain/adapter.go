@@ -39,6 +39,15 @@ type ReorgAwareAdapter interface {
 	GetFinalizedBlockNumber(ctx context.Context) (int64, error)
 }
 
+// BalanceQueryAdapter extends ChainAdapter with on-chain balance queries
+// for reconciliation purposes.
+type BalanceQueryAdapter interface {
+	ChainAdapter
+	// GetBalance returns the on-chain balance for the given address and token.
+	// tokenContract is empty string for native token.
+	GetBalance(ctx context.Context, address string, tokenContract string) (string, error)
+}
+
 // SignatureInfo represents a transaction reference from the chain.
 type SignatureInfo struct {
 	Hash     string     // tx_hash (Solana: signature, EVM: hash)

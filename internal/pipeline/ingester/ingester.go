@@ -511,6 +511,31 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 			contractsToCheck[be.ContractAddress] = struct{}{}
 			allEvents = append(allEvents, eventContext{ntx: ntx, be: be, canonicalTxHash: canonicalTxHash})
 		}
+
+		// GAP-6: For failed transactions with no balance events but a non-zero fee,
+		// generate a synthetic fee-only withdrawal event. This ensures gas costs
+		// from reverted transactions are tracked in the balance ledger.
+		if ntx.Status == model.TxStatusFailed && len(ntx.BalanceEvents) == 0 &&
+			ntx.FeeAmount != "" && ntx.FeeAmount != "0" && ntx.FeePayer != "" {
+			feeOnlyEvent := buildFeeOnlyEvent(ntx, batch)
+			nativeContract := nativeTokenContract(batch.Chain)
+			if _, exists := tokenModelsByContract[nativeContract]; !exists {
+				tokenModel := &model.Token{
+					Chain:           batch.Chain,
+					Network:         batch.Network,
+					ContractAddress: nativeContract,
+					Symbol:          nativeTokenSymbol(batch.Chain),
+					Name:            nativeTokenName(batch.Chain),
+					Decimals:        nativeTokenDecimals(batch.Chain),
+					TokenType:       model.TokenTypeNative,
+					ChainData:       json.RawMessage("{}"),
+				}
+				tokenModelsByContract[nativeContract] = tokenModel
+				tokenModels = append(tokenModels, tokenModel)
+			}
+			contractsToCheck[nativeContract] = struct{}{}
+			allEvents = append(allEvents, eventContext{ntx: ntx, be: feeOnlyEvent, canonicalTxHash: canonicalTxHash})
+		}
 	}
 
 	phase1Span.SetAttributes(
@@ -1927,5 +1952,103 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+// buildFeeOnlyEvent creates a synthetic fee-only withdrawal event for a failed
+// transaction. Even when a transaction reverts, the gas fee is still consumed.
+func buildFeeOnlyEvent(ntx event.NormalizedTransaction, batch event.NormalizedBatch) event.NormalizedBalanceEvent {
+	// Negate the fee amount to make it a withdrawal delta
+	negFee := ntx.FeeAmount
+	if !strings.HasPrefix(negFee, "-") {
+		negFee = "-" + negFee
+	}
+
+	return event.NormalizedBalanceEvent{
+		OuterInstructionIndex: 0,
+		InnerInstructionIndex: 0,
+		ActivityType:          model.ActivityFee,
+		EventAction:           "fee_only_failed_tx",
+		ProgramID:             "",
+		ContractAddress:       nativeTokenContract(batch.Chain),
+		Address:               ntx.FeePayer,
+		CounterpartyAddress:   "",
+		Delta:                 negFee,
+		ChainData:             json.RawMessage("{}"),
+		TokenSymbol:           nativeTokenSymbol(batch.Chain),
+		TokenName:             nativeTokenName(batch.Chain),
+		TokenDecimals:         nativeTokenDecimals(batch.Chain),
+		TokenType:             model.TokenTypeNative,
+		EventID:               fmt.Sprintf("fee:%s:%s", batch.Chain, ntx.TxHash),
+		BlockHash:             ntx.BlockHash,
+		TxIndex:               0,
+		EventPath:             "fee_only",
+		EventPathType:         "synthetic",
+		FinalityState:         "",
+	}
+}
+
+// nativeTokenContract returns the native token contract identifier for a chain.
+func nativeTokenContract(ch model.Chain) string {
+	switch ch {
+	case model.ChainSolana:
+		return "So11111111111111111111111111111111111111112"
+	case model.ChainBTC:
+		return "btc_native"
+	default:
+		// EVM chains: native ETH/MATIC/BNB uses zero address convention
+		return "0x0000000000000000000000000000000000000000"
+	}
+}
+
+// nativeTokenSymbol returns the native token symbol for a chain.
+func nativeTokenSymbol(ch model.Chain) string {
+	switch ch {
+	case model.ChainSolana:
+		return "SOL"
+	case model.ChainEthereum, model.ChainBase, model.ChainArbitrum:
+		return "ETH"
+	case model.ChainPolygon:
+		return "MATIC"
+	case model.ChainBSC:
+		return "BNB"
+	case model.ChainBTC:
+		return "BTC"
+	default:
+		return "NATIVE"
+	}
+}
+
+// nativeTokenName returns the native token name for a chain.
+func nativeTokenName(ch model.Chain) string {
+	switch ch {
+	case model.ChainSolana:
+		return "Solana"
+	case model.ChainEthereum:
+		return "Ether"
+	case model.ChainBase:
+		return "Ether"
+	case model.ChainArbitrum:
+		return "Ether"
+	case model.ChainPolygon:
+		return "MATIC"
+	case model.ChainBSC:
+		return "BNB"
+	case model.ChainBTC:
+		return "Bitcoin"
+	default:
+		return "Native Token"
+	}
+}
+
+// nativeTokenDecimals returns the native token decimals for a chain.
+func nativeTokenDecimals(ch model.Chain) int {
+	switch ch {
+	case model.ChainSolana:
+		return 9
+	case model.ChainBTC:
+		return 8
+	default:
+		return 18 // EVM chains
 	}
 }

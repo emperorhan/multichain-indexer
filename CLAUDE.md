@@ -33,6 +33,9 @@ make run
 - `internal/domain/event/` — pipeline event types
 - `internal/chain/` — chain adapter interface + implementations
 - `internal/pipeline/` — pipeline stages (coordinator, fetcher, normalizer, ingester)
+- `internal/pipeline/health.go` — per-chain health monitoring (HEALTHY/UNHEALTHY/INACTIVE)
+- `internal/alert/` — alert system (Slack, Webhook) with per-key cooldown
+- `internal/reconciliation/` — balance reconciliation (on-chain vs DB)
 - `internal/store/` — repository implementations (PostgreSQL, Redis)
 - `proto/` — protobuf definitions
 - `sidecar/` — Node.js gRPC decoder service
@@ -56,6 +59,7 @@ make lint           # Run linter
 - PostgreSQL 16 on port 5433
 - Migrations in `internal/store/postgres/migrations/`
 - Core tables: `transactions`, `balance_events`, `balances`, `tokens`, `cursors`, `watched_addresses`, `indexer_configs`
+- Operational tables: `address_books`, `balance_reconciliation_snapshots`, `runtime_configs`
 - `balance_events` uses signed delta model (+deposit, -withdrawal) with 3-layer dedup
 
 ## Environment Variables
@@ -68,3 +72,6 @@ make lint           # Run linter
 | `SIDECAR_ADDR` | Sidecar gRPC address | `localhost:50051` |
 | `WATCHED_ADDRESSES` | Comma-separated Solana addresses | — |
 | `LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
+| `SLACK_WEBHOOK_URL` | Slack webhook for alerts | — |
+| `ALERT_WEBHOOK_URL` | Generic webhook for alerts | — |
+| `ALERT_COOLDOWN_MS` | Alert dedup cooldown | `1800000` (30 min) |

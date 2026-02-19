@@ -28,6 +28,14 @@ type CoordinatorUpdater interface {
 	UpdateInterval(newInterval time.Duration) bool
 }
 
+// ActivationController allows the config watcher to activate/deactivate
+// a pipeline at runtime without restarting the process.
+type ActivationController interface {
+	Deactivate()
+	Activate()
+	IsActive() bool
+}
+
 // ConfigWatcher polls the runtime_configs table and applies changes
 // to the running pipeline coordinator without requiring a restart.
 type ConfigWatcher struct {
@@ -35,6 +43,7 @@ type ConfigWatcher struct {
 	network     model.Network
 	repo        store.RuntimeConfigRepository
 	coordinator CoordinatorUpdater
+	activation  ActivationController
 	logger      *slog.Logger
 	interval    time.Duration
 
@@ -58,6 +67,12 @@ func NewConfigWatcher(
 		interval:    configWatcherDefaultInterval,
 		lastSeen:    make(map[string]string),
 	}
+}
+
+// WithActivationController sets the activation controller on the watcher.
+func (w *ConfigWatcher) WithActivationController(ac ActivationController) *ConfigWatcher {
+	w.activation = ac
+	return w
 }
 
 // Run starts the config watcher loop. It blocks until the context is cancelled.
@@ -122,6 +137,29 @@ func (w *ConfigWatcher) applyConfig(key, value string) {
 			w.coordinator.UpdateInterval(time.Duration(v) * time.Millisecond)
 		} else {
 			w.logger.Warn("invalid indexing_interval_ms value", "value", value)
+		}
+
+	case ConfigKeyIsActive:
+		if w.activation == nil {
+			w.logger.Debug("is_active config received but no activation controller set")
+			return
+		}
+		trimmed := strings.ToLower(strings.TrimSpace(value))
+		switch trimmed {
+		case "false", "0", "no", "off":
+			if w.activation.IsActive() {
+				w.logger.Warn("deactivating pipeline via runtime config",
+					"chain", w.chain, "network", w.network)
+				w.activation.Deactivate()
+			}
+		case "true", "1", "yes", "on":
+			if !w.activation.IsActive() {
+				w.logger.Info("reactivating pipeline via runtime config",
+					"chain", w.chain, "network", w.network)
+				w.activation.Activate()
+			}
+		default:
+			w.logger.Warn("invalid is_active value", "value", value)
 		}
 
 	default:
