@@ -82,6 +82,9 @@ func (f *fakeBlockRepo) UpdateFinalityTx(_ context.Context, _ *sql.Tx, _ model.C
 func (f *fakeBlockRepo) DeleteFromBlockTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) error {
 	return nil
 }
+func (f *fakeBlockRepo) PurgeFinalizedBefore(_ context.Context, _ model.Chain, _ model.Network, _ int64) (int64, error) {
+	return 0, nil
+}
 
 func TestDetector_NoUnfinalizedBlocks(t *testing.T) {
 	t.Parallel()

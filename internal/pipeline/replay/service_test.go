@@ -102,6 +102,10 @@ func (m *mockBlockRepo) DeleteFromBlockTx(_ context.Context, _ *sql.Tx, _ model.
 	return nil
 }
 
+func (m *mockBlockRepo) PurgeFinalizedBefore(_ context.Context, _ model.Chain, _ model.Network, _ int64) (int64, error) {
+	return 0, nil
+}
+
 func testLogger() *slog.Logger {
 	return slog.Default()
 }

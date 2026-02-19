@@ -241,6 +241,13 @@ var (
 		Help:      "Total finality promotions sent",
 	}, []string{"chain", "network"})
 
+	FinalizerPrunedBlocksTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "finalizer",
+		Name:      "pruned_blocks_total",
+		Help:      "Total finalized blocks pruned from indexed_blocks",
+	}, []string{"chain", "network"})
+
 	FinalizerLatestFinalizedBlock = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "indexer",
 		Subsystem: "finalizer",
@@ -291,5 +298,50 @@ var (
 		Subsystem: "replay",
 		Name:      "dry_runs_total",
 		Help:      "Total replay dry run operations executed",
+	}, []string{"chain", "network"})
+
+	// Pipeline health
+	PipelineHealthStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "pipeline",
+		Name:      "health_status",
+		Help:      "Pipeline health status (0=UNKNOWN, 1=HEALTHY, 2=UNHEALTHY, 3=INACTIVE)",
+	}, []string{"chain", "network"})
+
+	PipelineConsecutiveFailures = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "pipeline",
+		Name:      "consecutive_failures",
+		Help:      "Number of consecutive pipeline failures",
+	}, []string{"chain", "network"})
+
+	// Alerts
+	AlertsSentTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "alert",
+		Name:      "sent_total",
+		Help:      "Total alerts sent",
+	}, []string{"channel", "alert_type"})
+
+	AlertsCooldownSkipped = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "alert",
+		Name:      "cooldown_skipped_total",
+		Help:      "Total alerts skipped due to cooldown",
+	}, []string{"channel", "alert_type"})
+
+	// Reconciliation
+	ReconciliationRunsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "reconciliation",
+		Name:      "runs_total",
+		Help:      "Total reconciliation runs executed",
+	}, []string{"chain", "network"})
+
+	ReconciliationMismatchesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "reconciliation",
+		Name:      "mismatches_total",
+		Help:      "Total balance mismatches detected during reconciliation",
 	}, []string{"chain", "network"})
 )

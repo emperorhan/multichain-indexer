@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
@@ -48,6 +50,7 @@ type Config struct {
 	CommitInterleaver      ingester.CommitInterleaver
 	ReorgDetectorInterval  time.Duration
 	FinalizerInterval      time.Duration
+	IndexedBlocksRetention int64
 }
 
 const streamBoundaryFetchToNormal = "fetcher-normalizer"
@@ -96,6 +99,13 @@ type Pipeline struct {
 	logger        *slog.Logger
 	replayService *replay.Service
 	replayCh      chan replayOp
+	health        *PipelineHealth
+
+	// Activation control: allows runtime deactivation/reactivation.
+	active     atomic.Bool
+	activeMu   sync.Mutex
+	activeCh   chan struct{} // signaled when reactivated
+	deactiveCh chan struct{} // signaled when deactivated
 }
 
 type streamCheckpointManager interface {
@@ -122,14 +132,62 @@ func New(
 	repos *Repos,
 	logger *slog.Logger,
 ) *Pipeline {
-	return &Pipeline{
-		cfg:     cfg,
-		adapter: adapter,
-		db:      db,
-		repos:   repos,
-		logger:  logger.With("component", "pipeline"),
-		replayCh: make(chan replayOp, 1),
+	p := &Pipeline{
+		cfg:        cfg,
+		adapter:    adapter,
+		db:         db,
+		repos:      repos,
+		logger:     logger.With("component", "pipeline"),
+		replayCh:   make(chan replayOp, 1),
+		health:     NewPipelineHealth(cfg.Chain, cfg.Network),
+		activeCh:   make(chan struct{}, 1),
+		deactiveCh: make(chan struct{}, 1),
 	}
+	p.active.Store(true)
+	return p
+}
+
+// Chain returns the pipeline's chain.
+func (p *Pipeline) Chain() model.Chain { return p.cfg.Chain }
+
+// Network returns the pipeline's network.
+func (p *Pipeline) Network() model.Network { return p.cfg.Network }
+
+// Health returns the pipeline's health tracker.
+func (p *Pipeline) Health() *PipelineHealth { return p.health }
+
+// Deactivate stops the pipeline gracefully. It can be reactivated later.
+func (p *Pipeline) Deactivate() {
+	p.activeMu.Lock()
+	defer p.activeMu.Unlock()
+	if !p.active.Load() {
+		return
+	}
+	p.active.Store(false)
+	p.health.SetStatus(HealthStatusInactive)
+	select {
+	case p.deactiveCh <- struct{}{}:
+	default:
+	}
+}
+
+// Activate reactivates a deactivated pipeline.
+func (p *Pipeline) Activate() {
+	p.activeMu.Lock()
+	defer p.activeMu.Unlock()
+	if p.active.Load() {
+		return
+	}
+	p.active.Store(true)
+	select {
+	case p.activeCh <- struct{}{}:
+	default:
+	}
+}
+
+// IsActive returns whether the pipeline is currently active.
+func (p *Pipeline) IsActive() bool {
+	return p.active.Load()
 }
 
 // SetReplayService sets the replay service on the pipeline. This must be
@@ -167,6 +225,23 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			return err
 		}
 
+		// Wait if pipeline is deactivated.
+		if !p.active.Load() {
+			p.logger.Info("pipeline is deactivated, waiting for reactivation",
+				"chain", p.cfg.Chain, "network", p.cfg.Network)
+			select {
+			case <-p.activeCh:
+				p.logger.Info("pipeline reactivated",
+					"chain", p.cfg.Chain, "network", p.cfg.Network)
+				p.health.SetStatus(HealthStatusHealthy)
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		p.health.SetStatus(HealthStatusHealthy)
+
 		// Each iteration creates a fresh context, channels, and errgroup.
 		runCtx, runCancel := context.WithCancel(ctx)
 		errCh := make(chan error, 1)
@@ -179,6 +254,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			// Pipeline terminated normally or with error.
 			runCancel()
 			if err != nil && !errors.Is(err, context.Canceled) {
+				p.health.RecordFailure()
 				return err
 			}
 			return nil
@@ -211,6 +287,14 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				)
 			}
 			// 3. Loop continues → pipeline restarts with fresh channels.
+			continue
+
+		case <-p.deactiveCh:
+			// Deactivation requested: stop pipeline and loop back to wait.
+			p.logger.Warn("pipeline deactivated via runtime config",
+				"chain", p.cfg.Chain, "network", p.cfg.Network)
+			runCancel()
+			<-errCh
 			continue
 
 		case <-ctx.Done():
@@ -354,7 +438,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 			p.cfg.Chain, p.cfg.Network,
 			p.repos.RuntimeConfig, coord,
 			p.logger,
-		)
+		).WithActivationController(p)
 		g.Go(func() error {
 			return watcher.Run(gCtx)
 		})
@@ -385,11 +469,16 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 			return detector.Run(gCtx)
 		})
 
+		var finOpts []finalizer.Option
+		if p.cfg.IndexedBlocksRetention > 0 {
+			finOpts = append(finOpts, finalizer.WithRetentionBlocks(p.cfg.IndexedBlocksRetention))
+		}
 		fin := finalizer.New(
 			p.cfg.Chain, p.cfg.Network,
 			reorgAdapter, p.repos.IndexedBlock,
 			finalityCh, p.cfg.FinalizerInterval,
 			p.logger,
+			finOpts...,
 		)
 		g.Go(func() error {
 			return fin.Run(gCtx)

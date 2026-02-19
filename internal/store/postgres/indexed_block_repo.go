@@ -145,3 +145,21 @@ func (r *IndexedBlockRepo) DeleteFromBlockTx(ctx context.Context, tx *sql.Tx, ch
 	}
 	return nil
 }
+
+func (r *IndexedBlockRepo) PurgeFinalizedBefore(ctx context.Context, chain model.Chain, network model.Network, beforeBlock int64) (int64, error) {
+	const query = `
+		DELETE FROM indexed_blocks
+		WHERE chain = $1 AND network = $2
+		  AND finality_state = 'finalized'
+		  AND block_number < $3
+	`
+	result, err := r.db.ExecContext(ctx, query, chain, network, beforeBlock)
+	if err != nil {
+		return 0, fmt.Errorf("purge finalized blocks before %d: %w", beforeBlock, err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("purge finalized rows affected: %w", err)
+	}
+	return n, nil
+}

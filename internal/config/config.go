@@ -34,6 +34,13 @@ type Config struct {
 	Server   ServerConfig
 	Log      LogConfig
 	Tracing  TracingConfig
+	Alert    AlertConfig
+}
+
+type AlertConfig struct {
+	SlackWebhookURL    string
+	WebhookURL         string
+	CooldownMS         int
 }
 
 type DBConfig struct {
@@ -164,6 +171,7 @@ type PipelineConfig struct {
 	CoordinatorAutoTunePolicyManifestDigest       string
 	CoordinatorAutoTunePolicyManifestRefreshEpoch int64
 	CoordinatorAutoTunePolicyActivationHoldTicks  int
+	IndexedBlocksRetention                        int
 	StreamTransportEnabled                        bool
 	StreamNamespace                               string
 	StreamSessionID                               string
@@ -316,6 +324,7 @@ func Load() (*Config, error) {
 			CoordinatorAutoTunePolicyManifestDigest:       getEnv("COORDINATOR_AUTOTUNE_POLICY_MANIFEST_DIGEST", "manifest-v1"),
 			CoordinatorAutoTunePolicyManifestRefreshEpoch: int64(getEnvInt("COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH", 0)),
 			CoordinatorAutoTunePolicyActivationHoldTicks:  getEnvInt("COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS", 1),
+			IndexedBlocksRetention:                        getEnvInt("INDEXED_BLOCKS_RETENTION", 10000),
 			StreamTransportEnabled:                        getEnvBool("PIPELINE_STREAM_TRANSPORT_ENABLED", false),
 			StreamNamespace:                               getEnv("PIPELINE_STREAM_NAMESPACE", "pipeline"),
 			StreamSessionID:                               getEnv("PIPELINE_STREAM_SESSION_ID", ""),
@@ -336,6 +345,11 @@ func Load() (*Config, error) {
 			Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 			Insecure:    getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
 			SampleRatio: getEnvFloat("OTEL_TRACE_SAMPLE_RATIO", 0.1),
+		},
+		Alert: AlertConfig{
+			SlackWebhookURL: getEnv("SLACK_WEBHOOK_URL", ""),
+			WebhookURL:      getEnv("ALERT_WEBHOOK_URL", ""),
+			CooldownMS:      getEnvInt("ALERT_COOLDOWN_MS", 1800000), // default 30 min
 		},
 	}
 

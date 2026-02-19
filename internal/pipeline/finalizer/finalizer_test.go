@@ -43,7 +43,11 @@ func (f *fakeReorgAwareAdapter) GetFinalizedBlockNumber(context.Context) (int64,
 	return f.finalizedBlock, nil
 }
 
-type fakeBlockRepo struct{}
+type fakeBlockRepo struct {
+	purgedBefore int64
+	purgeCount   int64
+	purgeErr     error
+}
 
 func (f *fakeBlockRepo) UpsertTx(_ context.Context, _ *sql.Tx, _ *model.IndexedBlock) error {
 	return nil
@@ -62,6 +66,13 @@ func (f *fakeBlockRepo) UpdateFinalityTx(_ context.Context, _ *sql.Tx, _ model.C
 }
 func (f *fakeBlockRepo) DeleteFromBlockTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) error {
 	return nil
+}
+func (f *fakeBlockRepo) PurgeFinalizedBefore(_ context.Context, _ model.Chain, _ model.Network, beforeBlock int64) (int64, error) {
+	f.purgedBefore = beforeBlock
+	if f.purgeErr != nil {
+		return 0, f.purgeErr
+	}
+	return f.purgeCount, nil
 }
 
 func TestFinalizer_SendsPromotionWhenBlockAdvances(t *testing.T) {
@@ -136,4 +147,74 @@ func TestFinalizer_AdvancesOnNewFinalized(t *testing.T) {
 	}
 
 	assert.Equal(t, int64(200), f.lastFinalized)
+}
+
+func TestFinalizer_PrunesOldFinalizedBlocks(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeReorgAwareAdapter{
+		chainName:      "base",
+		finalizedBlock: 20000,
+	}
+	repo := &fakeBlockRepo{purgeCount: 5000}
+	finalityCh := make(chan event.FinalityPromotion, 1)
+
+	f := New(model.ChainBase, model.NetworkSepolia, adapter, repo, finalityCh, time.Second, slog.Default(),
+		WithRetentionBlocks(10000),
+	)
+
+	err := f.check(context.Background())
+	require.NoError(t, err)
+
+	// Drain the promotion
+	<-finalityCh
+
+	// Verify pruning was called with correct cutoff: 20000 - 10000 = 10000
+	assert.Equal(t, int64(10000), repo.purgedBefore)
+}
+
+func TestFinalizer_NoPruneWhenRetentionZero(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeReorgAwareAdapter{
+		chainName:      "base",
+		finalizedBlock: 20000,
+	}
+	repo := &fakeBlockRepo{}
+	finalityCh := make(chan event.FinalityPromotion, 1)
+
+	// retention=0 (default) means no pruning
+	f := New(model.ChainBase, model.NetworkSepolia, adapter, repo, finalityCh, time.Second, slog.Default())
+
+	err := f.check(context.Background())
+	require.NoError(t, err)
+
+	<-finalityCh
+
+	// purgedBefore should remain zero (PurgeFinalizedBefore was never called)
+	assert.Equal(t, int64(0), repo.purgedBefore)
+}
+
+func TestFinalizer_NoPruneWhenCutoffNotPositive(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeReorgAwareAdapter{
+		chainName:      "base",
+		finalizedBlock: 5000,
+	}
+	repo := &fakeBlockRepo{}
+	finalityCh := make(chan event.FinalityPromotion, 1)
+
+	// retention is larger than finalized block number, cutoff would be negative
+	f := New(model.ChainBase, model.NetworkSepolia, adapter, repo, finalityCh, time.Second, slog.Default(),
+		WithRetentionBlocks(10000),
+	)
+
+	err := f.check(context.Background())
+	require.NoError(t, err)
+
+	<-finalityCh
+
+	// purgedBefore should remain zero (cutoff <= 0 so no pruning)
+	assert.Equal(t, int64(0), repo.purgedBefore)
 }

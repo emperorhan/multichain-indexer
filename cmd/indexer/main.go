@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/admin"
+	"github.com/emperorhan/multichain-indexer/internal/alert"
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/chain/arbitrum"
 	"github.com/emperorhan/multichain-indexer/internal/chain/base"
@@ -29,6 +30,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/ingester"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
+	"github.com/emperorhan/multichain-indexer/internal/reconciliation"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
 	redispkg "github.com/emperorhan/multichain-indexer/internal/store/redis"
@@ -542,6 +544,7 @@ func main() {
 			CommitInterleaver:      commitInterleaver,
 			ReorgDetectorInterval:  time.Duration(cfg.Pipeline.ReorgDetectorIntervalMs) * time.Millisecond,
 			FinalizerInterval:      time.Duration(cfg.Pipeline.FinalizerIntervalMs) * time.Millisecond,
+			IndexedBlocksRetention: int64(cfg.Pipeline.IndexedBlocksRetention),
 		}
 		p := pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL))
 		p.SetReplayService(replayService)
@@ -564,10 +567,34 @@ func main() {
 		return runHealthServer(gCtx, cfg.Server.HealthPort, cfg.Server.MetricsAuthUser, cfg.Server.MetricsAuthPass, checker, logger)
 	})
 
+	// Build alerter from config
+	alerter := buildAlerter(cfg, logger)
+
+	// Build reconciliation service
+	reconService := reconciliation.NewService(
+		db.DB, repos.Balance, repos.WatchedAddr, repos.Token, alerter, logger,
+	)
+	reconService.SetSnapshotRepository(postgres.NewReconciliationSnapshotRepo(db.DB))
+	// Register balance query adapters for reconciliation
+	for _, target := range targets {
+		if bqa, ok := target.adapter.(chain.BalanceQueryAdapter); ok {
+			reconService.RegisterAdapter(target.chain, target.network, bqa)
+		}
+	}
+
+	// Address book repo
+	addressBookRepo := postgres.NewAddressBookRepo(db.DB)
+
 	// Admin API server (optional)
 	if cfg.Server.AdminAddr != "" {
 		replayAdapter := pipeline.NewRegistryReplayAdapter(registry, replayService, repos.Config)
-		adminSrv := admin.NewServer(repos.WatchedAddr, repos.Config, logger, admin.WithReplayRequester(replayAdapter))
+		healthAdapter := pipeline.NewRegistryHealthAdapter(registry)
+		adminSrv := admin.NewServer(repos.WatchedAddr, repos.Config, logger,
+			admin.WithReplayRequester(replayAdapter),
+			admin.WithHealthProvider(healthAdapter),
+			admin.WithReconcileRequester(reconService),
+			admin.WithAddressBookRepo(addressBookRepo),
+		)
 		var adminHandler http.Handler = adminSrv.Handler()
 		if cfg.Server.AdminAuthUser != "" && cfg.Server.AdminAuthPass != "" {
 			adminHandler = basicAuthMiddleware(cfg.Server.AdminAuthUser, cfg.Server.AdminAuthPass, adminHandler)
@@ -838,6 +865,26 @@ func runHealthServer(ctx context.Context, port int, metricsUser, metricsPass str
 		return fmt.Errorf("health server: %w", err)
 	}
 	return nil
+}
+
+func buildAlerter(cfg *config.Config, logger *slog.Logger) alert.Alerter {
+	var alerters []alert.Alerter
+
+	if cfg.Alert.SlackWebhookURL != "" {
+		alerters = append(alerters, alert.NewSlackAlerter(cfg.Alert.SlackWebhookURL))
+		logger.Info("slack alerter enabled")
+	}
+	if cfg.Alert.WebhookURL != "" {
+		alerters = append(alerters, alert.NewWebhookAlerter(cfg.Alert.WebhookURL))
+		logger.Info("webhook alerter enabled")
+	}
+
+	if len(alerters) == 0 {
+		return &alert.NoopAlerter{}
+	}
+
+	cooldown := time.Duration(cfg.Alert.CooldownMS) * time.Millisecond
+	return alert.NewMultiAlerter(cooldown, logger, alerters...)
 }
 
 func runAdminServer(ctx context.Context, addr string, handler http.Handler, logger *slog.Logger) error {
