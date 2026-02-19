@@ -27,6 +27,8 @@ Thumbs.db
 # Build
 tmp/
 .cache/
+indexer
+loadtest
 
 # Ralph local runtime
 .agent/
