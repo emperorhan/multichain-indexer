@@ -21,6 +21,24 @@ const (
 	EventCategoryFeeDataL1      EventCategory = "fee_data_l1"
 )
 
+type ActivityType string
+
+const (
+	ActivityDeposit        ActivityType = "DEPOSIT"
+	ActivityWithdrawal     ActivityType = "WITHDRAWAL"
+	ActivityStake          ActivityType = "STAKE"
+	ActivityUnstake        ActivityType = "UNSTAKE"
+	ActivityClaimReward    ActivityType = "CLAIM_REWARD"
+	ActivityFee            ActivityType = "FEE"
+	ActivityFeeExecutionL2 ActivityType = "FEE_EXECUTION_L2"
+	ActivityFeeDataL1      ActivityType = "FEE_DATA_L1"
+	ActivitySwap           ActivityType = "SWAP"
+	ActivityMint           ActivityType = "MINT"
+	ActivityBurn           ActivityType = "BURN"
+	ActivityOther          ActivityType = "OTHER"
+	ActivitySelfTransfer   ActivityType = "SELF_TRANSFER"
+)
+
 type BalanceEvent struct {
 	ID                    uuid.UUID       `db:"id"`
 	Chain                 Chain           `db:"chain"`
@@ -30,7 +48,7 @@ type BalanceEvent struct {
 	OuterInstructionIndex int             `db:"outer_instruction_index"`
 	InnerInstructionIndex int             `db:"inner_instruction_index"`
 	TokenID               uuid.UUID       `db:"token_id"`
-	EventCategory         EventCategory   `db:"event_category"`
+	ActivityType          ActivityType    `db:"activity_type"`
 	EventAction           string          `db:"event_action"`
 	ProgramID             string          `db:"program_id"`
 	Address               string          `db:"address"`
@@ -44,6 +62,7 @@ type BalanceEvent struct {
 	BlockCursor           int64           `db:"block_cursor"`
 	BlockTime             *time.Time      `db:"block_time"`
 	ChainData             json.RawMessage `db:"chain_data"`
+	BalanceApplied        bool            `json:"balance_applied" db:"balance_applied"`
 	EventID               string          `json:"event_id" db:"event_id"`
 	BlockHash             string          `json:"block_hash" db:"block_hash"`
 	TxIndex               int64           `json:"tx_index" db:"tx_index"`

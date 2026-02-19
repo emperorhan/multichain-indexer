@@ -36,7 +36,7 @@ type NormalizedTransaction struct {
 type NormalizedBalanceEvent struct {
 	OuterInstructionIndex int
 	InnerInstructionIndex int
-	EventCategory         model.EventCategory
+	ActivityType          model.ActivityType
 	EventAction           string
 	ProgramID             string
 	ContractAddress       string // mint address or contract address
