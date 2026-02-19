@@ -67,6 +67,9 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Empty(t, cfg.Pipeline.SolanaWatchedAddresses)
 	assert.Empty(t, cfg.Pipeline.BaseWatchedAddresses)
 	assert.Empty(t, cfg.Pipeline.BTCWatchedAddresses)
+	assert.False(t, cfg.Tracing.Insecure)
+	assert.Empty(t, cfg.Server.MetricsAuthUser)
+	assert.Empty(t, cfg.Server.MetricsAuthPass)
 }
 
 func TestLoad_EnvOverride(t *testing.T) {
@@ -736,4 +739,59 @@ func TestValidate_NewChainRPCRequired(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errContains)
 		})
 	}
+}
+
+func TestLoad_RequiresDBURL_WhenNotSet(t *testing.T) {
+	t.Setenv("DB_URL", "")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DB_URL is required")
+}
+
+func TestLoad_OTLPInsecure_DefaultsFalse(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.False(t, cfg.Tracing.Insecure)
+}
+
+func TestLoad_MetricsAuth_Defaults(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Empty(t, cfg.Server.MetricsAuthUser)
+	assert.Empty(t, cfg.Server.MetricsAuthPass)
+}
+
+func TestLoad_MetricsAuth_EnvOverride(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+	t.Setenv("METRICS_AUTH_USER", "admin")
+	t.Setenv("METRICS_AUTH_PASS", "secret")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "admin", cfg.Server.MetricsAuthUser)
+	assert.Equal(t, "secret", cfg.Server.MetricsAuthPass)
 }

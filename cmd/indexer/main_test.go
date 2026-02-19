@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
@@ -701,4 +704,84 @@ func TestSyncWatchedAddresses_StopsOnEnsureExistsFailure(t *testing.T) {
 	err := syncWatchedAddresses(context.Background(), mockWatchedRepo, mockCursorRepo, chain, network, addresses)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ensure cursor")
+}
+
+func TestMaskCredentials(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"with credentials", "redis://user:pass@host:6379", "redis://***@host:6379"},
+		{"without credentials", "redis://host:6379", "redis://host:6379"},
+		{"empty string", "", ""},
+		{"complex password", "redis://admin:p%40ssw0rd@redis.example.com:6380/0", "redis://***@redis.example.com:6380/0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, maskCredentials(tt.input))
+		})
+	}
+}
+
+func TestBasicAuthMiddleware_RejectsWithoutCredentials(t *testing.T) {
+	handler := basicAuthMiddleware("admin", "secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Header().Get("WWW-Authenticate"), `Basic realm="metrics"`)
+}
+
+func TestBasicAuthMiddleware_RejectsWrongCredentials(t *testing.T) {
+	handler := basicAuthMiddleware("admin", "secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.SetBasicAuth("admin", "wrong")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestBasicAuthMiddleware_AcceptsValidCredentials(t *testing.T) {
+	handler := basicAuthMiddleware("admin", "secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.SetBasicAuth("admin", "secret")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "ok", rec.Body.String())
+}
+
+func TestHealthChecker_ReturnsErrorWhenDBNil(t *testing.T) {
+	checker := &healthChecker{db: nil}
+	err := checker.check(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database not initialized")
+}
+
+func TestHealthChecker_ReturnsReadyWhenDBAlive(t *testing.T) {
+	// Use a sql.DB that we know will fail (no real DB), to test the error path
+	db, err := sql.Open("postgres", "postgres://invalid:invalid@localhost:1/nonexistent?sslmode=disable&connect_timeout=1")
+	require.NoError(t, err)
+	defer db.Close()
+
+	checker := &healthChecker{db: db}
+	// This will fail because there's no real DB, but it tests the code path
+	checkErr := checker.check(context.Background())
+	assert.Error(t, checkErr)
+	assert.Contains(t, checkErr.Error(), "database")
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -124,6 +125,62 @@ func resolveStreamSessionID(rawSessionID string) string {
 		return defaultStreamSessionID
 	}
 	return sessionID
+}
+
+func logSecurityWarnings(cfg *config.Config, logger *slog.Logger) {
+	if strings.Contains(cfg.DB.URL, "sslmode=disable") {
+		logger.Warn("SECURITY: database connection uses sslmode=disable — use sslmode=require or sslmode=verify-full in production")
+	}
+	if !cfg.Sidecar.TLSEnabled {
+		logger.Warn("SECURITY: sidecar gRPC TLS is disabled — set SIDECAR_TLS_ENABLED=true in production")
+	}
+	if cfg.Tracing.Enabled && cfg.Tracing.Insecure {
+		logger.Warn("SECURITY: OTLP tracing uses plaintext gRPC — set OTEL_EXPORTER_OTLP_INSECURE=false in production")
+	}
+	if cfg.Server.MetricsAuthUser == "" {
+		logger.Warn("SECURITY: /metrics endpoint has no authentication — set METRICS_AUTH_USER and METRICS_AUTH_PASS in production")
+	}
+}
+
+func maskCredentials(rawURL string) string {
+	if idx := strings.Index(rawURL, "@"); idx > 0 {
+		schemeEnd := strings.Index(rawURL, "://")
+		if schemeEnd < 0 {
+			return rawURL
+		}
+		scheme := rawURL[:schemeEnd+3]
+		return scheme + "***@" + rawURL[idx+1:]
+	}
+	return rawURL
+}
+
+func basicAuthMiddleware(user, pass string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok || subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="metrics"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type healthChecker struct {
+	db *sql.DB
+}
+
+func (h *healthChecker) check(ctx context.Context) error {
+	if h.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := h.db.PingContext(checkCtx); err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	return nil
 }
 
 func startDBPoolStatsPump(ctx context.Context, db dbStatsProvider, targets []runtimeTarget, intervalMS int, logger *slog.Logger) {
@@ -294,6 +351,8 @@ func main() {
 		"bsc_watched_addresses", len(cfg.Pipeline.BSCWatchedAddresses),
 	)
 
+	logSecurityWarnings(cfg, logger)
+
 	// Initialize OpenTelemetry tracing
 	tracingEndpoint := ""
 	if cfg.Tracing.Enabled {
@@ -331,7 +390,7 @@ func main() {
 
 	streamBackend, streamTransportEnabled, err := resolveStreamBackend(cfg, streamSessionID, logger)
 	if err != nil {
-		logger.Error("failed to initialize stream transport", "error", err, "redis_url", cfg.Redis.URL)
+		logger.Error("failed to initialize stream transport", "error", err, "redis_url", maskCredentials(cfg.Redis.URL))
 		os.Exit(1)
 	}
 
@@ -435,8 +494,9 @@ func main() {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	// Health check server
+	checker := &healthChecker{db: db.DB}
 	g.Go(func() error {
-		return runHealthServer(gCtx, cfg.Server.HealthPort, logger)
+		return runHealthServer(gCtx, cfg.Server.HealthPort, cfg.Server.MetricsAuthUser, cfg.Server.MetricsAuthPass, checker, logger)
 	})
 
 	// Pipelines
@@ -654,7 +714,7 @@ func syncWatchedAddresses(
 	return nil
 }
 
-func runHealthServer(ctx context.Context, port int, logger *slog.Logger) error {
+func runHealthServer(ctx context.Context, port int, metricsUser, metricsPass string, checker *healthChecker, logger *slog.Logger) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -662,7 +722,24 @@ func runHealthServer(ctx context.Context, port int, logger *slog.Logger) error {
 			logger.Warn("failed to write health response", "error", err)
 		}
 	})
-	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := checker.check(ctx); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("not ready: " + err.Error()))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	})
+	metricsHandler := promhttp.Handler()
+	if metricsUser != "" && metricsPass != "" {
+		metricsHandler = basicAuthMiddleware(metricsUser, metricsPass, metricsHandler)
+	}
+	mux.Handle("/metrics", metricsHandler)
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),

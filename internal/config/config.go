@@ -147,7 +147,9 @@ type PipelineConfig struct {
 }
 
 type ServerConfig struct {
-	HealthPort int
+	HealthPort      int
+	MetricsAuthUser string
+	MetricsAuthPass string
 }
 
 type LogConfig struct {
@@ -175,7 +177,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		DB: DBConfig{
-			URL:                 getEnv("DB_URL", "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable"),
+			URL:                 getEnv("DB_URL", ""),
 			MaxOpenConns:        getEnvInt("DB_MAX_OPEN_CONNS", 25),
 			MaxIdleConns:        getEnvInt("DB_MAX_IDLE_CONNS", 5),
 			ConnMaxLifetime:     time.Duration(getEnvInt("DB_CONN_MAX_LIFETIME_MIN", 30)) * time.Minute,
@@ -254,7 +256,9 @@ func Load() (*Config, error) {
 			StreamSessionID:                               getEnv("PIPELINE_STREAM_SESSION_ID", ""),
 		},
 		Server: ServerConfig{
-			HealthPort: getEnvInt("HEALTH_PORT", 8080),
+			HealthPort:      getEnvInt("HEALTH_PORT", 8080),
+			MetricsAuthUser: getEnv("METRICS_AUTH_USER", ""),
+			MetricsAuthPass: getEnv("METRICS_AUTH_PASS", ""),
 		},
 		Log: LogConfig{
 			Level: getEnv("LOG_LEVEL", "info"),
@@ -262,7 +266,7 @@ func Load() (*Config, error) {
 		Tracing: TracingConfig{
 			Enabled:  getEnvBool("OTEL_TRACING_ENABLED", false),
 			Endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-			Insecure: getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", true),
+			Insecure: getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
 		},
 	}
 
