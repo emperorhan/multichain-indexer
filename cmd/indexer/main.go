@@ -420,14 +420,8 @@ func main() {
 	}
 }
 
-func run() error {
-	// Setup logger
+func initLogger(cfg *config.Config) *slog.Logger {
 	logLevel := slog.LevelInfo
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-
 	switch cfg.Log.Level {
 	case "debug":
 		logLevel = slog.LevelDebug
@@ -436,7 +430,6 @@ func run() error {
 	case "error":
 		logLevel = slog.LevelError
 	}
-
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
@@ -464,30 +457,25 @@ func run() error {
 		"arbitrum_watched_addresses", len(cfg.Pipeline.ArbitrumWatchedAddresses),
 		"bsc_watched_addresses", len(cfg.Pipeline.BSCWatchedAddresses),
 	)
+	return logger
+}
 
-	if err := logSecurityWarnings(cfg, logger); err != nil {
-		return err
-	}
-
-	// Initialize OpenTelemetry tracing
+func initTracing(cfg *config.Config, logger *slog.Logger) (func(context.Context) error, error) {
 	tracingEndpoint := ""
 	if cfg.Tracing.Enabled {
 		tracingEndpoint = cfg.Tracing.Endpoint
 	}
-	shutdownTracing, err := tracing.Init(context.Background(), "multichain-indexer", tracingEndpoint, cfg.Tracing.Insecure, cfg.Tracing.SampleRatio)
+	shutdown, err := tracing.Init(context.Background(), "multichain-indexer", tracingEndpoint, cfg.Tracing.Insecure, cfg.Tracing.SampleRatio)
 	if err != nil {
-		return fmt.Errorf("initialize tracing: %w", err)
+		return nil, fmt.Errorf("initialize tracing: %w", err)
 	}
-	defer func() {
-		if err := shutdownTracing(context.Background()); err != nil {
-			logger.Warn("tracing shutdown error", "error", err)
-		}
-	}()
 	if cfg.Tracing.Enabled {
 		logger.Info("tracing enabled", "endpoint", cfg.Tracing.Endpoint)
 	}
+	return shutdown, nil
+}
 
-	// Connect to PostgreSQL
+func initDatabase(cfg *config.Config, logger *slog.Logger) (*postgres.DB, error) {
 	db, err := postgres.New(postgres.Config{
 		URL:             cfg.DB.URL,
 		MaxOpenConns:    cfg.DB.MaxOpenConns,
@@ -495,24 +483,14 @@ func run() error {
 		ConnMaxLifetime: cfg.DB.ConnMaxLifetime,
 	})
 	if err != nil {
-		return fmt.Errorf("connect to database: %w", err)
+		return nil, fmt.Errorf("connect to database: %w", err)
 	}
-	defer db.Close()
 	logger.Info("connected to database")
+	return db, nil
+}
 
-	streamSessionID := resolveStreamSessionID(cfg.Pipeline.StreamSessionID)
-
-	streamBackend, streamTransportEnabled, err := resolveStreamBackend(cfg, streamSessionID, logger)
-	if err != nil {
-		return fmt.Errorf("initialize stream transport: %w", err)
-	}
-
-	if streamBackend != nil {
-		defer streamBackend.Close()
-	}
-
-	// Create repositories
-	repos := &pipeline.Repos{
+func initRepositories(db *postgres.DB) *pipeline.Repos {
+	return &pipeline.Repos{
 		WatchedAddr:   postgres.NewWatchedAddressRepo(db),
 		Cursor:        postgres.NewCursorRepo(db),
 		Transaction:   postgres.NewTransactionRepo(db),
@@ -523,6 +501,108 @@ func run() error {
 		RuntimeConfig: postgres.NewRuntimeConfigRepo(db),
 		IndexedBlock:  postgres.NewIndexedBlockRepo(db.DB),
 	}
+}
+
+func buildPipelineConfig(
+	cfg *config.Config,
+	target runtimeTarget,
+	alerter alert.Alerter,
+	streamTransportEnabled bool,
+	streamBackend redispkg.MessageTransport,
+	streamSessionID string,
+	commitInterleaver ingester.CommitInterleaver,
+) pipeline.Config {
+	return pipeline.Config{
+		Chain:                      target.chain,
+		Network:                    target.network,
+		BatchSize:                  cfg.Pipeline.BatchSize,
+		IndexingInterval:           time.Duration(cfg.Pipeline.IndexingIntervalMs) * time.Millisecond,
+		ReorgDetectorMaxCheckDepth: cfg.ReorgDetector.MaxCheckDepth,
+		Alerter:                    alerter,
+		CoordinatorAutoTune: pipeline.CoordinatorAutoTuneConfig{
+			Enabled:                    cfg.Pipeline.CoordinatorAutoTuneEnabled,
+			MinBatchSize:               cfg.Pipeline.CoordinatorAutoTuneMinBatchSize,
+			MaxBatchSize:               cfg.Pipeline.CoordinatorAutoTuneMaxBatchSize,
+			StepUp:                     cfg.Pipeline.CoordinatorAutoTuneStepUp,
+			StepDown:                   cfg.Pipeline.CoordinatorAutoTuneStepDown,
+			LagHighWatermark:           cfg.Pipeline.CoordinatorAutoTuneLagHighWatermark,
+			LagLowWatermark:            cfg.Pipeline.CoordinatorAutoTuneLagLowWatermark,
+			QueueHighWatermarkPct:      cfg.Pipeline.CoordinatorAutoTuneQueueHighPct,
+			QueueLowWatermarkPct:       cfg.Pipeline.CoordinatorAutoTuneQueueLowPct,
+			HysteresisTicks:            cfg.Pipeline.CoordinatorAutoTuneHysteresisTicks,
+			TelemetryStaleTicks:        cfg.Pipeline.CoordinatorAutoTuneTelemetryStaleTicks,
+			TelemetryRecoveryTicks:     cfg.Pipeline.CoordinatorAutoTuneTelemetryRecoveryTicks,
+			OperatorOverrideBatch:      cfg.Pipeline.CoordinatorAutoTuneOperatorOverrideBatch,
+			OperatorReleaseHoldTicks:   cfg.Pipeline.CoordinatorAutoTuneOperatorReleaseTicks,
+			PolicyVersion:              cfg.Pipeline.CoordinatorAutoTunePolicyVersion,
+			PolicyManifestDigest:       cfg.Pipeline.CoordinatorAutoTunePolicyManifestDigest,
+			PolicyManifestRefreshEpoch: cfg.Pipeline.CoordinatorAutoTunePolicyManifestRefreshEpoch,
+			PolicyActivationHoldTicks:  cfg.Pipeline.CoordinatorAutoTunePolicyActivationHoldTicks,
+		},
+		FetchWorkers:           cfg.Pipeline.FetchWorkers,
+		NormalizerWorkers:      cfg.Pipeline.NormalizerWorkers,
+		ChannelBufferSize:      cfg.Pipeline.ChannelBufferSize,
+		SidecarAddr:            cfg.Sidecar.Addr,
+		SidecarTimeout:         cfg.Sidecar.Timeout,
+		SidecarTLSEnabled:      cfg.Sidecar.TLSEnabled,
+		SidecarTLSCert:         cfg.Sidecar.TLSCert,
+		SidecarTLSKey:          cfg.Sidecar.TLSKey,
+		SidecarTLSCA:           cfg.Sidecar.TLSCA,
+		StreamTransportEnabled: streamTransportEnabled,
+		StreamBackend:          streamBackend,
+		StreamNamespace:        cfg.Pipeline.StreamNamespace,
+		StreamSessionID:        streamSessionID,
+		CommitInterleaver:      commitInterleaver,
+		ReorgDetectorInterval:  time.Duration(cfg.Pipeline.ReorgDetectorIntervalMs) * time.Millisecond,
+		FinalizerInterval:      time.Duration(cfg.Pipeline.FinalizerIntervalMs) * time.Millisecond,
+		IndexedBlocksRetention: int64(cfg.Pipeline.IndexedBlocksRetention),
+		AddressIndex:           cfg.Pipeline.AddressIndex,
+		Fetcher:                cfg.Pipeline.Fetcher,
+		Normalizer:             cfg.Pipeline.Normalizer,
+		Ingester:               cfg.Pipeline.Ingester,
+		Health:                 cfg.Pipeline.Health,
+		ConfigWatcher:          cfg.Pipeline.ConfigWatcher,
+	}
+}
+
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	logger := initLogger(cfg)
+
+	if err := logSecurityWarnings(cfg, logger); err != nil {
+		return err
+	}
+
+	shutdownTracing, err := initTracing(cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			logger.Warn("tracing shutdown error", "error", err)
+		}
+	}()
+
+	db, err := initDatabase(cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	streamSessionID := resolveStreamSessionID(cfg.Pipeline.StreamSessionID)
+	streamBackend, streamTransportEnabled, err := resolveStreamBackend(cfg, streamSessionID, logger)
+	if err != nil {
+		return fmt.Errorf("initialize stream transport: %w", err)
+	}
+	if streamBackend != nil {
+		defer streamBackend.Close()
+	}
+
+	repos := initRepositories(db)
 
 	allTargets := buildRuntimeTargets(cfg, logger)
 	targets, err := selectRuntimeTargets(allTargets, cfg.Runtime)
@@ -545,67 +625,14 @@ func run() error {
 		}
 	}
 
-	// Build alerter from config (needed by pipeline + reconciliation)
 	alerter := buildAlerter(cfg, logger)
-
-	// Create shared replay service
 	replayService := replay.NewService(db, repos.Balance, repos.Config, repos.IndexedBlock, logger)
 
 	registry := pipeline.NewRegistry()
 	pipelines := make([]*pipeline.Pipeline, 0, len(targets))
 	commitInterleaver := ingester.NewDeterministicMandatoryChainInterleaver(deterministicInterleaveMaxSkew)
 	for _, target := range targets {
-		pipelineCfg := pipeline.Config{
-			Chain:                      target.chain,
-			Network:                    target.network,
-			BatchSize:                  cfg.Pipeline.BatchSize,
-			IndexingInterval:           time.Duration(cfg.Pipeline.IndexingIntervalMs) * time.Millisecond,
-			ReorgDetectorMaxCheckDepth: cfg.ReorgDetector.MaxCheckDepth,
-			Alerter:                    alerter,
-			CoordinatorAutoTune: pipeline.CoordinatorAutoTuneConfig{
-				Enabled:                    cfg.Pipeline.CoordinatorAutoTuneEnabled,
-				MinBatchSize:               cfg.Pipeline.CoordinatorAutoTuneMinBatchSize,
-				MaxBatchSize:               cfg.Pipeline.CoordinatorAutoTuneMaxBatchSize,
-				StepUp:                     cfg.Pipeline.CoordinatorAutoTuneStepUp,
-				StepDown:                   cfg.Pipeline.CoordinatorAutoTuneStepDown,
-				LagHighWatermark:           cfg.Pipeline.CoordinatorAutoTuneLagHighWatermark,
-				LagLowWatermark:            cfg.Pipeline.CoordinatorAutoTuneLagLowWatermark,
-				QueueHighWatermarkPct:      cfg.Pipeline.CoordinatorAutoTuneQueueHighPct,
-				QueueLowWatermarkPct:       cfg.Pipeline.CoordinatorAutoTuneQueueLowPct,
-				HysteresisTicks:            cfg.Pipeline.CoordinatorAutoTuneHysteresisTicks,
-				TelemetryStaleTicks:        cfg.Pipeline.CoordinatorAutoTuneTelemetryStaleTicks,
-				TelemetryRecoveryTicks:     cfg.Pipeline.CoordinatorAutoTuneTelemetryRecoveryTicks,
-				OperatorOverrideBatch:      cfg.Pipeline.CoordinatorAutoTuneOperatorOverrideBatch,
-				OperatorReleaseHoldTicks:   cfg.Pipeline.CoordinatorAutoTuneOperatorReleaseTicks,
-				PolicyVersion:              cfg.Pipeline.CoordinatorAutoTunePolicyVersion,
-				PolicyManifestDigest:       cfg.Pipeline.CoordinatorAutoTunePolicyManifestDigest,
-				PolicyManifestRefreshEpoch: cfg.Pipeline.CoordinatorAutoTunePolicyManifestRefreshEpoch,
-				PolicyActivationHoldTicks:  cfg.Pipeline.CoordinatorAutoTunePolicyActivationHoldTicks,
-			},
-			FetchWorkers:           cfg.Pipeline.FetchWorkers,
-			NormalizerWorkers:      cfg.Pipeline.NormalizerWorkers,
-			ChannelBufferSize:      cfg.Pipeline.ChannelBufferSize,
-			SidecarAddr:            cfg.Sidecar.Addr,
-			SidecarTimeout:         cfg.Sidecar.Timeout,
-			SidecarTLSEnabled:      cfg.Sidecar.TLSEnabled,
-			SidecarTLSCert:         cfg.Sidecar.TLSCert,
-			SidecarTLSKey:          cfg.Sidecar.TLSKey,
-			SidecarTLSCA:           cfg.Sidecar.TLSCA,
-			StreamTransportEnabled: streamTransportEnabled,
-			StreamBackend:          streamBackend,
-			StreamNamespace:        cfg.Pipeline.StreamNamespace,
-			StreamSessionID:        streamSessionID,
-			CommitInterleaver:      commitInterleaver,
-			ReorgDetectorInterval:  time.Duration(cfg.Pipeline.ReorgDetectorIntervalMs) * time.Millisecond,
-			FinalizerInterval:      time.Duration(cfg.Pipeline.FinalizerIntervalMs) * time.Millisecond,
-			IndexedBlocksRetention: int64(cfg.Pipeline.IndexedBlocksRetention),
-			AddressIndex:           cfg.Pipeline.AddressIndex,
-			Fetcher:                cfg.Pipeline.Fetcher,
-			Normalizer:             cfg.Pipeline.Normalizer,
-			Ingester:               cfg.Pipeline.Ingester,
-			Health:                 cfg.Pipeline.Health,
-			ConfigWatcher:          cfg.Pipeline.ConfigWatcher,
-		}
+		pipelineCfg := buildPipelineConfig(cfg, target, alerter, streamTransportEnabled, streamBackend, streamSessionID, commitInterleaver)
 		p := pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL))
 		p.SetReplayService(replayService)
 		registry.Register(p)
@@ -627,19 +654,16 @@ func run() error {
 		return runHealthServer(gCtx, cfg.Server.HealthPort, cfg.Server.MetricsAuthUser, cfg.Server.MetricsAuthPass, checker, logger)
 	})
 
-	// Build reconciliation service
+	// Reconciliation service
 	reconService := reconciliation.NewService(
 		db.DB, repos.Balance, repos.WatchedAddr, repos.Token, alerter, logger,
 	)
 	reconService.SetSnapshotRepository(postgres.NewReconciliationSnapshotRepo(db.DB))
-	// Register balance query adapters for reconciliation
 	for _, target := range targets {
 		if bqa, ok := target.adapter.(chain.BalanceQueryAdapter); ok {
 			reconService.RegisterAdapter(target.chain, target.network, bqa)
 		}
 	}
-
-	// Start periodic reconciliation
 	if cfg.Reconciliation.IntervalMS > 0 {
 		reconInterval := time.Duration(cfg.Reconciliation.IntervalMS) * time.Millisecond
 		g.Go(func() error {
@@ -647,13 +671,11 @@ func run() error {
 		})
 	}
 
-	// Address book repo
-	addressBookRepo := postgres.NewAddressBookRepo(db.DB)
-
 	// Admin API server (optional)
 	if cfg.Server.AdminAddr != "" {
 		replayAdapter := pipeline.NewRegistryReplayAdapter(registry, replayService, repos.Config)
 		healthAdapter := pipeline.NewRegistryHealthAdapter(registry)
+		addressBookRepo := postgres.NewAddressBookRepo(db.DB)
 		adminSrv := admin.NewServer(repos.WatchedAddr, repos.Config, logger,
 			admin.WithReplayRequester(replayAdapter),
 			admin.WithHealthProvider(healthAdapter),

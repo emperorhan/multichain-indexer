@@ -337,7 +337,16 @@ func loadYAMLFile(cfg *Config) error {
 // applyEnvOverrides overrides config values with environment variables.
 // Only explicitly set env vars (via LookupEnv) override YAML values.
 func applyEnvOverrides(cfg *Config) {
-	// DB
+	applyInfraEnvOverrides(cfg)
+	applyChainEnvOverrides(cfg)
+	applyRuntimeEnvOverrides(cfg)
+	applyPipelineEnvOverrides(cfg)
+	applyServerEnvOverrides(cfg)
+	applyObservabilityEnvOverrides(cfg)
+}
+
+func applyInfraEnvOverrides(cfg *Config) {
+	// Database
 	overrideStr(&cfg.DB.URL, "DB_URL")
 	overrideInt(&cfg.DB.MaxOpenConns, "DB_MAX_OPEN_CONNS")
 	overrideInt(&cfg.DB.MaxIdleConns, "DB_MAX_IDLE_CONNS")
@@ -354,7 +363,9 @@ func applyEnvOverrides(cfg *Config) {
 	overrideStr(&cfg.Sidecar.TLSCert, "SIDECAR_TLS_CERT")
 	overrideStr(&cfg.Sidecar.TLSKey, "SIDECAR_TLS_KEY")
 	overrideStr(&cfg.Sidecar.TLSCA, "SIDECAR_TLS_CA")
+}
 
+func applyChainEnvOverrides(cfg *Config) {
 	// Solana
 	overrideStrAny(&cfg.Solana.RPCURL, "SOLANA_DEVNET_RPC_URL", "SOLANA_RPC_URL")
 	overrideStr(&cfg.Solana.Network, "SOLANA_NETWORK")
@@ -411,13 +422,20 @@ func applyEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.BSC.RateLimit.Burst, "BSC_RPC_BURST")
 	overrideInt(&cfg.BSC.MaxInitialLookbackBlocks, "BSC_MAX_INITIAL_LOOKBACK_BLOCKS")
 	overrideInt(&cfg.BSC.MaxConcurrentTxs, "BSC_MAX_CONCURRENT_TXS")
+}
 
-	// Runtime
+func applyRuntimeEnvOverrides(cfg *Config) {
 	overrideStrLower(&cfg.Runtime.DeploymentMode, "RUNTIME_DEPLOYMENT_MODE")
 	overrideStrLower(&cfg.Runtime.LikeGroup, "RUNTIME_LIKE_GROUP")
 	overrideCSVList(&cfg.Runtime.ChainTargets, "RUNTIME_CHAIN_TARGETS", "RUNTIME_CHAIN_TARGET")
 
-	// Pipeline
+	if len(cfg.Runtime.ChainTargets) > 0 {
+		cfg.Runtime.ChainTargets = normalizeCSVValues(cfg.Runtime.ChainTargets)
+	}
+}
+
+func applyPipelineEnvOverrides(cfg *Config) {
+	// Core pipeline settings
 	overrideInt(&cfg.Pipeline.ReorgDetectorIntervalMs, "REORG_DETECTOR_INTERVAL_MS")
 	overrideInt(&cfg.Pipeline.FinalizerIntervalMs, "FINALIZER_INTERVAL_MS")
 	overrideInt(&cfg.Pipeline.BTCFinalityConfirmations, "BTC_FINALITY_CONFIRMATIONS")
@@ -426,6 +444,9 @@ func applyEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Pipeline.BatchSize, "BATCH_SIZE")
 	overrideInt(&cfg.Pipeline.IndexingIntervalMs, "INDEXING_INTERVAL_MS")
 	overrideInt(&cfg.Pipeline.ChannelBufferSize, "CHANNEL_BUFFER_SIZE")
+	overrideInt(&cfg.Pipeline.IndexedBlocksRetention, "INDEXED_BLOCKS_RETENTION")
+
+	// Coordinator auto-tune
 	overrideBool(&cfg.Pipeline.CoordinatorAutoTuneEnabled, "COORDINATOR_AUTOTUNE_ENABLED")
 	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneMinBatchSize, "COORDINATOR_AUTOTUNE_MIN_BATCH_SIZE")
 	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneMaxBatchSize, "COORDINATOR_AUTOTUNE_MAX_BATCH_SIZE")
@@ -444,12 +465,13 @@ func applyEnvOverrides(cfg *Config) {
 	overrideStr(&cfg.Pipeline.CoordinatorAutoTunePolicyManifestDigest, "COORDINATOR_AUTOTUNE_POLICY_MANIFEST_DIGEST")
 	overrideInt64(&cfg.Pipeline.CoordinatorAutoTunePolicyManifestRefreshEpoch, "COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH")
 	overrideInt(&cfg.Pipeline.CoordinatorAutoTunePolicyActivationHoldTicks, "COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS")
-	overrideInt(&cfg.Pipeline.IndexedBlocksRetention, "INDEXED_BLOCKS_RETENTION")
+
+	// Stream transport
 	overrideBool(&cfg.Pipeline.StreamTransportEnabled, "PIPELINE_STREAM_TRANSPORT_ENABLED")
 	overrideStr(&cfg.Pipeline.StreamNamespace, "PIPELINE_STREAM_NAMESPACE")
 	overrideStr(&cfg.Pipeline.StreamSessionID, "PIPELINE_STREAM_SESSION_ID")
 
-	// Pipeline stage configs
+	// Per-stage configs
 	overrideInt(&cfg.Pipeline.Fetcher.RetryMaxAttempts, "FETCHER_RETRY_MAX_ATTEMPTS")
 	overrideInt(&cfg.Pipeline.Fetcher.BackoffInitialMs, "FETCHER_BACKOFF_INITIAL_MS")
 	overrideInt(&cfg.Pipeline.Fetcher.BackoffMaxMs, "FETCHER_BACKOFF_MAX_MS")
@@ -480,16 +502,21 @@ func applyEnvOverrides(cfg *Config) {
 	overrideCSVList(&cfg.Pipeline.PolygonWatchedAddresses, "POLYGON_WATCHED_ADDRESSES")
 	overrideCSVList(&cfg.Pipeline.ArbitrumWatchedAddresses, "ARBITRUM_WATCHED_ADDRESSES")
 	overrideCSVList(&cfg.Pipeline.BSCWatchedAddresses, "BSC_WATCHED_ADDRESSES")
+}
 
-	// Server
+func applyServerEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Server.HealthPort, "HEALTH_PORT")
 	overrideStr(&cfg.Server.MetricsAuthUser, "METRICS_AUTH_USER")
 	overrideStr(&cfg.Server.MetricsAuthPass, "METRICS_AUTH_PASS")
 	overrideStr(&cfg.Server.AdminAddr, "ADMIN_ADDR")
 	overrideStr(&cfg.Server.AdminAuthUser, "ADMIN_AUTH_USER")
 	overrideStr(&cfg.Server.AdminAuthPass, "ADMIN_AUTH_PASS")
+	overrideBool(&cfg.Server.AdminRateLimitEnabled, "ADMIN_RATE_LIMIT_ENABLED")
+	overrideBool(&cfg.Server.AdminRequireAuth, "ADMIN_REQUIRE_AUTH")
+}
 
-	// Log
+func applyObservabilityEnvOverrides(cfg *Config) {
+	// Logging
 	overrideStr(&cfg.Log.Level, "LOG_LEVEL")
 
 	// Tracing
@@ -498,7 +525,7 @@ func applyEnvOverrides(cfg *Config) {
 	overrideBool(&cfg.Tracing.Insecure, "OTEL_EXPORTER_OTLP_INSECURE")
 	overrideFloat64(&cfg.Tracing.SampleRatio, "OTEL_TRACE_SAMPLE_RATIO")
 
-	// Alert
+	// Alerting
 	overrideStr(&cfg.Alert.SlackWebhookURL, "SLACK_WEBHOOK_URL")
 	overrideStr(&cfg.Alert.WebhookURL, "ALERT_WEBHOOK_URL")
 	overrideInt(&cfg.Alert.CooldownMS, "ALERT_COOLDOWN_MS")
@@ -508,15 +535,6 @@ func applyEnvOverrides(cfg *Config) {
 
 	// Reorg detector
 	overrideInt(&cfg.ReorgDetector.MaxCheckDepth, "REORG_DETECTOR_MAX_CHECK_DEPTH")
-
-	// Admin security
-	overrideBool(&cfg.Server.AdminRateLimitEnabled, "ADMIN_RATE_LIMIT_ENABLED")
-	overrideBool(&cfg.Server.AdminRequireAuth, "ADMIN_REQUIRE_AUTH")
-
-	// Normalize chain targets
-	if len(cfg.Runtime.ChainTargets) > 0 {
-		cfg.Runtime.ChainTargets = normalizeCSVValues(cfg.Runtime.ChainTargets)
-	}
 }
 
 // applyDefaults sets default values for zero-value fields.

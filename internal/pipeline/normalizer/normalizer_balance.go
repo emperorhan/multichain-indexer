@@ -16,6 +16,74 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 )
 
+// buildRawBalanceEvents converts sidecar raw events into NormalizedBalanceEvents,
+// filtering by watchedAddress. When handleSelfTransfer is true, transfer events
+// where counterparty == watchedAddress are emitted as delta=0 SELF_TRANSFER events.
+func buildRawBalanceEvents(
+	rawEvents []*sidecarv1.BalanceEventInfo,
+	watchedAddress string,
+	handleSelfTransfer bool,
+) []event.NormalizedBalanceEvent {
+	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+2)
+
+	for _, be := range rawEvents {
+		if be == nil {
+			continue
+		}
+		if be.Address != watchedAddress {
+			continue
+		}
+		category := model.EventCategory(be.EventCategory)
+
+		if handleSelfTransfer && category == model.EventCategoryTransfer && be.CounterpartyAddress == watchedAddress {
+			chainData, _ := json.Marshal(be.Metadata)
+			normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
+				OuterInstructionIndex: int(be.OuterInstructionIndex),
+				InnerInstructionIndex: int(be.InnerInstructionIndex),
+				ActivityType:          model.ActivitySelfTransfer,
+				EventAction:           "self_transfer",
+				ProgramID:             be.ProgramId,
+				ContractAddress:       be.ContractAddress,
+				Address:               be.Address,
+				CounterpartyAddress:   be.CounterpartyAddress,
+				Delta:                 "0",
+				ChainData:             chainData,
+				TokenSymbol:           be.TokenSymbol,
+				TokenName:             be.TokenName,
+				TokenDecimals:         int(be.TokenDecimals),
+				TokenType:             model.TokenType(be.TokenType),
+				AssetID:               be.ContractAddress,
+			})
+			continue
+		}
+
+		activityType := model.ClassifyActivity(category, be.Delta, be.Address == watchedAddress)
+		chainData, _ := json.Marshal(be.Metadata)
+
+		normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
+			OuterInstructionIndex: int(be.OuterInstructionIndex),
+			InnerInstructionIndex: int(be.InnerInstructionIndex),
+			ActivityType:          activityType,
+			EventAction:           be.EventAction,
+			ProgramID:             be.ProgramId,
+			ContractAddress:       be.ContractAddress,
+			Address:               be.Address,
+			CounterpartyAddress:   be.CounterpartyAddress,
+			Delta:                 be.Delta,
+			ChainData:             chainData,
+			TokenSymbol:           be.TokenSymbol,
+			TokenName:             be.TokenName,
+			TokenDecimals:         int(be.TokenDecimals),
+			TokenType:             model.TokenType(be.TokenType),
+			AssetID:               be.ContractAddress,
+		})
+	}
+
+	return normalizedEvents
+}
+
+// --- Solana ---
+
 func buildCanonicalSolanaBalanceEvents(
 	chain model.Chain,
 	network model.Network,
@@ -24,61 +92,7 @@ func buildCanonicalSolanaBalanceEvents(
 	watchedAddress string,
 ) []event.NormalizedBalanceEvent {
 	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+1)
-
-	for _, be := range rawEvents {
-		if be == nil {
-			continue
-		}
-		// Filter: only events for the watched address
-		if be.Address != watchedAddress {
-			continue
-		}
-		category := model.EventCategory(be.EventCategory)
-		// Self-transfer: from == to → delta=0 SELF_TRANSFER 이벤트로 변환 (거래 이력 보존).
-		// SPL token 단방향 bug도 여기서 해결됨.
-		if category == model.EventCategoryTransfer && be.CounterpartyAddress == watchedAddress {
-			chainData, _ := json.Marshal(be.Metadata)
-			normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
-				OuterInstructionIndex: int(be.OuterInstructionIndex),
-				InnerInstructionIndex: int(be.InnerInstructionIndex),
-				ActivityType:          model.ActivitySelfTransfer,
-				EventAction:           "self_transfer",
-				ProgramID:             be.ProgramId,
-				ContractAddress:       be.ContractAddress,
-				Address:               be.Address,
-				CounterpartyAddress:   be.CounterpartyAddress,
-				Delta:                 "0",
-				ChainData:             chainData,
-				TokenSymbol:           be.TokenSymbol,
-				TokenName:             be.TokenName,
-				TokenDecimals:         int(be.TokenDecimals),
-				TokenType:             model.TokenType(be.TokenType),
-				AssetID:               be.ContractAddress,
-			})
-			continue
-		}
-		activityType := model.ClassifyActivity(category, be.Delta, be.Address == watchedAddress)
-		chainData, _ := json.Marshal(be.Metadata)
-
-		normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
-			OuterInstructionIndex: int(be.OuterInstructionIndex),
-			InnerInstructionIndex: int(be.InnerInstructionIndex),
-			ActivityType:          activityType,
-			EventAction:           be.EventAction,
-			ProgramID:             be.ProgramId,
-			ContractAddress:       be.ContractAddress,
-			Address:               be.Address,
-			CounterpartyAddress:   be.CounterpartyAddress,
-			Delta:                 be.Delta,
-			ChainData:             chainData,
-			TokenSymbol:           be.TokenSymbol,
-			TokenName:             be.TokenName,
-			TokenDecimals:         int(be.TokenDecimals),
-			TokenType:             model.TokenType(be.TokenType),
-			AssetID:               be.ContractAddress,
-		})
-	}
+	normalizedEvents := buildRawBalanceEvents(rawEvents, watchedAddress, true)
 
 	// Fee events: only emit if feePayer is the watched address
 	if feePayer == watchedAddress && shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount) && !hasSolanaFeeEvent(normalizedEvents, feePayer) {
@@ -86,859 +100,6 @@ func buildCanonicalSolanaBalanceEvents(
 	}
 
 	return canonicalizeSolanaBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)
-}
-
-func buildCanonicalBaseBalanceEvents(
-	chain model.Chain,
-	network model.Network,
-	txHash, txStatus, feePayer, feeAmount, finalityState string,
-	rawEvents []*sidecarv1.BalanceEventInfo,
-	watchedAddress string,
-) []event.NormalizedBalanceEvent {
-	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+2)
-	meta := collectBaseMetadata(rawEvents)
-	missingDataFee := !hasBaseDataFee(meta)
-	eventPath := resolveBaseFeeEventPath(meta)
-
-	for _, be := range rawEvents {
-		if be == nil {
-			continue
-		}
-		// Filter: only events for the watched address
-		if be.Address != watchedAddress {
-			continue
-		}
-		category := model.EventCategory(be.EventCategory)
-		// Self-transfer: EVM native/ERC-20 → delta=0 SELF_TRANSFER 이벤트로 변환 (거래 이력 보존).
-		if category == model.EventCategoryTransfer && be.CounterpartyAddress == watchedAddress {
-			chainData, _ := json.Marshal(be.Metadata)
-			normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
-				OuterInstructionIndex: int(be.OuterInstructionIndex),
-				InnerInstructionIndex: int(be.InnerInstructionIndex),
-				ActivityType:          model.ActivitySelfTransfer,
-				EventAction:           "self_transfer",
-				ProgramID:             be.ProgramId,
-				ContractAddress:       be.ContractAddress,
-				Address:               be.Address,
-				CounterpartyAddress:   be.CounterpartyAddress,
-				Delta:                 "0",
-				ChainData:             chainData,
-				TokenSymbol:           be.TokenSymbol,
-				TokenName:             be.TokenName,
-				TokenDecimals:         int(be.TokenDecimals),
-				TokenType:             model.TokenType(be.TokenType),
-				AssetID:               be.ContractAddress,
-			})
-			continue
-		}
-		activityType := model.ClassifyActivity(category, be.Delta, be.Address == watchedAddress)
-		chainData, _ := json.Marshal(be.Metadata)
-
-		normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
-			OuterInstructionIndex: int(be.OuterInstructionIndex),
-			InnerInstructionIndex: int(be.InnerInstructionIndex),
-			ActivityType:          activityType,
-			EventAction:           be.EventAction,
-			ProgramID:             be.ProgramId,
-			ContractAddress:       be.ContractAddress,
-			Address:               be.Address,
-			CounterpartyAddress:   be.CounterpartyAddress,
-			Delta:                 be.Delta,
-			ChainData:             chainData,
-			TokenSymbol:           be.TokenSymbol,
-			TokenName:             be.TokenName,
-			TokenDecimals:         int(be.TokenDecimals),
-			TokenType:             model.TokenType(be.TokenType),
-			AssetID:               be.ContractAddress,
-		})
-	}
-
-	if feePayer == watchedAddress && shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount) {
-		nativeToken := evmNativeToken(chain)
-		if isEVML1Chain(chain) {
-			// L1: single FEE event (no execution/data split)
-			normalizedEvents = append(normalizedEvents, buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath, nativeToken))
-		} else {
-			// L2: dual fee events (fee_execution_l2 + fee_data_l1)
-			executionFee := deriveBaseExecutionFee(feeAmount, meta)
-			dataFee, hasDataFee := deriveBaseDataFee(meta)
-
-			executionEvent := buildBaseFeeBalanceEvent(
-				model.ActivityFeeExecutionL2,
-				feePayer,
-				executionFee.String(),
-				eventPath,
-				"net_base",
-			)
-			marker := map[string]string{}
-			if hasBaseFeeComponentMetaMismatch(feeAmount, meta) {
-				marker["fee_total_mismatch"] = "true"
-				execAmount, hasExecution := deriveBaseExecutionFeeFromMetadata(meta)
-				dataAmount, hasData := deriveBaseDataFee(meta)
-				if !hasExecution {
-					execAmount = big.NewInt(0)
-				}
-				if !hasData {
-					dataAmount = big.NewInt(0)
-				}
-				marker["fee_execution_total_from_components"] = execAmount.String()
-				marker["fee_data_total_from_components"] = dataAmount.String()
-				marker["fee_amount_total"] = feeAmount
-			}
-			if missingDataFee {
-				marker["data_fee_l1_unavailable"] = "true"
-			}
-			if len(marker) > 0 {
-				executionEvent.ChainData = mergeMetadataJSON(executionEvent.ChainData, marker)
-			}
-
-			normalizedEvents = append(normalizedEvents, executionEvent)
-
-			if hasDataFee {
-				normalizedEvents = append(
-					normalizedEvents,
-					buildBaseFeeBalanceEvent(
-						model.ActivityFeeDataL1,
-						feePayer,
-						dataFee.String(),
-						eventPath,
-						"net_base_data",
-					),
-				)
-			}
-		}
-	}
-
-	return canonicalizeBaseBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)
-}
-
-func buildCanonicalBTCBalanceEvents(
-	chain model.Chain,
-	network model.Network,
-	txHash, txStatus, feePayer, feeAmount, finalityState string,
-	rawEvents []*sidecarv1.BalanceEventInfo,
-	watchedAddress string,
-) []event.NormalizedBalanceEvent {
-	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+1)
-
-	for _, be := range rawEvents {
-		if be == nil {
-			continue
-		}
-		// Filter: only events for the watched address
-		if be.Address != watchedAddress {
-			continue
-		}
-		category := model.EventCategory(be.EventCategory)
-		activityType := model.ClassifyActivity(category, be.Delta, be.Address == watchedAddress)
-		chainData, _ := json.Marshal(be.Metadata)
-		normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
-			OuterInstructionIndex: int(be.OuterInstructionIndex),
-			InnerInstructionIndex: int(be.InnerInstructionIndex),
-			ActivityType:          activityType,
-			EventAction:           be.EventAction,
-			ProgramID:             be.ProgramId,
-			ContractAddress:       be.ContractAddress,
-			Address:               be.Address,
-			CounterpartyAddress:   be.CounterpartyAddress,
-			Delta:                 be.Delta,
-			ChainData:             chainData,
-			TokenSymbol:           be.TokenSymbol,
-			TokenName:             be.TokenName,
-			TokenDecimals:         int(be.TokenDecimals),
-			TokenType:             model.TokenType(be.TokenType),
-			AssetID:               be.ContractAddress,
-		})
-	}
-
-	// Fee events: only emit if feePayer is the watched address
-	if feePayer == watchedAddress && shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount, normalizedEvents) && !hasBTCFeeEvent(normalizedEvents, feePayer) {
-		normalizedEvents = append(normalizedEvents, buildBTCFeeBalanceEvent(feePayer, feeAmount))
-	}
-
-	return canonicalizeBTCBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)
-}
-
-func collectBaseMetadata(rawEvents []*sidecarv1.BalanceEventInfo) map[string]string {
-	out := make(map[string]string, len(rawEvents))
-	for _, be := range rawEvents {
-		if be == nil {
-			continue
-		}
-		for k, v := range be.Metadata {
-			if _, exists := out[k]; exists {
-				continue
-			}
-			out[k] = v
-		}
-	}
-	reconcileBaseFeeComponentMetadata(out, rawEvents)
-	return out
-}
-
-var baseFeePathMetadataKeys = [...]string{
-	"event_path",
-	"log_path",
-	"log_index",
-	"base_log_index",
-	"base_event_path",
-}
-
-var baseFeeComponentMetadataKeys = [...]string{
-	"fee_execution_l2",
-	"fee_data_l1",
-	"data_fee_l1",
-	"l1_data_fee",
-	"l1_fee",
-}
-
-type baseFeeMetadataCandidate struct {
-	metadata      map[string]string
-	hasExecution  bool
-	execution     *big.Int
-	hasData       bool
-	data          *big.Int
-	pathHint      bool
-	metadataCount int
-	fingerprint   string
-}
-
-func newBaseFeeMetadataCandidate(be *sidecarv1.BalanceEventInfo) *baseFeeMetadataCandidate {
-	if be == nil || len(be.Metadata) == 0 {
-		return nil
-	}
-	execution, hasExecution := deriveBaseExecutionFeeFromMetadata(be.Metadata)
-	data, hasData := deriveBaseDataFee(be.Metadata)
-	return &baseFeeMetadataCandidate{
-		metadata:      be.Metadata,
-		hasExecution:  hasExecution,
-		execution:     execution,
-		hasData:       hasData,
-		data:          data,
-		pathHint:      resolveBaseMetadataEventPath(be.Metadata) != "",
-		metadataCount: len(be.Metadata),
-		fingerprint:   decodedEventFingerprint(model.ChainBase, be),
-	}
-}
-
-func shouldPreferBaseFeeMetadataCandidate(existing, incoming *baseFeeMetadataCandidate) bool {
-	if existing == nil {
-		return incoming != nil
-	}
-	if incoming == nil {
-		return false
-	}
-	if existing.pathHint != incoming.pathHint {
-		return incoming.pathHint
-	}
-	if existing.metadataCount != incoming.metadataCount {
-		return incoming.metadataCount > existing.metadataCount
-	}
-	if existing.fingerprint != incoming.fingerprint {
-		return incoming.fingerprint < existing.fingerprint
-	}
-	return false
-}
-
-func pickBestBaseFeeMetadataCandidate(
-	candidates []*baseFeeMetadataCandidate,
-	predicate func(*baseFeeMetadataCandidate) bool,
-) *baseFeeMetadataCandidate {
-	var best *baseFeeMetadataCandidate
-	for _, candidate := range candidates {
-		if candidate == nil {
-			continue
-		}
-		if predicate != nil && !predicate(candidate) {
-			continue
-		}
-		if best == nil || shouldPreferBaseFeeMetadataCandidate(best, candidate) {
-			best = candidate
-		}
-	}
-	return best
-}
-
-func applyBasePathMetadata(out map[string]string, metadata map[string]string) {
-	for _, key := range baseFeePathMetadataKeys {
-		delete(out, key)
-	}
-	if len(metadata) == 0 {
-		return
-	}
-	for _, key := range baseFeePathMetadataKeys {
-		value := strings.TrimSpace(metadata[key])
-		if value == "" {
-			continue
-		}
-		out[key] = value
-	}
-}
-
-func reconcileBaseFeeComponentMetadata(out map[string]string, rawEvents []*sidecarv1.BalanceEventInfo) {
-	candidates := make([]*baseFeeMetadataCandidate, 0, len(rawEvents))
-	for _, be := range rawEvents {
-		candidate := newBaseFeeMetadataCandidate(be)
-		if candidate != nil {
-			candidates = append(candidates, candidate)
-		}
-	}
-	if len(candidates) == 0 {
-		return
-	}
-
-	bestBoth := pickBestBaseFeeMetadataCandidate(candidates, func(candidate *baseFeeMetadataCandidate) bool {
-		return candidate.hasExecution && candidate.hasData
-	})
-	bestExecution := pickBestBaseFeeMetadataCandidate(candidates, func(candidate *baseFeeMetadataCandidate) bool {
-		return candidate.hasExecution
-	})
-	bestData := pickBestBaseFeeMetadataCandidate(candidates, func(candidate *baseFeeMetadataCandidate) bool {
-		return candidate.hasData
-	})
-
-	selected := bestBoth
-	if selected == nil {
-		selected = bestExecution
-	}
-	if selected == nil {
-		selected = bestData
-	}
-	if selected == nil {
-		return
-	}
-
-	for _, key := range baseFeeComponentMetadataKeys {
-		delete(out, key)
-	}
-	executionSource := bestExecution
-	dataSource := bestData
-	if bestBoth != nil {
-		executionSource = bestBoth
-		dataSource = bestBoth
-	}
-	if executionSource != nil && executionSource.execution != nil {
-		out["fee_execution_l2"] = executionSource.execution.String()
-	}
-	if dataSource != nil && dataSource.data != nil {
-		out["fee_data_l1"] = dataSource.data.String()
-	}
-
-	pathSource := selected
-	if resolveBaseMetadataEventPath(pathSource.metadata) == "" {
-		bestPath := pickBestBaseFeeMetadataCandidate(candidates, func(candidate *baseFeeMetadataCandidate) bool {
-			return candidate.pathHint
-		})
-		if bestPath != nil {
-			pathSource = bestPath
-		}
-	}
-	applyBasePathMetadata(out, pathSource.metadata)
-}
-
-type evmNativeTokenInfo struct {
-	Symbol   string
-	Name     string
-	Decimals int
-}
-
-func evmNativeToken(chain model.Chain) evmNativeTokenInfo {
-	switch chain {
-	case model.ChainPolygon:
-		return evmNativeTokenInfo{Symbol: "POL", Name: "POL", Decimals: 18}
-	case model.ChainBSC:
-		return evmNativeTokenInfo{Symbol: "BNB", Name: "BNB", Decimals: 18}
-	default:
-		return evmNativeTokenInfo{Symbol: "ETH", Name: "Ether", Decimals: 18}
-	}
-}
-
-func isEVML1Chain(chain model.Chain) bool {
-	switch chain {
-	case model.ChainEthereum, model.ChainPolygon, model.ChainBSC:
-		return true
-	default:
-		return false
-	}
-}
-
-func evmDecoderVersion(chain model.Chain) string {
-	if isEVML1Chain(chain) {
-		return "evm-l1-decoder-v1"
-	}
-	return "base-decoder-v1"
-}
-
-func buildEthL1FeeBalanceEvent(feePayer, feeAmount, eventPath string) event.NormalizedBalanceEvent {
-	return buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath, evmNativeToken(model.ChainEthereum))
-}
-
-func buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath string, token evmNativeTokenInfo) event.NormalizedBalanceEvent {
-	return event.NormalizedBalanceEvent{
-		OuterInstructionIndex: -1,
-		InnerInstructionIndex: -1,
-		ActivityType:          model.ActivityFee,
-		EventAction:           "net_eth",
-		ProgramID:             "0x0000000000000000000000000000000000000000000000000000000000000000",
-		ContractAddress:       token.Symbol,
-		Address:               feePayer,
-		CounterpartyAddress:   "",
-		Delta:                 canonicalFeeDelta(feeAmount),
-		ChainData:             json.RawMessage("{}"),
-		TokenSymbol:           token.Symbol,
-		TokenName:             token.Name,
-		TokenDecimals:         token.Decimals,
-		TokenType:             model.TokenTypeNative,
-		AssetID:               token.Symbol,
-		EventPath:             eventPath,
-	}
-}
-
-func buildBaseFeeBalanceEvent(
-	activityType model.ActivityType,
-	feePayer, feeAmount string,
-	eventPath, eventAction string,
-) event.NormalizedBalanceEvent {
-	return event.NormalizedBalanceEvent{
-		OuterInstructionIndex: -1,
-		InnerInstructionIndex: -1,
-		ActivityType:          activityType,
-		EventAction:           eventAction,
-		ProgramID:             "0x0000000000000000000000000000000000000000000000000000000000000000",
-		ContractAddress:       "ETH",
-		Address:               feePayer,
-		CounterpartyAddress:   "",
-		Delta:                 canonicalFeeDelta(feeAmount),
-		ChainData:             json.RawMessage("{}"),
-		TokenSymbol:           "ETH",
-		TokenName:             "Ether",
-		TokenDecimals:         18,
-		TokenType:             model.TokenTypeNative,
-		AssetID:               "ETH",
-		EventPath:             eventPath,
-	}
-}
-
-func resolveBaseFeeEventPath(metadata map[string]string) string {
-	if p := resolveBaseMetadataEventPath(metadata); p != "" {
-		return p
-	}
-	return "log:0"
-}
-
-func resolveBaseMetadataEventPath(metadata map[string]string) string {
-	if len(metadata) == 0 {
-		return ""
-	}
-	if p := metadata["event_path"]; p != "" {
-		return p
-	}
-	if p := metadata["log_path"]; p != "" {
-		return p
-	}
-	if idx := metadata["log_index"]; idx != "" {
-		return "log:" + idx
-	}
-	if idx := metadata["base_log_index"]; idx != "" {
-		return "log:" + idx
-	}
-	if p := metadata["base_event_path"]; p != "" {
-		return p
-	}
-	return ""
-}
-
-func shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount string) bool {
-	return shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount)
-}
-
-func deriveBaseExecutionFee(totalFee string, metadata map[string]string) *big.Int {
-	if fee, ok := deriveBaseExecutionFeeFromMetadata(metadata); ok {
-		return fee
-	}
-	if fee, ok := parseBigInt(totalFee); ok {
-		return fee
-	}
-	return big.NewInt(0)
-}
-
-func deriveBaseExecutionFeeFromMetadata(metadata map[string]string) (*big.Int, bool) {
-	if fee, ok := parseBigInt(metadata["fee_execution_l2"]); ok {
-		return fee, true
-	}
-	if gasUsed, ok1 := parseBigInt(metadata["gas_used"]); ok1 {
-		if gasPrice, ok2 := parseBigInt(metadata["effective_gas_price"]); ok2 {
-			return gasUsed.Mul(gasUsed, gasPrice), true
-		}
-	}
-	if gasUsed, ok1 := parseBigInt(metadata["base_gas_used"]); ok1 {
-		if gasPrice, ok2 := parseBigInt(metadata["base_effective_gas_price"]); ok2 {
-			return gasUsed.Mul(gasUsed, gasPrice), true
-		}
-	}
-	return nil, false
-}
-
-func deriveBaseDataFee(metadata map[string]string) (*big.Int, bool) {
-	keys := []string{
-		"fee_data_l1",
-		"data_fee_l1",
-		"l1_data_fee",
-		"l1_fee",
-	}
-	for _, key := range keys {
-		if fee, ok := parseBigInt(metadata[key]); ok {
-			return fee, true
-		}
-	}
-	return big.NewInt(0), false
-}
-
-func hasBaseDataFee(metadata map[string]string) bool {
-	_, has := deriveBaseDataFee(metadata)
-	return has
-}
-
-func hasBaseFeeComponentMetaMismatch(totalFee string, metadata map[string]string) bool {
-	total, ok := parseBigInt(totalFee)
-	if !ok || total.Sign() == 0 {
-		return false
-	}
-
-	exec, hasExecutionFee := deriveBaseExecutionFeeFromMetadata(metadata)
-	data, hasDataFee := deriveBaseDataFee(metadata)
-	if !hasExecutionFee || !hasDataFee {
-		return false
-	}
-
-	sum := new(big.Int).Add(exec, data)
-	return sum.Cmp(total) != 0
-}
-
-func parseBigInt(value string) (*big.Int, bool) {
-	raw := strings.TrimSpace(value)
-	if raw == "" {
-		return nil, false
-	}
-	if raw[0] == '+' || raw[0] == '-' {
-		raw = raw[1:]
-	}
-	if raw == "" {
-		return nil, false
-	}
-	parsed := new(big.Int)
-	if _, ok := parsed.SetString(raw, 10); !ok {
-		return nil, false
-	}
-	return parsed, true
-}
-
-func parseSignedBigInt(value string) (*big.Int, bool) {
-	raw := strings.TrimSpace(value)
-	if raw == "" {
-		return nil, false
-	}
-	parsed := new(big.Int)
-	if _, ok := parsed.SetString(raw, 10); !ok {
-		return nil, false
-	}
-	return parsed, true
-}
-
-func compareCanonicalDeltas(left, right string) int {
-	leftValue, leftOK := parseSignedBigInt(left)
-	rightValue, rightOK := parseSignedBigInt(right)
-	if !leftOK || !rightOK {
-		return strings.Compare(strings.TrimSpace(left), strings.TrimSpace(right))
-	}
-	return leftValue.Cmp(rightValue)
-}
-
-func mergeMetadataJSON(original json.RawMessage, additions map[string]string) json.RawMessage {
-	base := map[string]string{}
-	if len(original) > 0 && string(original) != "null" {
-		_ = json.Unmarshal(original, &base)
-	}
-	for k, v := range additions {
-		base[k] = v
-	}
-	marshaled, _ := json.Marshal(base)
-	return marshaled
-}
-
-func canonicalizeBaseBalanceEvents(
-	chain model.Chain,
-	network model.Network,
-	txHash string,
-	finalityState string,
-	normalizedEvents []event.NormalizedBalanceEvent,
-) []event.NormalizedBalanceEvent {
-	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	eventsByID := make(map[string]event.NormalizedBalanceEvent, len(normalizedEvents))
-	decoderVersion := evmDecoderVersion(chain)
-
-	for _, be := range normalizedEvents {
-		if be.ActivityType == model.ActivityFeeExecutionL2 || be.ActivityType == model.ActivityFeeDataL1 {
-			be.EventAction = string(be.ActivityType)
-			be.Delta = canonicalFeeDelta(be.Delta)
-		} else if be.ActivityType == model.ActivityFee {
-			be.Delta = canonicalFeeDelta(be.Delta)
-		}
-		if metadataPath := resolveBaseMetadataEventPath(metadataFromChainData(be.ChainData)); metadataPath != "" {
-			be.EventPath = metadataPath
-		}
-		be.EventPath = strings.TrimSpace(be.EventPath)
-		if be.EventPath == "" {
-			be.EventPath = balanceEventPath(int32(be.OuterInstructionIndex), int32(be.InnerInstructionIndex))
-		}
-
-		be.Address = canonicalizeAddressIdentity(chain, be.Address)
-		be.CounterpartyAddress = canonicalizeAddressIdentity(chain, be.CounterpartyAddress)
-		be.ContractAddress = canonicalizeAddressIdentity(chain, be.ContractAddress)
-		be.AssetID = canonicalizeAddressIdentity(chain, be.AssetID)
-		if be.AssetID == "" {
-			be.AssetID = be.ContractAddress
-		}
-
-		assetType := mapTokenTypeToAssetType(be.TokenType)
-		if isBaseFeeActivity(be.ActivityType) || be.ActivityType == model.ActivityFee {
-			assetType = "fee"
-		}
-
-		be.ActorAddress = canonicalizeAddressIdentity(chain, be.Address)
-		be.AssetType = assetType
-		be.EventPathType = "base_log"
-		be.FinalityState = finalityState
-		be.DecoderVersion = decoderVersion
-		be.SchemaVersion = "v2"
-		be.EventID = buildCanonicalEventID(
-			chain, network,
-			txHash, be.EventPath,
-			be.ActorAddress, be.AssetID, be.ActivityType,
-		)
-
-		existing, ok := eventsByID[be.EventID]
-		if !ok || shouldReplaceCanonicalBaseEvent(existing, be) {
-			eventsByID[be.EventID] = be
-		}
-	}
-
-	events := make([]event.NormalizedBalanceEvent, 0, len(eventsByID))
-	for _, be := range eventsByID {
-		events = append(events, be)
-	}
-
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].EventID < events[j].EventID
-	})
-
-	return events
-}
-
-func isBaseFeeActivity(activityType model.ActivityType) bool {
-	switch activityType {
-	case model.ActivityFeeExecutionL2, model.ActivityFeeDataL1:
-		return true
-	default:
-		return false
-	}
-}
-
-func canonicalizeBTCBalanceEvents(
-	chain model.Chain,
-	network model.Network,
-	txHash string,
-	finalityState string,
-	normalizedEvents []event.NormalizedBalanceEvent,
-) []event.NormalizedBalanceEvent {
-	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	eventsByID := make(map[string]event.NormalizedBalanceEvent, len(normalizedEvents))
-
-	for _, be := range normalizedEvents {
-		metadata := metadataFromChainData(be.ChainData)
-		be.EventPath = resolveBTCEventPathFromMetadata(metadata, int32(be.OuterInstructionIndex))
-		if be.EventPath == "" {
-			be.EventPath = balanceEventPath(int32(be.OuterInstructionIndex), int32(be.InnerInstructionIndex))
-		}
-
-		be.Address = canonicalizeAddressIdentity(chain, be.Address)
-		be.CounterpartyAddress = canonicalizeAddressIdentity(chain, be.CounterpartyAddress)
-		be.ContractAddress = canonicalizeBTCAssetID(be.ContractAddress)
-		be.AssetID = canonicalizeBTCAssetID(be.AssetID)
-		if be.AssetID == "" {
-			be.AssetID = be.ContractAddress
-		}
-
-		assetType := mapTokenTypeToAssetType(be.TokenType)
-		if be.ActivityType == model.ActivityFee {
-			assetType = "fee"
-		}
-
-		be.ActorAddress = canonicalizeAddressIdentity(chain, be.Address)
-		be.AssetType = assetType
-		if be.ActivityType == model.ActivityFee {
-			be.EventPathType = "btc_fee"
-		} else {
-			be.EventPathType = "btc_utxo"
-		}
-		be.FinalityState = finalityState
-		be.DecoderVersion = "btc-decoder-v1"
-		be.SchemaVersion = "v2"
-		be.EventID = buildCanonicalEventID(
-			chain, network,
-			txHash, be.EventPath,
-			be.ActorAddress, be.AssetID, be.ActivityType,
-		)
-
-		existing, ok := eventsByID[be.EventID]
-		if !ok || shouldReplaceCanonicalBTCEvent(existing, be) {
-			eventsByID[be.EventID] = be
-		}
-	}
-
-	events := make([]event.NormalizedBalanceEvent, 0, len(eventsByID))
-	for _, be := range eventsByID {
-		events = append(events, be)
-	}
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].EventID < events[j].EventID
-	})
-	return events
-}
-
-func resolveBTCEventPathFromMetadata(metadata map[string]string, outerInstructionIndex int32) string {
-	if metadata == nil {
-		return ""
-	}
-	eventPath := strings.TrimSpace(metadata["event_path"])
-	if eventPath != "" {
-		return eventPath
-	}
-	utxoPathType := strings.ToLower(strings.TrimSpace(metadata["utxo_path_type"]))
-	if (utxoPathType == "vin" || utxoPathType == "vout") && outerInstructionIndex >= 0 {
-		return fmt.Sprintf("%s:%d", utxoPathType, outerInstructionIndex)
-	}
-	return ""
-}
-
-func shouldReplaceCanonicalBTCEvent(existing, incoming event.NormalizedBalanceEvent) bool {
-	if cmp := compareFinalityStateStrength(existing.FinalityState, incoming.FinalityState); cmp != 0 {
-		return cmp < 0
-	}
-	if existing.EventAction != incoming.EventAction {
-		return incoming.EventAction < existing.EventAction
-	}
-	if existing.ContractAddress != incoming.ContractAddress {
-		return incoming.ContractAddress < existing.ContractAddress
-	}
-	if existing.CounterpartyAddress != incoming.CounterpartyAddress {
-		return incoming.CounterpartyAddress < existing.CounterpartyAddress
-	}
-	return compareCanonicalDeltas(existing.Delta, incoming.Delta) > 0
-}
-
-func canonicalizeBTCAssetID(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "BTC"
-	}
-	if strings.EqualFold(trimmed, "btc") {
-		return "BTC"
-	}
-	return trimmed
-}
-
-func shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount string, rawEvents []event.NormalizedBalanceEvent) bool {
-	if !shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount) {
-		return false
-	}
-	return !hasBTCFeeRepresentedAsChangeOutput(rawEvents, feePayer, feeAmount)
-}
-
-func hasBTCFeeRepresentedAsChangeOutput(events []event.NormalizedBalanceEvent, feePayer, feeAmount string) bool {
-	feePayer = canonicalizeAddressIdentity(model.ChainBTC, feePayer)
-	if feePayer == "" {
-		return false
-	}
-
-	fee, ok := parseBigInt(feeAmount)
-	if !ok || fee.Sign() == 0 {
-		return false
-	}
-
-	hasInputSpend := false
-	hasRecipient := false
-	hasEqualFeeChangeOutput := false
-
-	for _, be := range events {
-		if be.ActivityType != model.ActivityDeposit && be.ActivityType != model.ActivityWithdrawal {
-			continue
-		}
-		action := strings.TrimSpace(be.EventAction)
-		if action == "vin_spend" {
-			hasInputSpend = true
-			continue
-		}
-		if action != "vout_receive" {
-			continue
-		}
-
-		beDelta, ok := parseBigInt(be.Delta)
-		if !ok || beDelta.Sign() == 0 {
-			continue
-		}
-
-		address := canonicalizeAddressIdentity(model.ChainBTC, be.Address)
-		if address == feePayer {
-			if beDelta.Cmp(fee) == 0 {
-				hasEqualFeeChangeOutput = true
-			}
-			continue
-		}
-
-		hasRecipient = true
-	}
-
-	return hasInputSpend && hasRecipient && hasEqualFeeChangeOutput
-}
-
-func hasBTCFeeEvent(events []event.NormalizedBalanceEvent, feePayer string) bool {
-	feePayer = strings.TrimSpace(feePayer)
-	if feePayer == "" {
-		return false
-	}
-	for _, be := range events {
-		if be.ActivityType != model.ActivityFee {
-			continue
-		}
-		if strings.TrimSpace(be.Address) == feePayer {
-			return true
-		}
-	}
-	return false
-}
-
-func buildBTCFeeBalanceEvent(feePayer, feeAmount string) event.NormalizedBalanceEvent {
-	chainData, _ := json.Marshal(map[string]string{"event_path": "fee:miner"})
-	return event.NormalizedBalanceEvent{
-		OuterInstructionIndex: -1,
-		InnerInstructionIndex: -1,
-		ActivityType:          model.ActivityFee,
-		EventAction:           "miner_fee",
-		ProgramID:             "btc",
-		ContractAddress:       "BTC",
-		Address:               feePayer,
-		CounterpartyAddress:   "",
-		Delta:                 canonicalFeeDelta(feeAmount),
-		ChainData:             chainData,
-		TokenSymbol:           "BTC",
-		TokenName:             "Bitcoin",
-		TokenDecimals:         8,
-		TokenType:             model.TokenTypeNative,
-		AssetID:               "BTC",
-	}
 }
 
 func shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount string) bool {
@@ -975,28 +136,6 @@ func hasSolanaFeeEvent(events []event.NormalizedBalanceEvent, feePayer string) b
 		}
 	}
 	return false
-}
-
-func canonicalFeeDelta(amount string) string {
-	clean := strings.TrimSpace(amount)
-	if clean == "" {
-		return "-0"
-	}
-	trimmed := clean
-	if strings.HasPrefix(trimmed, "+") || strings.HasPrefix(trimmed, "-") {
-		trimmed = trimmed[1:]
-	}
-	if trimmed == "" {
-		return "-0"
-	}
-	amountInt := new(big.Int)
-	if _, ok := amountInt.SetString(trimmed, 10); !ok {
-		return "-0"
-	}
-	if amountInt.Sign() == 0 {
-		return "-0"
-	}
-	return "-" + amountInt.String()
 }
 
 func buildSolanaFeeBalanceEvent(feePayer, feeAmount string) event.NormalizedBalanceEvent {
@@ -1180,6 +319,8 @@ func shouldReplaceCanonicalSolanaEvent(
 	return compareCanonicalDeltas(existing.Delta, incoming.Delta) > 0
 }
 
+// --- Shared helpers ---
+
 func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, activityType model.ActivityType) string {
 	canonicalTxHash := strings.TrimSpace(txHash)
 	canonicalTxHash = identity.CanonicalSignatureIdentity(chain, canonicalTxHash)
@@ -1206,4 +347,77 @@ func mapTokenTypeToAssetType(tokenType model.TokenType) string {
 
 func balanceEventPath(outerInstructionIndex, innerInstructionIndex int32) string {
 	return fmt.Sprintf("outer:%d|inner:%d", outerInstructionIndex, innerInstructionIndex)
+}
+
+func canonicalFeeDelta(amount string) string {
+	clean := strings.TrimSpace(amount)
+	if clean == "" {
+		return "-0"
+	}
+	trimmed := clean
+	if strings.HasPrefix(trimmed, "+") || strings.HasPrefix(trimmed, "-") {
+		trimmed = trimmed[1:]
+	}
+	if trimmed == "" {
+		return "-0"
+	}
+	amountInt := new(big.Int)
+	if _, ok := amountInt.SetString(trimmed, 10); !ok {
+		return "-0"
+	}
+	if amountInt.Sign() == 0 {
+		return "-0"
+	}
+	return "-" + amountInt.String()
+}
+
+func parseBigInt(value string) (*big.Int, bool) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return nil, false
+	}
+	if raw[0] == '+' || raw[0] == '-' {
+		raw = raw[1:]
+	}
+	if raw == "" {
+		return nil, false
+	}
+	parsed := new(big.Int)
+	if _, ok := parsed.SetString(raw, 10); !ok {
+		return nil, false
+	}
+	return parsed, true
+}
+
+func parseSignedBigInt(value string) (*big.Int, bool) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return nil, false
+	}
+	parsed := new(big.Int)
+	if _, ok := parsed.SetString(raw, 10); !ok {
+		return nil, false
+	}
+	return parsed, true
+}
+
+func compareCanonicalDeltas(left, right string) int {
+	leftValue, leftOK := parseSignedBigInt(left)
+	rightValue, rightOK := parseSignedBigInt(right)
+	if !leftOK || !rightOK {
+		return strings.Compare(strings.TrimSpace(left), strings.TrimSpace(right))
+	}
+	return leftValue.Cmp(rightValue)
+}
+
+func mergeMetadataJSON(original json.RawMessage, additions map[string]string) json.RawMessage {
+	base := map[string]string{}
+	if len(original) > 0 && string(original) != "null" {
+		_ = json.Unmarshal(original, &base)
+	}
+	for k, v := range additions {
+		base[k] = v
+	}
+	marshaled, _ := json.Marshal(base)
+	return marshaled
 }

@@ -129,6 +129,40 @@ func validateChainNetwork(chain model.Chain, network model.Network) bool {
 	return allowedChains[chain] && allowedNetworks[network]
 }
 
+// writeJSON writes v as JSON with the given HTTP status code.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+// requireChainNetworkQuery extracts and validates chain/network from query params.
+// Returns false (and writes an error response) if validation fails.
+func requireChainNetworkQuery(w http.ResponseWriter, r *http.Request) (model.Chain, model.Network, bool) {
+	chain := model.Chain(r.URL.Query().Get("chain"))
+	network := model.Network(r.URL.Query().Get("network"))
+	if chain == "" || network == "" {
+		http.Error(w, `{"error":"chain and network query params required"}`, http.StatusBadRequest)
+		return "", "", false
+	}
+	if !validateChainNetwork(chain, network) {
+		http.Error(w, `{"error":"invalid chain or network value"}`, http.StatusBadRequest)
+		return "", "", false
+	}
+	return chain, network, true
+}
+
+// decodeJSONBody reads and decodes a JSON request body into v.
+// Returns false (and writes an error response) if decoding fails.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
 type watchedAddressResponse struct {
 	Address        string  `json:"address"`
 	Chain          string  `json:"chain"`
@@ -139,16 +173,8 @@ type watchedAddressResponse struct {
 }
 
 func (s *Server) handleListWatchedAddresses(w http.ResponseWriter, r *http.Request) {
-	chain := model.Chain(r.URL.Query().Get("chain"))
-	network := model.Network(r.URL.Query().Get("network"))
-
-	if chain == "" || network == "" {
-		http.Error(w, `{"error":"chain and network query params required"}`, http.StatusBadRequest)
-		return
-	}
-
-	if !validateChainNetwork(chain, network) {
-		http.Error(w, `{"error":"invalid chain or network value"}`, http.StatusBadRequest)
+	chain, network, ok := requireChainNetworkQuery(w, r)
+	if !ok {
 		return
 	}
 
@@ -171,8 +197,7 @@ func (s *Server) handleListWatchedAddresses(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type addWatchedAddressRequest struct {
@@ -182,11 +207,8 @@ type addWatchedAddressRequest struct {
 }
 
 func (s *Server) handleAddWatchedAddress(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-
 	var req addWatchedAddressRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -223,9 +245,7 @@ func (s *Server) handleAddWatchedAddress(w http.ResponseWriter, r *http.Request)
 		"address", req.Address,
 	)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	writeJSON(w, http.StatusCreated, map[string]bool{"success": true})
 }
 
 type chainStatusResponse struct {
@@ -235,16 +255,8 @@ type chainStatusResponse struct {
 }
 
 func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
-	chain := model.Chain(r.URL.Query().Get("chain"))
-	network := model.Network(r.URL.Query().Get("network"))
-
-	if chain == "" || network == "" {
-		http.Error(w, `{"error":"chain and network query params required"}`, http.StatusBadRequest)
-		return
-	}
-
-	if !validateChainNetwork(chain, network) {
-		http.Error(w, `{"error":"invalid chain or network value"}`, http.StatusBadRequest)
+	chain, network, ok := requireChainNetworkQuery(w, r)
+	if !ok {
 		return
 	}
 
@@ -263,8 +275,7 @@ func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		resp.Watermark = watermark.IngestedSequence
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // --- Replay endpoints ---
@@ -285,11 +296,8 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-
 	var req replayRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -352,8 +360,7 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 type replayStatusResponse struct {
@@ -370,16 +377,8 @@ func (s *Server) handleReplayStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chain := model.Chain(r.URL.Query().Get("chain"))
-	network := model.Network(r.URL.Query().Get("network"))
-
-	if chain == "" || network == "" {
-		http.Error(w, `{"error":"chain and network query params required"}`, http.StatusBadRequest)
-		return
-	}
-
-	if !validateChainNetwork(chain, network) {
-		http.Error(w, `{"error":"invalid chain or network value"}`, http.StatusBadRequest)
+	chain, network, ok := requireChainNetworkQuery(w, r)
+	if !ok {
 		return
 	}
 
@@ -408,8 +407,7 @@ func (s *Server) handleReplayStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // --- Health endpoint ---
@@ -420,9 +418,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapshots := s.healthProvider.HealthSnapshots()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(snapshots)
+	writeJSON(w, http.StatusOK, s.healthProvider.HealthSnapshots())
 }
 
 // --- Reconciliation endpoint ---
@@ -438,11 +434,8 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-
 	var req reconcileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -471,8 +464,7 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 // --- Address Book endpoints ---
@@ -499,16 +491,8 @@ func (s *Server) handleListAddressBooks(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	chain := model.Chain(r.URL.Query().Get("chain"))
-	network := model.Network(r.URL.Query().Get("network"))
-
-	if chain == "" || network == "" {
-		http.Error(w, `{"error":"chain and network query params required"}`, http.StatusBadRequest)
-		return
-	}
-
-	if !validateChainNetwork(chain, network) {
-		http.Error(w, `{"error":"invalid chain or network value"}`, http.StatusBadRequest)
+	chain, network, ok := requireChainNetworkQuery(w, r)
+	if !ok {
 		return
 	}
 
@@ -519,8 +503,7 @@ func (s *Server) handleListAddressBooks(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(books)
+	writeJSON(w, http.StatusOK, books)
 }
 
 func (s *Server) handleAddAddressBook(w http.ResponseWriter, r *http.Request) {
@@ -529,11 +512,8 @@ func (s *Server) handleAddAddressBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-
 	var req addressBookRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -567,9 +547,7 @@ func (s *Server) handleAddAddressBook(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("address book entry added", "chain", req.Chain, "network", req.Network, "address", req.Address, "name", req.Name)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	writeJSON(w, http.StatusCreated, map[string]bool{"success": true})
 }
 
 func (s *Server) handleDeleteAddressBook(w http.ResponseWriter, r *http.Request) {
@@ -578,17 +556,14 @@ func (s *Server) handleDeleteAddressBook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	chain := model.Chain(r.URL.Query().Get("chain"))
-	network := model.Network(r.URL.Query().Get("network"))
-	address := r.URL.Query().Get("address")
-
-	if chain == "" || network == "" || address == "" {
-		http.Error(w, `{"error":"chain, network, and address query params required"}`, http.StatusBadRequest)
+	chain, network, ok := requireChainNetworkQuery(w, r)
+	if !ok {
 		return
 	}
 
-	if !validateChainNetwork(chain, network) {
-		http.Error(w, `{"error":"invalid chain or network value"}`, http.StatusBadRequest)
+	address := r.URL.Query().Get("address")
+	if address == "" {
+		http.Error(w, `{"error":"chain, network, and address query params required"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -598,8 +573,7 @@ func (s *Server) handleDeleteAddressBook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 // AddressBookEntry is used as the request model for address book operations.
