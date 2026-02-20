@@ -116,9 +116,14 @@ func (n *Normalizer) Run(ctx context.Context) error {
 		return fmt.Errorf("build transport credentials: %w", err)
 	}
 
+	const maxMsgSize = 16 * 1024 * 1024 // 16 MB — Solana mainnet blocks can exceed 4 MB default
 	conn, err := grpc.NewClient(
 		n.sidecarAddr,
 		grpc.WithTransportCredentials(transportCreds),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(maxMsgSize),
+			grpc.MaxCallSendMsgSize(maxMsgSize),
+		),
 	)
 	if err != nil {
 		return fmt.Errorf("connect sidecar: %w", err)

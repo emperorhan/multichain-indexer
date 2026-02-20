@@ -18,7 +18,11 @@ export function createServer(): grpc.Server {
   const protoDescriptor = grpc.loadPackageDefinition(packageDef) as any;
   const sidecarService = protoDescriptor.sidecar.v1.ChainDecoder.service;
 
-  const server = new grpc.Server();
+  const MAX_MSG_SIZE = 16 * 1024 * 1024; // 16 MB — Solana mainnet blocks can exceed 4 MB default
+  const server = new grpc.Server({
+    'grpc.max_receive_message_length': MAX_MSG_SIZE,
+    'grpc.max_send_message_length': MAX_MSG_SIZE,
+  });
   server.addService(sidecarService, {
     decodeSolanaTransactionBatch: handleDecodeSolanaTransactionBatch,
     healthCheck: handleHealthCheck,
