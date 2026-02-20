@@ -1,0 +1,200 @@
+# Testbed Configuration — Mainnet 3-Chain
+# ----------------------------------------
+# 프로덕션급 메인넷 데이터로 인덱서를 평가하기 위한 설정.
+# Solana, Ethereum, BTC 메인넷을 동시에 인덱싱한다.
+#
+# 사용법:
+#   CONFIG_FILE=configs/testbed.yaml go run ./cmd/indexer
+#   또는: ./scripts/testbed.sh run
+#
+# 사전 준비:
+#   1. docker compose -f deployments/docker-compose.yaml up -d postgres redis prometheus grafana
+#   2. docker compose -f deployments/docker-compose.yaml up migrate
+#   3. docker compose -f deployments/docker-compose.yaml up -d sidecar
+#
+# RPC 엔드포인트:
+#   - Solana mainnet: 무료 공개 RPC (rate limit 보수적)
+#   - Ethereum mainnet: Alchemy/Infura 무료 티어 필요 (ETH_RPC_URL 환경변수)
+#   - BTC mainnet: QuickNode/GetBlock 무료 티어 필요 (BTC_RPC_URL 환경변수)
+
+# Database
+db:
+  url: "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime_min: 30
+  pool_stats_interval_ms: 5000
+
+# Redis
+redis:
+  url: "redis://localhost:6380"
+
+# Sidecar
+sidecar:
+  addr: "localhost:50051"
+  timeout_sec: 30
+
+# ============================================================
+# Chain: Solana (mainnet) — 무료 공개 RPC
+# ============================================================
+solana:
+  rpc_url: "https://api.mainnet-beta.solana.com"
+  network: "mainnet"
+  rate_limit:
+    rps: 3 # mainnet 공개 RPC는 보수적으로
+    burst: 5
+  max_page_size: 100
+  max_concurrent_txs: 3
+  max_initial_lookback_blocks: 5000 # 최근 5,000슬롯 (~33분) — Raydium/Jupiter 초당 수십 txn
+
+# ============================================================
+# Chain: Ethereum (mainnet) — RPC 필요: ETH_RPC_URL 환경변수
+# 무료 RPC 옵션:
+#   - Alchemy: https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+#   - Infura: https://mainnet.infura.io/v3/YOUR_KEY
+# ============================================================
+ethereum:
+  rpc_url: "" # ETH_RPC_URL 환경변수로 설정
+  network: "mainnet"
+  rate_limit:
+    rps: 10
+    burst: 20
+  max_initial_lookback_blocks: 300 # 최근 300블록 (~60분) — Uniswap/WETH 매 블록 활동
+  max_concurrent_txs: 5
+
+# ============================================================
+# Chain: BTC (mainnet) — RPC 필요: BTC_RPC_URL 환경변수
+# 무료 RPC 옵션:
+#   - QuickNode: BTC mainnet 무료 티어
+#   - GetBlock: https://go.getblock.io/YOUR_KEY
+# ============================================================
+btc:
+  rpc_url: "" # BTC_RPC_URL 환경변수로 설정
+  network: "mainnet"
+  rate_limit:
+    rps: 3
+    burst: 5
+  max_initial_lookback_blocks: 50 # 최근 50블록 (~8시간) — Binance 지갑 일 단위 활동
+
+# ============================================================
+# Runtime: 3체인 동시 실행
+# like_group을 비워두고 chain_targets로 명시적 지정
+# ============================================================
+runtime:
+  deployment_mode: "like-group"
+  like_group: ""
+  chain_targets:
+    - "solana-mainnet"
+    - "ethereum-mainnet"
+    - "btc-mainnet"
+
+# ============================================================
+# Pipeline
+# ============================================================
+pipeline:
+  fetch_workers: 2
+  normalizer_workers: 2
+  batch_size: 100 # lookback 윈도우를 빠르게 따라잡기 위해 증가
+  indexing_interval_ms: 15000 # 15초 간격 (메인넷 RPC 부담 완화)
+  channel_buffer_size: 5
+  indexed_blocks_retention: 1000
+
+  # ----------------------------------------------------------
+  # Solana mainnet 감시 주소 (5개 — 복잡한 트랜잭션 패턴)
+  # ----------------------------------------------------------
+  solana_watched_addresses:
+    # 1. Raydium Authority — 대규모 DEX swap, CPI, 다중 토큰
+    - "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"
+
+    # 2. Jupiter Aggregator V6 — 멀티홉 스왑, 복잡한 내부 명령어
+    - "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+
+    # 3. Marinade Finance — SOL 스테이킹, mSOL mint/burn
+    - "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD"
+
+    # 4. Phantom whale wallet — 다양한 토큰 활동
+    - "CuieVDEDtLo7FypA9SbLM9saXFdb1dsshEkyErMqkRQq"
+
+    # 5. USDC 대량 보유자 (Circle reserve) — SPL Token 전송 패턴
+    - "7VHUFJHWu2CuExkJcJrzhQPJ2oygupd2fDnjThLk64aR"
+
+  # ----------------------------------------------------------
+  # Ethereum mainnet 감시 주소 (5개 — EVM 패턴)
+  # ----------------------------------------------------------
+  ethereum_watched_addresses:
+    # 1. Uniswap Universal Router — 멀티토큰 스왑, 복잡한 이벤트
+    - "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"
+
+    # 2. USDC Contract (proxy) — ERC-20 Transfer 대량
+    - "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+
+    # 3. Vitalik.eth — 다양한 ETH + 토큰 활동
+    - "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+
+    # 4. Coinbase Hot Wallet — 고빈도 입출금
+    - "0xA9D1e08C7793af67e9d92fe308d5697FB81d3E43"
+
+    # 5. WETH Contract — wrap/unwrap, DeFi 경유
+    - "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+  # ----------------------------------------------------------
+  # BTC mainnet 감시 주소 (5개 — UTXO 패턴)
+  # ----------------------------------------------------------
+  btc_watched_addresses:
+    # 1. Binance Cold Wallet — 대규모 UTXO 통합
+    - "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo"
+
+    # 2. Bitfinex Hot Wallet — 고빈도 입출금 패턴
+    - "3JZq4atUahhuA9rLhXLMhhTo133J9rF97j"
+
+    # 3. Binance Hot Wallet (bech32) — 분 단위 활동, 고빈도 입출금
+    - "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+
+    # 4. Kraken Hot Wallet — 매시간 활동, 다양한 UTXO 패턴
+    - "bc1qa5wkgaew2dkv56kc6hp24cc2nkej6ece2grary"
+
+    # 5. SegWit (bech32) 활성 지갑 — 최신 주소 형식
+    - "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h"
+
+  # Coordinator auto-tune (testbed에서는 비활성)
+  coordinator_autotune_enabled: false
+
+  # Fetcher tuning
+  fetcher:
+    retry_max_attempts: 3
+    backoff_initial_ms: 1000
+    backoff_max_ms: 10000
+
+  # Ingester tuning
+  ingester:
+    retry_max_attempts: 3
+    denied_cache_capacity: 1000
+    denied_cache_ttl_sec: 300
+
+  # Health
+  health:
+    unhealthy_threshold: 10 # testbed에서는 관대하게
+
+  # Config watcher
+  config_watcher:
+    interval_sec: 60
+
+# Server
+server:
+  health_port: 8080
+  admin_addr: ":9091"
+  admin_require_auth: false # testbed에서는 인증 비활성
+  admin_rate_limit_enabled: true
+
+# Logging
+log:
+  level: "debug" # testbed에서는 debug
+
+# Alerting (testbed에서는 비활성)
+alert:
+  slack_webhook_url: ""
+  webhook_url: ""
+
+# Reconciliation
+reconciliation:
+  interval_ms: 300000 # 5분 간격
