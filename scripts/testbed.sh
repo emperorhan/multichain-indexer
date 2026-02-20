@@ -155,9 +155,9 @@ cmd_run_all() {
 
     log "Starting indexer with chains: $targets"
     echo ""
-    print_start_positions "$chains_available"
+    print_start_positions "${chains_available[@]}"
     echo ""
-    print_watched_addresses "$chains_available"
+    print_watched_addresses "${chains_available[@]}"
     echo ""
 
     CONFIG_FILE="$CONFIG_FILE" \
