@@ -1,0 +1,203 @@
+# Multichain Indexer Configuration
+# ---------------------------------
+# This file provides default values for all configuration options.
+# Environment variables override any value set here.
+# Set CONFIG_FILE env var to specify a custom path (default: config.yaml).
+
+# Database (PostgreSQL)
+db:
+  url: "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable"  # DB_URL (required)
+  max_open_conns: 50             # DB_MAX_OPEN_CONNS
+  max_idle_conns: 10             # DB_MAX_IDLE_CONNS
+  conn_max_lifetime_min: 30      # DB_CONN_MAX_LIFETIME_MIN
+  pool_stats_interval_ms: 5000   # DB_POOL_STATS_INTERVAL_MS (range: 100-3600000)
+
+# Redis
+redis:
+  url: "redis://localhost:6380"  # REDIS_URL
+
+# Sidecar (gRPC decoder)
+sidecar:
+  addr: "localhost:50051"  # SIDECAR_ADDR (required)
+  timeout_sec: 30          # SIDECAR_TIMEOUT_SEC
+  tls_enabled: false       # SIDECAR_TLS_ENABLED
+  tls_cert: ""             # SIDECAR_TLS_CERT
+  tls_key: ""              # SIDECAR_TLS_KEY
+  tls_ca: ""               # SIDECAR_TLS_CA
+
+# Chain: Solana
+solana:
+  rpc_url: "https://api.devnet.solana.com"  # SOLANA_RPC_URL / SOLANA_DEVNET_RPC_URL
+  network: "devnet"                          # SOLANA_NETWORK
+  rate_limit:
+    rps: 10       # SOLANA_RPC_RATE_LIMIT
+    burst: 20     # SOLANA_RPC_BURST
+  max_page_size: 1000        # SOLANA_MAX_PAGE_SIZE
+  max_concurrent_txs: 10     # SOLANA_MAX_CONCURRENT_TXS
+
+# Chain: Base (EVM L2)
+base:
+  rpc_url: ""              # BASE_RPC_URL / BASE_SEPOLIA_RPC_URL
+  network: "sepolia"       # BASE_NETWORK
+  rate_limit:
+    rps: 25      # BASE_RPC_RATE_LIMIT
+    burst: 50    # BASE_RPC_BURST
+  max_initial_lookback_blocks: 200  # BASE_MAX_INITIAL_LOOKBACK_BLOCKS
+  max_concurrent_txs: 10            # BASE_MAX_CONCURRENT_TXS
+
+# Chain: Ethereum
+ethereum:
+  rpc_url: ""              # ETHEREUM_RPC_URL / ETH_MAINNET_RPC_URL
+  network: "mainnet"       # ETHEREUM_NETWORK
+  rate_limit:
+    rps: 25      # ETH_RPC_RATE_LIMIT
+    burst: 50    # ETH_RPC_BURST
+  max_initial_lookback_blocks: 200  # ETH_MAX_INITIAL_LOOKBACK_BLOCKS
+  max_concurrent_txs: 10            # ETH_MAX_CONCURRENT_TXS
+
+# Chain: Bitcoin
+btc:
+  rpc_url: ""            # BTC_RPC_URL / BTC_TESTNET_RPC_URL
+  network: "testnet"     # BTC_NETWORK
+  rate_limit:
+    rps: 5       # BTC_RPC_RATE_LIMIT
+    burst: 10    # BTC_RPC_BURST
+  max_initial_lookback_blocks: 200  # BTC_MAX_INITIAL_LOOKBACK_BLOCKS
+
+# Chain: Polygon
+polygon:
+  rpc_url: ""              # POLYGON_RPC_URL / POLYGON_MAINNET_RPC_URL
+  network: "mainnet"       # POLYGON_NETWORK
+  rate_limit:
+    rps: 25      # POLYGON_RPC_RATE_LIMIT
+    burst: 50    # POLYGON_RPC_BURST
+  max_initial_lookback_blocks: 200  # POLYGON_MAX_INITIAL_LOOKBACK_BLOCKS
+  max_concurrent_txs: 10            # POLYGON_MAX_CONCURRENT_TXS
+
+# Chain: Arbitrum
+arbitrum:
+  rpc_url: ""              # ARBITRUM_RPC_URL / ARBITRUM_MAINNET_RPC_URL
+  network: "mainnet"       # ARBITRUM_NETWORK
+  rate_limit:
+    rps: 25      # ARBITRUM_RPC_RATE_LIMIT
+    burst: 50    # ARBITRUM_RPC_BURST
+  max_initial_lookback_blocks: 200  # ARBITRUM_MAX_INITIAL_LOOKBACK_BLOCKS
+  max_concurrent_txs: 10            # ARBITRUM_MAX_CONCURRENT_TXS
+
+# Chain: BSC (BNB Smart Chain)
+bsc:
+  rpc_url: ""              # BSC_RPC_URL / BSC_MAINNET_RPC_URL
+  network: "mainnet"       # BSC_NETWORK
+  rate_limit:
+    rps: 25      # BSC_RPC_RATE_LIMIT
+    burst: 50    # BSC_RPC_BURST
+  max_initial_lookback_blocks: 200  # BSC_MAX_INITIAL_LOOKBACK_BLOCKS
+  max_concurrent_txs: 10            # BSC_MAX_CONCURRENT_TXS
+
+# Runtime deployment configuration
+runtime:
+  deployment_mode: "like-group"  # RUNTIME_DEPLOYMENT_MODE ("like-group" | "independent")
+  like_group: ""                 # RUNTIME_LIKE_GROUP ("solana-like" | "evm-like" | "btc-like")
+  chain_targets: []              # RUNTIME_CHAIN_TARGETS (comma-separated)
+
+# Pipeline settings
+pipeline:
+  reorg_detector_interval_ms: 30000   # REORG_DETECTOR_INTERVAL_MS
+  finalizer_interval_ms: 60000        # FINALIZER_INTERVAL_MS
+  btc_finality_confirmations: 6       # BTC_FINALITY_CONFIRMATIONS
+  fetch_workers: 2                     # FETCH_WORKERS
+  normalizer_workers: 2                # NORMALIZER_WORKERS
+  batch_size: 100                      # BATCH_SIZE
+  indexing_interval_ms: 5000           # INDEXING_INTERVAL_MS
+  channel_buffer_size: 10              # CHANNEL_BUFFER_SIZE
+  indexed_blocks_retention: 10000      # INDEXED_BLOCKS_RETENTION
+
+  # Watched addresses per chain (comma-separated in env vars)
+  solana_watched_addresses: []     # SOLANA_WATCHED_ADDRESSES / WATCHED_ADDRESSES
+  base_watched_addresses: []       # BASE_WATCHED_ADDRESSES
+  ethereum_watched_addresses: []   # ETH_WATCHED_ADDRESSES
+  btc_watched_addresses: []        # BTC_WATCHED_ADDRESSES
+  polygon_watched_addresses: []    # POLYGON_WATCHED_ADDRESSES
+  arbitrum_watched_addresses: []   # ARBITRUM_WATCHED_ADDRESSES
+  bsc_watched_addresses: []        # BSC_WATCHED_ADDRESSES
+
+  # Coordinator auto-tune
+  coordinator_autotune_enabled: false                          # COORDINATOR_AUTOTUNE_ENABLED
+  coordinator_autotune_min_batch_size: 10                      # COORDINATOR_AUTOTUNE_MIN_BATCH_SIZE
+  coordinator_autotune_max_batch_size: 0                       # COORDINATOR_AUTOTUNE_MAX_BATCH_SIZE (0 = batch_size)
+  coordinator_autotune_step_up: 10                             # COORDINATOR_AUTOTUNE_STEP_UP
+  coordinator_autotune_step_down: 10                           # COORDINATOR_AUTOTUNE_STEP_DOWN
+  coordinator_autotune_lag_high_watermark: 500                 # COORDINATOR_AUTOTUNE_LAG_HIGH_WATERMARK
+  coordinator_autotune_lag_low_watermark: 100                  # COORDINATOR_AUTOTUNE_LAG_LOW_WATERMARK
+  coordinator_autotune_queue_high_pct: 80                      # COORDINATOR_AUTOTUNE_QUEUE_HIGH_PCT
+  coordinator_autotune_queue_low_pct: 30                       # COORDINATOR_AUTOTUNE_QUEUE_LOW_PCT
+  coordinator_autotune_hysteresis_ticks: 2                     # COORDINATOR_AUTOTUNE_HYSTERESIS_TICKS
+  coordinator_autotune_telemetry_stale_ticks: 2                # COORDINATOR_AUTOTUNE_TELEMETRY_STALE_TICKS
+  coordinator_autotune_telemetry_recovery_ticks: 1             # COORDINATOR_AUTOTUNE_TELEMETRY_RECOVERY_TICKS
+  coordinator_autotune_operator_override_batch: 0              # COORDINATOR_AUTOTUNE_OPERATOR_OVERRIDE_BATCH_SIZE
+  coordinator_autotune_operator_release_ticks: 2               # COORDINATOR_AUTOTUNE_OPERATOR_RELEASE_HOLD_TICKS
+  coordinator_autotune_policy_version: "policy-v1"             # COORDINATOR_AUTOTUNE_POLICY_VERSION
+  coordinator_autotune_policy_manifest_digest: "manifest-v1"   # COORDINATOR_AUTOTUNE_POLICY_MANIFEST_DIGEST
+  coordinator_autotune_policy_manifest_refresh_epoch: 0        # COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH
+  coordinator_autotune_policy_activation_hold_ticks: 1         # COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS
+
+  # Stream transport
+  stream_transport_enabled: false    # PIPELINE_STREAM_TRANSPORT_ENABLED
+  stream_namespace: "pipeline"       # PIPELINE_STREAM_NAMESPACE
+  stream_session_id: ""              # PIPELINE_STREAM_SESSION_ID
+
+  # Pipeline stage tuning: Fetcher
+  fetcher:
+    retry_max_attempts: 4              # FETCHER_RETRY_MAX_ATTEMPTS
+    backoff_initial_ms: 200            # FETCHER_BACKOFF_INITIAL_MS
+    backoff_max_ms: 3000               # FETCHER_BACKOFF_MAX_MS
+    adaptive_min_batch: 1              # FETCHER_ADAPTIVE_MIN_BATCH
+    boundary_overlap_lookahead: 1      # FETCHER_BOUNDARY_OVERLAP_LOOKAHEAD
+
+  # Pipeline stage tuning: Normalizer
+  normalizer:
+    retry_max_attempts: 3              # NORMALIZER_RETRY_MAX_ATTEMPTS
+    retry_delay_initial_ms: 100        # NORMALIZER_RETRY_DELAY_INITIAL_MS
+    retry_delay_max_ms: 1000           # NORMALIZER_RETRY_DELAY_MAX_MS
+
+  # Pipeline stage tuning: Ingester
+  ingester:
+    retry_max_attempts: 3              # INGESTER_RETRY_MAX_ATTEMPTS
+    retry_delay_initial_ms: 100        # INGESTER_RETRY_DELAY_INITIAL_MS
+    retry_delay_max_ms: 1000           # INGESTER_RETRY_DELAY_MAX_MS
+    denied_cache_capacity: 10000       # INGESTER_DENIED_CACHE_CAPACITY
+    denied_cache_ttl_sec: 300          # INGESTER_DENIED_CACHE_TTL_SEC
+
+  # Pipeline stage tuning: Health
+  health:
+    unhealthy_threshold: 5             # HEALTH_UNHEALTHY_THRESHOLD
+
+  # Pipeline stage tuning: Config Watcher
+  config_watcher:
+    interval_sec: 30                   # CONFIG_WATCHER_INTERVAL_SEC
+
+# Server
+server:
+  health_port: 8080          # HEALTH_PORT
+  metrics_auth_user: ""      # METRICS_AUTH_USER
+  metrics_auth_pass: ""      # METRICS_AUTH_PASS
+  admin_addr: ""             # ADMIN_ADDR (host:port or :port)
+  admin_auth_user: ""        # ADMIN_AUTH_USER
+  admin_auth_pass: ""        # ADMIN_AUTH_PASS
+
+# Logging
+log:
+  level: "info"  # LOG_LEVEL (debug | info | warn | error)
+
+# OpenTelemetry Tracing
+tracing:
+  enabled: false       # OTEL_TRACING_ENABLED
+  endpoint: ""         # OTEL_EXPORTER_OTLP_ENDPOINT
+  insecure: false      # OTEL_EXPORTER_OTLP_INSECURE
+  sample_ratio: 0.1    # OTEL_TRACE_SAMPLE_RATIO
+
+# Alerting
+alert:
+  slack_webhook_url: ""    # SLACK_WEBHOOK_URL
+  webhook_url: ""          # ALERT_WEBHOOK_URL
+  cooldown_ms: 1800000     # ALERT_COOLDOWN_MS (30 min default)

@@ -8,6 +8,6 @@ import (
 )
 
 // NewAdapter creates an EVM adapter configured for the Polygon chain.
-func NewAdapter(rpcURL string, logger *slog.Logger) chain.ChainAdapter {
-	return base.NewAdapterWithChain("polygon", rpcURL, logger)
+func NewAdapter(rpcURL string, logger *slog.Logger, opts ...base.AdapterOption) chain.ChainAdapter {
+	return base.NewAdapterWithChain("polygon", rpcURL, logger, opts...)
 }

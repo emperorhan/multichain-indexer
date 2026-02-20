@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/cache"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
@@ -107,6 +108,20 @@ func WithReplayService(svc *replay.Service) Option {
 func WithWatchedAddressRepo(repo store.WatchedAddressRepository) Option {
 	return func(ing *Ingester) {
 		ing.watchedAddrRepo = repo
+	}
+}
+
+func WithRetryConfig(maxAttempts int, delayInitial, delayMax time.Duration) Option {
+	return func(ing *Ingester) {
+		ing.retryMaxAttempts = maxAttempts
+		ing.retryDelayStart = delayInitial
+		ing.retryDelayMax = delayMax
+	}
+}
+
+func WithDeniedCacheConfig(capacity int, ttl time.Duration) Option {
+	return func(ing *Ingester) {
+		ing.deniedCache = cache.NewLRU[string, bool](capacity, ttl)
 	}
 }
 
@@ -272,11 +287,11 @@ func isCanonicalityDrift(batch event.NormalizedBatch) bool {
 	if batch.PreviousCursorSequence == 0 {
 		return false
 	}
-	prevIdentity := canonicalSignatureIdentity(batch.Chain, *batch.PreviousCursorValue)
+	prevIdentity := identity.CanonicalSignatureIdentity(batch.Chain, *batch.PreviousCursorValue)
 	if prevIdentity == "" {
 		prevIdentity = strings.TrimSpace(*batch.PreviousCursorValue)
 	}
-	newIdentity := canonicalSignatureIdentity(batch.Chain, *batch.NewCursorValue)
+	newIdentity := identity.CanonicalSignatureIdentity(batch.Chain, *batch.NewCursorValue)
 	if newIdentity == "" {
 		newIdentity = strings.TrimSpace(*batch.NewCursorValue)
 	}
@@ -307,11 +322,11 @@ func isBTCRestartAnchorReplay(batch event.NormalizedBatch) bool {
 		return false
 	}
 
-	previousCursor := canonicalSignatureIdentity(batch.Chain, *batch.PreviousCursorValue)
+	previousCursor := identity.CanonicalSignatureIdentity(batch.Chain, *batch.PreviousCursorValue)
 	if previousCursor == "" {
 		previousCursor = strings.TrimSpace(*batch.PreviousCursorValue)
 	}
-	newCursor := canonicalSignatureIdentity(batch.Chain, *batch.NewCursorValue)
+	newCursor := identity.CanonicalSignatureIdentity(batch.Chain, *batch.NewCursorValue)
 	if newCursor == "" {
 		newCursor = strings.TrimSpace(*batch.NewCursorValue)
 	}
@@ -370,8 +385,8 @@ func shouldAdvanceCommitCheckpoint(batch event.NormalizedBatch) bool {
 		return true
 	}
 
-	previousCursor := canonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
-	newCursor := canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+	previousCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
+	newCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
 	if previousCursor == nil && newCursor == nil {
 		return false
 	}
@@ -385,8 +400,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	if ing.reorgHandler == nil {
 		ing.reorgHandler = ing.rollbackCanonicalityDrift
 	}
-	batch.PreviousCursorValue = canonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
-	batch.NewCursorValue = canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+	batch.PreviousCursorValue = identity.CanonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
+	batch.NewCursorValue = identity.CanonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
 	advanceCommitCheckpoint := shouldAdvanceCommitCheckpoint(batch)
 	committed := false
 
@@ -493,7 +508,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	var allEvents []eventContext
 
 	for _, ntx := range batch.Transactions {
-		canonicalTxHash := canonicalSignatureIdentity(batch.Chain, ntx.TxHash)
+		canonicalTxHash := identity.CanonicalSignatureIdentity(batch.Chain, ntx.TxHash)
 		if canonicalTxHash == "" {
 			canonicalTxHash = strings.TrimSpace(ntx.TxHash)
 		}
@@ -846,8 +861,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 			}
 
 			// Staking balance tracking
-			if isStakingActivity(beModel.ActivityType) {
-				invertedDelta, negErr := negateDecimalString(ec.be.Delta)
+			if identity.IsStakingActivity(beModel.ActivityType) {
+				invertedDelta, negErr := identity.NegateDecimalString(ec.be.Delta)
 				if negErr != nil {
 					phase3Span.RecordError(negErr)
 					phase3Span.SetStatus(codes.Error, negErr.Error())
@@ -1090,7 +1105,7 @@ func (ing *Ingester) handleReorg(ctx context.Context, reorg event.ReorgEvent) er
 		if !be.BalanceApplied {
 			continue
 		}
-		invertedDelta, err := negateDecimalString(be.Delta)
+		invertedDelta, err := identity.NegateDecimalString(be.Delta)
 		if err != nil {
 			return fmt.Errorf("negate delta for %s: %w", be.TxHash, err)
 		}
@@ -1102,7 +1117,7 @@ func (ing *Ingester) handleReorg(ctx context.Context, reorg event.ReorgEvent) er
 		); err != nil {
 			return fmt.Errorf("revert balance: %w", err)
 		}
-		if isStakingActivity(be.ActivityType) {
+		if identity.IsStakingActivity(be.ActivityType) {
 			if err := ing.balanceRepo.AdjustBalanceTx(
 				ctx, dbTx,
 				reorg.Chain, reorg.Network, be.Address,
@@ -1278,8 +1293,8 @@ func (ing *Ingester) handleFinalityPromotion(ctx context.Context, promo event.Fi
 				BalanceType: "",
 			})
 
-			if isStakingActivity(pe.ActivityType) {
-				invertedDelta, err := negateDecimalString(pe.Delta)
+			if identity.IsStakingActivity(pe.ActivityType) {
+				invertedDelta, err := identity.NegateDecimalString(pe.Delta)
 				if err != nil {
 					return fmt.Errorf("negate staking delta: %w", err)
 				}
@@ -1393,26 +1408,6 @@ func (ing *Ingester) promoteBalanceEvents(
 	return events, nil
 }
 
-func (ing *Ingester) computeBalanceTransition(
-	ctx context.Context,
-	tx *sql.Tx,
-	batch event.NormalizedBatch,
-	be event.NormalizedBalanceEvent,
-	tokenID uuid.UUID,
-) (string, bool, string, error) {
-	beforeAmount, exists, err := ing.balanceRepo.GetAmountWithExistsTx(ctx, tx, batch.Chain, batch.Network, be.Address, tokenID, "")
-	if err != nil {
-		return "", false, "", fmt.Errorf("get current balance: %w", err)
-	}
-
-	afterAmount, err := addDecimalStrings(beforeAmount, be.Delta)
-	if err != nil {
-		return "", false, "", fmt.Errorf("apply delta %s to balance %s: %w", be.Delta, beforeAmount, err)
-	}
-
-	return beforeAmount, exists, afterAmount, nil
-}
-
 // detectScamSignal checks for scam token signals.
 // Returns the signal name if suspicious, or empty string if clean.
 func detectScamSignal(chain model.Chain, be event.NormalizedBalanceEvent, balanceBefore string, balanceExists bool) string {
@@ -1475,7 +1470,7 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 		if !be.BalanceApplied {
 			continue
 		}
-		invertedDelta, err := negateDecimalString(be.Delta)
+		invertedDelta, err := identity.NegateDecimalString(be.Delta)
 		if err != nil {
 			return fmt.Errorf("negate delta for %s: %w", be.TxHash, err)
 		}
@@ -1490,7 +1485,7 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 		}
 
 		// Reverse staking balance if applicable
-		if isStakingActivity(be.ActivityType) {
+		if identity.IsStakingActivity(be.ActivityType) {
 			if err := ing.balanceRepo.AdjustBalanceTx(
 				ctx, dbTx,
 				batch.Chain, batch.Network, be.Address,
@@ -1678,12 +1673,12 @@ func resolveRewindCursorBoundary(
 	}
 
 	if committedCursorValue != nil && committedCursorSequence > 0 && committedCursorSequence <= forkCursor {
-		if canonicalCommitted := canonicalizeCursorValue(chain, committedCursorValue); canonicalCommitted != nil {
+		if canonicalCommitted := identity.CanonicalizeCursorValue(chain, committedCursorValue); canonicalCommitted != nil {
 			return canonicalCommitted, committedCursorSequence
 		}
 	}
 
-	resolvedCursor := canonicalizeCursorValue(chain, fallbackCursorValue)
+	resolvedCursor := identity.CanonicalizeCursorValue(chain, fallbackCursorValue)
 	resolvedSequence := fallbackCursorSequence
 	if resolvedSequence <= 0 {
 		return resolvedCursor, forkCursor
@@ -1694,26 +1689,6 @@ func resolveRewindCursorBoundary(
 	return resolvedCursor, resolvedSequence
 }
 
-func negateDecimalString(value string) (string, error) {
-	var delta big.Int
-	if _, ok := delta.SetString(value, 10); !ok {
-		return "", fmt.Errorf("invalid decimal value: %s", value)
-	}
-	delta.Neg(&delta)
-	return delta.String(), nil
-}
-
-func canonicalizeCursorValue(chainID model.Chain, cursor *string) *string {
-	if cursor == nil {
-		return nil
-	}
-	identity := canonicalSignatureIdentity(chainID, *cursor)
-	if identity == "" {
-		return nil
-	}
-	value := identity
-	return &value
-}
 
 func (ing *Ingester) reconcileAmbiguousCommitOutcome(
 	ctx context.Context,
@@ -1729,7 +1704,7 @@ func (ing *Ingester) reconcileAmbiguousCommitOutcome(
 		return ing.reconcileBlockScanCommit(ctx, batch, commitErr)
 	}
 
-	expectedCursor := canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+	expectedCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
 	if expectedCursor == nil {
 		return false, retry.Terminal(fmt.Errorf(
 			"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=missing_expected_cursor expected_seq=%d commit_err=%w",
@@ -1763,7 +1738,7 @@ func (ing *Ingester) reconcileAmbiguousCommitOutcome(
 	observedCursor := "<nil>"
 	if cursor != nil {
 		observedSeq = cursor.CursorSequence
-		if normalized := canonicalizeCursorValue(batch.Chain, cursor.CursorValue); normalized != nil {
+		if normalized := identity.CanonicalizeCursorValue(batch.Chain, cursor.CursorValue); normalized != nil {
 			observedCursor = *normalized
 		}
 	}
@@ -1833,7 +1808,7 @@ func cursorMatchesCommitBoundary(
 		return false
 	}
 
-	observedCursor := canonicalizeCursorValue(chain, cursor.CursorValue)
+	observedCursor := identity.CanonicalizeCursorValue(chain, cursor.CursorValue)
 	if observedCursor == nil {
 		return false
 	}
@@ -1875,56 +1850,6 @@ func containsAnySubstring(value string, tokens []string) bool {
 	return false
 }
 
-func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
-	trimmed := strings.TrimSpace(hash)
-	if trimmed == "" {
-		return ""
-	}
-	if chainID == model.ChainBTC {
-		withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
-		if withoutPrefix == "" {
-			return ""
-		}
-		return strings.ToLower(withoutPrefix)
-	}
-	if !isEVMChain(chainID) {
-		return trimmed
-	}
-
-	withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
-	if withoutPrefix == "" {
-		return ""
-	}
-	if isHexString(withoutPrefix) {
-		return "0x" + strings.ToLower(withoutPrefix)
-	}
-	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
-		return "0x" + strings.ToLower(withoutPrefix)
-	}
-	return trimmed
-}
-
-func isEVMChain(chainID model.Chain) bool {
-	switch chainID {
-	case model.ChainBase, model.ChainEthereum, model.ChainPolygon, model.ChainArbitrum, model.ChainBSC:
-		return true
-	default:
-		return false
-	}
-}
-
-func isHexString(v string) bool {
-	for _, ch := range v {
-		switch {
-		case ch >= '0' && ch <= '9':
-		case ch >= 'a' && ch <= 'f':
-		case ch >= 'A' && ch <= 'F':
-		default:
-			return false
-		}
-	}
-	return true
-}
 
 // meetsBalanceThreshold checks whether the finality state is strong enough
 // to apply the balance adjustment for the given chain.
@@ -1954,10 +1879,6 @@ func finalityStateRank(state string) int {
 	default:
 		return 0
 	}
-}
-
-func isStakingActivity(activityType model.ActivityType) bool {
-	return activityType == model.ActivityStake || activityType == model.ActivityUnstake
 }
 
 func defaultTokenSymbol(be event.NormalizedBalanceEvent) string {

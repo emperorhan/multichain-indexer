@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,7 +24,6 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable", cfg.DB.URL)
 	assert.Equal(t, 50, cfg.DB.MaxOpenConns)
 	assert.Equal(t, 10, cfg.DB.MaxIdleConns)
-	assert.Equal(t, dbStatementTimeoutDefaultMS, cfg.DB.StatementTimeoutMS)
 	assert.Equal(t, dbPoolStatsIntervalDefaultMS, cfg.DB.PoolStatsIntervalMS)
 	assert.Equal(t, "redis://localhost:6380", cfg.Redis.URL)
 	assert.Equal(t, "localhost:50051", cfg.Sidecar.Addr)
@@ -63,7 +64,6 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.False(t, cfg.Pipeline.StreamTransportEnabled)
 	assert.Equal(t, "pipeline", cfg.Pipeline.StreamNamespace)
 	assert.Empty(t, cfg.Pipeline.StreamSessionID)
-	assert.Empty(t, cfg.Pipeline.WatchedAddresses)
 	assert.Empty(t, cfg.Pipeline.SolanaWatchedAddresses)
 	assert.Empty(t, cfg.Pipeline.BaseWatchedAddresses)
 	assert.Empty(t, cfg.Pipeline.BTCWatchedAddresses)
@@ -104,7 +104,6 @@ func TestLoad_EnvOverride(t *testing.T) {
 	t.Setenv("COORDINATOR_AUTOTUNE_POLICY_MANIFEST_DIGEST", "manifest-v2b")
 	t.Setenv("COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH", "4")
 	t.Setenv("COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS", "4")
-	t.Setenv("DB_STATEMENT_TIMEOUT_MS", "45000")
 	t.Setenv("DB_POOL_STATS_INTERVAL_MS", "12500")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("HEALTH_PORT", "9090")
@@ -121,7 +120,6 @@ func TestLoad_EnvOverride(t *testing.T) {
 	assert.Equal(t, "sidecar:50051", cfg.Sidecar.Addr)
 	assert.Equal(t, "redis://redis:6379", cfg.Redis.URL)
 	assert.Equal(t, "mainnet", cfg.Solana.Network)
-	assert.Equal(t, 45000, cfg.DB.StatementTimeoutMS)
 	assert.Equal(t, 12500, cfg.DB.PoolStatsIntervalMS)
 	assert.Equal(t, 4, cfg.Pipeline.FetchWorkers)
 	assert.Equal(t, 3, cfg.Pipeline.NormalizerWorkers)
@@ -179,32 +177,6 @@ func TestLoad_RejectsUnsupportedRuntimeTargetNetwork(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported network")
 }
 
-func TestLoad_DBStatementTimeout_InvalidValue(t *testing.T) {
-	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
-	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
-	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
-	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
-	t.Setenv("SIDECAR_ADDR", "localhost:50051")
-	t.Setenv("DB_STATEMENT_TIMEOUT_MS", "not-a-number")
-
-	_, err := Load()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "DB_STATEMENT_TIMEOUT_MS")
-}
-
-func TestLoad_DBStatementTimeout_OutOfRangeValue(t *testing.T) {
-	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
-	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
-	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
-	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
-	t.Setenv("SIDECAR_ADDR", "localhost:50051")
-	t.Setenv("DB_STATEMENT_TIMEOUT_MS", "-1")
-
-	_, err := Load()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "DB_STATEMENT_TIMEOUT_MS")
-}
-
 func TestLoad_DBPoolStatsInterval_Default(t *testing.T) {
 	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
 	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
@@ -257,19 +229,6 @@ func TestLoad_DBPoolStatsInterval_InvalidValue(t *testing.T) {
 	assert.Contains(t, err.Error(), "DB_POOL_STATS_INTERVAL_MS")
 }
 
-func TestLoad_DBStatementTimeout_OutOfRangeHighValue(t *testing.T) {
-	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
-	t.Setenv("SOLANA_RPC_URL", "https://rpc.example.com")
-	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
-	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
-	t.Setenv("SIDECAR_ADDR", "localhost:50051")
-	t.Setenv("DB_STATEMENT_TIMEOUT_MS", "6000000")
-
-	_, err := Load()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "DB_STATEMENT_TIMEOUT_MS")
-}
-
 func TestLoad_WatchedAddresses_Parsing(t *testing.T) {
 	t.Setenv("DB_URL", "postgres://x:x@localhost/db")
 	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
@@ -316,7 +275,6 @@ func TestLoad_WatchedAddresses_Parsing(t *testing.T) {
 			cfg, err := Load()
 			require.NoError(t, err)
 
-			assert.Equal(t, tt.expected, cfg.Pipeline.WatchedAddresses)
 			assert.Equal(t, tt.expected, cfg.Pipeline.SolanaWatchedAddresses)
 		})
 	}
@@ -337,7 +295,6 @@ func TestLoad_ChainSpecificWatchedAddresses(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"sol1", "sol2"}, cfg.Pipeline.SolanaWatchedAddresses)
-	assert.Equal(t, []string{"sol1", "sol2"}, cfg.Pipeline.WatchedAddresses)
 	assert.Equal(t, []string{"base1", "base2"}, cfg.Pipeline.BaseWatchedAddresses)
 	assert.Equal(t, []string{"btc1", "btc2"}, cfg.Pipeline.BTCWatchedAddresses)
 }
@@ -794,4 +751,300 @@ func TestLoad_MetricsAuth_EnvOverride(t *testing.T) {
 
 	assert.Equal(t, "admin", cfg.Server.MetricsAuthUser)
 	assert.Equal(t, "secret", cfg.Server.MetricsAuthPass)
+}
+
+// writeYAML is a test helper that writes a YAML file and sets CONFIG_FILE.
+func writeYAML(t *testing.T, content string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0644))
+	t.Setenv("CONFIG_FILE", path)
+}
+
+func TestLoad_YAMLOnly(t *testing.T) {
+	writeYAML(t, `
+db:
+  url: "postgres://yaml:yaml@yamlhost/yamldb"
+sidecar:
+  addr: "yaml-sidecar:50051"
+solana:
+  rpc_url: "https://yaml-solana.example"
+base:
+  rpc_url: "https://yaml-base.example"
+btc:
+  rpc_url: "https://yaml-btc.example"
+pipeline:
+  batch_size: 200
+  fetch_workers: 8
+  fetcher:
+    retry_max_attempts: 6
+  ingester:
+    denied_cache_capacity: 5000
+`)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "postgres://yaml:yaml@yamlhost/yamldb", cfg.DB.URL)
+	assert.Equal(t, "yaml-sidecar:50051", cfg.Sidecar.Addr)
+	assert.Equal(t, "https://yaml-solana.example", cfg.Solana.RPCURL)
+	assert.Equal(t, "https://yaml-base.example", cfg.Base.RPCURL)
+	assert.Equal(t, "https://yaml-btc.example", cfg.BTC.RPCURL)
+	assert.Equal(t, 200, cfg.Pipeline.BatchSize)
+	assert.Equal(t, 8, cfg.Pipeline.FetchWorkers)
+	assert.Equal(t, 6, cfg.Pipeline.Fetcher.RetryMaxAttempts)
+	assert.Equal(t, 5000, cfg.Pipeline.Ingester.DeniedCacheCapacity)
+	// Defaults still apply for unset fields
+	assert.Equal(t, "redis://localhost:6380", cfg.Redis.URL)
+	assert.Equal(t, 10, cfg.Pipeline.ChannelBufferSize)
+	assert.Equal(t, 3, cfg.Pipeline.Normalizer.RetryMaxAttempts)
+}
+
+func TestLoad_EnvOverridesYAML(t *testing.T) {
+	writeYAML(t, `
+db:
+  url: "postgres://yaml:yaml@yamlhost/yamldb"
+sidecar:
+  addr: "yaml-sidecar:50051"
+solana:
+  rpc_url: "https://yaml-solana.example"
+base:
+  rpc_url: "https://yaml-base.example"
+btc:
+  rpc_url: "https://yaml-btc.example"
+pipeline:
+  batch_size: 200
+`)
+
+	// Env var overrides YAML value
+	t.Setenv("BATCH_SIZE", "500")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	// YAML values retained where no env override
+	assert.Equal(t, "postgres://yaml:yaml@yamlhost/yamldb", cfg.DB.URL)
+	// Env override wins
+	assert.Equal(t, 500, cfg.Pipeline.BatchSize)
+}
+
+func TestLoad_EnvOnlyBackwardCompat(t *testing.T) {
+	// No YAML file — CONFIG_FILE points to non-existent path
+	t.Setenv("CONFIG_FILE", "/tmp/nonexistent-config-test.yaml")
+	t.Setenv("DB_URL", "postgres://env@localhost/envdb")
+	t.Setenv("SOLANA_RPC_URL", "https://env-solana.example")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://env-base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://env-btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "postgres://env@localhost/envdb", cfg.DB.URL)
+	assert.Equal(t, "https://env-solana.example", cfg.Solana.RPCURL)
+}
+
+func TestLoad_YAMLMalformed(t *testing.T) {
+	writeYAML(t, `
+db:
+  url: [invalid yaml
+  not: valid: yaml:
+`)
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse config file")
+}
+
+func TestLoad_YAMLFileNotFound_IsNotError(t *testing.T) {
+	t.Setenv("CONFIG_FILE", "/tmp/does-not-exist-config-test.yaml")
+	t.Setenv("DB_URL", "postgres://x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://sol.example")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+
+	_, err := Load()
+	require.NoError(t, err)
+}
+
+func TestLoad_NewPipelineStageDefaults(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://sol.example")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	// Fetcher stage defaults
+	assert.Equal(t, 4, cfg.Pipeline.Fetcher.RetryMaxAttempts)
+	assert.Equal(t, 200, cfg.Pipeline.Fetcher.BackoffInitialMs)
+	assert.Equal(t, 3000, cfg.Pipeline.Fetcher.BackoffMaxMs)
+	assert.Equal(t, 1, cfg.Pipeline.Fetcher.AdaptiveMinBatch)
+	assert.Equal(t, 1, cfg.Pipeline.Fetcher.BoundaryOverlapLookahead)
+
+	// Normalizer stage defaults
+	assert.Equal(t, 3, cfg.Pipeline.Normalizer.RetryMaxAttempts)
+	assert.Equal(t, 100, cfg.Pipeline.Normalizer.RetryDelayInitialMs)
+	assert.Equal(t, 1000, cfg.Pipeline.Normalizer.RetryDelayMaxMs)
+
+	// Ingester stage defaults
+	assert.Equal(t, 3, cfg.Pipeline.Ingester.RetryMaxAttempts)
+	assert.Equal(t, 100, cfg.Pipeline.Ingester.RetryDelayInitialMs)
+	assert.Equal(t, 1000, cfg.Pipeline.Ingester.RetryDelayMaxMs)
+	assert.Equal(t, 10000, cfg.Pipeline.Ingester.DeniedCacheCapacity)
+	assert.Equal(t, 300, cfg.Pipeline.Ingester.DeniedCacheTTLSec)
+
+	// Health stage defaults
+	assert.Equal(t, 5, cfg.Pipeline.Health.UnhealthyThreshold)
+
+	// Config watcher defaults
+	assert.Equal(t, 30, cfg.Pipeline.ConfigWatcher.IntervalSec)
+}
+
+func TestLoad_PipelineStageEnvOverride(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://sol.example")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+	t.Setenv("FETCHER_RETRY_MAX_ATTEMPTS", "8")
+	t.Setenv("NORMALIZER_RETRY_DELAY_MAX_MS", "5000")
+	t.Setenv("INGESTER_DENIED_CACHE_CAPACITY", "20000")
+	t.Setenv("HEALTH_UNHEALTHY_THRESHOLD", "10")
+	t.Setenv("CONFIG_WATCHER_INTERVAL_SEC", "60")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, 8, cfg.Pipeline.Fetcher.RetryMaxAttempts)
+	assert.Equal(t, 5000, cfg.Pipeline.Normalizer.RetryDelayMaxMs)
+	assert.Equal(t, 20000, cfg.Pipeline.Ingester.DeniedCacheCapacity)
+	assert.Equal(t, 10, cfg.Pipeline.Health.UnhealthyThreshold)
+	assert.Equal(t, 60, cfg.Pipeline.ConfigWatcher.IntervalSec)
+}
+
+func TestLoad_ChainAdapterConfigDefaults(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://sol.example")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	// Solana adapter defaults
+	assert.Equal(t, 1000, cfg.Solana.MaxPageSize)
+	assert.Equal(t, 10, cfg.Solana.MaxConcurrentTxs)
+
+	// EVM chain adapter defaults
+	assert.Equal(t, 200, cfg.Base.MaxInitialLookbackBlocks)
+	assert.Equal(t, 10, cfg.Base.MaxConcurrentTxs)
+	assert.Equal(t, 200, cfg.Ethereum.MaxInitialLookbackBlocks)
+	assert.Equal(t, 10, cfg.Ethereum.MaxConcurrentTxs)
+	assert.Equal(t, 200, cfg.Polygon.MaxInitialLookbackBlocks)
+	assert.Equal(t, 10, cfg.Polygon.MaxConcurrentTxs)
+	assert.Equal(t, 200, cfg.Arbitrum.MaxInitialLookbackBlocks)
+	assert.Equal(t, 10, cfg.Arbitrum.MaxConcurrentTxs)
+	assert.Equal(t, 200, cfg.BSC.MaxInitialLookbackBlocks)
+	assert.Equal(t, 10, cfg.BSC.MaxConcurrentTxs)
+
+	// BTC adapter defaults
+	assert.Equal(t, 200, cfg.BTC.MaxInitialLookbackBlocks)
+}
+
+func TestLoad_ChainAdapterConfigEnvOverride(t *testing.T) {
+	t.Setenv("DB_URL", "postgres://x@localhost/db")
+	t.Setenv("SOLANA_RPC_URL", "https://sol.example")
+	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base.example")
+	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc.example")
+	t.Setenv("SIDECAR_ADDR", "localhost:50051")
+	t.Setenv("SOLANA_MAX_PAGE_SIZE", "500")
+	t.Setenv("SOLANA_MAX_CONCURRENT_TXS", "20")
+	t.Setenv("BASE_MAX_INITIAL_LOOKBACK_BLOCKS", "500")
+	t.Setenv("BASE_MAX_CONCURRENT_TXS", "25")
+	t.Setenv("BTC_MAX_INITIAL_LOOKBACK_BLOCKS", "100")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, 500, cfg.Solana.MaxPageSize)
+	assert.Equal(t, 20, cfg.Solana.MaxConcurrentTxs)
+	assert.Equal(t, 500, cfg.Base.MaxInitialLookbackBlocks)
+	assert.Equal(t, 25, cfg.Base.MaxConcurrentTxs)
+	assert.Equal(t, 100, cfg.BTC.MaxInitialLookbackBlocks)
+}
+
+func TestOverrideHelpers(t *testing.T) {
+	t.Run("overrideStr_set", func(t *testing.T) {
+		t.Setenv("TEST_STR", "hello")
+		s := "original"
+		overrideStr(&s, "TEST_STR")
+		assert.Equal(t, "hello", s)
+	})
+
+	t.Run("overrideStr_unset", func(t *testing.T) {
+		s := "original"
+		overrideStr(&s, "UNSET_KEY_12345")
+		assert.Equal(t, "original", s)
+	})
+
+	t.Run("overrideInt_set", func(t *testing.T) {
+		t.Setenv("TEST_INT_OVR", "42")
+		i := 10
+		overrideInt(&i, "TEST_INT_OVR")
+		assert.Equal(t, 42, i)
+	})
+
+	t.Run("overrideInt_unset", func(t *testing.T) {
+		i := 10
+		overrideInt(&i, "UNSET_KEY_12345")
+		assert.Equal(t, 10, i)
+	})
+
+	t.Run("overrideInt_invalid", func(t *testing.T) {
+		t.Setenv("TEST_INT_BAD", "abc")
+		i := 10
+		overrideInt(&i, "TEST_INT_BAD")
+		assert.Equal(t, 10, i) // unchanged
+	})
+
+	t.Run("overrideBool_true", func(t *testing.T) {
+		t.Setenv("TEST_BOOL", "true")
+		b := false
+		overrideBool(&b, "TEST_BOOL")
+		assert.True(t, b)
+	})
+
+	t.Run("overrideBool_false", func(t *testing.T) {
+		t.Setenv("TEST_BOOL_F", "false")
+		b := true
+		overrideBool(&b, "TEST_BOOL_F")
+		assert.False(t, b)
+	})
+
+	t.Run("overrideFloat64_set", func(t *testing.T) {
+		t.Setenv("TEST_FLOAT", "3.14")
+		f := 1.0
+		overrideFloat64(&f, "TEST_FLOAT")
+		assert.InDelta(t, 3.14, f, 0.001)
+	})
+
+	t.Run("overrideInt64_set", func(t *testing.T) {
+		t.Setenv("TEST_INT64", "9999999999")
+		var i int64 = 0
+		overrideInt64(&i, "TEST_INT64")
+		assert.Equal(t, int64(9999999999), i)
+	})
+
+	t.Run("overrideCSVList_set", func(t *testing.T) {
+		t.Setenv("TEST_CSV", "a,b,c")
+		var list []string
+		overrideCSVList(&list, "TEST_CSV")
+		assert.Equal(t, []string{"a", "b", "c"}, list)
+	})
 }

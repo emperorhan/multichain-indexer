@@ -24,8 +24,15 @@ const (
 )
 
 type Adapter struct {
-	client rpc.RPCClient
-	logger *slog.Logger
+	client                   rpc.RPCClient
+	logger                   *slog.Logger
+	maxInitialLookbackBlocks int64
+}
+
+type AdapterOption func(*Adapter)
+
+func WithMaxInitialLookbackBlocks(n int) AdapterOption {
+	return func(a *Adapter) { a.maxInitialLookbackBlocks = int64(n) }
 }
 
 type candidateSignature struct {
@@ -75,14 +82,21 @@ var _ chain.ChainAdapter = (*Adapter)(nil)
 var _ chain.ReorgAwareAdapter = (*Adapter)(nil)
 var _ chain.BlockScanAdapter = (*Adapter)(nil)
 
-func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
+func NewAdapter(rpcURL string, logger *slog.Logger, opts ...AdapterOption) *Adapter {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Adapter{
-		client: rpc.NewClient(rpcURL, logger),
-		logger: logger.With("chain", "btc"),
+	a := &Adapter{
+		client:                   rpc.NewClient(rpcURL, logger),
+		logger:                   logger.With("chain", "btc"),
+		maxInitialLookbackBlocks: maxInitialLookbackBlocks,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(a)
+		}
+	}
+	return a
 }
 
 // SetRateLimiter applies a rate limiter to the underlying RPC client.
@@ -145,7 +159,7 @@ func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address stri
 		}
 	}
 
-	startBlock := head - (maxInitialLookbackBlocks - 1)
+	startBlock := head - (a.maxInitialLookbackBlocks - 1)
 	if startBlock < 0 {
 		startBlock = 0
 	}

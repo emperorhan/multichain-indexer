@@ -7,116 +7,123 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	dbStatementTimeoutDefaultMS  = 30000
-	dbStatementTimeoutMinMS      = 0
-	dbStatementTimeoutMaxMS      = 3_600_000
 	dbPoolStatsIntervalDefaultMS = 5000
 	dbPoolStatsIntervalMinMS     = 100
 	dbPoolStatsIntervalMaxMS     = 3_600_000
 )
 
 type Config struct {
-	DB       DBConfig
-	Redis    RedisConfig
-	Sidecar  SidecarConfig
-	Solana   SolanaConfig
-	Base     BaseConfig
-	Ethereum EthereumConfig
-	BTC      BTCConfig
-	Polygon  PolygonConfig
-	Arbitrum ArbitrumConfig
-	BSC      BSCConfig
-	Runtime  RuntimeConfig
-	Pipeline PipelineConfig
-	Server   ServerConfig
-	Log      LogConfig
-	Tracing  TracingConfig
-	Alert    AlertConfig
+	DB       DBConfig       `yaml:"db"`
+	Redis    RedisConfig    `yaml:"redis"`
+	Sidecar  SidecarConfig  `yaml:"sidecar"`
+	Solana   SolanaConfig   `yaml:"solana"`
+	Base     BaseConfig     `yaml:"base"`
+	Ethereum EthereumConfig `yaml:"ethereum"`
+	BTC      BTCConfig      `yaml:"btc"`
+	Polygon  PolygonConfig  `yaml:"polygon"`
+	Arbitrum ArbitrumConfig `yaml:"arbitrum"`
+	BSC      BSCConfig      `yaml:"bsc"`
+	Runtime  RuntimeConfig  `yaml:"runtime"`
+	Pipeline PipelineConfig `yaml:"pipeline"`
+	Server   ServerConfig   `yaml:"server"`
+	Log      LogConfig      `yaml:"log"`
+	Tracing  TracingConfig  `yaml:"tracing"`
+	Alert    AlertConfig    `yaml:"alert"`
 }
 
 type AlertConfig struct {
-	SlackWebhookURL    string
-	WebhookURL         string
-	CooldownMS         int
+	SlackWebhookURL string `yaml:"slack_webhook_url"`
+	WebhookURL      string `yaml:"webhook_url"`
+	CooldownMS      int    `yaml:"cooldown_ms"`
 }
 
 type DBConfig struct {
-	URL                 string
-	MaxOpenConns        int
-	MaxIdleConns        int
-	ConnMaxLifetime     time.Duration
-	StatementTimeoutMS  int
-	PoolStatsIntervalMS int
+	URL                string `yaml:"url"`
+	MaxOpenConns       int    `yaml:"max_open_conns"`
+	MaxIdleConns       int    `yaml:"max_idle_conns"`
+	ConnMaxLifetimeMin int    `yaml:"conn_max_lifetime_min"`
+	// TimeoutSec is used internally for YAML; SidecarConfig has similar pattern.
+	ConnMaxLifetime     time.Duration `yaml:"-"`
+	PoolStatsIntervalMS int           `yaml:"pool_stats_interval_ms"`
 }
 
 type RedisConfig struct {
-	URL string
+	URL string `yaml:"url"`
 }
 
 type SidecarConfig struct {
-	Addr       string
-	Timeout    time.Duration
-	TLSEnabled bool
-	TLSCert    string // client cert for mTLS (PEM path)
-	TLSKey     string // client key for mTLS (PEM path)
-	TLSCA      string // CA cert to verify server (PEM path)
+	Addr       string        `yaml:"addr"`
+	TimeoutSec int           `yaml:"timeout_sec"`
+	Timeout    time.Duration `yaml:"-"`
+	TLSEnabled bool          `yaml:"tls_enabled"`
+	TLSCert    string        `yaml:"tls_cert"`
+	TLSKey     string        `yaml:"tls_key"`
+	TLSCA      string        `yaml:"tls_ca"`
 }
 
 type RPCRateLimitConfig struct {
-	RPS   float64
-	Burst int
+	RPS   float64 `yaml:"rps"`
+	Burst int     `yaml:"burst"`
 }
 
 type SolanaConfig struct {
-	RPCURL    string
-	Network   string
-	RateLimit RPCRateLimitConfig
-	DBURL     string // optional chain-specific DB URL (env: SOLANA_DB_URL)
+	RPCURL           string             `yaml:"rpc_url"`
+	Network          string             `yaml:"network"`
+	RateLimit        RPCRateLimitConfig `yaml:"rate_limit"`
+	MaxPageSize      int                `yaml:"max_page_size"`
+	MaxConcurrentTxs int                `yaml:"max_concurrent_txs"`
 }
 
 type BaseConfig struct {
-	RPCURL    string
-	Network   string
-	RateLimit RPCRateLimitConfig
-	DBURL     string // optional chain-specific DB URL (env: BASE_DB_URL)
+	RPCURL                   string             `yaml:"rpc_url"`
+	Network                  string             `yaml:"network"`
+	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
+	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
+	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
 }
 
 type EthereumConfig struct {
-	RPCURL    string
-	Network   string
-	RateLimit RPCRateLimitConfig
-	DBURL     string // optional chain-specific DB URL (env: ETHEREUM_DB_URL)
+	RPCURL                   string             `yaml:"rpc_url"`
+	Network                  string             `yaml:"network"`
+	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
+	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
+	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
 }
 
 type BTCConfig struct {
-	RPCURL    string
-	Network   string
-	RateLimit RPCRateLimitConfig
-	DBURL     string // optional chain-specific DB URL (env: BTC_DB_URL)
+	RPCURL                   string             `yaml:"rpc_url"`
+	Network                  string             `yaml:"network"`
+	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
+	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
 }
 
 type PolygonConfig struct {
-	RPCURL    string
-	Network   string
-	RateLimit RPCRateLimitConfig
-	DBURL     string // optional chain-specific DB URL (env: POLYGON_DB_URL)
+	RPCURL                   string             `yaml:"rpc_url"`
+	Network                  string             `yaml:"network"`
+	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
+	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
+	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
 }
 
 type ArbitrumConfig struct {
-	RPCURL    string
-	Network   string
-	RateLimit RPCRateLimitConfig
-	DBURL     string // optional chain-specific DB URL (env: ARBITRUM_DB_URL)
+	RPCURL                   string             `yaml:"rpc_url"`
+	Network                  string             `yaml:"network"`
+	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
+	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
+	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
 }
 
 type BSCConfig struct {
-	RPCURL    string
-	Network   string
-	RateLimit RPCRateLimitConfig
-	DBURL     string // optional chain-specific DB URL (env: BSC_DB_URL)
+	RPCURL                   string             `yaml:"rpc_url"`
+	Network                  string             `yaml:"network"`
+	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
+	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
+	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
 }
 
 const (
@@ -131,247 +138,633 @@ const (
 )
 
 type RuntimeConfig struct {
-	DeploymentMode string
-	LikeGroup      string
-	ChainTargets   []string
+	DeploymentMode string   `yaml:"deployment_mode"`
+	LikeGroup      string   `yaml:"like_group"`
+	ChainTargets   []string `yaml:"chain_targets"`
+}
+
+// FetcherStageConfig holds tuning parameters for the fetcher pipeline stage.
+type FetcherStageConfig struct {
+	RetryMaxAttempts         int `yaml:"retry_max_attempts"`
+	BackoffInitialMs         int `yaml:"backoff_initial_ms"`
+	BackoffMaxMs             int `yaml:"backoff_max_ms"`
+	AdaptiveMinBatch         int `yaml:"adaptive_min_batch"`
+	BoundaryOverlapLookahead int `yaml:"boundary_overlap_lookahead"`
+}
+
+// NormalizerStageConfig holds tuning parameters for the normalizer pipeline stage.
+type NormalizerStageConfig struct {
+	RetryMaxAttempts    int `yaml:"retry_max_attempts"`
+	RetryDelayInitialMs int `yaml:"retry_delay_initial_ms"`
+	RetryDelayMaxMs     int `yaml:"retry_delay_max_ms"`
+}
+
+// IngesterStageConfig holds tuning parameters for the ingester pipeline stage.
+type IngesterStageConfig struct {
+	RetryMaxAttempts    int `yaml:"retry_max_attempts"`
+	RetryDelayInitialMs int `yaml:"retry_delay_initial_ms"`
+	RetryDelayMaxMs     int `yaml:"retry_delay_max_ms"`
+	DeniedCacheCapacity int `yaml:"denied_cache_capacity"`
+	DeniedCacheTTLSec   int `yaml:"denied_cache_ttl_sec"`
+}
+
+// HealthStageConfig holds tuning parameters for pipeline health tracking.
+type HealthStageConfig struct {
+	UnhealthyThreshold int `yaml:"unhealthy_threshold"`
+}
+
+// ConfigWatcherStageConfig holds tuning parameters for the runtime config watcher.
+type ConfigWatcherStageConfig struct {
+	IntervalSec int `yaml:"interval_sec"`
 }
 
 type PipelineConfig struct {
-	ReorgDetectorIntervalMs  int
-	FinalizerIntervalMs      int
-	BTCFinalityConfirmations int
-	WatchedAddresses         []string // legacy alias of SolanaWatchedAddresses
-	SolanaWatchedAddresses                        []string
-	BaseWatchedAddresses                          []string
-	EthereumWatchedAddresses                      []string
-	BTCWatchedAddresses                           []string
-	PolygonWatchedAddresses                       []string
-	ArbitrumWatchedAddresses                      []string
-	BSCWatchedAddresses                           []string
-	FetchWorkers                                  int
-	NormalizerWorkers                             int
-	BatchSize                                     int
-	IndexingIntervalMs                            int
-	ChannelBufferSize                             int
-	CoordinatorAutoTuneEnabled                    bool
-	CoordinatorAutoTuneMinBatchSize               int
-	CoordinatorAutoTuneMaxBatchSize               int
-	CoordinatorAutoTuneStepUp                     int
-	CoordinatorAutoTuneStepDown                   int
-	CoordinatorAutoTuneLagHighWatermark           int64
-	CoordinatorAutoTuneLagLowWatermark            int64
-	CoordinatorAutoTuneQueueHighPct               int
-	CoordinatorAutoTuneQueueLowPct                int
-	CoordinatorAutoTuneHysteresisTicks            int
-	CoordinatorAutoTuneTelemetryStaleTicks        int
-	CoordinatorAutoTuneTelemetryRecoveryTicks     int
-	CoordinatorAutoTuneOperatorOverrideBatch      int
-	CoordinatorAutoTuneOperatorReleaseTicks       int
-	CoordinatorAutoTunePolicyVersion              string
-	CoordinatorAutoTunePolicyManifestDigest       string
-	CoordinatorAutoTunePolicyManifestRefreshEpoch int64
-	CoordinatorAutoTunePolicyActivationHoldTicks  int
-	IndexedBlocksRetention                        int
-	StreamTransportEnabled                        bool
-	StreamNamespace                               string
-	StreamSessionID                               string
+	ReorgDetectorIntervalMs                       int      `yaml:"reorg_detector_interval_ms"`
+	FinalizerIntervalMs                           int      `yaml:"finalizer_interval_ms"`
+	BTCFinalityConfirmations                      int      `yaml:"btc_finality_confirmations"`
+	SolanaWatchedAddresses                        []string `yaml:"solana_watched_addresses"`
+	BaseWatchedAddresses                          []string `yaml:"base_watched_addresses"`
+	EthereumWatchedAddresses                      []string `yaml:"ethereum_watched_addresses"`
+	BTCWatchedAddresses                           []string `yaml:"btc_watched_addresses"`
+	PolygonWatchedAddresses                       []string `yaml:"polygon_watched_addresses"`
+	ArbitrumWatchedAddresses                      []string `yaml:"arbitrum_watched_addresses"`
+	BSCWatchedAddresses                           []string `yaml:"bsc_watched_addresses"`
+	FetchWorkers                                  int      `yaml:"fetch_workers"`
+	NormalizerWorkers                             int      `yaml:"normalizer_workers"`
+	BatchSize                                     int      `yaml:"batch_size"`
+	IndexingIntervalMs                            int      `yaml:"indexing_interval_ms"`
+	ChannelBufferSize                             int      `yaml:"channel_buffer_size"`
+	CoordinatorAutoTuneEnabled                    bool     `yaml:"coordinator_autotune_enabled"`
+	CoordinatorAutoTuneMinBatchSize               int      `yaml:"coordinator_autotune_min_batch_size"`
+	CoordinatorAutoTuneMaxBatchSize               int      `yaml:"coordinator_autotune_max_batch_size"`
+	CoordinatorAutoTuneStepUp                     int      `yaml:"coordinator_autotune_step_up"`
+	CoordinatorAutoTuneStepDown                   int      `yaml:"coordinator_autotune_step_down"`
+	CoordinatorAutoTuneLagHighWatermark           int64    `yaml:"coordinator_autotune_lag_high_watermark"`
+	CoordinatorAutoTuneLagLowWatermark            int64    `yaml:"coordinator_autotune_lag_low_watermark"`
+	CoordinatorAutoTuneQueueHighPct               int      `yaml:"coordinator_autotune_queue_high_pct"`
+	CoordinatorAutoTuneQueueLowPct                int      `yaml:"coordinator_autotune_queue_low_pct"`
+	CoordinatorAutoTuneHysteresisTicks            int      `yaml:"coordinator_autotune_hysteresis_ticks"`
+	CoordinatorAutoTuneTelemetryStaleTicks        int      `yaml:"coordinator_autotune_telemetry_stale_ticks"`
+	CoordinatorAutoTuneTelemetryRecoveryTicks     int      `yaml:"coordinator_autotune_telemetry_recovery_ticks"`
+	CoordinatorAutoTuneOperatorOverrideBatch      int      `yaml:"coordinator_autotune_operator_override_batch"`
+	CoordinatorAutoTuneOperatorReleaseTicks       int      `yaml:"coordinator_autotune_operator_release_ticks"`
+	CoordinatorAutoTunePolicyVersion              string   `yaml:"coordinator_autotune_policy_version"`
+	CoordinatorAutoTunePolicyManifestDigest       string   `yaml:"coordinator_autotune_policy_manifest_digest"`
+	CoordinatorAutoTunePolicyManifestRefreshEpoch int64    `yaml:"coordinator_autotune_policy_manifest_refresh_epoch"`
+	CoordinatorAutoTunePolicyActivationHoldTicks  int      `yaml:"coordinator_autotune_policy_activation_hold_ticks"`
+	IndexedBlocksRetention                        int      `yaml:"indexed_blocks_retention"`
+	StreamTransportEnabled                        bool     `yaml:"stream_transport_enabled"`
+	StreamNamespace                               string   `yaml:"stream_namespace"`
+	StreamSessionID                               string   `yaml:"stream_session_id"`
+	Fetcher                                       FetcherStageConfig       `yaml:"fetcher"`
+	Normalizer                                    NormalizerStageConfig    `yaml:"normalizer"`
+	Ingester                                      IngesterStageConfig      `yaml:"ingester"`
+	Health                                        HealthStageConfig        `yaml:"health"`
+	ConfigWatcher                                 ConfigWatcherStageConfig `yaml:"config_watcher"`
 }
 
 type ServerConfig struct {
-	HealthPort      int
-	MetricsAuthUser string
-	MetricsAuthPass string
-	AdminAddr       string
-	AdminAuthUser   string
-	AdminAuthPass   string
+	HealthPort      int    `yaml:"health_port"`
+	MetricsAuthUser string `yaml:"metrics_auth_user"`
+	MetricsAuthPass string `yaml:"metrics_auth_pass"`
+	AdminAddr       string `yaml:"admin_addr"`
+	AdminAuthUser   string `yaml:"admin_auth_user"`
+	AdminAuthPass   string `yaml:"admin_auth_pass"`
 }
 
 type LogConfig struct {
-	Level string
+	Level string `yaml:"level"`
 }
 
 type TracingConfig struct {
-	Enabled     bool
-	Endpoint    string  // OTLP gRPC endpoint (e.g. "localhost:4317")
-	Insecure    bool    // Use plaintext gRPC (true for local, false for TLS-enabled collectors)
-	SampleRatio float64 // Fraction of traces to sample (0.0–1.0). 0 defaults to 0.1.
+	Enabled     bool    `yaml:"enabled"`
+	Endpoint    string  `yaml:"endpoint"`
+	Insecure    bool    `yaml:"insecure"`
+	SampleRatio float64 `yaml:"sample_ratio"`
 }
 
+// Load loads the configuration using a 3-stage approach:
+//  1. Load from YAML file (if present)
+//  2. Override with environment variables (only explicitly set ones)
+//  3. Apply defaults for any remaining zero-value fields
 func Load() (*Config, error) {
-	statementTimeoutMS, err := getEnvIntBounded("DB_STATEMENT_TIMEOUT_MS", dbStatementTimeoutDefaultMS, dbStatementTimeoutMinMS, dbStatementTimeoutMaxMS)
-	if err != nil {
-		return nil, fmt.Errorf("DB_STATEMENT_TIMEOUT_MS: %w", err)
+	cfg := &Config{}
+
+	// Step 1: YAML load (file not found is not an error — backward compat)
+	if err := loadYAMLFile(cfg); err != nil {
+		return nil, err
 	}
 
-	poolStatsIntervalMS, err := getEnvIntBounded("DB_POOL_STATS_INTERVAL_MS", dbPoolStatsIntervalDefaultMS, dbPoolStatsIntervalMinMS, dbPoolStatsIntervalMaxMS)
-	if err != nil {
-		return nil, fmt.Errorf("DB_POOL_STATS_INTERVAL_MS: %w", err)
+	// Step 2: env var overrides (only explicitly set vars)
+	applyEnvOverrides(cfg)
+
+	// Step 3: apply defaults for zero-value fields
+	applyDefaults(cfg)
+
+	// Step 4: compute derived fields (Duration from int, etc.)
+	computeDerived(cfg)
+
+	// Step 5: bounded validation for pool stats interval
+	if v, ok := os.LookupEnv("DB_POOL_STATS_INTERVAL_MS"); ok && strings.TrimSpace(v) != "" {
+		trimmed := strings.TrimSpace(v)
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("DB_POOL_STATS_INTERVAL_MS: must be an integer")
+		}
+		if parsed < dbPoolStatsIntervalMinMS || parsed > dbPoolStatsIntervalMaxMS {
+			return nil, fmt.Errorf("DB_POOL_STATS_INTERVAL_MS: must be within [%d, %d]", dbPoolStatsIntervalMinMS, dbPoolStatsIntervalMaxMS)
+		}
+	} else if cfg.DB.PoolStatsIntervalMS < dbPoolStatsIntervalMinMS || cfg.DB.PoolStatsIntervalMS > dbPoolStatsIntervalMaxMS {
+		// Reset to default if YAML value is out of range
+		cfg.DB.PoolStatsIntervalMS = dbPoolStatsIntervalDefaultMS
 	}
 
-	pipelineBatchSize := getEnvInt("BATCH_SIZE", 100)
-
-	cfg := &Config{
-		DB: DBConfig{
-			URL:                 getEnv("DB_URL", ""),
-			MaxOpenConns:        getEnvInt("DB_MAX_OPEN_CONNS", 50),
-			MaxIdleConns:        getEnvInt("DB_MAX_IDLE_CONNS", 10),
-			ConnMaxLifetime:     time.Duration(getEnvInt("DB_CONN_MAX_LIFETIME_MIN", 30)) * time.Minute,
-			StatementTimeoutMS:  statementTimeoutMS,
-			PoolStatsIntervalMS: poolStatsIntervalMS,
-		},
-		Redis: RedisConfig{
-			URL: getEnv("REDIS_URL", "redis://localhost:6380"),
-		},
-		Sidecar: SidecarConfig{
-			Addr:       getEnv("SIDECAR_ADDR", "localhost:50051"),
-			Timeout:    time.Duration(getEnvInt("SIDECAR_TIMEOUT_SEC", 30)) * time.Second,
-			TLSEnabled: getEnvBool("SIDECAR_TLS_ENABLED", false),
-			TLSCert:    getEnv("SIDECAR_TLS_CERT", ""),
-			TLSKey:     getEnv("SIDECAR_TLS_KEY", ""),
-			TLSCA:      getEnv("SIDECAR_TLS_CA", ""),
-		},
-		Solana: SolanaConfig{
-			RPCURL:  getEnvAny([]string{"SOLANA_DEVNET_RPC_URL", "SOLANA_RPC_URL"}, "https://api.devnet.solana.com"),
-			Network: getEnv("SOLANA_NETWORK", "devnet"),
-			RateLimit: RPCRateLimitConfig{
-				RPS:   getEnvFloat("SOLANA_RPC_RATE_LIMIT", 10),
-				Burst: getEnvInt("SOLANA_RPC_BURST", 20),
-			},
-			DBURL: getEnv("SOLANA_DB_URL", ""),
-		},
-		Base: BaseConfig{
-			RPCURL:  getEnvAny([]string{"BASE_SEPOLIA_RPC_URL", "BASE_RPC_URL"}, ""),
-			Network: getEnv("BASE_NETWORK", "sepolia"),
-			RateLimit: RPCRateLimitConfig{
-				RPS:   getEnvFloat("BASE_RPC_RATE_LIMIT", 25),
-				Burst: getEnvInt("BASE_RPC_BURST", 50),
-			},
-			DBURL: getEnv("BASE_DB_URL", ""),
-		},
-		Ethereum: EthereumConfig{
-			RPCURL:  getEnvAny([]string{"ETH_MAINNET_RPC_URL", "ETHEREUM_RPC_URL"}, ""),
-			Network: getEnv("ETHEREUM_NETWORK", "mainnet"),
-			RateLimit: RPCRateLimitConfig{
-				RPS:   getEnvFloat("ETH_RPC_RATE_LIMIT", 25),
-				Burst: getEnvInt("ETH_RPC_BURST", 50),
-			},
-			DBURL: getEnv("ETHEREUM_DB_URL", ""),
-		},
-		BTC: BTCConfig{
-			RPCURL:  getEnvAny([]string{"BTC_TESTNET_RPC_URL", "BTC_RPC_URL"}, ""),
-			Network: getEnv("BTC_NETWORK", "testnet"),
-			RateLimit: RPCRateLimitConfig{
-				RPS:   getEnvFloat("BTC_RPC_RATE_LIMIT", 5),
-				Burst: getEnvInt("BTC_RPC_BURST", 10),
-			},
-			DBURL: getEnv("BTC_DB_URL", ""),
-		},
-		Polygon: PolygonConfig{
-			RPCURL:  getEnvAny([]string{"POLYGON_RPC_URL", "POLYGON_MAINNET_RPC_URL"}, ""),
-			Network: getEnv("POLYGON_NETWORK", "mainnet"),
-			RateLimit: RPCRateLimitConfig{
-				RPS:   getEnvFloat("POLYGON_RPC_RATE_LIMIT", 25),
-				Burst: getEnvInt("POLYGON_RPC_BURST", 50),
-			},
-			DBURL: getEnv("POLYGON_DB_URL", ""),
-		},
-		Arbitrum: ArbitrumConfig{
-			RPCURL:  getEnvAny([]string{"ARBITRUM_RPC_URL", "ARBITRUM_MAINNET_RPC_URL"}, ""),
-			Network: getEnv("ARBITRUM_NETWORK", "mainnet"),
-			RateLimit: RPCRateLimitConfig{
-				RPS:   getEnvFloat("ARBITRUM_RPC_RATE_LIMIT", 25),
-				Burst: getEnvInt("ARBITRUM_RPC_BURST", 50),
-			},
-			DBURL: getEnv("ARBITRUM_DB_URL", ""),
-		},
-		BSC: BSCConfig{
-			RPCURL:  getEnvAny([]string{"BSC_RPC_URL", "BSC_MAINNET_RPC_URL"}, ""),
-			Network: getEnv("BSC_NETWORK", "mainnet"),
-			RateLimit: RPCRateLimitConfig{
-				RPS:   getEnvFloat("BSC_RPC_RATE_LIMIT", 25),
-				Burst: getEnvInt("BSC_RPC_BURST", 50),
-			},
-			DBURL: getEnv("BSC_DB_URL", ""),
-		},
-		Runtime: RuntimeConfig{
-			DeploymentMode: strings.ToLower(getEnv("RUNTIME_DEPLOYMENT_MODE", RuntimeDeploymentModeLikeGroup)),
-			LikeGroup:      strings.ToLower(getEnv("RUNTIME_LIKE_GROUP", "")),
-		},
-		Pipeline: PipelineConfig{
-			ReorgDetectorIntervalMs:  getEnvInt("REORG_DETECTOR_INTERVAL_MS", 30000),
-			FinalizerIntervalMs:      getEnvInt("FINALIZER_INTERVAL_MS", 60000),
-			BTCFinalityConfirmations: getEnvInt("BTC_FINALITY_CONFIRMATIONS", 6),
-			FetchWorkers:                                  getEnvInt("FETCH_WORKERS", 2),
-			NormalizerWorkers:                             getEnvInt("NORMALIZER_WORKERS", 2),
-			BatchSize:                                     pipelineBatchSize,
-			IndexingIntervalMs:                            getEnvInt("INDEXING_INTERVAL_MS", 5000),
-			ChannelBufferSize:                             getEnvInt("CHANNEL_BUFFER_SIZE", 10),
-			CoordinatorAutoTuneEnabled:                    getEnvBool("COORDINATOR_AUTOTUNE_ENABLED", false),
-			CoordinatorAutoTuneMinBatchSize:               getEnvInt("COORDINATOR_AUTOTUNE_MIN_BATCH_SIZE", 10),
-			CoordinatorAutoTuneMaxBatchSize:               getEnvInt("COORDINATOR_AUTOTUNE_MAX_BATCH_SIZE", pipelineBatchSize),
-			CoordinatorAutoTuneStepUp:                     getEnvInt("COORDINATOR_AUTOTUNE_STEP_UP", 10),
-			CoordinatorAutoTuneStepDown:                   getEnvInt("COORDINATOR_AUTOTUNE_STEP_DOWN", 10),
-			CoordinatorAutoTuneLagHighWatermark:           int64(getEnvInt("COORDINATOR_AUTOTUNE_LAG_HIGH_WATERMARK", 500)),
-			CoordinatorAutoTuneLagLowWatermark:            int64(getEnvInt("COORDINATOR_AUTOTUNE_LAG_LOW_WATERMARK", 100)),
-			CoordinatorAutoTuneQueueHighPct:               getEnvInt("COORDINATOR_AUTOTUNE_QUEUE_HIGH_PCT", 80),
-			CoordinatorAutoTuneQueueLowPct:                getEnvInt("COORDINATOR_AUTOTUNE_QUEUE_LOW_PCT", 30),
-			CoordinatorAutoTuneHysteresisTicks:            getEnvInt("COORDINATOR_AUTOTUNE_HYSTERESIS_TICKS", 2),
-			CoordinatorAutoTuneTelemetryStaleTicks:        getEnvInt("COORDINATOR_AUTOTUNE_TELEMETRY_STALE_TICKS", 2),
-			CoordinatorAutoTuneTelemetryRecoveryTicks:     getEnvInt("COORDINATOR_AUTOTUNE_TELEMETRY_RECOVERY_TICKS", 1),
-			CoordinatorAutoTuneOperatorOverrideBatch:      getEnvInt("COORDINATOR_AUTOTUNE_OPERATOR_OVERRIDE_BATCH_SIZE", 0),
-			CoordinatorAutoTuneOperatorReleaseTicks:       getEnvInt("COORDINATOR_AUTOTUNE_OPERATOR_RELEASE_HOLD_TICKS", 2),
-			CoordinatorAutoTunePolicyVersion:              getEnv("COORDINATOR_AUTOTUNE_POLICY_VERSION", "policy-v1"),
-			CoordinatorAutoTunePolicyManifestDigest:       getEnv("COORDINATOR_AUTOTUNE_POLICY_MANIFEST_DIGEST", "manifest-v1"),
-			CoordinatorAutoTunePolicyManifestRefreshEpoch: int64(getEnvInt("COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH", 0)),
-			CoordinatorAutoTunePolicyActivationHoldTicks:  getEnvInt("COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS", 1),
-			IndexedBlocksRetention:                        getEnvInt("INDEXED_BLOCKS_RETENTION", 10000),
-			StreamTransportEnabled:                        getEnvBool("PIPELINE_STREAM_TRANSPORT_ENABLED", false),
-			StreamNamespace:                               getEnv("PIPELINE_STREAM_NAMESPACE", "pipeline"),
-			StreamSessionID:                               getEnv("PIPELINE_STREAM_SESSION_ID", ""),
-		},
-		Server: ServerConfig{
-			HealthPort:      getEnvInt("HEALTH_PORT", 8080),
-			MetricsAuthUser: getEnv("METRICS_AUTH_USER", ""),
-			MetricsAuthPass: getEnv("METRICS_AUTH_PASS", ""),
-			AdminAddr:       getEnv("ADMIN_ADDR", ""),
-			AdminAuthUser:   getEnv("ADMIN_AUTH_USER", ""),
-			AdminAuthPass:   getEnv("ADMIN_AUTH_PASS", ""),
-		},
-		Log: LogConfig{
-			Level: getEnv("LOG_LEVEL", "info"),
-		},
-		Tracing: TracingConfig{
-			Enabled:     getEnvBool("OTEL_TRACING_ENABLED", false),
-			Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-			Insecure:    getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
-			SampleRatio: getEnvFloat("OTEL_TRACE_SAMPLE_RATIO", 0.1),
-		},
-		Alert: AlertConfig{
-			SlackWebhookURL: getEnv("SLACK_WEBHOOK_URL", ""),
-			WebhookURL:      getEnv("ALERT_WEBHOOK_URL", ""),
-			CooldownMS:      getEnvInt("ALERT_COOLDOWN_MS", 1800000), // default 30 min
-		},
-	}
-
-	cfg.Pipeline.SolanaWatchedAddresses = parseAddressCSV(
-		getEnvAny([]string{"SOLANA_WATCHED_ADDRESSES", "WATCHED_ADDRESSES"}, ""),
-	)
-	cfg.Pipeline.BaseWatchedAddresses = parseAddressCSV(getEnv("BASE_WATCHED_ADDRESSES", ""))
-	cfg.Pipeline.EthereumWatchedAddresses = parseAddressCSV(getEnv("ETH_WATCHED_ADDRESSES", ""))
-	cfg.Pipeline.BTCWatchedAddresses = parseAddressCSV(getEnv("BTC_WATCHED_ADDRESSES", ""))
-	cfg.Pipeline.PolygonWatchedAddresses = parseAddressCSV(getEnv("POLYGON_WATCHED_ADDRESSES", ""))
-	cfg.Pipeline.ArbitrumWatchedAddresses = parseAddressCSV(getEnv("ARBITRUM_WATCHED_ADDRESSES", ""))
-	cfg.Pipeline.BSCWatchedAddresses = parseAddressCSV(getEnv("BSC_WATCHED_ADDRESSES", ""))
-	cfg.Runtime.ChainTargets = normalizeCSVValues(parseAddressCSV(
-		getEnvAny([]string{"RUNTIME_CHAIN_TARGETS", "RUNTIME_CHAIN_TARGET"}, ""),
-	))
-	cfg.Pipeline.WatchedAddresses = append([]string(nil), cfg.Pipeline.SolanaWatchedAddresses...)
-
+	// Step 6: validate
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
+
+// loadYAMLFile loads config from a YAML file specified by CONFIG_FILE env var.
+// Default path is "config.yaml". If the file doesn't exist, this is a no-op.
+func loadYAMLFile(cfg *Config) error {
+	path := os.Getenv("CONFIG_FILE")
+	if path == "" {
+		path = "config.yaml"
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // File not found is fine — env-only mode
+		}
+		return fmt.Errorf("read config file %s: %w", path, err)
+	}
+
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return fmt.Errorf("parse config file %s: %w", path, err)
+	}
+
+	return nil
+}
+
+// applyEnvOverrides overrides config values with environment variables.
+// Only explicitly set env vars (via LookupEnv) override YAML values.
+func applyEnvOverrides(cfg *Config) {
+	// DB
+	overrideStr(&cfg.DB.URL, "DB_URL")
+	overrideInt(&cfg.DB.MaxOpenConns, "DB_MAX_OPEN_CONNS")
+	overrideInt(&cfg.DB.MaxIdleConns, "DB_MAX_IDLE_CONNS")
+	overrideInt(&cfg.DB.ConnMaxLifetimeMin, "DB_CONN_MAX_LIFETIME_MIN")
+	overrideIntBounded(&cfg.DB.PoolStatsIntervalMS, "DB_POOL_STATS_INTERVAL_MS")
+
+	// Redis
+	overrideStr(&cfg.Redis.URL, "REDIS_URL")
+
+	// Sidecar
+	overrideStr(&cfg.Sidecar.Addr, "SIDECAR_ADDR")
+	overrideInt(&cfg.Sidecar.TimeoutSec, "SIDECAR_TIMEOUT_SEC")
+	overrideBool(&cfg.Sidecar.TLSEnabled, "SIDECAR_TLS_ENABLED")
+	overrideStr(&cfg.Sidecar.TLSCert, "SIDECAR_TLS_CERT")
+	overrideStr(&cfg.Sidecar.TLSKey, "SIDECAR_TLS_KEY")
+	overrideStr(&cfg.Sidecar.TLSCA, "SIDECAR_TLS_CA")
+
+	// Solana
+	overrideStrAny(&cfg.Solana.RPCURL, "SOLANA_DEVNET_RPC_URL", "SOLANA_RPC_URL")
+	overrideStr(&cfg.Solana.Network, "SOLANA_NETWORK")
+	overrideFloat64(&cfg.Solana.RateLimit.RPS, "SOLANA_RPC_RATE_LIMIT")
+	overrideInt(&cfg.Solana.RateLimit.Burst, "SOLANA_RPC_BURST")
+	overrideInt(&cfg.Solana.MaxPageSize, "SOLANA_MAX_PAGE_SIZE")
+	overrideInt(&cfg.Solana.MaxConcurrentTxs, "SOLANA_MAX_CONCURRENT_TXS")
+
+	// Base
+	overrideStrAny(&cfg.Base.RPCURL, "BASE_SEPOLIA_RPC_URL", "BASE_RPC_URL")
+	overrideStr(&cfg.Base.Network, "BASE_NETWORK")
+	overrideFloat64(&cfg.Base.RateLimit.RPS, "BASE_RPC_RATE_LIMIT")
+	overrideInt(&cfg.Base.RateLimit.Burst, "BASE_RPC_BURST")
+	overrideInt(&cfg.Base.MaxInitialLookbackBlocks, "BASE_MAX_INITIAL_LOOKBACK_BLOCKS")
+	overrideInt(&cfg.Base.MaxConcurrentTxs, "BASE_MAX_CONCURRENT_TXS")
+
+	// Ethereum
+	overrideStrAny(&cfg.Ethereum.RPCURL, "ETH_MAINNET_RPC_URL", "ETHEREUM_RPC_URL")
+	overrideStr(&cfg.Ethereum.Network, "ETHEREUM_NETWORK")
+	overrideFloat64(&cfg.Ethereum.RateLimit.RPS, "ETH_RPC_RATE_LIMIT")
+	overrideInt(&cfg.Ethereum.RateLimit.Burst, "ETH_RPC_BURST")
+	overrideInt(&cfg.Ethereum.MaxInitialLookbackBlocks, "ETH_MAX_INITIAL_LOOKBACK_BLOCKS")
+	overrideInt(&cfg.Ethereum.MaxConcurrentTxs, "ETH_MAX_CONCURRENT_TXS")
+
+	// BTC
+	overrideStrAny(&cfg.BTC.RPCURL, "BTC_TESTNET_RPC_URL", "BTC_RPC_URL")
+	overrideStr(&cfg.BTC.Network, "BTC_NETWORK")
+	overrideFloat64(&cfg.BTC.RateLimit.RPS, "BTC_RPC_RATE_LIMIT")
+	overrideInt(&cfg.BTC.RateLimit.Burst, "BTC_RPC_BURST")
+	overrideInt(&cfg.BTC.MaxInitialLookbackBlocks, "BTC_MAX_INITIAL_LOOKBACK_BLOCKS")
+
+	// Polygon
+	overrideStrAny(&cfg.Polygon.RPCURL, "POLYGON_RPC_URL", "POLYGON_MAINNET_RPC_URL")
+	overrideStr(&cfg.Polygon.Network, "POLYGON_NETWORK")
+	overrideFloat64(&cfg.Polygon.RateLimit.RPS, "POLYGON_RPC_RATE_LIMIT")
+	overrideInt(&cfg.Polygon.RateLimit.Burst, "POLYGON_RPC_BURST")
+	overrideInt(&cfg.Polygon.MaxInitialLookbackBlocks, "POLYGON_MAX_INITIAL_LOOKBACK_BLOCKS")
+	overrideInt(&cfg.Polygon.MaxConcurrentTxs, "POLYGON_MAX_CONCURRENT_TXS")
+
+	// Arbitrum
+	overrideStrAny(&cfg.Arbitrum.RPCURL, "ARBITRUM_RPC_URL", "ARBITRUM_MAINNET_RPC_URL")
+	overrideStr(&cfg.Arbitrum.Network, "ARBITRUM_NETWORK")
+	overrideFloat64(&cfg.Arbitrum.RateLimit.RPS, "ARBITRUM_RPC_RATE_LIMIT")
+	overrideInt(&cfg.Arbitrum.RateLimit.Burst, "ARBITRUM_RPC_BURST")
+	overrideInt(&cfg.Arbitrum.MaxInitialLookbackBlocks, "ARBITRUM_MAX_INITIAL_LOOKBACK_BLOCKS")
+	overrideInt(&cfg.Arbitrum.MaxConcurrentTxs, "ARBITRUM_MAX_CONCURRENT_TXS")
+
+	// BSC
+	overrideStrAny(&cfg.BSC.RPCURL, "BSC_RPC_URL", "BSC_MAINNET_RPC_URL")
+	overrideStr(&cfg.BSC.Network, "BSC_NETWORK")
+	overrideFloat64(&cfg.BSC.RateLimit.RPS, "BSC_RPC_RATE_LIMIT")
+	overrideInt(&cfg.BSC.RateLimit.Burst, "BSC_RPC_BURST")
+	overrideInt(&cfg.BSC.MaxInitialLookbackBlocks, "BSC_MAX_INITIAL_LOOKBACK_BLOCKS")
+	overrideInt(&cfg.BSC.MaxConcurrentTxs, "BSC_MAX_CONCURRENT_TXS")
+
+	// Runtime
+	overrideStrLower(&cfg.Runtime.DeploymentMode, "RUNTIME_DEPLOYMENT_MODE")
+	overrideStrLower(&cfg.Runtime.LikeGroup, "RUNTIME_LIKE_GROUP")
+	overrideCSVList(&cfg.Runtime.ChainTargets, "RUNTIME_CHAIN_TARGETS", "RUNTIME_CHAIN_TARGET")
+
+	// Pipeline
+	overrideInt(&cfg.Pipeline.ReorgDetectorIntervalMs, "REORG_DETECTOR_INTERVAL_MS")
+	overrideInt(&cfg.Pipeline.FinalizerIntervalMs, "FINALIZER_INTERVAL_MS")
+	overrideInt(&cfg.Pipeline.BTCFinalityConfirmations, "BTC_FINALITY_CONFIRMATIONS")
+	overrideInt(&cfg.Pipeline.FetchWorkers, "FETCH_WORKERS")
+	overrideInt(&cfg.Pipeline.NormalizerWorkers, "NORMALIZER_WORKERS")
+	overrideInt(&cfg.Pipeline.BatchSize, "BATCH_SIZE")
+	overrideInt(&cfg.Pipeline.IndexingIntervalMs, "INDEXING_INTERVAL_MS")
+	overrideInt(&cfg.Pipeline.ChannelBufferSize, "CHANNEL_BUFFER_SIZE")
+	overrideBool(&cfg.Pipeline.CoordinatorAutoTuneEnabled, "COORDINATOR_AUTOTUNE_ENABLED")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneMinBatchSize, "COORDINATOR_AUTOTUNE_MIN_BATCH_SIZE")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneMaxBatchSize, "COORDINATOR_AUTOTUNE_MAX_BATCH_SIZE")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneStepUp, "COORDINATOR_AUTOTUNE_STEP_UP")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneStepDown, "COORDINATOR_AUTOTUNE_STEP_DOWN")
+	overrideInt64(&cfg.Pipeline.CoordinatorAutoTuneLagHighWatermark, "COORDINATOR_AUTOTUNE_LAG_HIGH_WATERMARK")
+	overrideInt64(&cfg.Pipeline.CoordinatorAutoTuneLagLowWatermark, "COORDINATOR_AUTOTUNE_LAG_LOW_WATERMARK")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneQueueHighPct, "COORDINATOR_AUTOTUNE_QUEUE_HIGH_PCT")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneQueueLowPct, "COORDINATOR_AUTOTUNE_QUEUE_LOW_PCT")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneHysteresisTicks, "COORDINATOR_AUTOTUNE_HYSTERESIS_TICKS")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneTelemetryStaleTicks, "COORDINATOR_AUTOTUNE_TELEMETRY_STALE_TICKS")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneTelemetryRecoveryTicks, "COORDINATOR_AUTOTUNE_TELEMETRY_RECOVERY_TICKS")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneOperatorOverrideBatch, "COORDINATOR_AUTOTUNE_OPERATOR_OVERRIDE_BATCH_SIZE")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTuneOperatorReleaseTicks, "COORDINATOR_AUTOTUNE_OPERATOR_RELEASE_HOLD_TICKS")
+	overrideStr(&cfg.Pipeline.CoordinatorAutoTunePolicyVersion, "COORDINATOR_AUTOTUNE_POLICY_VERSION")
+	overrideStr(&cfg.Pipeline.CoordinatorAutoTunePolicyManifestDigest, "COORDINATOR_AUTOTUNE_POLICY_MANIFEST_DIGEST")
+	overrideInt64(&cfg.Pipeline.CoordinatorAutoTunePolicyManifestRefreshEpoch, "COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH")
+	overrideInt(&cfg.Pipeline.CoordinatorAutoTunePolicyActivationHoldTicks, "COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS")
+	overrideInt(&cfg.Pipeline.IndexedBlocksRetention, "INDEXED_BLOCKS_RETENTION")
+	overrideBool(&cfg.Pipeline.StreamTransportEnabled, "PIPELINE_STREAM_TRANSPORT_ENABLED")
+	overrideStr(&cfg.Pipeline.StreamNamespace, "PIPELINE_STREAM_NAMESPACE")
+	overrideStr(&cfg.Pipeline.StreamSessionID, "PIPELINE_STREAM_SESSION_ID")
+
+	// Pipeline stage configs
+	overrideInt(&cfg.Pipeline.Fetcher.RetryMaxAttempts, "FETCHER_RETRY_MAX_ATTEMPTS")
+	overrideInt(&cfg.Pipeline.Fetcher.BackoffInitialMs, "FETCHER_BACKOFF_INITIAL_MS")
+	overrideInt(&cfg.Pipeline.Fetcher.BackoffMaxMs, "FETCHER_BACKOFF_MAX_MS")
+	overrideInt(&cfg.Pipeline.Fetcher.AdaptiveMinBatch, "FETCHER_ADAPTIVE_MIN_BATCH")
+	overrideInt(&cfg.Pipeline.Fetcher.BoundaryOverlapLookahead, "FETCHER_BOUNDARY_OVERLAP_LOOKAHEAD")
+	overrideInt(&cfg.Pipeline.Normalizer.RetryMaxAttempts, "NORMALIZER_RETRY_MAX_ATTEMPTS")
+	overrideInt(&cfg.Pipeline.Normalizer.RetryDelayInitialMs, "NORMALIZER_RETRY_DELAY_INITIAL_MS")
+	overrideInt(&cfg.Pipeline.Normalizer.RetryDelayMaxMs, "NORMALIZER_RETRY_DELAY_MAX_MS")
+	overrideInt(&cfg.Pipeline.Ingester.RetryMaxAttempts, "INGESTER_RETRY_MAX_ATTEMPTS")
+	overrideInt(&cfg.Pipeline.Ingester.RetryDelayInitialMs, "INGESTER_RETRY_DELAY_INITIAL_MS")
+	overrideInt(&cfg.Pipeline.Ingester.RetryDelayMaxMs, "INGESTER_RETRY_DELAY_MAX_MS")
+	overrideInt(&cfg.Pipeline.Ingester.DeniedCacheCapacity, "INGESTER_DENIED_CACHE_CAPACITY")
+	overrideInt(&cfg.Pipeline.Ingester.DeniedCacheTTLSec, "INGESTER_DENIED_CACHE_TTL_SEC")
+	overrideInt(&cfg.Pipeline.Health.UnhealthyThreshold, "HEALTH_UNHEALTHY_THRESHOLD")
+	overrideInt(&cfg.Pipeline.ConfigWatcher.IntervalSec, "CONFIG_WATCHER_INTERVAL_SEC")
+
+	// Watched addresses
+	overrideCSVList(&cfg.Pipeline.SolanaWatchedAddresses, "SOLANA_WATCHED_ADDRESSES", "WATCHED_ADDRESSES")
+	overrideCSVList(&cfg.Pipeline.BaseWatchedAddresses, "BASE_WATCHED_ADDRESSES")
+	overrideCSVList(&cfg.Pipeline.EthereumWatchedAddresses, "ETH_WATCHED_ADDRESSES")
+	overrideCSVList(&cfg.Pipeline.BTCWatchedAddresses, "BTC_WATCHED_ADDRESSES")
+	overrideCSVList(&cfg.Pipeline.PolygonWatchedAddresses, "POLYGON_WATCHED_ADDRESSES")
+	overrideCSVList(&cfg.Pipeline.ArbitrumWatchedAddresses, "ARBITRUM_WATCHED_ADDRESSES")
+	overrideCSVList(&cfg.Pipeline.BSCWatchedAddresses, "BSC_WATCHED_ADDRESSES")
+
+	// Server
+	overrideInt(&cfg.Server.HealthPort, "HEALTH_PORT")
+	overrideStr(&cfg.Server.MetricsAuthUser, "METRICS_AUTH_USER")
+	overrideStr(&cfg.Server.MetricsAuthPass, "METRICS_AUTH_PASS")
+	overrideStr(&cfg.Server.AdminAddr, "ADMIN_ADDR")
+	overrideStr(&cfg.Server.AdminAuthUser, "ADMIN_AUTH_USER")
+	overrideStr(&cfg.Server.AdminAuthPass, "ADMIN_AUTH_PASS")
+
+	// Log
+	overrideStr(&cfg.Log.Level, "LOG_LEVEL")
+
+	// Tracing
+	overrideBool(&cfg.Tracing.Enabled, "OTEL_TRACING_ENABLED")
+	overrideStr(&cfg.Tracing.Endpoint, "OTEL_EXPORTER_OTLP_ENDPOINT")
+	overrideBool(&cfg.Tracing.Insecure, "OTEL_EXPORTER_OTLP_INSECURE")
+	overrideFloat64(&cfg.Tracing.SampleRatio, "OTEL_TRACE_SAMPLE_RATIO")
+
+	// Alert
+	overrideStr(&cfg.Alert.SlackWebhookURL, "SLACK_WEBHOOK_URL")
+	overrideStr(&cfg.Alert.WebhookURL, "ALERT_WEBHOOK_URL")
+	overrideInt(&cfg.Alert.CooldownMS, "ALERT_COOLDOWN_MS")
+
+	// Normalize chain targets
+	if len(cfg.Runtime.ChainTargets) > 0 {
+		cfg.Runtime.ChainTargets = normalizeCSVValues(cfg.Runtime.ChainTargets)
+	}
+}
+
+// applyDefaults sets default values for zero-value fields.
+func applyDefaults(cfg *Config) {
+	// Redis
+	setDefaultStr(&cfg.Redis.URL, "redis://localhost:6380")
+
+	// Sidecar
+	setDefaultStr(&cfg.Sidecar.Addr, "localhost:50051")
+	setDefault(&cfg.Sidecar.TimeoutSec, 30)
+
+	// DB
+	setDefault(&cfg.DB.MaxOpenConns, 50)
+	setDefault(&cfg.DB.MaxIdleConns, 10)
+	setDefault(&cfg.DB.ConnMaxLifetimeMin, 30)
+	setDefault(&cfg.DB.PoolStatsIntervalMS, dbPoolStatsIntervalDefaultMS)
+
+	// Solana
+	setDefaultStr(&cfg.Solana.RPCURL, "https://api.devnet.solana.com")
+	setDefaultStr(&cfg.Solana.Network, "devnet")
+	setDefaultFloat(&cfg.Solana.RateLimit.RPS, 10)
+	setDefault(&cfg.Solana.RateLimit.Burst, 20)
+	setDefault(&cfg.Solana.MaxPageSize, 1000)
+	setDefault(&cfg.Solana.MaxConcurrentTxs, 10)
+
+	// Base
+	setDefaultStr(&cfg.Base.Network, "sepolia")
+	setDefaultFloat(&cfg.Base.RateLimit.RPS, 25)
+	setDefault(&cfg.Base.RateLimit.Burst, 50)
+	setDefault(&cfg.Base.MaxInitialLookbackBlocks, 200)
+	setDefault(&cfg.Base.MaxConcurrentTxs, 10)
+
+	// Ethereum
+	setDefaultStr(&cfg.Ethereum.Network, "mainnet")
+	setDefaultFloat(&cfg.Ethereum.RateLimit.RPS, 25)
+	setDefault(&cfg.Ethereum.RateLimit.Burst, 50)
+	setDefault(&cfg.Ethereum.MaxInitialLookbackBlocks, 200)
+	setDefault(&cfg.Ethereum.MaxConcurrentTxs, 10)
+
+	// BTC
+	setDefaultStr(&cfg.BTC.Network, "testnet")
+	setDefaultFloat(&cfg.BTC.RateLimit.RPS, 5)
+	setDefault(&cfg.BTC.RateLimit.Burst, 10)
+	setDefault(&cfg.BTC.MaxInitialLookbackBlocks, 200)
+
+	// Polygon
+	setDefaultStr(&cfg.Polygon.Network, "mainnet")
+	setDefaultFloat(&cfg.Polygon.RateLimit.RPS, 25)
+	setDefault(&cfg.Polygon.RateLimit.Burst, 50)
+	setDefault(&cfg.Polygon.MaxInitialLookbackBlocks, 200)
+	setDefault(&cfg.Polygon.MaxConcurrentTxs, 10)
+
+	// Arbitrum
+	setDefaultStr(&cfg.Arbitrum.Network, "mainnet")
+	setDefaultFloat(&cfg.Arbitrum.RateLimit.RPS, 25)
+	setDefault(&cfg.Arbitrum.RateLimit.Burst, 50)
+	setDefault(&cfg.Arbitrum.MaxInitialLookbackBlocks, 200)
+	setDefault(&cfg.Arbitrum.MaxConcurrentTxs, 10)
+
+	// BSC
+	setDefaultStr(&cfg.BSC.Network, "mainnet")
+	setDefaultFloat(&cfg.BSC.RateLimit.RPS, 25)
+	setDefault(&cfg.BSC.RateLimit.Burst, 50)
+	setDefault(&cfg.BSC.MaxInitialLookbackBlocks, 200)
+	setDefault(&cfg.BSC.MaxConcurrentTxs, 10)
+
+	// Runtime
+	setDefaultStr(&cfg.Runtime.DeploymentMode, RuntimeDeploymentModeLikeGroup)
+
+	// Pipeline
+	setDefault(&cfg.Pipeline.ReorgDetectorIntervalMs, 30000)
+	setDefault(&cfg.Pipeline.FinalizerIntervalMs, 60000)
+	setDefault(&cfg.Pipeline.BTCFinalityConfirmations, 6)
+	setDefault(&cfg.Pipeline.FetchWorkers, 2)
+	setDefault(&cfg.Pipeline.NormalizerWorkers, 2)
+	setDefault(&cfg.Pipeline.BatchSize, 100)
+	setDefault(&cfg.Pipeline.IndexingIntervalMs, 5000)
+	setDefault(&cfg.Pipeline.ChannelBufferSize, 10)
+	setDefault(&cfg.Pipeline.CoordinatorAutoTuneMinBatchSize, 10)
+	setDefault(&cfg.Pipeline.CoordinatorAutoTuneStepUp, 10)
+	setDefault(&cfg.Pipeline.CoordinatorAutoTuneStepDown, 10)
+	setDefaultInt64(&cfg.Pipeline.CoordinatorAutoTuneLagHighWatermark, 500)
+	setDefaultInt64(&cfg.Pipeline.CoordinatorAutoTuneLagLowWatermark, 100)
+	setDefault(&cfg.Pipeline.CoordinatorAutoTuneQueueHighPct, 80)
+	setDefault(&cfg.Pipeline.CoordinatorAutoTuneQueueLowPct, 30)
+	setDefault(&cfg.Pipeline.CoordinatorAutoTuneHysteresisTicks, 2)
+	setDefault(&cfg.Pipeline.CoordinatorAutoTuneTelemetryStaleTicks, 2)
+	setDefault(&cfg.Pipeline.CoordinatorAutoTuneTelemetryRecoveryTicks, 1)
+	setDefault(&cfg.Pipeline.CoordinatorAutoTuneOperatorReleaseTicks, 2)
+	setDefaultStr(&cfg.Pipeline.CoordinatorAutoTunePolicyVersion, "policy-v1")
+	setDefaultStr(&cfg.Pipeline.CoordinatorAutoTunePolicyManifestDigest, "manifest-v1")
+	setDefault(&cfg.Pipeline.CoordinatorAutoTunePolicyActivationHoldTicks, 1)
+	setDefault(&cfg.Pipeline.IndexedBlocksRetention, 10000)
+	setDefaultStr(&cfg.Pipeline.StreamNamespace, "pipeline")
+
+	// AutoTune max batch defaults to batch_size if not set
+	if cfg.Pipeline.CoordinatorAutoTuneMaxBatchSize == 0 {
+		cfg.Pipeline.CoordinatorAutoTuneMaxBatchSize = cfg.Pipeline.BatchSize
+	}
+
+	// Pipeline stage defaults
+	setDefault(&cfg.Pipeline.Fetcher.RetryMaxAttempts, 4)
+	setDefault(&cfg.Pipeline.Fetcher.BackoffInitialMs, 200)
+	setDefault(&cfg.Pipeline.Fetcher.BackoffMaxMs, 3000)
+	setDefault(&cfg.Pipeline.Fetcher.AdaptiveMinBatch, 1)
+	setDefault(&cfg.Pipeline.Fetcher.BoundaryOverlapLookahead, 1)
+	setDefault(&cfg.Pipeline.Normalizer.RetryMaxAttempts, 3)
+	setDefault(&cfg.Pipeline.Normalizer.RetryDelayInitialMs, 100)
+	setDefault(&cfg.Pipeline.Normalizer.RetryDelayMaxMs, 1000)
+	setDefault(&cfg.Pipeline.Ingester.RetryMaxAttempts, 3)
+	setDefault(&cfg.Pipeline.Ingester.RetryDelayInitialMs, 100)
+	setDefault(&cfg.Pipeline.Ingester.RetryDelayMaxMs, 1000)
+	setDefault(&cfg.Pipeline.Ingester.DeniedCacheCapacity, 10000)
+	setDefault(&cfg.Pipeline.Ingester.DeniedCacheTTLSec, 300)
+	setDefault(&cfg.Pipeline.Health.UnhealthyThreshold, 5)
+	setDefault(&cfg.Pipeline.ConfigWatcher.IntervalSec, 30)
+
+	// Server
+	setDefault(&cfg.Server.HealthPort, 8080)
+
+	// Log
+	setDefaultStr(&cfg.Log.Level, "info")
+
+	// Tracing
+	setDefaultFloat(&cfg.Tracing.SampleRatio, 0.1)
+
+	// Alert
+	setDefault(&cfg.Alert.CooldownMS, 1800000)
+}
+
+// computeDerived calculates derived Duration fields from integer config values.
+func computeDerived(cfg *Config) {
+	cfg.DB.ConnMaxLifetime = time.Duration(cfg.DB.ConnMaxLifetimeMin) * time.Minute
+	cfg.Sidecar.Timeout = time.Duration(cfg.Sidecar.TimeoutSec) * time.Second
+}
+
+// --- override helpers (LookupEnv-based: only override if env var is explicitly set) ---
+
+func overrideStr(target *string, envKeys ...string) {
+	for _, key := range envKeys {
+		if v, ok := os.LookupEnv(key); ok && v != "" {
+			*target = v
+			return
+		}
+	}
+}
+
+func overrideStrAny(target *string, envKeys ...string) {
+	for _, key := range envKeys {
+		if v, ok := os.LookupEnv(key); ok && v != "" {
+			*target = v
+			return
+		}
+	}
+}
+
+func overrideStrLower(target *string, envKeys ...string) {
+	for _, key := range envKeys {
+		if v, ok := os.LookupEnv(key); ok && v != "" {
+			*target = strings.ToLower(v)
+			return
+		}
+	}
+}
+
+func overrideInt(target *int, envKeys ...string) {
+	for _, key := range envKeys {
+		if v, ok := os.LookupEnv(key); ok {
+			trimmed := strings.TrimSpace(v)
+			if trimmed == "" {
+				continue
+			}
+			i, err := strconv.Atoi(trimmed)
+			if err != nil {
+				slog.Warn("invalid integer env var, ignoring", "key", key, "value", v)
+				continue
+			}
+			*target = i
+			return
+		}
+	}
+}
+
+func overrideIntBounded(target *int, envKeys ...string) {
+	for _, key := range envKeys {
+		if v, ok := os.LookupEnv(key); ok {
+			trimmed := strings.TrimSpace(v)
+			if trimmed == "" {
+				continue
+			}
+			i, err := strconv.Atoi(trimmed)
+			if err != nil {
+				slog.Warn("invalid integer env var, ignoring", "key", key, "value", v)
+				continue
+			}
+			*target = i
+			return
+		}
+	}
+}
+
+func overrideInt64(target *int64, envKeys ...string) {
+	for _, key := range envKeys {
+		if v, ok := os.LookupEnv(key); ok {
+			trimmed := strings.TrimSpace(v)
+			if trimmed == "" {
+				continue
+			}
+			i, err := strconv.ParseInt(trimmed, 10, 64)
+			if err != nil {
+				slog.Warn("invalid int64 env var, ignoring", "key", key, "value", v)
+				continue
+			}
+			*target = i
+			return
+		}
+	}
+}
+
+func overrideBool(target *bool, envKeys ...string) {
+	for _, key := range envKeys {
+		if v, ok := os.LookupEnv(key); ok {
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "1", "true", "yes", "on":
+				*target = true
+				return
+			case "0", "false", "no", "off":
+				*target = false
+				return
+			}
+		}
+	}
+}
+
+func overrideFloat64(target *float64, envKeys ...string) {
+	for _, key := range envKeys {
+		if v, ok := os.LookupEnv(key); ok {
+			trimmed := strings.TrimSpace(v)
+			if trimmed == "" {
+				continue
+			}
+			f, err := strconv.ParseFloat(trimmed, 64)
+			if err != nil {
+				slog.Warn("invalid float env var, ignoring", "key", key, "value", v)
+				continue
+			}
+			*target = f
+			return
+		}
+	}
+}
+
+func overrideCSVList(target *[]string, envKeys ...string) {
+	for _, key := range envKeys {
+		if v, ok := os.LookupEnv(key); ok {
+			parsed := parseAddressCSV(v)
+			if parsed != nil {
+				*target = parsed
+				return
+			}
+		}
+	}
+}
+
+// --- default helpers (only set if current value is zero) ---
+
+func setDefaultStr(target *string, defaultVal string) {
+	if *target == "" {
+		*target = defaultVal
+	}
+}
+
+func setDefault(target *int, defaultVal int) {
+	if *target == 0 {
+		*target = defaultVal
+	}
+}
+
+func setDefaultInt64(target *int64, defaultVal int64) {
+	if *target == 0 {
+		*target = defaultVal
+	}
+}
+
+func setDefaultFloat(target *float64, defaultVal float64) {
+	if *target == 0 {
+		*target = defaultVal
+	}
+}
+
+// --- validation (unchanged) ---
 
 func (c *Config) validate() error {
 	if c.DB.URL == "" {
@@ -606,21 +999,7 @@ func validateRuntimeChainTargets(targets []string) error {
 	return nil
 }
 
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func getEnvAny(keys []string, fallback string) string {
-	for _, key := range keys {
-		if v := os.Getenv(key); v != "" {
-			return v
-		}
-	}
-	return fallback
-}
+// --- utility functions ---
 
 func parseAddressCSV(addrs string) []string {
 	if addrs == "" {
@@ -658,6 +1037,8 @@ func normalizeCSVValues(values []string) []string {
 	return normalized
 }
 
+// Legacy helpers kept for backward compatibility with tests that call them directly.
+
 func getEnvInt(key string, fallback int) int {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
@@ -669,49 +1050,4 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return i
-}
-
-func getEnvIntBounded(key string, fallback int, min int, max int) (int, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback, nil
-	}
-
-	value, err := strconv.Atoi(v)
-	if err != nil {
-		return 0, fmt.Errorf("must be an integer")
-	}
-
-	if value < min || value > max {
-		return 0, fmt.Errorf("must be within [%d, %d]", min, max)
-	}
-
-	return value, nil
-}
-
-func getEnvFloat(key string, fallback float64) float64 {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		slog.Warn("invalid float env var, using fallback", "key", key, "value", v, "fallback", fallback)
-		return fallback
-	}
-	return f
-}
-
-func getEnvBool(key string, fallback bool) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	switch v {
-	case "":
-		return fallback
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return fallback
-	}
 }

@@ -19,17 +19,37 @@ const (
 )
 
 type Adapter struct {
-	client rpc.RPCClient
-	logger *slog.Logger
+	client           rpc.RPCClient
+	logger           *slog.Logger
+	maxPageSize      int
+	maxConcurrentTxs int
+}
+
+type AdapterOption func(*Adapter)
+
+func WithMaxPageSize(n int) AdapterOption {
+	return func(a *Adapter) { a.maxPageSize = n }
+}
+
+func WithMaxConcurrentTxs(n int) AdapterOption {
+	return func(a *Adapter) { a.maxConcurrentTxs = n }
 }
 
 var _ chain.ChainAdapter = (*Adapter)(nil)
 
-func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
-	return &Adapter{
-		client: rpc.NewClient(rpcURL, logger),
-		logger: logger.With("chain", "solana"),
+func NewAdapter(rpcURL string, logger *slog.Logger, opts ...AdapterOption) *Adapter {
+	a := &Adapter{
+		client:           rpc.NewClient(rpcURL, logger),
+		logger:           logger.With("chain", "solana"),
+		maxPageSize:      maxPageSize,
+		maxConcurrentTxs: maxConcurrentTxs,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(a)
+		}
+	}
+	return a
 }
 
 // SetRateLimiter applies a rate limiter to the underlying RPC client.
@@ -70,8 +90,8 @@ func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address stri
 	remaining := batchSize
 	for remaining > 0 {
 		pageSize := remaining
-		if pageSize > maxPageSize {
-			pageSize = maxPageSize
+		if pageSize > a.maxPageSize {
+			pageSize = a.maxPageSize
 		}
 
 		opts := &rpc.GetSignaturesOpts{
@@ -159,7 +179,7 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 	var mu sync.Mutex
 	var firstErr error
 
-	sem := make(chan struct{}, maxConcurrentTxs)
+	sem := make(chan struct{}, a.maxConcurrentTxs)
 	var wg sync.WaitGroup
 
 	for i, sig := range signatures {

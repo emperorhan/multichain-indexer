@@ -17,8 +17,10 @@ import (
 func newTestAdapter(ctrl *gomock.Controller) (*Adapter, *rpcmocks.MockRPCClient) {
 	mockClient := rpcmocks.NewMockRPCClient(ctrl)
 	adapter := &Adapter{
-		client: mockClient,
-		logger: slog.Default(),
+		client:           mockClient,
+		logger:           slog.Default(),
+		maxPageSize:      maxPageSize,
+		maxConcurrentTxs: maxConcurrentTxs,
 	}
 	return adapter, mockClient
 }
@@ -289,8 +291,10 @@ func TestAdapter_FetchTransactions_BatchPreferred(t *testing.T) {
 		},
 	}
 	adapter := &Adapter{
-		client: client,
-		logger: slog.Default(),
+		client:           client,
+		logger:           slog.Default(),
+		maxPageSize:      maxPageSize,
+		maxConcurrentTxs: maxConcurrentTxs,
 	}
 
 	results, err := adapter.FetchTransactions(context.Background(), []string{"sig1", "sig2"})

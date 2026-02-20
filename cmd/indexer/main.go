@@ -261,13 +261,31 @@ func applyRateLimit(adapter chain.ChainAdapter, rlCfg config.RPCRateLimitConfig,
 }
 
 func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarget {
-	solanaAdapter := solana.NewAdapter(cfg.Solana.RPCURL, logger)
+	var solanaOpts []solana.AdapterOption
+	if cfg.Solana.MaxPageSize > 0 {
+		solanaOpts = append(solanaOpts, solana.WithMaxPageSize(cfg.Solana.MaxPageSize))
+	}
+	if cfg.Solana.MaxConcurrentTxs > 0 {
+		solanaOpts = append(solanaOpts, solana.WithMaxConcurrentTxs(cfg.Solana.MaxConcurrentTxs))
+	}
+	solanaAdapter := solana.NewAdapter(cfg.Solana.RPCURL, logger, solanaOpts...)
 	applyRateLimit(solanaAdapter, cfg.Solana.RateLimit, "solana")
 
-	baseAdapter := base.NewAdapter(cfg.Base.RPCURL, logger)
+	var baseOpts []base.AdapterOption
+	if cfg.Base.MaxInitialLookbackBlocks > 0 {
+		baseOpts = append(baseOpts, base.WithMaxInitialLookbackBlocks(cfg.Base.MaxInitialLookbackBlocks))
+	}
+	if cfg.Base.MaxConcurrentTxs > 0 {
+		baseOpts = append(baseOpts, base.WithMaxConcurrentTxs(cfg.Base.MaxConcurrentTxs))
+	}
+	baseAdapter := base.NewAdapter(cfg.Base.RPCURL, logger, baseOpts...)
 	applyRateLimit(baseAdapter, cfg.Base.RateLimit, "base")
 
-	btcAdapter := btc.NewAdapter(cfg.BTC.RPCURL, logger)
+	var btcOpts []btc.AdapterOption
+	if cfg.BTC.MaxInitialLookbackBlocks > 0 {
+		btcOpts = append(btcOpts, btc.WithMaxInitialLookbackBlocks(cfg.BTC.MaxInitialLookbackBlocks))
+	}
+	btcAdapter := btc.NewAdapter(cfg.BTC.RPCURL, logger, btcOpts...)
 	applyRateLimit(btcAdapter, cfg.BTC.RateLimit, "btc")
 
 	targets := []runtimeTarget{
@@ -298,7 +316,14 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 	}
 
 	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "ethereum") {
-		ethAdapter := ethereum.NewAdapter(cfg.Ethereum.RPCURL, logger)
+		var ethOpts []base.AdapterOption
+		if cfg.Ethereum.MaxInitialLookbackBlocks > 0 {
+			ethOpts = append(ethOpts, base.WithMaxInitialLookbackBlocks(cfg.Ethereum.MaxInitialLookbackBlocks))
+		}
+		if cfg.Ethereum.MaxConcurrentTxs > 0 {
+			ethOpts = append(ethOpts, base.WithMaxConcurrentTxs(cfg.Ethereum.MaxConcurrentTxs))
+		}
+		ethAdapter := ethereum.NewAdapter(cfg.Ethereum.RPCURL, logger, ethOpts...)
 		applyRateLimit(ethAdapter, cfg.Ethereum.RateLimit, "ethereum")
 		targets = append(targets, runtimeTarget{
 			chain:   model.ChainEthereum,
@@ -311,7 +336,14 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 	}
 
 	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "polygon") {
-		polyAdapter := polygon.NewAdapter(cfg.Polygon.RPCURL, logger)
+		var polyOpts []base.AdapterOption
+		if cfg.Polygon.MaxInitialLookbackBlocks > 0 {
+			polyOpts = append(polyOpts, base.WithMaxInitialLookbackBlocks(cfg.Polygon.MaxInitialLookbackBlocks))
+		}
+		if cfg.Polygon.MaxConcurrentTxs > 0 {
+			polyOpts = append(polyOpts, base.WithMaxConcurrentTxs(cfg.Polygon.MaxConcurrentTxs))
+		}
+		polyAdapter := polygon.NewAdapter(cfg.Polygon.RPCURL, logger, polyOpts...)
 		applyRateLimit(polyAdapter, cfg.Polygon.RateLimit, "polygon")
 		targets = append(targets, runtimeTarget{
 			chain:   model.ChainPolygon,
@@ -324,7 +356,14 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 	}
 
 	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "arbitrum") {
-		arbAdapter := arbitrum.NewAdapter(cfg.Arbitrum.RPCURL, logger)
+		var arbOpts []base.AdapterOption
+		if cfg.Arbitrum.MaxInitialLookbackBlocks > 0 {
+			arbOpts = append(arbOpts, base.WithMaxInitialLookbackBlocks(cfg.Arbitrum.MaxInitialLookbackBlocks))
+		}
+		if cfg.Arbitrum.MaxConcurrentTxs > 0 {
+			arbOpts = append(arbOpts, base.WithMaxConcurrentTxs(cfg.Arbitrum.MaxConcurrentTxs))
+		}
+		arbAdapter := arbitrum.NewAdapter(cfg.Arbitrum.RPCURL, logger, arbOpts...)
 		applyRateLimit(arbAdapter, cfg.Arbitrum.RateLimit, "arbitrum")
 		targets = append(targets, runtimeTarget{
 			chain:   model.ChainArbitrum,
@@ -337,7 +376,14 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 	}
 
 	if shouldBuildChainRuntimeTarget(cfg.Runtime.ChainTargets, "bsc") {
-		bscAdapter := bsc.NewAdapter(cfg.BSC.RPCURL, logger)
+		var bscOpts []base.AdapterOption
+		if cfg.BSC.MaxInitialLookbackBlocks > 0 {
+			bscOpts = append(bscOpts, base.WithMaxInitialLookbackBlocks(cfg.BSC.MaxInitialLookbackBlocks))
+		}
+		if cfg.BSC.MaxConcurrentTxs > 0 {
+			bscOpts = append(bscOpts, base.WithMaxConcurrentTxs(cfg.BSC.MaxConcurrentTxs))
+		}
+		bscAdapter := bsc.NewAdapter(cfg.BSC.RPCURL, logger, bscOpts...)
 		applyRateLimit(bscAdapter, cfg.BSC.RateLimit, "bsc")
 		targets = append(targets, runtimeTarget{
 			chain:   model.ChainBSC,
@@ -545,6 +591,11 @@ func main() {
 			ReorgDetectorInterval:  time.Duration(cfg.Pipeline.ReorgDetectorIntervalMs) * time.Millisecond,
 			FinalizerInterval:      time.Duration(cfg.Pipeline.FinalizerIntervalMs) * time.Millisecond,
 			IndexedBlocksRetention: int64(cfg.Pipeline.IndexedBlocksRetention),
+			Fetcher:                cfg.Pipeline.Fetcher,
+			Normalizer:             cfg.Pipeline.Normalizer,
+			Ingester:               cfg.Pipeline.Ingester,
+			Health:                 cfg.Pipeline.Health,
+			ConfigWatcher:          cfg.Pipeline.ConfigWatcher,
 		}
 		p := pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL))
 		p.SetReplayService(replayService)

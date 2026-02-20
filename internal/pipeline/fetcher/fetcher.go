@@ -14,6 +14,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/emperorhan/multichain-indexer/internal/tracing"
@@ -40,11 +41,12 @@ type Fetcher struct {
 	logger          *slog.Logger
 	autoTuneSignals autotune.AutoTuneSignalSink
 
-	retryMaxAttempts int
-	backoffInitial   time.Duration
-	backoffMax       time.Duration
-	adaptiveMinBatch int
-	sleepFn          func(ctx context.Context, d time.Duration) error
+	retryMaxAttempts          int
+	backoffInitial            time.Duration
+	backoffMax                time.Duration
+	adaptiveMinBatch          int
+	boundaryOverlapLookahead  int
+	sleepFn                   func(ctx context.Context, d time.Duration) error
 
 	batchStateMu       sync.Mutex
 	batchSizeByAddress map[string]int
@@ -55,6 +57,26 @@ type Option func(*Fetcher)
 func WithAutoTuneSignalSink(sink autotune.AutoTuneSignalSink) Option {
 	return func(f *Fetcher) {
 		f.autoTuneSignals = sink
+	}
+}
+
+func WithRetryConfig(maxAttempts int, backoffInitial, backoffMax time.Duration) Option {
+	return func(f *Fetcher) {
+		f.retryMaxAttempts = maxAttempts
+		f.backoffInitial = backoffInitial
+		f.backoffMax = backoffMax
+	}
+}
+
+func WithAdaptiveMinBatch(minBatch int) Option {
+	return func(f *Fetcher) {
+		f.adaptiveMinBatch = minBatch
+	}
+}
+
+func WithBoundaryOverlapLookahead(n int) Option {
+	return func(f *Fetcher) {
+		f.boundaryOverlapLookahead = n
 	}
 }
 
@@ -173,10 +195,10 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	}
 
 	requestedBatch := f.resolveBatchSize(job.Chain, job.Network, fetchAddress, job.BatchSize)
-	canonicalCursor := canonicalizeCursorValue(job.Chain, job.CursorValue)
+	canonicalCursor := identity.CanonicalizeCursorValue(job.Chain, job.CursorValue)
 	signatureBatch := requestedBatch
 	if canonicalCursor != nil {
-		signatureBatch += boundaryOverlapLookahead
+		signatureBatch += f.effectiveBoundaryOverlapLookahead()
 	}
 
 	// 1. Fetch new signatures with retry/backoff and adaptive batch size reduction.
@@ -709,6 +731,13 @@ func (f *Fetcher) effectiveAdaptiveMinBatch() int {
 	return f.adaptiveMinBatch
 }
 
+func (f *Fetcher) effectiveBoundaryOverlapLookahead() int {
+	if f.boundaryOverlapLookahead <= 0 {
+		return boundaryOverlapLookahead
+	}
+	return f.boundaryOverlapLookahead
+}
+
 func canonicalizeSignatures(chainID model.Chain, sigs []chain.SignatureInfo) []chain.SignatureInfo {
 	if len(sigs) == 0 {
 		return []chain.SignatureInfo{}
@@ -716,7 +745,7 @@ func canonicalizeSignatures(chainID model.Chain, sigs []chain.SignatureInfo) []c
 
 	byIdentity := make(map[string]chain.SignatureInfo, len(sigs))
 	for _, sig := range sigs {
-		identity := canonicalSignatureIdentity(chainID, sig.Hash)
+		identity := identity.CanonicalSignatureIdentity(chainID, sig.Hash)
 		if identity == "" {
 			continue
 		}
@@ -747,14 +776,14 @@ func suppressBoundaryCursorSignatures(chainID model.Chain, sigs []chain.Signatur
 	if len(sigs) == 0 || cursor == nil {
 		return sigs
 	}
-	cursorIdentity := canonicalSignatureIdentity(chainID, *cursor)
+	cursorIdentity := identity.CanonicalSignatureIdentity(chainID, *cursor)
 	if cursorIdentity == "" {
 		return sigs
 	}
 
 	filtered := make([]chain.SignatureInfo, 0, len(sigs))
 	for _, sig := range sigs {
-		if canonicalSignatureIdentity(chainID, sig.Hash) == cursorIdentity {
+		if identity.CanonicalSignatureIdentity(chainID, sig.Hash) == cursorIdentity {
 			continue
 		}
 		filtered = append(filtered, sig)
@@ -870,12 +899,12 @@ func canonicalizeWatchedAddressIdentity(chainID model.Chain, address string) str
 	if trimmed == "" {
 		return ""
 	}
-	if isEVMChain(chainID) {
+	if identity.IsEVMChain(chainID) {
 		withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
 		if withoutPrefix == "" {
 			return ""
 		}
-		if isHexString(withoutPrefix) {
+		if identity.IsHexString(withoutPrefix) {
 			return "0x" + strings.ToLower(withoutPrefix)
 		}
 		if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
@@ -886,67 +915,3 @@ func canonicalizeWatchedAddressIdentity(chainID model.Chain, address string) str
 	return trimmed
 }
 
-func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
-	trimmed := strings.TrimSpace(hash)
-	if trimmed == "" {
-		return ""
-	}
-	if chainID == model.ChainBTC {
-		withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
-		if withoutPrefix == "" {
-			return ""
-		}
-		return strings.ToLower(withoutPrefix)
-	}
-	if !isEVMChain(chainID) {
-		return trimmed
-	}
-
-	withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
-	if withoutPrefix == "" {
-		return ""
-	}
-	if isHexString(withoutPrefix) {
-		// Canonical EVM identity: lowercase hex with 0x prefix.
-		return "0x" + strings.ToLower(withoutPrefix)
-	}
-	// Keep non-hex provider artifacts deterministic while still normalizing case.
-	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
-		return "0x" + strings.ToLower(withoutPrefix)
-	}
-	return trimmed
-}
-
-func canonicalizeCursorValue(chainID model.Chain, cursor *string) *string {
-	if cursor == nil {
-		return nil
-	}
-	identity := canonicalSignatureIdentity(chainID, *cursor)
-	if identity == "" {
-		return nil
-	}
-	value := identity
-	return &value
-}
-
-func isEVMChain(chainID model.Chain) bool {
-	switch chainID {
-	case model.ChainBase, model.ChainEthereum, model.ChainPolygon, model.ChainArbitrum, model.ChainBSC:
-		return true
-	default:
-		return false
-	}
-}
-
-func isHexString(v string) bool {
-	for _, ch := range v {
-		switch {
-		case ch >= '0' && ch <= '9':
-		case ch >= 'a' && ch <= 'f':
-		case ch >= 'A' && ch <= 'F':
-		default:
-			return false
-		}
-	}
-	return true
-}

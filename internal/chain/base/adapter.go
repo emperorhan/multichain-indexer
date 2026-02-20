@@ -21,18 +21,30 @@ const (
 )
 
 type Adapter struct {
-	client    rpc.RPCClient
-	logger    *slog.Logger
-	chainName string
-	evmLayer  string // "l1" or "l2"
+	client                   rpc.RPCClient
+	logger                   *slog.Logger
+	chainName                string
+	evmLayer                 string // "l1" or "l2"
+	maxInitialLookbackBlocks int64
+	maxConcurrentTxs         int
+}
+
+type AdapterOption func(*Adapter)
+
+func WithMaxInitialLookbackBlocks(n int) AdapterOption {
+	return func(a *Adapter) { a.maxInitialLookbackBlocks = int64(n) }
+}
+
+func WithMaxConcurrentTxs(n int) AdapterOption {
+	return func(a *Adapter) { a.maxConcurrentTxs = n }
 }
 
 var _ chain.ChainAdapter = (*Adapter)(nil)
 var _ chain.ReorgAwareAdapter = (*Adapter)(nil)
 var _ chain.BlockScanAdapter = (*Adapter)(nil)
 
-func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
-	return NewAdapterWithChain("base", rpcURL, logger)
+func NewAdapter(rpcURL string, logger *slog.Logger, opts ...AdapterOption) *Adapter {
+	return NewAdapterWithChain("base", rpcURL, logger, opts...)
 }
 
 func inferEVMLayer(chainName string) string {
@@ -45,13 +57,21 @@ func inferEVMLayer(chainName string) string {
 }
 
 // NewAdapterWithChain creates an EVM adapter for any chain name.
-func NewAdapterWithChain(chainName, rpcURL string, logger *slog.Logger) *Adapter {
-	return &Adapter{
-		client:    rpc.NewClient(rpcURL, logger),
-		logger:    logger.With("chain", chainName),
-		chainName: chainName,
-		evmLayer:  inferEVMLayer(chainName),
+func NewAdapterWithChain(chainName, rpcURL string, logger *slog.Logger, opts ...AdapterOption) *Adapter {
+	a := &Adapter{
+		client:                   rpc.NewClient(rpcURL, logger),
+		logger:                   logger.With("chain", chainName),
+		chainName:                chainName,
+		evmLayer:                 inferEVMLayer(chainName),
+		maxInitialLookbackBlocks: maxInitialLookbackBlocks,
+		maxConcurrentTxs:         maxConcurrentTxs,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(a)
+		}
+	}
+	return a
 }
 
 // SetRateLimiter applies a rate limiter to the underlying RPC client.
@@ -91,7 +111,7 @@ func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address stri
 		head = liveHead
 	}
 
-	startBlock := head - (maxInitialLookbackBlocks - 1)
+	startBlock := head - (a.maxInitialLookbackBlocks - 1)
 	if startBlock < 0 {
 		startBlock = 0
 	}
@@ -439,7 +459,7 @@ func (a *Adapter) fetchTransactionsOneByOne(ctx context.Context, signatures []st
 	var mu sync.Mutex
 	var firstErr error
 
-	sem := make(chan struct{}, maxConcurrentTxs)
+	sem := make(chan struct{}, a.maxConcurrentTxs)
 	var wg sync.WaitGroup
 
 	for i, hash := range signatures {

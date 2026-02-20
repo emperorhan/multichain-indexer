@@ -33,6 +33,7 @@ make run
 - `internal/domain/event/` — pipeline event types
 - `internal/chain/` — chain adapter interface + implementations
 - `internal/pipeline/` — pipeline stages (coordinator, fetcher, normalizer, ingester)
+- `internal/pipeline/identity/` — shared identity/canonicalization functions (dedup across pipeline stages)
 - `internal/pipeline/health.go` — per-chain health monitoring (HEALTHY/UNHEALTHY/INACTIVE)
 - `internal/alert/` — alert system (Slack, Webhook) with per-key cooldown
 - `internal/reconciliation/` — balance reconciliation (on-chain vs DB)
@@ -58,14 +59,26 @@ make lint           # Run linter
 
 - PostgreSQL 16 on port 5433
 - Migrations in `internal/store/postgres/migrations/`
-- Core tables: `transactions`, `balance_events`, `balances`, `tokens`, `cursors`, `watched_addresses`, `indexer_configs`
+- Core tables: `transactions`, `balance_events`, `balances`, `tokens`, `address_cursors`, `watched_addresses`, `indexer_configs`, `indexed_blocks`
 - Operational tables: `address_books`, `balance_reconciliation_snapshots`, `runtime_configs`
-- `balance_events` uses signed delta model (+deposit, -withdrawal) with 3-layer dedup
+- `balance_events` uses signed delta model (+deposit, -withdrawal) with UNIQUE INDEX on event_id for dedup
+
+## Configuration
+
+The indexer uses a layered configuration system:
+
+1. **YAML file** — base configuration (default path: `config.yaml`, override with `CONFIG_FILE` env var)
+2. **Environment variables** — override any YAML value
+3. **Built-in defaults** — applied for any remaining zero-value fields
+
+If no YAML file is found, the indexer runs in env-only mode (backward compatible).
+See `configs/config.example.yaml` for the full reference with all fields, defaults, and env var names.
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `CONFIG_FILE` | Path to YAML config file | `config.yaml` |
 | `SOLANA_RPC_URL` | Solana RPC endpoint | `https://api.devnet.solana.com` |
 | `DB_URL` | PostgreSQL connection string | `postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable` |
 | `REDIS_URL` | Redis connection string | `redis://localhost:6380` |

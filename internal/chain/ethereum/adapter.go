@@ -8,6 +8,6 @@ import (
 )
 
 // NewAdapter creates an EVM adapter configured for the Ethereum chain.
-func NewAdapter(rpcURL string, logger *slog.Logger) chain.ChainAdapter {
-	return base.NewAdapterWithChain("ethereum", rpcURL, logger)
+func NewAdapter(rpcURL string, logger *slog.Logger, opts ...base.AdapterOption) chain.ChainAdapter {
+	return base.NewAdapterWithChain("ethereum", rpcURL, logger, opts...)
 }

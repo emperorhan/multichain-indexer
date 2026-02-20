@@ -17,6 +17,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/emperorhan/multichain-indexer/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
@@ -66,6 +67,14 @@ func WithTLS(enabled bool, caPath, certPath, keyPath string) Option {
 		n.tlsCA = caPath
 		n.tlsCert = certPath
 		n.tlsKey = keyPath
+	}
+}
+
+func WithRetryConfig(maxAttempts int, delayInitial, delayMax time.Duration) Option {
+	return func(n *Normalizer) {
+		n.retryMaxAttempts = maxAttempts
+		n.retryDelayStart = delayInitial
+		n.retryDelayMax = delayMax
 	}
 }
 
@@ -230,8 +239,8 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	if len(canonicalSignatures) == 0 && len(batch.Signatures) > 0 {
 		return fmt.Errorf("decode collapse stage=%s no canonical signatures in batch", decodeStage)
 	}
-	canonicalPrevCursor := canonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
-	canonicalNewCursor := canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+	canonicalPrevCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
+	canonicalNewCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
 
 	// Build gRPC request
 	rawTxs := make([]*sidecarv1.RawTransaction, len(batch.RawTransactions))
@@ -277,7 +286,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 
 	expectedSignatures := make(map[string]struct{}, len(canonicalSignatures))
 	for _, sig := range canonicalSignatures {
-		signatureKey := canonicalSignatureIdentity(batch.Chain, sig.Hash)
+		signatureKey := identity.CanonicalSignatureIdentity(batch.Chain, sig.Hash)
 		if signatureKey == "" {
 			continue
 		}
@@ -292,7 +301,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 			continue
 		}
 
-		signatureKey := canonicalSignatureIdentity(batch.Chain, result.TxHash)
+		signatureKey := identity.CanonicalSignatureIdentity(batch.Chain, result.TxHash)
 		if signatureKey == "" {
 			unexpectedResults["<empty>"] = struct{}{}
 			continue
@@ -342,7 +351,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 
 	for _, sig := range canonicalSignatures {
 		signature := strings.TrimSpace(sig.Hash)
-		signatureKey := canonicalSignatureIdentity(batch.Chain, signature)
+		signatureKey := identity.CanonicalSignatureIdentity(batch.Chain, signature)
 		if signatureKey == "" {
 			decodeFailures = append(decodeFailures, decodeFailure{
 				signature: "<empty>",
@@ -372,7 +381,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		if result == nil && len(canonicalSignatures) == 1 {
 			result = singleSignatureFallbackResult(unexpectedResultBySignature)
 			if result != nil {
-				delete(unexpectedResultBySignature, canonicalSignatureIdentity(batch.Chain, result.TxHash))
+				delete(unexpectedResultBySignature, identity.CanonicalSignatureIdentity(batch.Chain, result.TxHash))
 				log.Warn("decode single-signature fallback applied",
 					"stage", decodeStage,
 					"address", batch.Address,
@@ -441,7 +450,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 }
 
 func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sidecarv1.TransactionResult) event.NormalizedTransaction {
-	txHash := canonicalSignatureIdentity(batch.Chain, result.TxHash)
+	txHash := identity.CanonicalSignatureIdentity(batch.Chain, result.TxHash)
 	if txHash == "" {
 		txHash = strings.TrimSpace(result.TxHash)
 	}
@@ -463,7 +472,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 		tx.Err = result.Error
 	}
 
-	isBaseChain := isEVMChain(batch.Chain)
+	isBaseChain := identity.IsEVMChain(batch.Chain)
 	isBTCChain := batch.Chain == model.ChainBTC
 	if isBaseChain {
 		tx.BalanceEvents = buildCanonicalBaseBalanceEvents(
@@ -545,7 +554,7 @@ func finalityMetadataKeys(chainID model.Chain) []string {
 	if chainID == model.ChainBTC {
 		return []string{"finality_state", "finality", "confirmation_status", "commitment"}
 	}
-	if isEVMChain(chainID) {
+	if identity.IsEVMChain(chainID) {
 		return []string{"finality_state", "finality", "confirmation_status", "commitment"}
 	}
 	return []string{"finality_state", "finality", "confirmation_status", "commitment"}
@@ -563,7 +572,7 @@ func defaultFinalityState(chainID model.Chain) string {
 	if chainID == model.ChainSolana {
 		return "finalized"
 	}
-	if isEVMChain(chainID) {
+	if identity.IsEVMChain(chainID) {
 		return "finalized"
 	}
 	return "finalized"
@@ -619,19 +628,6 @@ func finalityStateRank(state string) int {
 	default:
 		return 0
 	}
-}
-
-func isHexString(v string) bool {
-	for _, ch := range v {
-		switch {
-		case ch >= '0' && ch <= '9':
-		case ch >= 'a' && ch <= 'f':
-		case ch >= 'A' && ch <= 'F':
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func (n *Normalizer) buildTransportCredentials() (credentials.TransportCredentials, error) {

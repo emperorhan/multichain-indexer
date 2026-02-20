@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
+	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
@@ -51,6 +52,11 @@ type Config struct {
 	ReorgDetectorInterval  time.Duration
 	FinalizerInterval      time.Duration
 	IndexedBlocksRetention int64
+	Fetcher                config.FetcherStageConfig
+	Normalizer             config.NormalizerStageConfig
+	Ingester               config.IngesterStageConfig
+	Health                 config.HealthStageConfig
+	ConfigWatcher          config.ConfigWatcherStageConfig
 }
 
 const streamBoundaryFetchToNormal = "fetcher-normalizer"
@@ -132,6 +138,10 @@ func New(
 	repos *Repos,
 	logger *slog.Logger,
 ) *Pipeline {
+	health := NewPipelineHealth(cfg.Chain, cfg.Network)
+	if cfg.Health.UnhealthyThreshold > 0 {
+		health.unhealthyThreshold = cfg.Health.UnhealthyThreshold
+	}
 	p := &Pipeline{
 		cfg:        cfg,
 		adapter:    adapter,
@@ -139,7 +149,7 @@ func New(
 		repos:      repos,
 		logger:     logger.With("component", "pipeline"),
 		replayCh:   make(chan replayOp, 1),
-		health:     NewPipelineHealth(cfg.Chain, cfg.Network),
+		health:     health,
 		activeCh:   make(chan struct{}, 1),
 		deactiveCh: make(chan struct{}, 1),
 	}
@@ -361,17 +371,43 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		coord = coord.WithBlockScanMode(p.repos.Config)
 	}
 
+	fetchOpts := []fetcher.Option{
+		fetcher.WithAutoTuneSignalSink(autoTuneSignalCollector),
+	}
+	if p.cfg.Fetcher.RetryMaxAttempts > 0 {
+		fetchOpts = append(fetchOpts, fetcher.WithRetryConfig(
+			p.cfg.Fetcher.RetryMaxAttempts,
+			time.Duration(p.cfg.Fetcher.BackoffInitialMs)*time.Millisecond,
+			time.Duration(p.cfg.Fetcher.BackoffMaxMs)*time.Millisecond,
+		))
+	}
+	if p.cfg.Fetcher.AdaptiveMinBatch > 0 {
+		fetchOpts = append(fetchOpts, fetcher.WithAdaptiveMinBatch(p.cfg.Fetcher.AdaptiveMinBatch))
+	}
+	if p.cfg.Fetcher.BoundaryOverlapLookahead > 0 {
+		fetchOpts = append(fetchOpts, fetcher.WithBoundaryOverlapLookahead(p.cfg.Fetcher.BoundaryOverlapLookahead))
+	}
 	fetch := fetcher.New(
 		p.adapter, jobCh, rawBatchOutputCh,
 		p.cfg.FetchWorkers, p.logger,
-		fetcher.WithAutoTuneSignalSink(autoTuneSignalCollector),
+		fetchOpts...,
 	)
 
+	normOpts := []normalizer.Option{
+		normalizer.WithTLS(p.cfg.SidecarTLSEnabled, p.cfg.SidecarTLSCA, p.cfg.SidecarTLSCert, p.cfg.SidecarTLSKey),
+	}
+	if p.cfg.Normalizer.RetryMaxAttempts > 0 {
+		normOpts = append(normOpts, normalizer.WithRetryConfig(
+			p.cfg.Normalizer.RetryMaxAttempts,
+			time.Duration(p.cfg.Normalizer.RetryDelayInitialMs)*time.Millisecond,
+			time.Duration(p.cfg.Normalizer.RetryDelayMaxMs)*time.Millisecond,
+		))
+	}
 	norm := normalizer.New(
 		p.cfg.SidecarAddr, p.cfg.SidecarTimeout,
 		rawBatchInputCh, normalizedCh,
 		p.cfg.NormalizerWorkers, p.logger,
-		normalizer.WithTLS(p.cfg.SidecarTLSEnabled, p.cfg.SidecarTLSCA, p.cfg.SidecarTLSCert, p.cfg.SidecarTLSKey),
+		normOpts...,
 	)
 
 	// Reorg/finality channels (nil-safe if not used)
@@ -383,6 +419,19 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		ingester.WithAutoTuneSignalSink(autoTuneSignalCollector),
 		ingester.WithReorgChannel(reorgCh),
 		ingester.WithFinalityChannel(finalityCh),
+	}
+	if p.cfg.Ingester.RetryMaxAttempts > 0 {
+		ingesterOpts = append(ingesterOpts, ingester.WithRetryConfig(
+			p.cfg.Ingester.RetryMaxAttempts,
+			time.Duration(p.cfg.Ingester.RetryDelayInitialMs)*time.Millisecond,
+			time.Duration(p.cfg.Ingester.RetryDelayMaxMs)*time.Millisecond,
+		))
+	}
+	if p.cfg.Ingester.DeniedCacheCapacity > 0 {
+		ingesterOpts = append(ingesterOpts, ingester.WithDeniedCacheConfig(
+			p.cfg.Ingester.DeniedCacheCapacity,
+			time.Duration(p.cfg.Ingester.DeniedCacheTTLSec)*time.Second,
+		))
 	}
 	if p.repos.IndexedBlock != nil {
 		ingesterOpts = append(ingesterOpts, ingester.WithIndexedBlockRepo(p.repos.IndexedBlock))
@@ -449,6 +498,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 			p.cfg.Chain, p.cfg.Network,
 			p.repos.RuntimeConfig, coord,
 			p.logger,
+			time.Duration(p.cfg.ConfigWatcher.IntervalSec)*time.Second,
 		).WithActivationController(p)
 		g.Go(func() error {
 			return watcher.Run(gCtx)

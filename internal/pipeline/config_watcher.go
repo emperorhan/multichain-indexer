@@ -57,14 +57,18 @@ func NewConfigWatcher(
 	repo store.RuntimeConfigRepository,
 	coordinator CoordinatorUpdater,
 	logger *slog.Logger,
+	interval time.Duration,
 ) *ConfigWatcher {
+	if interval <= 0 {
+		interval = configWatcherDefaultInterval
+	}
 	return &ConfigWatcher{
 		chain:       chain,
 		network:     network,
 		repo:        repo,
 		coordinator: coordinator,
 		logger:      logger.With("component", "config_watcher"),
-		interval:    configWatcherDefaultInterval,
+		interval:    interval,
 		lastSeen:    make(map[string]string),
 	}
 }

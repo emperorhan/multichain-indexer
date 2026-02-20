@@ -78,7 +78,7 @@ func TestConfigWatcher_AppliesBatchSizeChange(t *testing.T) {
 	coord := &fakeCoordinatorUpdater{}
 	watcher := NewConfigWatcher(
 		model.ChainBase, model.NetworkSepolia,
-		repo, coord, slog.Default(),
+		repo, coord, slog.Default(), 0,
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -100,7 +100,7 @@ func TestConfigWatcher_AppliesIntervalChange(t *testing.T) {
 	coord := &fakeCoordinatorUpdater{}
 	watcher := NewConfigWatcher(
 		model.ChainBase, model.NetworkSepolia,
-		repo, coord, slog.Default(),
+		repo, coord, slog.Default(), 0,
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -122,7 +122,7 @@ func TestConfigWatcher_SkipsDuplicateUpdates(t *testing.T) {
 	coord := &fakeCoordinatorUpdater{}
 	watcher := NewConfigWatcher(
 		model.ChainBase, model.NetworkSepolia,
-		repo, coord, slog.Default(),
+		repo, coord, slog.Default(), 0,
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -155,7 +155,7 @@ func TestConfigWatcher_IgnoresInvalidValues(t *testing.T) {
 	coord := &fakeCoordinatorUpdater{}
 	watcher := NewConfigWatcher(
 		model.ChainBase, model.NetworkSepolia,
-		repo, coord, slog.Default(),
+		repo, coord, slog.Default(), 0,
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())

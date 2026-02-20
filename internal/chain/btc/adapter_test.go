@@ -69,8 +69,9 @@ func (f *fakeRPCClient) GetRawTransactionVerbose(_ context.Context, txid string)
 
 func newTestAdapter(client rpc.RPCClient) *Adapter {
 	return &Adapter{
-		client: client,
-		logger: slog.Default(),
+		client:                   client,
+		logger:                   slog.Default(),
+		maxInitialLookbackBlocks: maxInitialLookbackBlocks,
 	}
 }
 
