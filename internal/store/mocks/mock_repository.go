@@ -557,6 +557,20 @@ func (mr *MockIndexerConfigRepositoryMockRecorder) UpdateWatermarkTx(ctx, tx, ch
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateWatermarkTx", reflect.TypeOf((*MockIndexerConfigRepository)(nil).UpdateWatermarkTx), ctx, tx, chain, network, ingestedSequence)
 }
 
+// RewindWatermarkTx mocks base method.
+func (m *MockIndexerConfigRepository) RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RewindWatermarkTx", ctx, tx, chain, network, ingestedSequence)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RewindWatermarkTx indicates an expected call of RewindWatermarkTx.
+func (mr *MockIndexerConfigRepositoryMockRecorder) RewindWatermarkTx(ctx, tx, chain, network, ingestedSequence any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RewindWatermarkTx", reflect.TypeOf((*MockIndexerConfigRepository)(nil).RewindWatermarkTx), ctx, tx, chain, network, ingestedSequence)
+}
+
 // GetWatermark mocks base method.
 func (m *MockIndexerConfigRepository) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
 	m.ctrl.T.Helper()

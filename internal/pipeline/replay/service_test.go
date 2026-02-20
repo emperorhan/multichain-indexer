@@ -68,6 +68,10 @@ func (m *mockConfigRepo) UpdateWatermarkTx(_ context.Context, _ *sql.Tx, _ model
 	return nil
 }
 
+func (m *mockConfigRepo) RewindWatermarkTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) error {
+	return nil
+}
+
 func (m *mockConfigRepo) GetWatermark(_ context.Context, _ model.Chain, _ model.Network) (*model.PipelineWatermark, error) {
 	return m.watermark, nil
 }

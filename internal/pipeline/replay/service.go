@@ -286,7 +286,7 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 	if newWatermark < 0 {
 		newWatermark = 0
 	}
-	if err := s.configRepo.UpdateWatermarkTx(ctx, dbTx, req.Chain, req.Network, newWatermark); err != nil {
+	if err := s.configRepo.RewindWatermarkTx(ctx, dbTx, req.Chain, req.Network, newWatermark); err != nil {
 		return nil, fmt.Errorf("rewind watermark: %w", err)
 	}
 	result.NewWatermark = newWatermark

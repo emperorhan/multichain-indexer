@@ -538,6 +538,23 @@ func (r *interleaveConfigRepo) UpdateWatermarkTx(
 	return nil
 }
 
+func (r *interleaveConfigRepo) RewindWatermarkTx(
+	_ context.Context,
+	_ *sql.Tx,
+	chain model.Chain,
+	network model.Network,
+	ingestedSequence int64,
+) error {
+	key := interleaveKey(chain, network)
+	r.state.mu.Lock()
+	defer r.state.mu.Unlock()
+	if ingestedSequence > r.state.watermarks[key] {
+		r.state.watermarks[key] = ingestedSequence
+	}
+	r.state.watermarkWrites[key] = append(r.state.watermarkWrites[key], r.state.watermarks[key])
+	return nil
+}
+
 func addDecimalStringsForTest(current, delta string) (string, error) {
 	baseValue := current
 	if baseValue == "" {

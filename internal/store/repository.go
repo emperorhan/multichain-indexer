@@ -112,6 +112,7 @@ type IndexerConfigRepository interface {
 	Get(ctx context.Context, chain model.Chain, network model.Network) (*model.IndexerConfig, error)
 	Upsert(ctx context.Context, c *model.IndexerConfig) error
 	UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
+	RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
 	GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)
 }
 

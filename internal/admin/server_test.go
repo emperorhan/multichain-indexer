@@ -35,10 +35,11 @@ func (m *mockWatchedAddressRepo) FindByAddress(ctx context.Context, chain model.
 }
 
 type mockIndexerConfigRepo struct {
-	getFunc             func(ctx context.Context, chain model.Chain, network model.Network) (*model.IndexerConfig, error)
-	upsertFunc          func(ctx context.Context, c *model.IndexerConfig) error
-	updateWatermarkFunc func(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
-	getWatermarkFunc    func(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)
+	getFunc              func(ctx context.Context, chain model.Chain, network model.Network) (*model.IndexerConfig, error)
+	upsertFunc           func(ctx context.Context, c *model.IndexerConfig) error
+	updateWatermarkFunc  func(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
+	rewindWatermarkFunc  func(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
+	getWatermarkFunc     func(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)
 }
 
 func (m *mockIndexerConfigRepo) Get(ctx context.Context, chain model.Chain, network model.Network) (*model.IndexerConfig, error) {
@@ -51,6 +52,13 @@ func (m *mockIndexerConfigRepo) Upsert(ctx context.Context, c *model.IndexerConf
 
 func (m *mockIndexerConfigRepo) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
 	return m.updateWatermarkFunc(ctx, tx, chain, network, ingestedSequence)
+}
+
+func (m *mockIndexerConfigRepo) RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
+	if m.rewindWatermarkFunc != nil {
+		return m.rewindWatermarkFunc(ctx, tx, chain, network, ingestedSequence)
+	}
+	return nil
 }
 
 func (m *mockIndexerConfigRepo) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {

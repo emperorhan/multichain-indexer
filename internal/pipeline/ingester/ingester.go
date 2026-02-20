@@ -439,8 +439,8 @@ type eventContext struct {
 
 type adjustmentKey struct {
 	store.BalanceKey
-	walletID *string
-	orgID    *string
+	walletID string
+	orgID    string
 }
 
 type adjustmentAccum struct {
@@ -538,7 +538,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		}
 		bc.blockScanAddrMap = make(map[string]addrMeta, len(activeAddrs))
 		for _, wa := range activeAddrs {
-			bc.blockScanAddrMap[wa.Address] = addrMeta{walletID: wa.WalletID, orgID: wa.OrganizationID}
+			key := identity.CanonicalAddressIdentity(batch.Chain, wa.Address)
+			bc.blockScanAddrMap[key] = addrMeta{walletID: wa.WalletID, orgID: wa.OrganizationID}
 		}
 	}
 
@@ -806,18 +807,36 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 		eventOrgID := batch.OrgID
 		eventWatchedAddr := &batch.Address
 		if batch.BlockScanMode {
-			addr := ec.be.Address
-			eventWatchedAddr = &addr
-			if ing.addressIndex != nil {
-				if wa := ing.addressIndex.Lookup(ctx, batch.Chain, batch.Network, ec.be.Address); wa != nil {
-					eventWalletID = wa.WalletID
-					eventOrgID = wa.OrganizationID
+			// Try to resolve watched address from be.Address first, then counterparty
+			resolved := false
+			candidates := []string{ec.be.Address, ec.be.CounterpartyAddress}
+			for _, candidate := range candidates {
+				if candidate == "" {
+					continue
 				}
-			} else if bc.blockScanAddrMap != nil {
-				if meta, ok := bc.blockScanAddrMap[ec.be.Address]; ok {
-					eventWalletID = meta.walletID
-					eventOrgID = meta.orgID
+				if ing.addressIndex != nil {
+					if wa := ing.addressIndex.Lookup(ctx, batch.Chain, batch.Network, candidate); wa != nil {
+						c := candidate
+						eventWatchedAddr = &c
+						eventWalletID = wa.WalletID
+						eventOrgID = wa.OrganizationID
+						resolved = true
+						break
+					}
+				} else if bc.blockScanAddrMap != nil {
+					if meta, ok := bc.blockScanAddrMap[candidate]; ok {
+						c := candidate
+						eventWatchedAddr = &c
+						eventWalletID = meta.walletID
+						eventOrgID = meta.orgID
+						resolved = true
+						break
+					}
 				}
+			}
+			if !resolved {
+				addr := ec.be.Address
+				eventWatchedAddr = &addr
 			}
 		}
 
@@ -852,7 +871,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 
 			ak := adjustmentKey{
 				BalanceKey: store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: ""},
-				walletID: eventWalletID, orgID: eventOrgID,
+				walletID: derefStr(eventWalletID), orgID: derefStr(eventOrgID),
 			}
 			delta := new(big.Int)
 			if _, ok := delta.SetString(strings.TrimSpace(ec.be.Delta), 10); !ok {
@@ -880,7 +899,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 				}
 				sak := adjustmentKey{
 					BalanceKey: store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: "staked"},
-					walletID: eventWalletID, orgID: eventOrgID,
+					walletID: derefStr(eventWalletID), orgID: derefStr(eventOrgID),
 				}
 				stakeDelta := new(big.Int)
 				if _, ok := stakeDelta.SetString(strings.TrimSpace(invertedDelta), 10); !ok {
@@ -932,8 +951,8 @@ func (ing *Ingester) writeBulkAndCommit(ctx context.Context, bc *batchContext) (
 		adjustItems := make([]store.BulkAdjustItem, 0, len(bc.aggregatedDeltas))
 		for ak, acc := range bc.aggregatedDeltas {
 			adjustItems = append(adjustItems, store.BulkAdjustItem{
-				Address: ak.Address, TokenID: ak.TokenID, WalletID: ak.walletID,
-				OrgID: ak.orgID, Delta: acc.delta.String(), Cursor: acc.cursor,
+				Address: ak.Address, TokenID: ak.TokenID, WalletID: strPtrOrNil(ak.walletID),
+				OrgID: strPtrOrNil(ak.orgID), Delta: acc.delta.String(), Cursor: acc.cursor,
 				TxHash: acc.txHash, BalanceType: ak.BalanceType,
 			})
 		}
@@ -1093,12 +1112,12 @@ func (ing *Ingester) handleReorg(ctx context.Context, reorg event.ReorgEvent) er
 		return fmt.Errorf("rewind cursors: %w", err)
 	}
 
-	// 7. Rewind watermark
+	// 7. Rewind watermark (unconditional — intentional reorg rollback)
 	rewindSequence := reorg.ForkBlockNumber - 1
 	if rewindSequence < 0 {
 		rewindSequence = 0
 	}
-	if err := ing.configRepo.UpdateWatermarkTx(ctx, dbTx, reorg.Chain, reorg.Network, rewindSequence); err != nil {
+	if err := ing.configRepo.RewindWatermarkTx(ctx, dbTx, reorg.Chain, reorg.Network, rewindSequence); err != nil {
 		return fmt.Errorf("rewind watermark: %w", err)
 	}
 
@@ -1399,11 +1418,11 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 		rewindWatermarkSequence = 0
 	}
 
-	if err := ing.configRepo.UpdateWatermarkTx(
+	if err := ing.configRepo.RewindWatermarkTx(
 		ctx, dbTx,
 		batch.Chain, batch.Network, rewindWatermarkSequence,
 	); err != nil {
-		return fmt.Errorf("update watermark after rewind: %w", err)
+		return fmt.Errorf("rewind watermark after drift: %w", err)
 	}
 
 	return nil
@@ -1919,6 +1938,20 @@ func nativeTokenDecimals(ch model.Chain) int {
 	default:
 		return 18 // EVM chains
 	}
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // oldestBlockTime returns the earliest block_time from the batch transactions.

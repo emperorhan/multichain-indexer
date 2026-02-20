@@ -54,6 +54,24 @@ func CanonicalizeCursorValue(chainID model.Chain, cursor *string) *string {
 	return &value
 }
 
+// CanonicalAddressIdentity normalises a blockchain address into its
+// canonical form. For EVM chains this lowercases and ensures 0x prefix;
+// for other chains the trimmed value is returned as-is.
+func CanonicalAddressIdentity(chainID model.Chain, address string) string {
+	trimmed := strings.TrimSpace(address)
+	if trimmed == "" {
+		return ""
+	}
+	if !IsEVMChain(chainID) {
+		return trimmed
+	}
+	canonical := CanonicalSignatureIdentity(chainID, trimmed)
+	if canonical == "" {
+		return trimmed
+	}
+	return canonical
+}
+
 // IsEVMChain returns true for EVM-compatible chains.
 func IsEVMChain(chainID model.Chain) bool {
 	switch chainID {

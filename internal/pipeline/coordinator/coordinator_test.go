@@ -18238,6 +18238,10 @@ func (r *inMemoryConfigRepo) UpdateWatermarkTx(context.Context, *sql.Tx, model.C
 	return nil
 }
 
+func (r *inMemoryConfigRepo) RewindWatermarkTx(context.Context, *sql.Tx, model.Chain, model.Network, int64) error {
+	return nil
+}
+
 func (r *inMemoryConfigRepo) GetWatermark(_ context.Context, _ model.Chain, _ model.Network) (*model.PipelineWatermark, error) {
 	if r.watermark <= 0 {
 		return nil, nil

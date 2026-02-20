@@ -154,6 +154,21 @@ func (r *testIndexerConfigStateRepo) UpdateWatermarkTx(
 	return nil
 }
 
+func (r *testIndexerConfigStateRepo) RewindWatermarkTx(
+	_ context.Context,
+	_ *sql.Tx,
+	_ model.Chain,
+	_ model.Network,
+	ingestedSequence int64,
+) error {
+	r.Requested = append(r.Requested, ingestedSequence)
+	if ingestedSequence > r.HighestWatermark {
+		r.HighestWatermark = ingestedSequence
+	}
+	r.Applied = append(r.Applied, r.HighestWatermark)
+	return nil
+}
+
 func Test_isCanonicalityDrift(t *testing.T) {
 	oldSig := "old_sig"
 	newSig := "new_sig"
@@ -394,7 +409,7 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 	rewindSig := "rewind_sig"
 	rewindSigSeq := int64(100)
 	ing.reorgHandler = func(ctx context.Context, tx *sql.Tx, got event.NormalizedBatch) error {
-		if err := configRepo.UpdateWatermarkTx(ctx, tx, got.Chain, got.Network, rewindSigSeq); err != nil {
+		if err := configRepo.RewindWatermarkTx(ctx, tx, got.Chain, got.Network, rewindSigSeq); err != nil {
 			return err
 		}
 		return nil
@@ -2002,7 +2017,7 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 			if err != nil {
 				return err
 			}
-			if err := configRepo.UpdateWatermarkTx(ctx, tx, got.Chain, got.Network, got.PreviousCursorSequence-1); err != nil {
+			if err := configRepo.RewindWatermarkTx(ctx, tx, got.Chain, got.Network, got.PreviousCursorSequence-1); err != nil {
 				return err
 			}
 			return nil
@@ -3721,4 +3736,373 @@ func TestIngester_Run_ReturnsErrorOnProcessBatchFailure(t *testing.T) {
 func TestCanonicalSignatureIdentity_BTC(t *testing.T) {
 	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
 	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
+}
+
+// ---------- Block-scan mode ingester tests ----------
+
+func TestProcessBatch_BlockScanMode_MultiAddressResolution(t *testing.T) {
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, _ := newIngesterMocks(t)
+	mockWatchedAddrRepo := storemocks.NewMockWatchedAddressRepository(ctrl)
+	configRepo := &testIndexerConfigStateRepo{}
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, configRepo, normalizedCh, slog.Default(),
+		WithWatchedAddressRepo(mockWatchedAddrRepo),
+	)
+
+	walletA := "wallet-aaa"
+	orgA := "org-aaa"
+	walletB := "wallet-bbb"
+	orgB := "org-bbb"
+
+	// GetActive returns two watched addresses on Solana devnet.
+	mockWatchedAddrRepo.EXPECT().
+		GetActive(gomock.Any(), model.ChainSolana, model.NetworkDevnet).
+		Return([]model.WatchedAddress{
+			{
+				Address:        "SolAddr1111111111111111111111111111111111111",
+				Chain:          model.ChainSolana,
+				Network:        model.NetworkDevnet,
+				WalletID:       &walletA,
+				OrganizationID: &orgA,
+				IsActive:       true,
+			},
+			{
+				Address:        "SolAddr2222222222222222222222222222222222222",
+				Chain:          model.ChainSolana,
+				Network:        model.NetworkDevnet,
+				WalletID:       &walletB,
+				OrganizationID: &orgB,
+				IsActive:       true,
+			},
+		}, nil)
+
+	cursor := "cursor-block-scan-multi"
+	batch := event.NormalizedBatch{
+		Chain:             model.ChainSolana,
+		Network:           model.NetworkDevnet,
+		BlockScanMode:     true,
+		WatchedAddresses:  []string{"SolAddr1111111111111111111111111111111111111", "SolAddr2222222222222222222222222222222222222"},
+		NewCursorValue:    &cursor,
+		NewCursorSequence: 500,
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:      "sig-multi-addr-1",
+				BlockCursor: 500,
+				FeeAmount:   "0",
+				FeePayer:    "other",
+				Status:      model.TxStatusSuccess,
+				ChainData:   json.RawMessage("{}"),
+				BalanceEvents: []event.NormalizedBalanceEvent{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						ActivityType:          model.ActivityDeposit,
+						EventAction:           "transfer",
+						ProgramID:             "11111111111111111111111111111111",
+						ContractAddress:       "11111111111111111111111111111111",
+						Address:               "SolAddr1111111111111111111111111111111111111",
+						CounterpartyAddress:   "external-sender",
+						Delta:                 "1000",
+						EventID:               "ev-multi-1",
+						TokenType:             model.TokenTypeNative,
+					},
+					{
+						OuterInstructionIndex: 1,
+						InnerInstructionIndex: -1,
+						ActivityType:          model.ActivityDeposit,
+						EventAction:           "transfer",
+						ProgramID:             "11111111111111111111111111111111",
+						ContractAddress:       "11111111111111111111111111111111",
+						Address:               "SolAddr2222222222222222222222222222222222222",
+						CounterpartyAddress:   "external-sender",
+						Delta:                 "2000",
+						EventID:               "ev-multi-2",
+						TokenType:             model.TokenTypeNative,
+					},
+				},
+			},
+		},
+	}
+
+	setupBeginTx(mockDB)
+
+	txID := uuid.New()
+	mockTxRepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, tx := range txns {
+				result[tx.TxHash] = txID
+			}
+			return result, nil
+		})
+	tokenID := uuid.New()
+	mockTokenRepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, tk := range tokens {
+				result[tk.ContractAddress] = tokenID
+			}
+			return result, nil
+		})
+
+	// Capture balance events to verify wallet/org attribution.
+	var capturedEvents []*model.BalanceEvent
+	mockBERepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+			capturedEvents = append(capturedEvents, events...)
+			return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
+		})
+	mockBalanceRepo.EXPECT().
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainSolana, model.NetworkDevnet, gomock.Any()).
+		Return(nil)
+
+	require.NoError(t, ing.processBatch(context.Background(), batch))
+
+	require.Len(t, capturedEvents, 2)
+
+	// First event should be attributed to SolAddr1's wallet/org.
+	assert.Equal(t, "SolAddr1111111111111111111111111111111111111", capturedEvents[0].Address)
+	require.NotNil(t, capturedEvents[0].WalletID)
+	assert.Equal(t, walletA, *capturedEvents[0].WalletID)
+	require.NotNil(t, capturedEvents[0].OrganizationID)
+	assert.Equal(t, orgA, *capturedEvents[0].OrganizationID)
+	require.NotNil(t, capturedEvents[0].WatchedAddress)
+	assert.Equal(t, "SolAddr1111111111111111111111111111111111111", *capturedEvents[0].WatchedAddress)
+
+	// Second event should be attributed to SolAddr2's wallet/org.
+	assert.Equal(t, "SolAddr2222222222222222222222222222222222222", capturedEvents[1].Address)
+	require.NotNil(t, capturedEvents[1].WalletID)
+	assert.Equal(t, walletB, *capturedEvents[1].WalletID)
+	require.NotNil(t, capturedEvents[1].OrganizationID)
+	assert.Equal(t, orgB, *capturedEvents[1].OrganizationID)
+	require.NotNil(t, capturedEvents[1].WatchedAddress)
+	assert.Equal(t, "SolAddr2222222222222222222222222222222222222", *capturedEvents[1].WatchedAddress)
+}
+
+func TestProcessBatch_BlockScanMode_EVMAddressCanonicalization(t *testing.T) {
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, _ := newIngesterMocks(t)
+	mockWatchedAddrRepo := storemocks.NewMockWatchedAddressRepository(ctrl)
+	configRepo := &testIndexerConfigStateRepo{}
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, configRepo, normalizedCh, slog.Default(),
+		WithWatchedAddressRepo(mockWatchedAddrRepo),
+	)
+
+	walletEVM := "wallet-evm"
+	orgEVM := "org-evm"
+
+	// DB stores mixed-case EIP-55 address; CanonicalAddressIdentity will lowercase it.
+	mockWatchedAddrRepo.EXPECT().
+		GetActive(gomock.Any(), model.ChainBase, model.NetworkSepolia).
+		Return([]model.WatchedAddress{
+			{
+				Address:        "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12",
+				Chain:          model.ChainBase,
+				Network:        model.NetworkSepolia,
+				WalletID:       &walletEVM,
+				OrganizationID: &orgEVM,
+				IsActive:       true,
+			},
+		}, nil)
+
+	cursor := "0xblockhash999"
+	batch := event.NormalizedBatch{
+		Chain:             model.ChainBase,
+		Network:           model.NetworkSepolia,
+		BlockScanMode:     true,
+		WatchedAddresses:  []string{"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"},
+		NewCursorValue:    &cursor,
+		NewCursorSequence: 1000,
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:      "0xTxHash0001",
+				BlockCursor: 1000,
+				FeeAmount:   "0",
+				FeePayer:    "0xfeepayer",
+				Status:      model.TxStatusSuccess,
+				ChainData:   json.RawMessage("{}"),
+				BalanceEvents: []event.NormalizedBalanceEvent{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						ActivityType:          model.ActivityDeposit,
+						EventAction:           "native_transfer",
+						ProgramID:             "0xbase-program",
+						ContractAddress:       "ETH",
+						// Sidecar provides lowercased address.
+						Address:             "0xabcdef1234567890abcdef1234567890abcdef12",
+						CounterpartyAddress: "0x9999999999999999999999999999999999999999",
+						Delta:               "5000",
+						EventID:             "ev-evm-canonical-1",
+						TokenType:           model.TokenTypeNative,
+						FinalityState:       "confirmed",
+					},
+				},
+			},
+		},
+	}
+
+	setupBeginTx(mockDB)
+
+	txID := uuid.New()
+	mockTxRepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, tx := range txns {
+				result[tx.TxHash] = txID
+			}
+			return result, nil
+		})
+	tokenID := uuid.New()
+	mockTokenRepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, tk := range tokens {
+				result[tk.ContractAddress] = tokenID
+			}
+			return result, nil
+		})
+
+	var capturedEvents []*model.BalanceEvent
+	mockBERepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+			capturedEvents = append(capturedEvents, events...)
+			return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
+		})
+	mockBalanceRepo.EXPECT().
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, gomock.Any()).
+		Return(nil)
+
+	require.NoError(t, ing.processBatch(context.Background(), batch))
+
+	require.Len(t, capturedEvents, 1)
+	// Despite DB having mixed-case address and sidecar providing lowercased,
+	// the canonicalization in blockScanAddrMap must ensure a match.
+	require.NotNil(t, capturedEvents[0].WalletID)
+	assert.Equal(t, walletEVM, *capturedEvents[0].WalletID)
+	require.NotNil(t, capturedEvents[0].OrganizationID)
+	assert.Equal(t, orgEVM, *capturedEvents[0].OrganizationID)
+	require.NotNil(t, capturedEvents[0].WatchedAddress)
+	assert.Equal(t, "0xabcdef1234567890abcdef1234567890abcdef12", *capturedEvents[0].WatchedAddress)
+}
+
+func TestProcessBatch_BlockScanMode_CounterpartyResolution(t *testing.T) {
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, _ := newIngesterMocks(t)
+	mockWatchedAddrRepo := storemocks.NewMockWatchedAddressRepository(ctrl)
+	configRepo := &testIndexerConfigStateRepo{}
+
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, configRepo, normalizedCh, slog.Default(),
+		WithWatchedAddressRepo(mockWatchedAddrRepo),
+	)
+
+	walletCounterparty := "wallet-counterparty"
+	orgCounterparty := "org-counterparty"
+
+	// Only the counterparty address is a watched address; the primary address is external.
+	mockWatchedAddrRepo.EXPECT().
+		GetActive(gomock.Any(), model.ChainSolana, model.NetworkDevnet).
+		Return([]model.WatchedAddress{
+			{
+				Address:        "SolWatchedCounterparty111111111111111111111",
+				Chain:          model.ChainSolana,
+				Network:        model.NetworkDevnet,
+				WalletID:       &walletCounterparty,
+				OrganizationID: &orgCounterparty,
+				IsActive:       true,
+			},
+		}, nil)
+
+	cursor := "cursor-counterparty-resolve"
+	batch := event.NormalizedBatch{
+		Chain:             model.ChainSolana,
+		Network:           model.NetworkDevnet,
+		BlockScanMode:     true,
+		WatchedAddresses:  []string{"SolWatchedCounterparty111111111111111111111"},
+		NewCursorValue:    &cursor,
+		NewCursorSequence: 600,
+		Transactions: []event.NormalizedTransaction{
+			{
+				TxHash:      "sig-counterparty-resolve-1",
+				BlockCursor: 600,
+				FeeAmount:   "0",
+				FeePayer:    "other",
+				Status:      model.TxStatusSuccess,
+				ChainData:   json.RawMessage("{}"),
+				BalanceEvents: []event.NormalizedBalanceEvent{
+					{
+						OuterInstructionIndex: 0,
+						InnerInstructionIndex: -1,
+						ActivityType:          model.ActivityDeposit,
+						EventAction:           "transfer",
+						ProgramID:             "11111111111111111111111111111111",
+						ContractAddress:       "11111111111111111111111111111111",
+						// Address is NOT a watched address.
+						Address: "ExternalSenderAddr1111111111111111111111111",
+						// CounterpartyAddress IS a watched address.
+						CounterpartyAddress: "SolWatchedCounterparty111111111111111111111",
+						Delta:               "500",
+						EventID:             "ev-counterparty-1",
+						TokenType:           model.TokenTypeNative,
+					},
+				},
+			},
+		},
+	}
+
+	setupBeginTx(mockDB)
+
+	txID := uuid.New()
+	mockTxRepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, txns []*model.Transaction) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(txns))
+			for _, tx := range txns {
+				result[tx.TxHash] = txID
+			}
+			return result, nil
+		})
+	tokenID := uuid.New()
+	mockTokenRepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error) {
+			result := make(map[string]uuid.UUID, len(tokens))
+			for _, tk := range tokens {
+				result[tk.ContractAddress] = tokenID
+			}
+			return result, nil
+		})
+
+	var capturedEvents []*model.BalanceEvent
+	mockBERepo.EXPECT().
+		BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+			capturedEvents = append(capturedEvents, events...)
+			return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
+		})
+	mockBalanceRepo.EXPECT().
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainSolana, model.NetworkDevnet, gomock.Any()).
+		Return(nil)
+
+	require.NoError(t, ing.processBatch(context.Background(), batch))
+
+	require.Len(t, capturedEvents, 1)
+	// The wallet/org should come from the counterparty's watched address entry.
+	require.NotNil(t, capturedEvents[0].WalletID)
+	assert.Equal(t, walletCounterparty, *capturedEvents[0].WalletID)
+	require.NotNil(t, capturedEvents[0].OrganizationID)
+	assert.Equal(t, orgCounterparty, *capturedEvents[0].OrganizationID)
+	// WatchedAddress should be set to the counterparty address (the resolved watched address).
+	require.NotNil(t, capturedEvents[0].WatchedAddress)
+	assert.Equal(t, "SolWatchedCounterparty111111111111111111111", *capturedEvents[0].WatchedAddress)
+	// The event's Address field stays as the external sender.
+	assert.Equal(t, "ExternalSenderAddr1111111111111111111111111", capturedEvents[0].Address)
 }

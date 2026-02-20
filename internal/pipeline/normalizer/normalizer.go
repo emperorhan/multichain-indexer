@@ -539,8 +539,12 @@ func resolveWatchedAddressSet(batch event.RawBatch) map[string]struct{} {
 	if batch.BlockScanMode && len(batch.WatchedAddresses) > 0 {
 		set := make(map[string]struct{}, len(batch.WatchedAddresses))
 		for _, addr := range batch.WatchedAddresses {
-			if addr != "" {
-				set[addr] = struct{}{}
+			canonical := canonicalizeAddressIdentity(batch.Chain, addr)
+			if canonical == "" {
+				canonical = strings.TrimSpace(addr)
+			}
+			if canonical != "" {
+				set[canonical] = struct{}{}
 			}
 		}
 		return set
