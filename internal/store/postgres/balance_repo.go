@@ -213,7 +213,7 @@ func (r *BalanceRepo) BulkAdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain
 			unnest($4::uuid[]),
 			unnest($5::text[]),
 			unnest($6::text[]),
-			unnest($7::numeric[]),
+			GREATEST(0, unnest($7::numeric[])),
 			unnest($8::bigint[]),
 			unnest($9::text[]),
 			unnest($10::text[])
