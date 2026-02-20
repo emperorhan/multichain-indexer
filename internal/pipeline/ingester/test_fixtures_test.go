@@ -172,6 +172,10 @@ func (r *interleaveTokenRepo) UpsertTx(_ context.Context, _ *sql.Tx, t *model.To
 	return id, nil
 }
 
+func (*interleaveTokenRepo) FindByID(context.Context, uuid.UUID) (*model.Token, error) {
+	return nil, nil
+}
+
 func (*interleaveTokenRepo) FindByContractAddress(context.Context, model.Chain, model.Network, string) (*model.Token, error) {
 	return nil, nil
 }
@@ -272,23 +276,14 @@ type interleaveBalanceRepo struct {
 func (r *interleaveBalanceRepo) AdjustBalanceTx(
 	_ context.Context,
 	_ *sql.Tx,
-	chain model.Chain,
-	network model.Network,
-	address string,
-	tokenID uuid.UUID,
-	_ *string,
-	_ *string,
-	delta string,
-	_ int64,
-	_ string,
-	_ string,
+	req store.AdjustRequest,
 ) error {
-	primaryKey := interleaveBalanceKey(chain, network, address, tokenID)
+	primaryKey := interleaveBalanceKey(req.Chain, req.Network, req.Address, req.TokenID)
 
 	r.state.mu.Lock()
 	defer r.state.mu.Unlock()
 	current := r.state.balances[primaryKey]
-	next, err := addDecimalStringsForTest(current, delta)
+	next, err := addDecimalStringsForTest(current, req.Delta)
 	if err != nil {
 		return err
 	}
@@ -364,7 +359,18 @@ func (r *interleaveBalanceRepo) BulkAdjustBalanceTx(
 	items []store.BulkAdjustItem,
 ) error {
 	for _, item := range items {
-		err := r.AdjustBalanceTx(context.Background(), nil, chain, network, item.Address, item.TokenID, item.WalletID, item.OrgID, item.Delta, item.Cursor, item.TxHash, item.BalanceType)
+		err := r.AdjustBalanceTx(context.Background(), nil, store.AdjustRequest{
+			Chain:       chain,
+			Network:     network,
+			Address:     item.Address,
+			TokenID:     item.TokenID,
+			WalletID:    item.WalletID,
+			OrgID:       item.OrgID,
+			Delta:       item.Delta,
+			Cursor:      item.Cursor,
+			TxHash:      item.TxHash,
+			BalanceType: item.BalanceType,
+		})
 		if err != nil {
 			return err
 		}

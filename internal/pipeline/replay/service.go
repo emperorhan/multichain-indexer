@@ -14,6 +14,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// defaultQueryTimeout mirrors the postgres package's DefaultQueryTimeout
+// for read-only count queries executed outside a managed transaction.
+const defaultQueryTimeout = 30 * time.Second
+
 // Service provides shared purge/rollback logic used by both the Admin API
 // (replay) and the Ingester (reorg handling).
 type Service struct {
@@ -196,23 +200,35 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 		if err != nil {
 			return nil, fmt.Errorf("negate delta for %s: %w", be.txHash, err)
 		}
-		if err := s.balanceRepo.AdjustBalanceTx(
-			ctx, dbTx,
-			req.Chain, req.Network, be.address,
-			be.tokenID, be.walletID, be.organizationID,
-			invertedDelta, be.blockCursor, be.txHash, "",
-		); err != nil {
+		if err := s.balanceRepo.AdjustBalanceTx(ctx, dbTx, store.AdjustRequest{
+			Chain:       req.Chain,
+			Network:     req.Network,
+			Address:     be.address,
+			TokenID:     be.tokenID,
+			WalletID:    be.walletID,
+			OrgID:       be.organizationID,
+			Delta:       invertedDelta,
+			Cursor:      be.blockCursor,
+			TxHash:      be.txHash,
+			BalanceType: "",
+		}); err != nil {
 			return nil, fmt.Errorf("revert balance: %w", err)
 		}
 		reversedCount++
 
 		if identity.IsStakingActivity(be.activityType) {
-			if err := s.balanceRepo.AdjustBalanceTx(
-				ctx, dbTx,
-				req.Chain, req.Network, be.address,
-				be.tokenID, be.walletID, be.organizationID,
-				be.delta, be.blockCursor, be.txHash, "staked",
-			); err != nil {
+			if err := s.balanceRepo.AdjustBalanceTx(ctx, dbTx, store.AdjustRequest{
+				Chain:       req.Chain,
+				Network:     req.Network,
+				Address:     be.address,
+				TokenID:     be.tokenID,
+				WalletID:    be.walletID,
+				OrgID:       be.organizationID,
+				Delta:       be.delta,
+				Cursor:      be.blockCursor,
+				TxHash:      be.txHash,
+				BalanceType: "staked",
+			}); err != nil {
 				return nil, fmt.Errorf("revert staked balance: %w", err)
 			}
 		}
@@ -311,6 +327,7 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 
 // rollbackEvent holds the fields needed to reverse a balance delta.
 type rollbackEvent struct {
+	id             int64
 	tokenID        uuid.UUID
 	address        string
 	delta          string
@@ -322,6 +339,8 @@ type rollbackEvent struct {
 	balanceApplied bool
 }
 
+const rollbackBatchSize = 1000
+
 func (s *Service) fetchRollbackEvents(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -329,12 +348,38 @@ func (s *Service) fetchRollbackEvents(
 	network model.Network,
 	fromBlock int64,
 ) ([]rollbackEvent, error) {
+	var all []rollbackEvent
+	var lastID int64
+	for {
+		batch, err := s.fetchRollbackBatch(ctx, tx, chain, network, fromBlock, lastID, rollbackBatchSize)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, batch...)
+		if len(batch) < rollbackBatchSize {
+			break
+		}
+		lastID = batch[len(batch)-1].id
+	}
+	return all, nil
+}
+
+func (s *Service) fetchRollbackBatch(
+	ctx context.Context,
+	tx *sql.Tx,
+	chain model.Chain,
+	network model.Network,
+	fromBlock int64,
+	afterID int64,
+	limit int,
+) ([]rollbackEvent, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT token_id, address, delta, block_cursor, tx_hash, wallet_id, organization_id, activity_type, balance_applied
+		SELECT id, token_id, address, delta, block_cursor, tx_hash, wallet_id, organization_id, activity_type, balance_applied
 		FROM balance_events
-		WHERE chain = $1 AND network = $2 AND block_cursor >= $3
-		ORDER BY block_cursor DESC, id DESC
-	`, chain, network, fromBlock)
+		WHERE chain = $1 AND network = $2 AND block_cursor >= $3 AND id > $4
+		ORDER BY id ASC
+		LIMIT $5
+	`, chain, network, fromBlock, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query rollback events: %w", err)
 	}
@@ -346,7 +391,7 @@ func (s *Service) fetchRollbackEvents(
 		var walletID sql.NullString
 		var organizationID sql.NullString
 		if err := rows.Scan(
-			&e.tokenID, &e.address, &e.delta, &e.blockCursor,
+			&e.id, &e.tokenID, &e.address, &e.delta, &e.blockCursor,
 			&e.txHash, &walletID, &organizationID,
 			&e.activityType, &e.balanceApplied,
 		); err != nil {
@@ -367,6 +412,9 @@ func (s *Service) fetchRollbackEvents(
 func queryCount(ctx context.Context, db store.TxBeginner, query string, args ...interface{}) error {
 	dest := args[len(args)-1].(*int64)
 	queryArgs := args[:len(args)-1]
+
+	ctx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
+	defer cancel()
 
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {

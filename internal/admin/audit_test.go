@@ -11,7 +11,7 @@ import (
 
 func TestAuditMiddleware_LogsMutatingRequests(t *testing.T) {
 	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	handler := AuditMiddleware(logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
@@ -40,7 +40,7 @@ func TestAuditMiddleware_LogsMutatingRequests(t *testing.T) {
 
 func TestAuditMiddleware_SkipsGETRequests(t *testing.T) {
 	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	handler := AuditMiddleware(logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -57,7 +57,7 @@ func TestAuditMiddleware_SkipsGETRequests(t *testing.T) {
 
 func TestAuditMiddleware_TruncatesLargeBody(t *testing.T) {
 	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	handler := AuditMiddleware(logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -77,7 +77,7 @@ func TestAuditMiddleware_TruncatesLargeBody(t *testing.T) {
 
 func TestAuditMiddleware_CapturesResponseStatus(t *testing.T) {
 	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	handler := AuditMiddleware(logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

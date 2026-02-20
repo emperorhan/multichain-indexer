@@ -79,6 +79,9 @@ func (r *IndexedBlockRepo) BulkUpsertTx(ctx context.Context, tx *sql.Tx, blocks 
 }
 
 func (r *IndexedBlockRepo) GetUnfinalized(ctx context.Context, chain model.Chain, network model.Network) ([]model.IndexedBlock, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	const query = `
 		SELECT chain, network, block_number, block_hash, parent_hash, finality_state, block_time
 		FROM indexed_blocks
@@ -103,6 +106,9 @@ func (r *IndexedBlockRepo) GetUnfinalized(ctx context.Context, chain model.Chain
 }
 
 func (r *IndexedBlockRepo) GetByBlockNumber(ctx context.Context, chain model.Chain, network model.Network, blockNumber int64) (*model.IndexedBlock, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	const query = `
 		SELECT chain, network, block_number, block_hash, parent_hash, finality_state, block_time
 		FROM indexed_blocks
@@ -148,6 +154,9 @@ func (r *IndexedBlockRepo) DeleteFromBlockTx(ctx context.Context, tx *sql.Tx, ch
 }
 
 func (r *IndexedBlockRepo) PurgeFinalizedBefore(ctx context.Context, chain model.Chain, network model.Network, beforeBlock int64) (int64, error) {
+	ctx, cancel := withTimeout(ctx, LongQueryTimeout)
+	defer cancel()
+
 	const query = `
 		DELETE FROM indexed_blocks
 		WHERE chain = $1 AND network = $2

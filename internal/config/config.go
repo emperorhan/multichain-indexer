@@ -734,6 +734,10 @@ func overrideIntBounded(target *int, envKeys ...string) {
 				slog.Warn("invalid integer env var, ignoring", "key", key, "value", v)
 				continue
 			}
+			if i < dbPoolStatsIntervalMinMS || i > dbPoolStatsIntervalMaxMS {
+				slog.Warn("env var out of bounds, ignoring", "key", key, "value", i, "min", dbPoolStatsIntervalMinMS, "max", dbPoolStatsIntervalMaxMS)
+				continue
+			}
 			*target = i
 			return
 		}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"sync"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/chain/ratelimit"
 	"github.com/emperorhan/multichain-indexer/internal/chain/solana/rpc"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -188,26 +188,22 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startSlot, endSlot int64, watc
 	}
 
 	numSlots := int(endSlot - startSlot + 1)
-	sem := make(chan struct{}, a.maxConcurrentTxs)
-	resultCh := make(chan slotResult, numSlots)
-	var wg sync.WaitGroup
+	allResults := make([]slotResult, numSlots)
+
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(a.maxConcurrentTxs)
 
 	for slot := startSlot; slot <= endSlot; slot++ {
-		wg.Add(1)
-		go func(s int64) {
-			defer wg.Done()
-
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			block, err := a.client.GetBlock(ctx, s, nil)
+		s := slot
+		idx := int(s - startSlot)
+		g.Go(func() error {
+			block, err := a.client.GetBlock(gCtx, s, nil)
 			if err != nil {
-				resultCh <- slotResult{slot: s, err: fmt.Errorf("scan slot %d: %w", s, err)}
-				return
+				return fmt.Errorf("scan slot %d: %w", s, err)
 			}
 			if block == nil {
-				resultCh <- slotResult{slot: s, skipped: true}
-				return
+				allResults[idx] = slotResult{slot: s, skipped: true}
+				return nil
 			}
 
 			var blockTime *time.Time
@@ -235,28 +231,14 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startSlot, endSlot int64, watc
 					})
 				}
 			}
-			resultCh <- slotResult{slot: s, sigs: sigs}
-		}(slot)
+			allResults[idx] = slotResult{slot: s, sigs: sigs}
+			return nil
+		})
 	}
 
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	// Collect results
-	var allResults []slotResult
-	for r := range resultCh {
-		if r.err != nil {
-			return nil, r.err
-		}
-		allResults = append(allResults, r)
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
-
-	// Sort by slot to maintain deterministic order
-	sort.Slice(allResults, func(i, j int) bool {
-		return allResults[i].slot < allResults[j].slot
-	})
 
 	var results []chain.SignatureInfo
 	for _, r := range allResults {

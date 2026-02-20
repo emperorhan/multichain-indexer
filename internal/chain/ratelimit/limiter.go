@@ -2,7 +2,9 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"golang.org/x/time/rate"
@@ -24,10 +26,21 @@ func NewLimiter(rps float64, burst int, chain string) *Limiter {
 }
 
 // Wait blocks until the limiter allows one event, or ctx is done.
+// Uses Reserve() to guarantee exactly one token is consumed per call.
 func (l *Limiter) Wait(ctx context.Context) error {
-	if !l.limiter.Allow() {
+	r := l.limiter.Reserve()
+	if !r.OK() {
+		return fmt.Errorf("rate: cannot reserve token")
+	}
+	delay := r.Delay()
+	if delay > 0 {
 		metrics.RPCRateLimitWaits.WithLabelValues(l.chain).Inc()
-		return l.limiter.Wait(ctx)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			r.Cancel()
+			return ctx.Err()
+		}
 	}
 	return nil
 }

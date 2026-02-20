@@ -370,17 +370,17 @@ func (mr *MockBalanceRepositoryMockRecorder) BulkGetAmountWithExistsTx(ctx, tx, 
 }
 
 // AdjustBalanceTx mocks base method.
-func (m *MockBalanceRepository) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID, orgID *string, delta string, cursor int64, txHash string, balanceType string) error {
+func (m *MockBalanceRepository) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, req store.AdjustRequest) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AdjustBalanceTx", ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash, balanceType)
+	ret := m.ctrl.Call(m, "AdjustBalanceTx", ctx, tx, req)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AdjustBalanceTx indicates an expected call of AdjustBalanceTx.
-func (mr *MockBalanceRepositoryMockRecorder) AdjustBalanceTx(ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash, balanceType any) *gomock.Call {
+func (mr *MockBalanceRepositoryMockRecorder) AdjustBalanceTx(ctx, tx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AdjustBalanceTx", reflect.TypeOf((*MockBalanceRepository)(nil).AdjustBalanceTx), ctx, tx, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash, balanceType)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AdjustBalanceTx", reflect.TypeOf((*MockBalanceRepository)(nil).AdjustBalanceTx), ctx, tx, req)
 }
 
 // GetAmountTx mocks base method.
@@ -481,6 +481,21 @@ func (m *MockTokenRepository) BulkUpsertTx(ctx context.Context, tx *sql.Tx, toke
 func (mr *MockTokenRepositoryMockRecorder) BulkUpsertTx(ctx, tx, tokens any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BulkUpsertTx", reflect.TypeOf((*MockTokenRepository)(nil).BulkUpsertTx), ctx, tx, tokens)
+}
+
+// FindByID mocks base method.
+func (m *MockTokenRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Token, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FindByID", ctx, id)
+	ret0, _ := ret[0].(*model.Token)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FindByID indicates an expected call of FindByID.
+func (mr *MockTokenRepositoryMockRecorder) FindByID(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByID", reflect.TypeOf((*MockTokenRepository)(nil).FindByID), ctx, id)
 }
 
 // FindByContractAddress mocks base method.

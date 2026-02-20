@@ -17,6 +17,9 @@ func NewCursorRepo(db *DB) *CursorRepo {
 }
 
 func (r *CursorRepo) Get(ctx context.Context, chain model.Chain, network model.Network, address string) (*model.AddressCursor, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	var c model.AddressCursor
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, chain, network, address, cursor_value, cursor_sequence, items_processed, last_fetched_at, created_at, updated_at
@@ -54,6 +57,9 @@ func (r *CursorRepo) UpsertTx(ctx context.Context, tx *sql.Tx, chain model.Chain
 }
 
 func (r *CursorRepo) EnsureExists(ctx context.Context, chain model.Chain, network model.Network, address string) error {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO address_cursors (chain, network, address)
 		VALUES ($1, $2, $3)

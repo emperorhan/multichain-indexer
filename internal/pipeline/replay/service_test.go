@@ -27,7 +27,7 @@ type mockBalanceRepo struct {
 	adjustCalled int
 }
 
-func (m *mockBalanceRepo) AdjustBalanceTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, _ string, _ int64, _ string, _ string) error {
+func (m *mockBalanceRepo) AdjustBalanceTx(_ context.Context, _ *sql.Tx, _ store.AdjustRequest) error {
 	m.adjustCalled++
 	return nil
 }

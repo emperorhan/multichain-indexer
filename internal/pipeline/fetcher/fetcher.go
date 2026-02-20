@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"time"
@@ -659,13 +660,21 @@ func (f *Fetcher) retryDelay(attempt int) time.Duration {
 	delay := base
 	for i := 1; i < attempt; i++ {
 		if delay >= max/2 {
-			return max
+			delay = max
+			break
 		}
 		delay *= 2
 	}
 	if delay > max {
-		return max
+		delay = max
 	}
+
+	// Add 0-25% random jitter to avoid thundering herd.
+	if delay > 0 {
+		jitter := time.Duration(rand.Int64N(int64(delay) / 4))
+		delay += jitter
+	}
+
 	return delay
 }
 

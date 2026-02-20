@@ -77,9 +77,23 @@ type BulkAdjustItem struct {
 	BalanceType string
 }
 
+// AdjustRequest holds the parameters for a single balance adjustment.
+type AdjustRequest struct {
+	Chain       model.Chain
+	Network     model.Network
+	Address     string
+	TokenID     uuid.UUID
+	WalletID    *string
+	OrgID       *string
+	Delta       string
+	Cursor      int64
+	TxHash      string
+	BalanceType string // "" for liquid, "staked" for staked
+}
+
 // BalanceRepository provides access to balance data.
 type BalanceRepository interface {
-	AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID *string, orgID *string, delta string, cursor int64, txHash string, balanceType string) error
+	AdjustBalanceTx(ctx context.Context, tx *sql.Tx, req AdjustRequest) error
 	GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, error)
 	GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (amount string, exists bool, err error)
 	GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error)
@@ -91,6 +105,7 @@ type BalanceRepository interface {
 type TokenRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Token) (uuid.UUID, error)
 	BulkUpsertTx(ctx context.Context, tx *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error)
+	FindByID(ctx context.Context, id uuid.UUID) (*model.Token, error)
 	FindByContractAddress(ctx context.Context, chain model.Chain, network model.Network, contractAddress string) (*model.Token, error)
 	IsDeniedTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string) (bool, error)
 	BulkIsDeniedTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddresses []string) (map[string]bool, error)

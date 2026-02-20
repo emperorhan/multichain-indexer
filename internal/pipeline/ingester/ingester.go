@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -1059,7 +1060,7 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	phase4Span.End()
 
 	metrics.IngesterBalanceEventsWritten.WithLabelValues(batch.Chain.String(), batch.Network.String()).Add(float64(totalEvents))
-	metrics.PipelineCursorSequence.WithLabelValues(batch.Chain.String(), batch.Network.String(), batch.Address).Set(float64(batch.NewCursorSequence))
+	metrics.PipelineCursorSequence.WithLabelValues(batch.Chain.String(), batch.Network.String()).Set(float64(batch.NewCursorSequence))
 
 	// E2E latency: oldest block_time in batch → now
 	if oldest := oldestBlockTime(batch); oldest != nil {
@@ -1134,21 +1135,33 @@ func (ing *Ingester) handleReorg(ctx context.Context, reorg event.ReorgEvent) er
 		if err != nil {
 			return fmt.Errorf("negate delta for %s: %w", be.TxHash, err)
 		}
-		if err := ing.balanceRepo.AdjustBalanceTx(
-			ctx, dbTx,
-			reorg.Chain, reorg.Network, be.Address,
-			be.TokenID, be.WalletID, be.OrganizationID,
-			invertedDelta, be.BlockCursor, be.TxHash, "",
-		); err != nil {
+		if err := ing.balanceRepo.AdjustBalanceTx(ctx, dbTx, store.AdjustRequest{
+			Chain:       reorg.Chain,
+			Network:     reorg.Network,
+			Address:     be.Address,
+			TokenID:     be.TokenID,
+			WalletID:    be.WalletID,
+			OrgID:       be.OrganizationID,
+			Delta:       invertedDelta,
+			Cursor:      be.BlockCursor,
+			TxHash:      be.TxHash,
+			BalanceType: "",
+		}); err != nil {
 			return fmt.Errorf("revert balance: %w", err)
 		}
 		if identity.IsStakingActivity(be.ActivityType) {
-			if err := ing.balanceRepo.AdjustBalanceTx(
-				ctx, dbTx,
-				reorg.Chain, reorg.Network, be.Address,
-				be.TokenID, be.WalletID, be.OrganizationID,
-				be.Delta, be.BlockCursor, be.TxHash, "staked",
-			); err != nil {
+			if err := ing.balanceRepo.AdjustBalanceTx(ctx, dbTx, store.AdjustRequest{
+				Chain:       reorg.Chain,
+				Network:     reorg.Network,
+				Address:     be.Address,
+				TokenID:     be.TokenID,
+				WalletID:    be.WalletID,
+				OrgID:       be.OrganizationID,
+				Delta:       be.Delta,
+				Cursor:      be.BlockCursor,
+				TxHash:      be.TxHash,
+				BalanceType: "staked",
+			}); err != nil {
 				return fmt.Errorf("revert staked balance: %w", err)
 			}
 		}
@@ -1500,23 +1513,35 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 			return fmt.Errorf("negate delta for %s: %w", be.TxHash, err)
 		}
 
-		if err := ing.balanceRepo.AdjustBalanceTx(
-			ctx, dbTx,
-			batch.Chain, batch.Network, be.Address,
-			be.TokenID, be.WalletID, be.OrganizationID,
-			invertedDelta, be.BlockCursor, be.TxHash, "",
-		); err != nil {
+		if err := ing.balanceRepo.AdjustBalanceTx(ctx, dbTx, store.AdjustRequest{
+			Chain:       batch.Chain,
+			Network:     batch.Network,
+			Address:     be.Address,
+			TokenID:     be.TokenID,
+			WalletID:    be.WalletID,
+			OrgID:       be.OrganizationID,
+			Delta:       invertedDelta,
+			Cursor:      be.BlockCursor,
+			TxHash:      be.TxHash,
+			BalanceType: "",
+		}); err != nil {
 			return fmt.Errorf("revert balance: %w", err)
 		}
 
 		// Reverse staking balance if applicable
 		if identity.IsStakingActivity(be.ActivityType) {
-			if err := ing.balanceRepo.AdjustBalanceTx(
-				ctx, dbTx,
-				batch.Chain, batch.Network, be.Address,
-				be.TokenID, be.WalletID, be.OrganizationID,
-				be.Delta, be.BlockCursor, be.TxHash, "staked",
-			); err != nil {
+			if err := ing.balanceRepo.AdjustBalanceTx(ctx, dbTx, store.AdjustRequest{
+				Chain:       batch.Chain,
+				Network:     batch.Network,
+				Address:     be.Address,
+				TokenID:     be.TokenID,
+				WalletID:    be.WalletID,
+				OrgID:       be.OrganizationID,
+				Delta:       be.Delta,
+				Cursor:      be.BlockCursor,
+				TxHash:      be.TxHash,
+				BalanceType: "staked",
+			}); err != nil {
 				return fmt.Errorf("revert staked balance: %w", err)
 			}
 		}
@@ -1947,16 +1972,24 @@ func (ing *Ingester) retryDelay(attempt int) time.Duration {
 	}
 	if attempt <= 1 {
 		if ing.retryDelayMax > 0 && delay > ing.retryDelayMax {
-			return ing.retryDelayMax
+			delay = ing.retryDelayMax
 		}
-		return delay
-	}
-	for i := 1; i < attempt; i++ {
-		delay *= 2
-		if ing.retryDelayMax > 0 && delay >= ing.retryDelayMax {
-			return ing.retryDelayMax
+	} else {
+		for i := 1; i < attempt; i++ {
+			delay *= 2
+			if ing.retryDelayMax > 0 && delay >= ing.retryDelayMax {
+				delay = ing.retryDelayMax
+				break
+			}
 		}
 	}
+
+	// Add 0-25% random jitter to avoid thundering herd.
+	if delay > 0 {
+		jitter := time.Duration(rand.Int64N(int64(delay) / 4))
+		delay += jitter
+	}
+
 	return delay
 }
 

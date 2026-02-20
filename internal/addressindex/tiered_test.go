@@ -100,7 +100,9 @@ func TestTieredIndex_DBFallback(t *testing.T) {
 
 	// Add to bloom (simulates Reload adding bloom entries) but don't put in LRU
 	key := lruKey(model.ChainSolana, "devnet", "addr1")
-	idx.bloom.Add(key)
+	bf := NewBloomFilter(1000, 0.001)
+	bf.Add(key)
+	idx.blooms[bloomKey(model.ChainSolana, "devnet")] = bf
 
 	// Bloom says "maybe" → LRU miss → falls through to DB
 	result := idx.Lookup(context.Background(), model.ChainSolana, "devnet", "addr1")
@@ -121,7 +123,9 @@ func TestTieredIndex_NegativeCaching(t *testing.T) {
 
 	// Add to bloom but not in DB
 	key := lruKey(model.ChainSolana, "devnet", "not_watched")
-	idx.bloom.Add(key)
+	bf := NewBloomFilter(1000, 0.001)
+	bf.Add(key)
+	idx.blooms[bloomKey(model.ChainSolana, "devnet")] = bf
 
 	// Bloom says "maybe" → LRU miss → DB returns nil → negative cache
 	result := idx.Lookup(context.Background(), model.ChainSolana, "devnet", "not_watched")

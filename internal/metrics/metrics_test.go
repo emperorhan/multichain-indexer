@@ -78,7 +78,7 @@ func TestMetrics_GaugeSetNoPanic(t *testing.T) {
 
 	labels2 := []string{"test-chain", "test-network"}
 
-	assert.NotPanics(t, func() { PipelineCursorSequence.WithLabelValues("test-chain", "test-network", "test-addr").Set(42.0) })
+	assert.NotPanics(t, func() { PipelineCursorSequence.WithLabelValues("test-chain", "test-network").Set(42.0) })
 	assert.NotPanics(t, func() { PipelineChannelDepth.WithLabelValues("test-chain", "test-network", "test-stage").Set(42.0) })
 	assert.NotPanics(t, func() { DBPoolOpen.WithLabelValues(labels2...).Set(42.0) })
 	assert.NotPanics(t, func() { DBPoolInUse.WithLabelValues(labels2...).Set(42.0) })

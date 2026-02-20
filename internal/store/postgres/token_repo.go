@@ -38,7 +38,37 @@ func (r *TokenRepo) UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Token) (u
 	return id, nil
 }
 
+// FindByID returns the token with the given ID.
+func (r *TokenRepo) FindByID(ctx context.Context, id uuid.UUID) (*model.Token, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
+	var t model.Token
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, chain, network, contract_address, symbol, name, decimals, token_type,
+		       is_denied, denied_reason, denied_at, scam_score, scam_signals, denied_source,
+		       chain_data, created_at, updated_at
+		FROM tokens
+		WHERE id = $1
+	`, id).Scan(
+		&t.ID, &t.Chain, &t.Network, &t.ContractAddress,
+		&t.Symbol, &t.Name, &t.Decimals, &t.TokenType,
+		&t.IsDenied, &t.DeniedReason, &t.DeniedAt, &t.ScamScore, &t.ScamSignals, &t.DeniedSource,
+		&t.ChainData, &t.CreatedAt, &t.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find token by id: %w", err)
+	}
+	return &t, nil
+}
+
 func (r *TokenRepo) FindByContractAddress(ctx context.Context, chain model.Chain, network model.Network, contractAddress string) (*model.Token, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	var t model.Token
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, chain, network, contract_address, symbol, name, decimals, token_type,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"sync"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/alert"
@@ -13,6 +14,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/store"
+	"github.com/google/uuid"
 )
 
 // SnapshotResult holds the result of a single address+token reconciliation.
@@ -47,6 +49,7 @@ type Service struct {
 	balanceRepo store.BalanceRepository
 	watchedRepo store.WatchedAddressRepository
 	tokenRepo   store.TokenRepository
+	mu          sync.RWMutex                        // protects adapters map
 	adapters    map[string]chain.BalanceQueryAdapter // keyed by "chain:network"
 	alerter     alert.Alerter
 	logger      *slog.Logger
@@ -85,14 +88,18 @@ func (s *Service) SetSnapshotRepository(repo SnapshotRepository) {
 
 // RegisterAdapter registers a chain adapter that supports balance queries.
 func (s *Service) RegisterAdapter(ch model.Chain, net model.Network, adapter chain.BalanceQueryAdapter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	key := string(ch) + ":" + string(net)
 	s.adapters[key] = adapter
 }
 
 // Reconcile runs reconciliation for the given chain/network.
 func (s *Service) Reconcile(ctx context.Context, ch model.Chain, net model.Network) (*RunResult, error) {
+	s.mu.RLock()
 	key := string(ch) + ":" + string(net)
 	adapter, ok := s.adapters[key]
+	s.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("no balance query adapter registered for %s", key)
 	}
@@ -240,15 +247,28 @@ func (s *Service) reconcileOne(
 
 // findTokenContract returns the contract address for a token ID.
 // Returns empty string for native tokens or on error.
-func (s *Service) findTokenContract(_ context.Context, _ model.Chain, _ model.Network, _ string) (string, error) {
-	// Token contract lookup from token_id requires a FindByID method.
-	// For now, native balance reconciliation uses empty contract.
-	// TODO: Add TokenRepository.FindByID for full token contract resolution.
-	return "", nil
+func (s *Service) findTokenContract(ctx context.Context, _ model.Chain, _ model.Network, tokenIDStr string) (string, error) {
+	id, err := uuid.Parse(tokenIDStr)
+	if err != nil {
+		return "", fmt.Errorf("parse token id %q: %w", tokenIDStr, err)
+	}
+
+	token, err := s.tokenRepo.FindByID(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("find token %s: %w", tokenIDStr, err)
+	}
+	if token == nil {
+		return "", fmt.Errorf("token %s not found", tokenIDStr)
+	}
+
+	// Native tokens have an empty contract address.
+	return token.ContractAddress, nil
 }
 
 // HasAdapter returns true if a balance query adapter is registered for the chain/network.
 func (s *Service) HasAdapter(ch model.Chain, net model.Network) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	key := string(ch) + ":" + string(net)
 	_, ok := s.adapters[key]
 	return ok
@@ -277,7 +297,13 @@ func (s *Service) RunPeriodic(ctx context.Context, interval time.Duration) error
 			s.logger.Info("periodic reconciliation stopping")
 			return ctx.Err()
 		case <-ticker.C:
-			for key, _ := range s.adapters {
+			s.mu.RLock()
+			keys := make([]string, 0, len(s.adapters))
+			for key := range s.adapters {
+				keys = append(keys, key)
+			}
+			s.mu.RUnlock()
+			for _, key := range keys {
 				parts := splitAdapterKey(key)
 				if parts == nil {
 					continue

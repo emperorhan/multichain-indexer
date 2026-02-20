@@ -22,7 +22,7 @@ func NewBalanceRepo(db *DB) *BalanceRepo {
 
 // AdjustBalanceTx adjusts a balance by a delta amount within a transaction.
 // Positive delta = deposit, negative delta = withdrawal/fee.
-func (r *BalanceRepo) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, walletID *string, orgID *string, delta string, cursor int64, txHash string, balanceType string) error {
+func (r *BalanceRepo) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, req store.AdjustRequest) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO balances (chain, network, address, token_id, wallet_id, organization_id, amount, last_updated_cursor, last_updated_tx_hash, balance_type)
 		VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10)
@@ -31,7 +31,7 @@ func (r *BalanceRepo) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain mod
 			last_updated_cursor = GREATEST(balances.last_updated_cursor, $8),
 			last_updated_tx_hash = $9,
 			updated_at = now()
-	`, chain, network, address, tokenID, walletID, orgID, delta, cursor, txHash, balanceType)
+	`, req.Chain, req.Network, req.Address, req.TokenID, req.WalletID, req.OrgID, req.Delta, req.Cursor, req.TxHash, req.BalanceType)
 	if err != nil {
 		return fmt.Errorf("adjust balance: %w", err)
 	}
@@ -86,6 +86,9 @@ func (r *BalanceRepo) GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, cha
 }
 
 func (r *BalanceRepo) GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, chain, network, address, token_id, balance_type, wallet_id, organization_id,
 			   amount, pending_withdrawal_amount, last_updated_cursor, last_updated_tx_hash,

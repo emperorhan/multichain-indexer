@@ -16,6 +16,9 @@ func NewRuntimeConfigRepo(db *DB) *RuntimeConfigRepo {
 }
 
 func (r *RuntimeConfigRepo) GetActive(ctx context.Context, chain model.Chain, network model.Network) (map[string]string, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT config_key, config_value
 		FROM runtime_configs

@@ -223,18 +223,18 @@ func TestBalanceRepo_AdjustAndGet(t *testing.T) {
 	// Deposit +1000000000
 	walletID := "wallet-1"
 	orgID := "org-1"
-	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
-		model.ChainSolana, model.NetworkDevnet, addr,
-		tokenID, &walletID, &orgID, "1000000000", 100, "tx-deposit", ""))
+	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx, store.AdjustRequest{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet, Address: addr,
+		TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: "1000000000", Cursor: 100, TxHash: "tx-deposit", BalanceType: ""}))
 
 	amount, err = balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "1000000000", amount)
 
 	// Withdraw -500000000
-	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
-		model.ChainSolana, model.NetworkDevnet, addr,
-		tokenID, &walletID, &orgID, "-500000000", 101, "tx-withdraw", ""))
+	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx, store.AdjustRequest{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet, Address: addr,
+		TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: "-500000000", Cursor: 101, TxHash: "tx-withdraw", BalanceType: ""}))
 
 	amount, err = balanceRepo.GetAmountTx(ctx, tx, model.ChainSolana, model.NetworkDevnet, addr, tokenID, "")
 	require.NoError(t, err)
@@ -752,9 +752,9 @@ func TestBalanceRepo_ConcurrentAdjustBalance(t *testing.T) {
 	// Seed balance with 1_000_000_000.
 	walletID := "wallet-1"
 	orgID := "org-1"
-	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, setupTx,
-		model.ChainSolana, model.NetworkDevnet, addr,
-		tokenID, &walletID, &orgID, "1000000000", 1, "tx-seed", ""))
+	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, setupTx, store.AdjustRequest{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet, Address: addr,
+		TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: "1000000000", Cursor: 1, TxHash: "tx-seed", BalanceType: ""}))
 	require.NoError(t, setupTx.Commit())
 
 	// 10 goroutines each adjust by +100.
@@ -770,9 +770,9 @@ func TestBalanceRepo_ConcurrentAdjustBalance(t *testing.T) {
 			if gErr != nil {
 				return
 			}
-			_ = balanceRepo.AdjustBalanceTx(ctx, gTx,
-				model.ChainSolana, model.NetworkDevnet, addr,
-				tokenID, &walletID, &orgID, deltaPerGoroutine, int64(10+idx), fmt.Sprintf("tx-concurrent-%d", idx), "")
+			_ = balanceRepo.AdjustBalanceTx(ctx, gTx, store.AdjustRequest{
+				Chain: model.ChainSolana, Network: model.NetworkDevnet, Address: addr,
+				TokenID: tokenID, WalletID: &walletID, OrgID: &orgID, Delta: deltaPerGoroutine, Cursor: int64(10 + idx), TxHash: fmt.Sprintf("tx-concurrent-%d", idx), BalanceType: ""})
 			_ = gTx.Commit()
 		}(i)
 	}
@@ -1003,12 +1003,12 @@ func TestBulkGetAmountWithExistsTx(t *testing.T) {
 	// Adjust balances to create 2 existing balance records.
 	walletID := "wallet-bulk"
 	orgID := "org-bulk"
-	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
-		model.ChainSolana, model.NetworkDevnet, addr1,
-		tokenID1, &walletID, &orgID, "5000000", 10, "tx-bulk-1", ""))
-	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx,
-		model.ChainSolana, model.NetworkDevnet, addr2,
-		tokenID2, &walletID, &orgID, "3000000", 11, "tx-bulk-2", ""))
+	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx, store.AdjustRequest{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet, Address: addr1,
+		TokenID: tokenID1, WalletID: &walletID, OrgID: &orgID, Delta: "5000000", Cursor: 10, TxHash: "tx-bulk-1", BalanceType: ""}))
+	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx, store.AdjustRequest{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet, Address: addr2,
+		TokenID: tokenID2, WalletID: &walletID, OrgID: &orgID, Delta: "3000000", Cursor: 11, TxHash: "tx-bulk-2", BalanceType: ""}))
 	require.NoError(t, tx.Commit())
 
 	// BulkGetAmountWithExistsTx for 3 keys: 2 existing + 1 missing.

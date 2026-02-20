@@ -54,7 +54,7 @@ func (m *mockBalanceRepo) GetByAddress(_ context.Context, _ model.Chain, _ model
 	return m.balances[address], nil
 }
 
-func (m *mockBalanceRepo) AdjustBalanceTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ uuid.UUID, _ *string, _ *string, _ string, _ int64, _ string, _ string) error {
+func (m *mockBalanceRepo) AdjustBalanceTx(_ context.Context, _ *sql.Tx, _ store.AdjustRequest) error {
 	return nil
 }
 
@@ -75,13 +75,24 @@ func (m *mockBalanceRepo) BulkAdjustBalanceTx(_ context.Context, _ *sql.Tx, _ mo
 }
 
 // mockTokenRepo implements store.TokenRepository.
-type mockTokenRepo struct{}
+type mockTokenRepo struct {
+	tokens map[uuid.UUID]*model.Token
+}
 
 func (m *mockTokenRepo) UpsertTx(_ context.Context, _ *sql.Tx, _ *model.Token) (uuid.UUID, error) {
 	return uuid.Nil, nil
 }
 
 func (m *mockTokenRepo) BulkUpsertTx(_ context.Context, _ *sql.Tx, _ []*model.Token) (map[string]uuid.UUID, error) {
+	return nil, nil
+}
+
+func (m *mockTokenRepo) FindByID(_ context.Context, id uuid.UUID) (*model.Token, error) {
+	if m.tokens != nil {
+		if t, ok := m.tokens[id]; ok {
+			return t, nil
+		}
+	}
 	return nil, nil
 }
 

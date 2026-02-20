@@ -17,6 +17,9 @@ func NewWatchedAddressRepo(db *DB) *WatchedAddressRepo {
 }
 
 func (r *WatchedAddressRepo) GetActive(ctx context.Context, chain model.Chain, network model.Network) ([]model.WatchedAddress, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, chain, network, address, wallet_id, organization_id, label, is_active, source, created_at, updated_at
 		FROM watched_addresses
@@ -44,6 +47,9 @@ func (r *WatchedAddressRepo) GetActive(ctx context.Context, chain model.Chain, n
 }
 
 func (r *WatchedAddressRepo) Upsert(ctx context.Context, addr *model.WatchedAddress) error {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO watched_addresses (chain, network, address, wallet_id, organization_id, label, is_active, source)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -58,6 +64,9 @@ func (r *WatchedAddressRepo) Upsert(ctx context.Context, addr *model.WatchedAddr
 }
 
 func (r *WatchedAddressRepo) FindByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) (*model.WatchedAddress, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
 	var a model.WatchedAddress
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, chain, network, address, wallet_id, organization_id, label, is_active, source, created_at, updated_at

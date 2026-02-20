@@ -2,6 +2,8 @@ package admin
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,6 +11,15 @@ import (
 )
 
 const maxAuditBodyBytes = 1024 // 1KB summary limit
+
+// generateRequestID creates a short random request ID for audit correlation.
+func generateRequestID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(b)
+}
 
 // AuditMiddleware logs all mutating (POST/DELETE) requests for operational audit trails.
 func AuditMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
@@ -21,6 +32,10 @@ func AuditMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		}
 
 		start := time.Now()
+		requestID := generateRequestID()
+
+		// Extract authenticated user if Basic Auth is used.
+		user, _, _ := r.BasicAuth()
 
 		// Capture body summary (up to 1KB)
 		var bodySummary string
@@ -42,8 +57,10 @@ func AuditMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 
 		next.ServeHTTP(sw, r)
 
-		auditLogger.Warn("admin API audit",
+		auditLogger.Info("admin API audit",
+			"request_id", requestID,
 			"timestamp", start.UTC().Format(time.RFC3339),
+			"user", user,
 			"remote_addr", r.RemoteAddr,
 			"method", r.Method,
 			"path", r.URL.Path,

@@ -141,8 +141,8 @@ var (
 		Namespace: "indexer",
 		Subsystem: "pipeline",
 		Name:      "cursor_sequence",
-		Help:      "Latest committed cursor sequence per chain/network/address",
-	}, []string{"chain", "network", "address"})
+		Help:      "Latest committed cursor sequence per chain/network",
+	}, []string{"chain", "network"})
 
 	PipelineChannelDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "indexer",

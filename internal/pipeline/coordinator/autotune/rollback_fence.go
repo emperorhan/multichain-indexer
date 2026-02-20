@@ -56,27 +56,7 @@ func isDeterministicRollbackFenceEpochCompactionTransition(
 	if !hasRollbackFenceEpochCompactionTombstone(targetNormalized) {
 		return false
 	}
-	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
-	if !ok {
-		return false
-	}
-	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
-	if !ok {
-		return false
-	}
-	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
-		return false
-	}
-	if sourceToSeq != epoch || targetToSeq != epoch {
-		return false
-	}
-	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
-		return false
-	}
-	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
-		return false
-	}
-	return true
+	return validateLineagePair(epoch, sourceNormalized, targetNormalized)
 }
 
 func hasRollbackFenceEpochCompactionTombstone(digest string) bool {
@@ -101,68 +81,34 @@ func hasRollbackFenceEpochCompactionTombstone(digest string) bool {
 }
 
 func parseRollbackFenceTombstoneExpiryEpoch(digest string) (int64, bool) {
-	const expiryKey = "rollback-fence-tombstone-expiry-epoch="
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		if !strings.HasPrefix(token, expiryKey) {
-			continue
-		}
-		value := strings.TrimSpace(strings.TrimPrefix(token, expiryKey))
-		if value == "" {
-			return 0, false
-		}
-		expiryEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || expiryEpoch < 0 {
-			return 0, false
-		}
-		return expiryEpoch, true
-	}
-
-	return 0, false
+	return parseSingleKey(digest, "rollback-fence-tombstone-expiry-epoch=")
 }
 
 func parseRollbackFenceLateMarkerHoldEpoch(digest string) (int64, bool) {
-	const holdKey = "rollback-fence-late-marker-hold-epoch="
-
-	for _, rawToken := range strings.Split(digest, "|") {
-		token := strings.TrimSpace(rawToken)
-		if !strings.HasPrefix(token, holdKey) {
-			continue
-		}
-		value := strings.TrimSpace(strings.TrimPrefix(token, holdKey))
-		if value == "" {
-			return 0, false
-		}
-		holdEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || holdEpoch < 0 {
-			return 0, false
-		}
-		return holdEpoch, true
-	}
-
-	return 0, false
+	return parseSingleKey(digest, "rollback-fence-late-marker-hold-epoch=")
 }
 
 func parseRollbackFenceLateMarkerReleaseEpoch(digest string) (int64, bool) {
-	const releaseKey = "rollback-fence-late-marker-release-epoch="
+	return parseSingleKey(digest, "rollback-fence-late-marker-release-epoch=")
+}
 
+// parseSingleKey extracts a single int64 value from a pipe-delimited digest.
+func parseSingleKey(digest, keyPrefix string) (int64, bool) {
 	for _, rawToken := range strings.Split(digest, "|") {
 		token := strings.TrimSpace(rawToken)
-		if !strings.HasPrefix(token, releaseKey) {
+		if !strings.HasPrefix(token, keyPrefix) {
 			continue
 		}
-		value := strings.TrimSpace(strings.TrimPrefix(token, releaseKey))
+		value := strings.TrimSpace(strings.TrimPrefix(token, keyPrefix))
 		if value == "" {
 			return 0, false
 		}
-		releaseEpoch, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || releaseEpoch < 0 {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
 			return 0, false
 		}
-		return releaseEpoch, true
+		return parsed, true
 	}
-
 	return 0, false
 }
 
@@ -184,21 +130,9 @@ func isRollbackFenceTombstoneExpiryDigest(epoch int64, digest string) bool {
 	if !ok {
 		return false
 	}
-	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(normalized)
-	if !ok {
+	if !validateRollbackLineage(epoch, normalized) {
 		return false
 	}
-	if rollbackToSeq != epoch {
-		return false
-	}
-	if rollbackFromSeq <= rollbackToSeq {
-		return false
-	}
-	if rollbackForwardSeq < rollbackFromSeq {
-		return false
-	}
-	// Expiry must be explicitly post-fence to avoid accepting ambiguous
-	// same-epoch markers that can re-open stale ownership.
 	return expiryEpoch > epoch
 }
 
@@ -221,24 +155,12 @@ func isRollbackFencePostExpiryLateMarkerQuarantineDigest(epoch int64, digest str
 	if !ok {
 		return false
 	}
-	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(normalized)
-	if !ok {
-		return false
-	}
-	if rollbackToSeq != epoch {
-		return false
-	}
-	if rollbackFromSeq <= rollbackToSeq {
-		return false
-	}
-	if rollbackForwardSeq < rollbackFromSeq {
+	if !validateRollbackLineage(epoch, normalized) {
 		return false
 	}
 	if expiryEpoch <= epoch {
 		return false
 	}
-	// Quarantine hold epochs must be explicitly post-expiry to avoid ambiguous
-	// same-epoch marker ownership.
 	return holdEpoch > expiryEpoch
 }
 
@@ -262,17 +184,7 @@ func isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch int64, digest string
 	if !ok {
 		return false
 	}
-	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(normalized)
-	if !ok {
-		return false
-	}
-	if rollbackToSeq != epoch {
-		return false
-	}
-	if rollbackFromSeq <= rollbackToSeq {
-		return false
-	}
-	if rollbackForwardSeq < rollbackFromSeq {
+	if !validateRollbackLineage(epoch, normalized) {
 		return false
 	}
 	if expiryEpoch <= epoch {
@@ -281,8 +193,6 @@ func isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch int64, digest string
 	if holdEpoch <= expiryEpoch {
 		return false
 	}
-	// Release boundaries must be explicitly post-hold to avoid accepting
-	// ambiguous release ownership.
 	return releaseEpoch > holdEpoch
 }
 
@@ -302,27 +212,7 @@ func isDeterministicRollbackFenceTombstoneExpiryTransition(
 	if !isRollbackFenceTombstoneExpiryDigest(epoch, targetNormalized) {
 		return false
 	}
-	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
-	if !ok {
-		return false
-	}
-	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
-	if !ok {
-		return false
-	}
-	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
-		return false
-	}
-	if sourceToSeq != epoch || targetToSeq != epoch {
-		return false
-	}
-	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
-		return false
-	}
-	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
-		return false
-	}
-	return true
+	return validateLineagePair(epoch, sourceNormalized, targetNormalized)
 }
 
 func isDeterministicRollbackFencePostExpiryLateMarkerQuarantineTransition(
@@ -341,24 +231,7 @@ func isDeterministicRollbackFencePostExpiryLateMarkerQuarantineTransition(
 	if !isRollbackFencePostExpiryLateMarkerQuarantineDigest(epoch, targetNormalized) {
 		return false
 	}
-	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
-	if !ok {
-		return false
-	}
-	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
-	if !ok {
-		return false
-	}
-	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
-		return false
-	}
-	if sourceToSeq != epoch || targetToSeq != epoch {
-		return false
-	}
-	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
-		return false
-	}
-	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
+	if !validateLineagePair(epoch, sourceNormalized, targetNormalized) {
 		return false
 	}
 	sourceExpiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(sourceNormalized)
@@ -388,24 +261,7 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(
 	if !isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch, targetNormalized) {
 		return false
 	}
-	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
-	if !ok {
-		return false
-	}
-	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
-	if !ok {
-		return false
-	}
-	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
-		return false
-	}
-	if sourceToSeq != epoch || targetToSeq != epoch {
-		return false
-	}
-	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
-		return false
-	}
-	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
+	if !validateLineagePair(epoch, sourceNormalized, targetNormalized) {
 		return false
 	}
 	sourceExpiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(sourceNormalized)
@@ -437,6 +293,21 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseTransition(
 	return targetReleaseEpoch > targetHoldEpoch
 }
 
+// stageProgressionMarkers lists the epoch marker indices that participate in
+// stage-progression checks within the release-window transition. Each entry
+// references an epochMarkers index via slotMarkerBase offset.
+var stageProgressionMarkers = [...]int{
+	13, // reintegration-seal (cycle 2)
+	14, // reintegration-seal-drift (cycle 2)
+	15, // reintegration-seal-drift-reanchor (cycle 2)
+	16, // reintegration-seal-drift-reanchor-compaction (cycle 2)
+	18, // reintegration-seal-drift-reanchor-compaction-expiry-quarantine (cycle 2)
+	12, // reintegration (cycle 2 - checked after quarantine)
+	19, // reintegration (cycle 3)
+	20, // reintegration-seal (cycle 3)
+	21, // reintegration-seal-drift (cycle 3)
+}
+
 func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	epoch int64,
 	sourceDigest string,
@@ -453,24 +324,7 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	if !isRollbackFencePostExpiryLateMarkerReleaseDigest(epoch, targetNormalized) {
 		return false
 	}
-	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
-	if !ok {
-		return false
-	}
-	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
-	if !ok {
-		return false
-	}
-	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
-		return false
-	}
-	if sourceToSeq != epoch || targetToSeq != epoch {
-		return false
-	}
-	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
-		return false
-	}
-	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
+	if !validateLineagePair(epoch, sourceNormalized, targetNormalized) {
 		return false
 	}
 	sourceExpiryEpoch, ok := parseRollbackFenceTombstoneExpiryEpoch(sourceNormalized)
@@ -503,155 +357,21 @@ func isDeterministicRollbackFencePostExpiryLateMarkerReleaseWindowTransition(
 	if !ok {
 		return false
 	}
-	_, sourceHasReintegrationSealBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch(sourceNormalized)
-	_, targetHasReintegrationSealBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch(targetNormalized)
-	if !sourceHasReintegrationSealBoundaryEpoch && targetHasReintegrationSealBoundaryEpoch {
-		// Once late-resurrection-quarantine reintegration-seal ownership is
-		// verified for a lineage, explicit reintegration-seal progression must
-		// win deterministically over reintegration-only ownership.
-		return true
+
+	// Stage-progression checks: for each marker, if the target has it but the
+	// source does not, the target wins (stage advancement). If the source has
+	// it but the target does not, reject (stage regression).
+	for _, idx := range stageProgressionMarkers {
+		_, sourceHas := parseEpochMarker(sourceNormalized, epochMarkers[idx])
+		_, targetHas := parseEpochMarker(targetNormalized, epochMarkers[idx])
+		if !sourceHas && targetHas {
+			return true
+		}
+		if sourceHas && !targetHas {
+			return false
+		}
 	}
-	if sourceHasReintegrationSealBoundaryEpoch && !targetHasReintegrationSealBoundaryEpoch {
-		// Reject stage-regression from verified reintegration-seal ownership
-		// back to reintegration-only ownership for the same lineage.
-		return false
-	}
-	_, sourceHasReintegrationSealDriftBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch(sourceNormalized)
-	_, targetHasReintegrationSealDriftBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch(targetNormalized)
-	if !sourceHasReintegrationSealDriftBoundaryEpoch && targetHasReintegrationSealDriftBoundaryEpoch {
-		// Once late-resurrection-quarantine reintegration-seal-drift ownership
-		// is verified for a lineage, explicit reintegration-seal-drift
-		// progression must win deterministically over reintegration-seal-only
-		// ownership.
-		return true
-	}
-	if sourceHasReintegrationSealDriftBoundaryEpoch && !targetHasReintegrationSealDriftBoundaryEpoch {
-		// Reject stage-regression from verified reintegration-seal-drift
-		// ownership back to reintegration-seal-only ownership for the same
-		// lineage.
-		return false
-	}
-	_, sourceHasReintegrationSealDriftReanchorBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorEpoch(sourceNormalized)
-	_, targetHasReintegrationSealDriftReanchorBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorEpoch(targetNormalized)
-	if !sourceHasReintegrationSealDriftReanchorBoundaryEpoch && targetHasReintegrationSealDriftReanchorBoundaryEpoch {
-		// Once reintegration-seal-drift-reanchor ownership is verified for a
-		// lineage, delayed reintegration-seal-drift echoes without explicit
-		// reanchor ownership must not reclaim control even if drift epochs are
-		// numerically larger.
-		return true
-	}
-	if sourceHasReintegrationSealDriftReanchorBoundaryEpoch && !targetHasReintegrationSealDriftReanchorBoundaryEpoch {
-		// Reject stage-regression from verified reintegration-seal-drift-reanchor
-		// ownership back to reintegration-seal-drift-only ownership.
-		return false
-	}
-	_, sourceHasReintegrationSealDriftReanchorCompactionBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionEpoch(sourceNormalized)
-	_, targetHasReintegrationSealDriftReanchorCompactionBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionEpoch(targetNormalized)
-	if !sourceHasReintegrationSealDriftReanchorCompactionBoundaryEpoch && targetHasReintegrationSealDriftReanchorCompactionBoundaryEpoch {
-		// Once reintegration-seal-drift-reanchor-lineage-compaction ownership is
-		// verified for a lineage, explicit compaction ownership progression must
-		// win deterministically over prior reanchor-only ownership.
-		return true
-	}
-	if sourceHasReintegrationSealDriftReanchorCompactionBoundaryEpoch && !targetHasReintegrationSealDriftReanchorCompactionBoundaryEpoch {
-		// Reject stage-regression from verified reintegration-seal-drift-reanchor
-		// lineage-compaction ownership back to reanchor-only ownership.
-		return false
-	}
-	_, sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch(sourceNormalized)
-	_, targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineEpoch(targetNormalized)
-	if !sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineBoundaryEpoch && targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineBoundaryEpoch {
-		// Once reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry
-		// ownership is verified for a lineage, explicit late-resurrection-quarantine
-		// progression must win deterministically over prior marker-expiry ownership.
-		return true
-	}
-	if sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineBoundaryEpoch && !targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineBoundaryEpoch {
-		// Reject stage-regression from verified reintegration-seal-drift-reanchor
-		// lineage-compaction marker-expiry late-resurrection-quarantine ownership
-		// back to marker-expiry-only ownership.
-		return false
-	}
-	_, sourceHasReintegrationBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch(sourceNormalized)
-	_, targetHasReintegrationBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch(targetNormalized)
-	if !sourceHasReintegrationBoundaryEpoch && targetHasReintegrationBoundaryEpoch {
-		// Once late-resurrection-quarantine reintegration ownership is verified for
-		// a lineage, explicit reintegration progression must win deterministically
-		// over pre-reintegration quarantine ownership.
-		return true
-	}
-	if sourceHasReintegrationBoundaryEpoch && !targetHasReintegrationBoundaryEpoch {
-		// Reject stage-regression from verified reintegration ownership back to
-		// late-resurrection-quarantine ownership.
-		return false
-	}
-	_, sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch(sourceNormalized)
-	_, targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationEpoch(targetNormalized)
-	if !sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationBoundaryEpoch && targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationBoundaryEpoch {
-		// Once reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry
-		// late-resurrection-quarantine-reintegration ownership is verified for a
-		// lineage, explicit reintegration progression must win deterministically
-		// over pre-reintegration late-resurrection-quarantine ownership.
-		return true
-	}
-	if sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationBoundaryEpoch && !targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationBoundaryEpoch {
-		// Reject stage-regression from verified reintegration ownership back to
-		// late-resurrection-quarantine ownership for the same lineage.
-		return false
-	}
-	_, sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch(sourceNormalized)
-	_, targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealEpoch(targetNormalized)
-	if !sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch && targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch {
-		// Once reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry
-		// late-resurrection-quarantine-reintegration-seal ownership is verified
-		// for a lineage, explicit reintegration-seal progression must win
-		// deterministically over reintegration-only ownership.
-		return true
-	}
-	if sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch && !targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealBoundaryEpoch {
-		// Reject stage-regression from verified reintegration-seal ownership
-		// back to reintegration-only ownership for the same lineage.
-		return false
-	}
-	_, sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch(sourceNormalized)
-	_, targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch := parseRollbackFenceResurrectionReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftEpoch(targetNormalized)
-	if !sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch && targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch {
-		// Once reintegration-seal-drift-reanchor-lineage-compaction-marker-expiry
-		// late-resurrection-quarantine-reintegration-seal-drift ownership is
-		// verified for a lineage, explicit reintegration-seal-drift progression
-		// must win deterministically over reintegration-seal-only ownership.
-		return true
-	}
-	if sourceHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch && !targetHasReintegrationSealDriftReanchorCompactionExpiryQuarantineReintegrationSealDriftBoundaryEpoch {
-		// Reject stage-regression from verified reintegration-seal-drift
-		// ownership back to reintegration-seal-only ownership for the same
-		// lineage.
-		return false
-	}
-	// Ownership progression is strictly monotonic under explicit
-	// (epoch, bridge_sequence, drain_watermark, live_head,
-	// steady_state_watermark, steady_generation, generation_retention_floor,
-	// floor_lift_epoch, settle_window_epoch, spillover_epoch,
-	// spillover_rejoin_epoch, rejoin_seal_epoch, seal_drift_epoch,
-	// drift_reanchor_epoch, reanchor_compaction_epoch,
-	// compaction_expiry_epoch, resurrection_quarantine_epoch,
-	// resurrection_reintegration_epoch, resurrection_reintegration_seal_epoch,
-	// resurrection_reintegration_seal_drift_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_epoch,
-	// resurrection_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_reanchor_compaction_expiry_quarantine_reintegration_seal_drift_epoch)
-	// ordering.
+
 	return compareRollbackFenceOwnershipOrdering(sourceOwnership, targetOwnership) < 0
 }
 
@@ -671,8 +391,6 @@ func isDeterministicRollbackFencePostReleaseWindowEpochRolloverStaleTransition(
 	if !isRollbackFencePostExpiryLateMarkerReleaseDigest(previousEpoch, previousNormalized) {
 		return false
 	}
-	// Once post-release-window ownership is verified, any digest still anchored
-	// to the prior rollback-fence epoch is stale at rollover.
 	return isRollbackFenceDigestAnchoredToEpoch(previousEpoch, incomingDigest)
 }
 
@@ -681,6 +399,12 @@ func isRollbackFenceDigestAnchoredToEpoch(epoch int64, digest string) bool {
 		return false
 	}
 	normalized := normalizePolicyManifestDigest(digest)
+	return validateRollbackLineage(epoch, normalized)
+}
+
+// validateRollbackLineage validates that a normalized digest has a valid
+// rollback lineage anchored to the given epoch.
+func validateRollbackLineage(epoch int64, normalized string) bool {
 	rollbackFromSeq, rollbackToSeq, rollbackForwardSeq, ok := parseRollbackLineage(normalized)
 	if !ok {
 		return false
@@ -692,6 +416,32 @@ func isRollbackFenceDigestAnchoredToEpoch(epoch int64, digest string) bool {
 		return false
 	}
 	if rollbackForwardSeq < rollbackFromSeq {
+		return false
+	}
+	return true
+}
+
+// validateLineagePair validates that two normalized digests share the same
+// rollback lineage anchored to the given epoch.
+func validateLineagePair(epoch int64, sourceNormalized, targetNormalized string) bool {
+	sourceFromSeq, sourceToSeq, sourceForwardSeq, ok := parseRollbackLineage(sourceNormalized)
+	if !ok {
+		return false
+	}
+	targetFromSeq, targetToSeq, targetForwardSeq, ok := parseRollbackLineage(targetNormalized)
+	if !ok {
+		return false
+	}
+	if sourceFromSeq != targetFromSeq || sourceToSeq != targetToSeq || sourceForwardSeq != targetForwardSeq {
+		return false
+	}
+	if sourceToSeq != epoch || targetToSeq != epoch {
+		return false
+	}
+	if sourceFromSeq <= sourceToSeq || targetFromSeq <= targetToSeq {
+		return false
+	}
+	if sourceForwardSeq < sourceFromSeq || targetForwardSeq < targetFromSeq {
 		return false
 	}
 	return true

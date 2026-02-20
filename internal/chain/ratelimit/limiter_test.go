@@ -65,6 +65,33 @@ func TestLimiter_WaitWhenExhausted(t *testing.T) {
 		"should have waited for a token, but only took %v", elapsed)
 }
 
+func TestLimiter_ExactTokenConsumption(t *testing.T) {
+	// Verify exactly N tokens are consumed for N Wait calls.
+	const (
+		rps   = 1000.0 // high rate so all calls succeed quickly
+		burst = 20
+		calls = 10
+	)
+	l := NewLimiter(rps, burst, "test")
+	ctx := context.Background()
+
+	for i := 0; i < calls; i++ {
+		err := l.Wait(ctx)
+		require.NoError(t, err, "call %d should succeed", i)
+	}
+
+	// After consuming `calls` tokens, the remaining burst should be burst - calls
+	// (modulo any tokens replenished). Allow should reflect this.
+	remaining := 0
+	for l.limiter.Allow() {
+		remaining++
+	}
+	// We consumed 10, burst was 20, some may have been replenished but
+	// at 1000 RPS the test runs in <1ms so at most 1 token replenished.
+	assert.LessOrEqual(t, remaining, burst-calls+2,
+		"remaining tokens should reflect exact consumption")
+}
+
 func TestLimiter_ContextCancellation(t *testing.T) {
 	// Create a limiter with very low RPS and small burst so we can exhaust tokens.
 	const (

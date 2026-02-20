@@ -137,10 +137,10 @@ func (w *ConfigWatcher) poll(ctx context.Context) {
 func (w *ConfigWatcher) applyConfig(key, value string) {
 	switch strings.TrimSpace(key) {
 	case ConfigKeyBatchSize:
-		if v, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && v > 0 {
+		if v, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && v > 0 && v <= 10000 {
 			w.coordinator.UpdateBatchSize(v)
 		} else {
-			w.logger.Warn("invalid batch_size value", "value", value)
+			w.logger.Warn("invalid batch_size value (must be 1-10000)", "value", value)
 		}
 
 	case ConfigKeyIndexingInterval:

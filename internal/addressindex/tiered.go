@@ -3,6 +3,7 @@ package addressindex
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/cache"
@@ -25,10 +26,15 @@ type TieredIndexConfig struct {
 //	Tier 2: LRU cache — fast positive/negative cache hit
 //	Tier 3: Database — authoritative lookup, result cached in LRU
 type TieredIndex struct {
-	bloom *BloomFilter
-	lru   *cache.LRU[string, *model.WatchedAddress] // nil value = negative cache
-	repo  store.WatchedAddressRepository
-	cfg   TieredIndexConfig
+	bloomMu sync.RWMutex
+	blooms  map[string]*BloomFilter // keyed by "chain:network"
+	lru     *cache.LRU[string, *model.WatchedAddress] // nil value = negative cache
+	repo    store.WatchedAddressRepository
+	cfg     TieredIndexConfig
+}
+
+func bloomKey(chain model.Chain, network model.Network) string {
+	return string(chain) + ":" + string(network)
 }
 
 // NewTieredIndex creates a new 3-tier address index.
@@ -47,11 +53,18 @@ func NewTieredIndex(repo store.WatchedAddressRepository, cfg TieredIndexConfig) 
 	}
 
 	return &TieredIndex{
-		bloom: NewBloomFilter(cfg.BloomExpectedItems, cfg.BloomFPR),
-		lru:   cache.NewLRU[string, *model.WatchedAddress](cfg.LRUCapacity, cfg.LRUTTL),
-		repo:  repo,
-		cfg:   cfg,
+		blooms: make(map[string]*BloomFilter),
+		lru:    cache.NewLRU[string, *model.WatchedAddress](cfg.LRUCapacity, cfg.LRUTTL),
+		repo:   repo,
+		cfg:    cfg,
 	}
+}
+
+// getBloom returns the bloom filter for a chain:network, or nil if none exists.
+func (t *TieredIndex) getBloom(chain model.Chain, network model.Network) *BloomFilter {
+	t.bloomMu.RLock()
+	defer t.bloomMu.RUnlock()
+	return t.blooms[bloomKey(chain, network)]
 }
 
 func lruKey(chain model.Chain, network model.Network, address string) string {
@@ -63,11 +76,14 @@ func lruKey(chain model.Chain, network model.Network, address string) string {
 func (t *TieredIndex) Contains(ctx context.Context, chain model.Chain, network model.Network, address string) bool {
 	key := lruKey(chain, network, address)
 
-	// Tier 1: Bloom filter
-	if !t.bloom.MayContain(key) {
-		metrics.AddressIndexBloomRejects.WithLabelValues(string(chain), string(network)).Inc()
-		return false
+	// Tier 1: Bloom filter (per chain:network)
+	if bf := t.getBloom(chain, network); bf != nil {
+		if !bf.MayContain(key) {
+			metrics.AddressIndexBloomRejects.WithLabelValues(string(chain), string(network)).Inc()
+			return false
+		}
 	}
+	// If no bloom exists yet, skip tier 1 (safe: assume possibly watched)
 
 	// Tier 2: LRU cache
 	if wa, ok := t.lru.Get(key); ok {
@@ -93,10 +109,12 @@ func (t *TieredIndex) Contains(ctx context.Context, chain model.Chain, network m
 func (t *TieredIndex) Lookup(ctx context.Context, chain model.Chain, network model.Network, address string) *model.WatchedAddress {
 	key := lruKey(chain, network, address)
 
-	// Tier 1: Bloom filter
-	if !t.bloom.MayContain(key) {
-		metrics.AddressIndexBloomRejects.WithLabelValues(string(chain), string(network)).Inc()
-		return nil
+	// Tier 1: Bloom filter (per chain:network)
+	if bf := t.getBloom(chain, network); bf != nil {
+		if !bf.MayContain(key) {
+			metrics.AddressIndexBloomRejects.WithLabelValues(string(chain), string(network)).Inc()
+			return nil
+		}
 	}
 
 	// Tier 2: LRU cache
@@ -118,19 +136,26 @@ func (t *TieredIndex) Lookup(ctx context.Context, chain model.Chain, network mod
 	return wa
 }
 
-// Reload rebuilds the bloom filter and warms the LRU from the database.
+// Reload rebuilds the bloom filter for a specific chain:network and warms the LRU.
+// Other chains' bloom filters are not affected.
 func (t *TieredIndex) Reload(ctx context.Context, chain model.Chain, network model.Network) error {
 	addrs, err := t.repo.GetActive(ctx, chain, network)
 	if err != nil {
 		return fmt.Errorf("reload address index: %w", err)
 	}
 
-	t.bloom.Reset()
+	// Build a fresh bloom filter for this chain:network only.
+	bf := NewBloomFilter(t.cfg.BloomExpectedItems, t.cfg.BloomFPR)
 	for i := range addrs {
 		key := lruKey(chain, network, addrs[i].Address)
-		t.bloom.Add(key)
+		bf.Add(key)
 		t.lru.Put(key, &addrs[i])
 	}
+
+	// Swap in the new bloom (other chains unaffected).
+	t.bloomMu.Lock()
+	t.blooms[bloomKey(chain, network)] = bf
+	t.bloomMu.Unlock()
 
 	return nil
 }

@@ -18,7 +18,21 @@ const (
 	dbStatementTimeoutDefaultMS = 30000
 	dbStatementTimeoutMinMS     = 0
 	dbStatementTimeoutMaxMS     = 3_600_000
+
+	// DefaultQueryTimeout is applied to individual non-transactional queries
+	// to prevent runaway SQL from holding connections indefinitely.
+	DefaultQueryTimeout = 30 * time.Second
+
+	// LongQueryTimeout is used for heavier operations such as migrations,
+	// reconciliation snapshots, or bulk purges.
+	LongQueryTimeout = 5 * time.Minute
 )
+
+// withTimeout returns a child context that will be cancelled after d.
+// Callers must defer the returned CancelFunc.
+func withTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, d)
+}
 
 type DB struct {
 	*sql.DB

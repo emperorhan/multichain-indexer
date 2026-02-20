@@ -132,7 +132,7 @@ func resolveStreamSessionID(rawSessionID string) string {
 	return sessionID
 }
 
-func logSecurityWarnings(cfg *config.Config, logger *slog.Logger) {
+func logSecurityWarnings(cfg *config.Config, logger *slog.Logger) error {
 	if strings.Contains(cfg.DB.URL, "sslmode=disable") {
 		logger.Warn("SECURITY: database connection uses sslmode=disable — use sslmode=require or sslmode=verify-full in production")
 	}
@@ -147,11 +147,11 @@ func logSecurityWarnings(cfg *config.Config, logger *slog.Logger) {
 	}
 	if cfg.Server.AdminAddr != "" && cfg.Server.AdminAuthUser == "" {
 		if cfg.Server.AdminRequireAuth {
-			logger.Error("SECURITY: admin API requires authentication but ADMIN_AUTH_USER is not set — set ADMIN_AUTH_USER and ADMIN_AUTH_PASS or set ADMIN_REQUIRE_AUTH=false")
-			os.Exit(1)
+			return fmt.Errorf("admin API requires authentication but ADMIN_AUTH_USER is not set — set ADMIN_AUTH_USER and ADMIN_AUTH_PASS or set ADMIN_REQUIRE_AUTH=false")
 		}
 		logger.Warn("SECURITY: admin API has no authentication — set ADMIN_AUTH_USER and ADMIN_AUTH_PASS in production")
 	}
+	return nil
 }
 
 func maskCredentials(rawURL string) string {
@@ -414,12 +414,18 @@ func shouldBuildChainRuntimeTarget(targets []string, chainName string) bool {
 }
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	// Setup logger
 	logLevel := slog.LevelInfo
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	switch cfg.Log.Level {
@@ -459,7 +465,9 @@ func main() {
 		"bsc_watched_addresses", len(cfg.Pipeline.BSCWatchedAddresses),
 	)
 
-	logSecurityWarnings(cfg, logger)
+	if err := logSecurityWarnings(cfg, logger); err != nil {
+		return err
+	}
 
 	// Initialize OpenTelemetry tracing
 	tracingEndpoint := ""
@@ -468,8 +476,7 @@ func main() {
 	}
 	shutdownTracing, err := tracing.Init(context.Background(), "multichain-indexer", tracingEndpoint, cfg.Tracing.Insecure, cfg.Tracing.SampleRatio)
 	if err != nil {
-		logger.Error("failed to initialize tracing", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("initialize tracing: %w", err)
 	}
 	defer func() {
 		if err := shutdownTracing(context.Background()); err != nil {
@@ -488,8 +495,7 @@ func main() {
 		ConnMaxLifetime: cfg.DB.ConnMaxLifetime,
 	})
 	if err != nil {
-		logger.Error("failed to connect to database", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("connect to database: %w", err)
 	}
 	defer db.Close()
 	logger.Info("connected to database")
@@ -498,8 +504,7 @@ func main() {
 
 	streamBackend, streamTransportEnabled, err := resolveStreamBackend(cfg, streamSessionID, logger)
 	if err != nil {
-		logger.Error("failed to initialize stream transport", "error", err, "redis_url", maskCredentials(cfg.Redis.URL))
-		os.Exit(1)
+		return fmt.Errorf("initialize stream transport: %w", err)
 	}
 
 	if streamBackend != nil {
@@ -522,12 +527,10 @@ func main() {
 	allTargets := buildRuntimeTargets(cfg, logger)
 	targets, err := selectRuntimeTargets(allTargets, cfg.Runtime)
 	if err != nil {
-		logger.Error("failed to select runtime targets", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("select runtime targets: %w", err)
 	}
 	if err := validateRuntimeWiring(targets); err != nil {
-		logger.Error("runtime wiring preflight failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("runtime wiring preflight: %w", err)
 	}
 	logger.Info("runtime targets selected",
 		"deployment_mode", cfg.Runtime.DeploymentMode,
@@ -538,12 +541,7 @@ func main() {
 
 	for _, target := range targets {
 		if err := syncWatchedAddresses(context.Background(), repos.WatchedAddr, repos.Cursor, target.chain, target.network, target.watched); err != nil {
-			logger.Error("failed to sync watched addresses",
-				"chain", target.chain,
-				"network", target.network,
-				"error", err,
-			)
-			os.Exit(1)
+			return fmt.Errorf("sync watched addresses %s/%s: %w", target.chain, target.network, err)
 		}
 	}
 
@@ -698,11 +696,11 @@ func main() {
 	})
 
 	if err := g.Wait(); err != nil && err != context.Canceled {
-		logger.Error("indexer exited with error", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("indexer exited: %w", err)
 	}
 
 	logger.Info("indexer shut down gracefully")
+	return nil
 }
 
 func validateRuntimeWiring(targets []runtimeTarget) error {
@@ -918,8 +916,12 @@ func runHealthServer(ctx context.Context, port int, metricsUser, metricsPass str
 	mux.Handle("/metrics", metricsHandler)
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {
@@ -960,8 +962,12 @@ func buildAlerter(cfg *config.Config, logger *slog.Logger) alert.Alerter {
 
 func runAdminServer(ctx context.Context, addr string, handler http.Handler, logger *slog.Logger) error {
 	server := &http.Server{
-		Addr:    addr,
-		Handler: handler,
+		Addr:              addr,
+		Handler:           handler,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {

@@ -28,7 +28,7 @@ type Coordinator struct {
 	watchedAddrRepo store.WatchedAddressRepository
 	cursorRepo      store.CursorRepository
 	batchSize       atomic.Int32
-	interval        time.Duration
+	intervalNs      atomic.Int64 // nanoseconds, accessed atomically
 	jobCh           chan<- event.FetchJob
 	logger          *slog.Logger
 	headProvider    headSequenceProvider
@@ -72,11 +72,11 @@ func New(
 		network:         network,
 		watchedAddrRepo: watchedAddrRepo,
 		cursorRepo:      cursorRepo,
-		interval:        interval,
 		jobCh:           jobCh,
 		logger:          logger.With("component", "coordinator"),
 	}
 	c.batchSize.Store(int32(batchSize))
+	c.intervalNs.Store(int64(interval))
 	return c
 }
 
@@ -262,8 +262,7 @@ func (c *Coordinator) UpdateInterval(newInterval time.Duration) bool {
 	if newInterval <= 0 {
 		return false
 	}
-	old := c.interval
-	c.interval = newInterval
+	old := time.Duration(c.intervalNs.Swap(int64(newInterval)))
 	if old != newInterval {
 		c.logger.Info("coordinator interval updated", "old", old, "new", newInterval)
 		return true
@@ -272,9 +271,10 @@ func (c *Coordinator) UpdateInterval(newInterval time.Duration) bool {
 }
 
 func (c *Coordinator) Run(ctx context.Context) error {
-	c.logger.Info("coordinator started", "chain", c.chain, "network", c.network, "interval", c.interval)
+	interval := time.Duration(c.intervalNs.Load())
+	c.logger.Info("coordinator started", "chain", c.chain, "network", c.network, "interval", interval)
 
-	ticker := time.NewTicker(c.interval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	chainLabel := c.chain.String()

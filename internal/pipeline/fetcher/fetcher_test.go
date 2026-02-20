@@ -282,7 +282,12 @@ func TestProcessJob_RetryBackoffAndAdaptiveReduction(t *testing.T) {
 	assert.Equal(t, "sig2", *batch.NewCursorValue)
 	assert.Equal(t, int64(2), batch.NewCursorSequence)
 	assert.Len(t, batch.RawTransactions, 2)
-	assert.Equal(t, []time.Duration{10 * time.Millisecond, 20 * time.Millisecond}, delays)
+	// retryDelay adds 0-25% random jitter, so check ranges.
+	require.Len(t, delays, 2)
+	assert.GreaterOrEqual(t, delays[0], 10*time.Millisecond)
+	assert.Less(t, delays[0], 13*time.Millisecond)
+	assert.GreaterOrEqual(t, delays[1], 20*time.Millisecond)
+	assert.Less(t, delays[1], 26*time.Millisecond)
 }
 
 func TestProcessJob_AdaptiveBatchStateAcrossRuns(t *testing.T) {
@@ -346,7 +351,9 @@ func TestProcessJob_AdaptiveBatchStateAcrossRuns(t *testing.T) {
 
 	err = f.processJob(context.Background(), slog.Default(), job)
 	require.NoError(t, err)
-	assert.Equal(t, []time.Duration{5 * time.Millisecond}, delays)
+	require.Len(t, delays, 1)
+	assert.GreaterOrEqual(t, delays[0], 5*time.Millisecond)
+	assert.Less(t, delays[0], 7*time.Millisecond) // 5ms + up to 25% jitter
 }
 
 func TestFetcher_RetryDelay_ExponentialWithCap(t *testing.T) {
@@ -356,10 +363,22 @@ func TestFetcher_RetryDelay_ExponentialWithCap(t *testing.T) {
 		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
-	assert.Equal(t, 10*time.Millisecond, f.retryDelay(1))
-	assert.Equal(t, 20*time.Millisecond, f.retryDelay(2))
-	assert.Equal(t, 25*time.Millisecond, f.retryDelay(3))
-	assert.Equal(t, 25*time.Millisecond, f.retryDelay(4))
+	// retryDelay adds 0-25% random jitter, so use range assertions.
+	d1 := f.retryDelay(1)
+	assert.GreaterOrEqual(t, d1, 10*time.Millisecond)
+	assert.Less(t, d1, 13*time.Millisecond) // 10ms + up to 25% jitter
+
+	d2 := f.retryDelay(2)
+	assert.GreaterOrEqual(t, d2, 20*time.Millisecond)
+	assert.Less(t, d2, 26*time.Millisecond) // 20ms + up to 25% jitter
+
+	d3 := f.retryDelay(3)
+	assert.GreaterOrEqual(t, d3, 25*time.Millisecond)
+	assert.Less(t, d3, 32*time.Millisecond) // 25ms (capped) + up to 25% jitter
+
+	d4 := f.retryDelay(4)
+	assert.GreaterOrEqual(t, d4, 25*time.Millisecond)
+	assert.Less(t, d4, 32*time.Millisecond) // 25ms (capped) + up to 25% jitter
 }
 
 func TestProcessJob_TerminalSignatureFetchError_NoRetryAcrossMandatoryChains(t *testing.T) {
@@ -515,7 +534,9 @@ func TestProcessJob_TransientSignatureFetchRetryAcrossMandatoryChains(t *testing
 			require.NotNil(t, batch.NewCursorValue)
 			assert.Equal(t, tc.txHash, *batch.NewCursorValue)
 			assert.Equal(t, tc.cursor, batch.NewCursorSequence)
-			assert.Equal(t, []time.Duration{5 * time.Millisecond}, delays)
+			require.Len(t, delays, 1)
+			assert.GreaterOrEqual(t, delays[0], 5*time.Millisecond)
+			assert.Less(t, delays[0], 7*time.Millisecond) // 5ms + up to 25% jitter
 		})
 	}
 }

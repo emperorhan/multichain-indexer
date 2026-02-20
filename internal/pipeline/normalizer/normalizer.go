@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"strings"
 	"sync"
@@ -675,16 +676,24 @@ func (n *Normalizer) retryDelay(attempt int) time.Duration {
 	}
 	if attempt <= 1 {
 		if n.retryDelayMax > 0 && delay > n.retryDelayMax {
-			return n.retryDelayMax
+			delay = n.retryDelayMax
 		}
-		return delay
-	}
-	for i := 1; i < attempt; i++ {
-		delay *= 2
-		if n.retryDelayMax > 0 && delay >= n.retryDelayMax {
-			return n.retryDelayMax
+	} else {
+		for i := 1; i < attempt; i++ {
+			delay *= 2
+			if n.retryDelayMax > 0 && delay >= n.retryDelayMax {
+				delay = n.retryDelayMax
+				break
+			}
 		}
 	}
+
+	// Add 0-25% random jitter to avoid thundering herd.
+	if delay > 0 {
+		jitter := time.Duration(rand.Int64N(int64(delay) / 4))
+		delay += jitter
+	}
+
 	return delay
 }
 
