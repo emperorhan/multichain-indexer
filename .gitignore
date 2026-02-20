@@ -22,17 +22,31 @@ Thumbs.db
 
 # Environment
 .env
-.env.local
+.env.*
+!.env.example
+
+# Secrets / Credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+credentials.json
+service-account*.json
+config.yaml
+config.yml
+!configs/config.example.yaml
 
 # Build
 tmp/
 .cache/
 indexer
 loadtest
+cover.out
+*.zip
 
-# Ralph local runtime
+# AI tools
+.claude/
 .agent/
 .ralph/
-
-# Qodo
 .qodo/

@@ -14,31 +14,33 @@
   - 라벨 규칙 및 자동 라벨링
 
 ### M2. Reliability Hardening
-- 상태: in-progress
-- 목표:
-  - 장애 탐지 지표/알람 정의
-  - 재처리(replay) 절차 표준화
-  - 운영 런북 기반 대응 훈련
-- 완료 조건:
-  - P0/P1 사고에 대해 재현 가능한 대응 절차 확보
+- 상태: **done**
+- 구현 완료:
+  - Prometheus 메트릭 + Grafana 대시보드 (`internal/metrics/`)
+  - Alert 시스템: Slack/Webhook, per-key cooldown (`internal/alert/`)
+  - Replay 서비스: Admin API 기반 재처리 (`internal/pipeline/replay/`)
+  - Reorg 감지 + 롤백 (`internal/pipeline/reorgdetector/`)
+  - OpenTelemetry 분산 트레이싱 (`internal/tracing/`)
+  - 운영 런북 + Recovery Playbooks (`docs/runbook.md`)
+  - 63개 테스트 파일, race detector 전체 통과
 
 ### M3. Data Quality Guarantees
-- 상태: planned
-- 목표:
-  - 중복/누락 감지 검증 잡
-  - 커서 정합성 모니터링
-  - 배치 처리 지연 및 실패율 대시보드
-- 완료 조건:
-  - 지표 기반으로 데이터 품질 이상을 15분 이내 탐지
+- 상태: **done**
+- 구현 완료:
+  - Reconciliation 서비스: 온체인 vs DB 잔액 검증 (`internal/reconciliation/`)
+  - `balance_events` event_id 기반 UNIQUE INDEX dedup
+  - Finality 상태 관리 + Finality promotion (`internal/pipeline/finalizer/`)
+  - 커서 정합성: GREATEST watermark (비퇴행)
+  - 배치 처리 메트릭: throughput, latency (P50/P95/P99), error rate
 
 ### M4. Chain/Plugin Expansion
-- 상태: planned
-- 목표:
-  - 신규 체인 어댑터 도입 절차 템플릿화
-  - Sidecar 플러그인 추가/검증 규칙 표준화
-  - 성능 리그레션 테스트 자동화
-- 완료 조건:
-  - 신규 플러그인 도입 시 표준 체크리스트 100% 통과
+- 상태: **done**
+- 구현 완료:
+  - 7개 체인 어댑터: Solana, Base, Ethereum, BTC, Polygon, Arbitrum, BSC
+  - `BlockScanAdapter` 인터페이스로 EVM/BTC 블록 범위 스캔 표준화
+  - 체인별 normalizer 분리: `normalizer_balance.go` (공통+Solana), `normalizer_balance_evm.go`, `normalizer_balance_btc.go`
+  - 체인별 RPC rate limiting (`internal/chain/ratelimit/`)
+  - Sidecar 디코더: Solana, Base, BTC
 
 ## Prioritization Rules
 - `priority/p0`: 서비스 중단, 데이터 손상 위험

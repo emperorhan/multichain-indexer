@@ -6,12 +6,13 @@
 
 ## 1. 현황 및 목표
 
-### 1.1 현재 상태
+### 1.1 현재 상태 (2026-02-20)
 
-- 테스트 커버리지: **0%** (단위 테스트, 통합 테스트 없음)
-- `*_test.go` 파일 없음
-- sidecar Jest 테스트 없음
-- 테스트 픽스처/testdata 없음
+- Go 테스트 파일: **63개** `*_test.go`
+- 테스트 범위: unit, benchmark, integration, E2E (runtime), error scenario
+- 전체 테스트 `-race` 통과
+- 인터페이스 기반 mock 주입 완료 (ingester, coordinator, fetcher 등)
+- sidecar Jest 테스트: 별도 구성
 
 ### 1.2 테스트 목표
 
@@ -74,107 +75,30 @@
 
 ---
 
-## 3. 선행 조건: 테스트 가능한 구조로 리팩토링
+## 3. 테스트 인프라 (구현 완료)
 
-### 3.1 현재 문제
+### 3.1 인터페이스 기반 의존성 주입
 
-현재 파이프라인 스테이지와 리포지토리가 **concrete 타입**에 직접 의존한다:
+모든 파이프라인 스테이지가 **인터페이스**에 의존하도록 리팩토링 완료:
+
+- Ingester: `TransactionRepository`, `BalanceEventRepository`, `BalanceRepository`, `TokenRepository`, `CursorRepository`, `WatermarkRepository`, `WatchedAddressRepository` 등
+- Coordinator: `WatchedAddressRepository`, `CursorReader`
+- Pipeline: `Repos` 구조체가 인터페이스 필드로 구성
+
+Go implicit interface 패턴으로 `postgres.*Repo` 구현체가 자동으로 인터페이스를 만족한다.
+
+### 3.2 Mock 패턴
+
+테스트에서는 hand-written fake/mock을 사용:
 
 ```go
-// 현재 (ingester.go)
-type Ingester struct {
-    txRepo       *postgres.TransactionRepo     // concrete 타입
-    transferRepo *postgres.TransferRepo        // concrete 타입
-    balanceRepo  *postgres.BalanceRepo         // concrete 타입
-    // ...
-}
-
-// 현재 (pipeline.go)
-type Repos struct {
-    WatchedAddr *postgres.WatchedAddressRepo   // concrete 타입
-    // ...
+// 함수 필드 기반 mock — 테스트별 동작 커스터마이즈
+type mockBalanceEventRepo struct {
+    BulkUpsertTxFunc func(ctx context.Context, tx *sql.Tx, events []model.BalanceEvent) error
 }
 ```
 
-이 구조에서는 단위 테스트에서 mock을 주입할 수 없다.
-
-### 3.2 추출할 인터페이스 (7개)
-
-테스트 가능성을 위해 각 리포지토리의 인터페이스를 추출한다.
-인터페이스는 **소비자 근처에 정의** (Go 관례):
-
-```go
-// internal/pipeline/ingester/ports.go (신규 파일)
-package ingester
-
-import (
-    "context"
-    "database/sql"
-    "github.com/google/uuid"
-    "github.com/emperorhan/multichain-indexer/internal/domain/model"
-)
-
-type TransactionRepository interface {
-    UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transaction) (uuid.UUID, error)
-}
-
-type TransferRepository interface {
-    UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transfer) error
-}
-
-type BalanceRepository interface {
-    AdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network,
-        address string, tokenID uuid.UUID, walletID *string, orgID *string,
-        delta string, cursor int64, txHash string) error
-}
-
-type TokenRepository interface {
-    UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Token) (uuid.UUID, error)
-}
-
-type CursorRepository interface {
-    UpsertTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network,
-        address string, cursorValue *string, cursorSequence int64, itemsProcessed int64) error
-}
-
-type WatermarkRepository interface {
-    UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network,
-        ingestedSequence int64) error
-}
-```
-
-```go
-// internal/pipeline/coordinator/ports.go (신규 파일)
-package coordinator
-
-type WatchedAddressRepository interface {
-    GetActive(ctx context.Context, chain model.Chain, network model.Network) ([]model.WatchedAddress, error)
-}
-
-type CursorReader interface {
-    Get(ctx context.Context, chain model.Chain, network model.Network, address string) (*model.AddressCursor, error)
-}
-```
-
-### 3.3 Pipeline.Repos 변경
-
-```go
-// 변경 전
-type Repos struct {
-    WatchedAddr *postgres.WatchedAddressRepo   // concrete
-    Cursor      *postgres.CursorRepo           // concrete
-    // ...
-}
-
-// 변경 후
-type Repos struct {
-    WatchedAddr WatchedAddressRepository       // interface
-    Cursor      CursorRepository               // interface
-    // ...
-}
-```
-
-이 변경 후 기존 `postgres.*Repo` 구현체는 인터페이스를 자동 만족 (Go implicit interface).
+별도의 mockgen 도구 없이 테스트 파일 내에서 직접 정의하는 방식을 선호한다.
 
 ---
 
@@ -1083,104 +1007,106 @@ stages:
 
 ---
 
-## 11. 테스트 파일 구조
+## 11. 테스트 파일 구조 (현재)
 
-### 11.1 Go
+### 11.1 Go (63개 테스트 파일)
 
 ```
+cmd/indexer/
+├── db_pool_metrics_test.go
+└── main_test.go
 internal/
-├── config/
-│   └── config_test.go
+├── addressindex/
+│   ├── bloom_test.go
+│   └── tiered_test.go
+├── admin/
+│   ├── audit_test.go
+│   ├── ratelimit_test.go
+│   └── server_test.go
+├── alert/
+│   └── alerter_test.go
+├── cache/
+│   ├── lru_bench_test.go
+│   └── lru_test.go
 ├── chain/
+│   ├── arbitrum/adapter_test.go
+│   ├── base/
+│   │   ├── adapter_test.go
+│   │   └── rpc/{client_test.go, methods_test.go}
+│   ├── bsc/adapter_test.go
+│   ├── btc/
+│   │   ├── adapter_test.go
+│   │   └── rpc/{client_test.go, methods_test.go}
+│   ├── ethereum/adapter_test.go
+│   ├── polygon/adapter_test.go
+│   ├── ratelimit/limiter_test.go
 │   └── solana/
 │       ├── adapter_test.go
-│       ├── adapter_bench_test.go
-│       └── rpc/
-│           └── client_test.go
+│       └── rpc/{client_test.go, methods_test.go}
+├── config/
+│   └── config_test.go
+├── domain/
+│   ├── event/normalized_batch_test.go
+│   └── model/{activity_classifier_test.go, balance_event_test.go, chain_test.go}
+├── metrics/
+│   └── metrics_test.go
 ├── pipeline/
-│   ├── pipeline_e2e_test.go           # //go:build e2e
+│   ├── config_watcher_test.go
+│   ├── health_test.go
+│   ├── pipeline_test.go
+│   ├── registry_test.go
 │   ├── coordinator/
-│   │   └── coordinator_test.go
-│   ├── fetcher/
-│   │   └── fetcher_test.go
+│   │   ├── coordinator_test.go
+│   │   └── autotune/{autotune_test.go, autotune_scenario_test.go}
+│   ├── fetcher/{fetcher_test.go, fetcher_bench_test.go}
+│   ├── finalizer/finalizer_test.go
+│   ├── ingester/
+│   │   ├── ingester_test.go
+│   │   ├── ingester_bench_test.go
+│   │   ├── helpers_test.go
+│   │   ├── interleaver_test.go
+│   │   ├── reorg_test.go
+│   │   ├── reorg_interleave_test.go
+│   │   └── test_fixtures_test.go
 │   ├── normalizer/
-│   │   └── normalizer_test.go
-│   └── ingester/
-│       ├── ingester_test.go
-│       ├── ingester_bench_test.go
-│       ├── ingester_integration_test.go  # //go:build integration
-│       └── ports.go                      # 인터페이스 정의
+│   │   ├── normalizer_test.go
+│   │   ├── normalizer_bench_test.go
+│   │   ├── normalizer_error_test.go
+│   │   ├── normalizer_balance_evm_chains_test.go
+│   │   ├── base_runtime_e2e_test.go
+│   │   ├── btc_runtime_e2e_test.go
+│   │   └── solana_runtime_e2e_test.go
+│   ├── reorgdetector/detector_test.go
+│   └── replay/service_test.go
+├── reconciliation/
+│   └── service_test.go
 ├── store/
-│   └── postgres/
-│       ├── transaction_repo_test.go      # //go:build integration
-│       ├── transfer_repo_test.go
-│       ├── balance_repo_test.go
-│       ├── cursor_repo_test.go
-│       ├── token_repo_test.go
-│       ├── watched_address_repo_test.go
-│       └── testutil_test.go              # testcontainers setup
-├── mocks/                                # hand-written fakes
-│   ├── chain_adapter.go
-│   ├── transaction_repo.go
-│   ├── transfer_repo.go
-│   ├── balance_repo.go
-│   ├── token_repo.go
-│   ├── cursor_repo.go
-│   └── watched_address_repo.go
-└── testdata/
-    └── solana/
-        ├── sol_system_transfer.json
-        ├── spl_transfer.json
-        ├── spl_transfer_checked.json
-        ├── failed_tx.json
-        ├── inner_instructions.json
-        ├── create_account.json
-        └── unrelated_tx.json
+│   └── postgres/{db_test.go, integration_test.go, testutil_test.go}
+├── tracing/
+│   └── tracing_test.go
+└── pipeline/retry/
+    └── retry_test.go
 ```
 
 ### 11.2 Sidecar (Jest)
 
 ```
 sidecar/
-├── src/
-│   └── decoder/
-│       └── solana/
-│           └── __tests__/
-│               ├── transaction_decoder.test.ts
-│               ├── spl_token_parser.test.ts
-│               ├── system_parser.test.ts
-│               └── golden.test.ts
+├── src/decoder/{solana,base,btc}/__tests__/
 ├── testdata/
-│   ├── sol_system_transfer.json
-│   ├── sol_system_transfer.expected.json
-│   ├── spl_transfer.json
-│   ├── spl_transfer.expected.json
-│   └── ...
 ├── jest.config.ts
-└── package.json  # scripts.test: "jest"
+└── package.json
 ```
 
-### 11.3 Mock 생성
+### 11.3 테스트 실행
 
-**Hand-written fakes** 선호 (mockgen 대비 단순, 가독성 높음):
+```bash
+# 전체 테스트 (race detector 포함)
+go test ./... -count=1 -race
 
-```go
-// internal/mocks/transaction_repo.go
-package mocks
+# 특정 패키지
+go test ./internal/pipeline/ingester/... -count=1 -race
 
-type TransactionRepo struct {
-    UpsertTxFunc func(ctx context.Context, tx *sql.Tx, t *model.Transaction) (uuid.UUID, error)
-    UpsertTxCalls []struct{ Tx *model.Transaction }
-}
-
-func (m *TransactionRepo) UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Transaction) (uuid.UUID, error) {
-    m.UpsertTxCalls = append(m.UpsertTxCalls, struct{ Tx *model.Transaction }{t})
-    if m.UpsertTxFunc != nil {
-        return m.UpsertTxFunc(ctx, tx, t)
-    }
-    return uuid.New(), nil
-}
+# 벤치마크
+go test ./internal/pipeline/ingester/... -bench=. -benchmem
 ```
-
-mock은 호출 기록 + 커스텀 동작 설정을 모두 지원하며,
-테스트에서 `assert.Equal(t, 1, len(mockTxRepo.UpsertTxCalls))` 로 검증.

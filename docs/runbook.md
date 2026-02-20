@@ -133,25 +133,11 @@ curl http://localhost:9090/admin/v1/status?chain=solana&network=devnet
 5. 지속 장애면 ingest 중단 후 원인 제거
 6. 체인별 DB 풀 분리 고려 (`SOLANA_DB_URL`, `BASE_DB_URL` 등)
 
-### D. Partition 관리
-
-```bash
-# 향후 14일 파티션 미리 생성 (SQL)
-SELECT create_daily_partitions(14);
-
-# 90일 이전 파티션 삭제
-SELECT drop_old_daily_partitions(90);
-```
-
-- 파티션 자동 생성은 cron 또는 K8s CronJob으로 스케줄링 권장
-- `balance_events_YYYY_MM_DD` 형식으로 일별 파티션 생성됨
-- 파티션 누락 시 `DEFAULT` 파티션으로 자동 라우팅되지만, 성능 저하 가능
-
-### E. Ingester Bulk Insert 실패
-1. OTel 트레이스에서 `ingester.phase2_prefetch` 또는 `ingester.phase4_write` 스팬 확인
+### D. Ingester Bulk Insert 실패
+1. OTel 트레이스에서 `ingester.collectEvents`, `ingester.prefetchBulkData`, `ingester.buildEventModels`, `ingester.writeBulkAndCommit` 스팬 확인
 2. 에러 로그에서 실패한 bulk 연산 식별 (BulkUpsertTx, BulkAdjustBalanceTx 등)
 3. 특정 트랜잭션/토큰/밸런스 키의 데이터 이상 여부 확인
-4. 필요시 해당 배치의 이벤트를 수동 재처리 (커서 리셋)
+4. 필요시 Admin API `/admin/v1/replay`로 특정 주소 리플레이
 
 ## Kubernetes Operations (Helm)
 
@@ -205,11 +191,11 @@ kubectl top pods -l app.kubernetes.io/name=multichain-indexer
 
 ## Rollback Policy
 1. 배포 단위를 PR 단위로 롤백 (Helm: `helm rollback indexer`)
-2. 스키마 변경 포함 시 down migration 영향 검토 후 실행
-3. 일별 파티셔닝 롤백 시: `011_daily_partitioning.down.sql` 실행 (월별 파티셔닝으로 복원)
+2. 스키마 변경 포함 시 down migration 영향 검토 후 실행 (현재 018번까지 적용)
+3. `balance_events`는 flat 테이블 (파티셔닝 제거됨, migration 018)
 4. sidecar/indexer 계약 변경이 포함된 경우 sidecar 우선 롤백 후 indexer 정합성 확인
 5. 롤백 후 무결성 검증:
-   - 중복 이벤트 발생 여부
+   - 중복 이벤트 발생 여부 (`event_id` UNIQUE INDEX로 dedup)
    - 커서 역행 여부
 
 ## Load Testing

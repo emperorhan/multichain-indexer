@@ -2,25 +2,38 @@
 
 > 멀티체인 커스터디 인덱서 — Go 파이프라인 + Node.js Sidecar (gRPC 디코더)
 
-## 0. Current Snapshot (2026-02-16)
+## 0. Current Snapshot (2026-02-20)
 
-이 문서는 장기 설계 설명과 함께 현재 구현 스냅샷을 함께 제공합니다.  
+이 문서는 장기 설계 설명과 함께 현재 구현 스냅샷을 함께 제공합니다.
 현재 코드 기준 핵심 상태는 아래와 같습니다.
 
-1. 체인별 구현 격리
-   - Go adapter: `internal/chain/solana/*`, `internal/chain/base/*`, `internal/chain/btc/*`
-   - Sidecar decoder: `sidecar/src/decoder/solana/*`, `sidecar/src/decoder/base/*`, `sidecar/src/decoder/btc/*`
-2. 런타임 격리
+1. **체인별 구현 격리** — 7개 체인 지원
+   - Go adapter: `internal/chain/{solana,base,btc,ethereum,polygon,arbitrum,bsc}/*`
+   - EVM/BTC 체인: `BlockScanAdapter` (블록 범위 스캔), Solana: 커서 기반
+   - Sidecar decoder: `sidecar/src/decoder/{solana,base,btc}/*`
+2. **런타임 격리**
    - `RUNTIME_DEPLOYMENT_MODE=like-group|independent`
    - `RUNTIME_LIKE_GROUP=solana-like|evm-like|btc-like`
    - `RUNTIME_CHAIN_TARGET(S)=<chain-network>`
-3. 배포 경계
-   - indexer: 환경변수 기반 타깃 선택(동일 바이너리)
+3. **배포 경계**
+   - indexer: YAML + 환경변수 기반 타깃 선택(동일 바이너리)
    - sidecar: 기본 단일 배포 단위(분리 트리거는 ADR 참고)
-4. sidecar protobuf 계약 상태
+4. **sidecar protobuf 계약 상태**
    - 현재 RPC 이름은 `DecodeSolanaTransactionBatch` (legacy naming)
    - 실제 구현은 payload 기반으로 Solana/Base/BTC 디코더로 분기
    - chain-neutral 단일 인터페이스 전환 정책: `docs/sidecar-deployment-decision.md`
+5. **운영 인프라**
+   - Admin REST API (`internal/admin/`): 감시 주소 관리, 리플레이, 상태 조회
+   - Alert 시스템 (`internal/alert/`): Slack/Webhook, per-key cooldown
+   - Reconciliation (`internal/reconciliation/`): 온체인 vs DB 잔액 검증
+   - Reorg 감지 (`internal/pipeline/reorgdetector/`): 블록 해시 기반 롤백
+   - OpenTelemetry 분산 트레이싱 (`internal/tracing/`)
+   - Prometheus 메트릭 (`internal/metrics/`)
+   - 63개 테스트 파일, race detector 전체 통과
+6. **설정 시스템**
+   - YAML 기반 계층형 설정: YAML → 환경변수 → 빌트인 기본값
+   - `configs/config.example.yaml` 참조
+   - ConfigWatcher: `runtime_configs` 테이블 폴링 (30초)으로 핫 설정 리로드
 
 ---
 
@@ -135,14 +148,20 @@ graph TB
     end
 
     subgraph "internal/chain"
-        adapter_if["adapter.go<br/>ChainAdapter 인터페이스"]
-        sol_adapter["solana/adapter.go<br/>Solana 구현"]
-        sol_rpc["solana/rpc/<br/>JSON-RPC 클라이언트"]
+        adapter_if["adapter.go<br/>ChainAdapter + BlockScanAdapter"]
+        sol_adapter["solana/<br/>Solana (cursor-based)"]
+        evm_adapters["base/ ethereum/ polygon/<br/>arbitrum/ bsc/<br/>EVM (block-scan)"]
+        btc_adapter["btc/<br/>BTC (block-scan)"]
+        ratelimit["ratelimit/<br/>Per-chain RPC rate limiting"]
+    end
+
+    subgraph "internal/admin"
+        admin_api["server.go<br/>Admin REST API"]
     end
 
     subgraph "internal/store/postgres"
         db["db.go<br/>연결 풀"]
-        repos["*_repo.go<br/>7개 리포지토리"]
+        repos["*_repo.go<br/>11개 리포지토리"]
     end
 
     subgraph "internal/domain"
@@ -1077,41 +1096,28 @@ sequenceDiagram
 
 ### 10.1 현재 아키텍처 갭
 
-| # | 갭 | 영향도 | 카테고리 |
-|---|------|-------|---------|
-| 1 | 재시도 로직 없음 (RPC, gRPC) | 높음 | 안정성 |
-| 2 | DLQ 없음 (실패 배치 추적 불가) | 높음 | 운영성 |
-| 3 | 메트릭/모니터링 없음 (Prometheus) | 높음 | 운영성 |
-| 4 | Fetcher/Normalizer WaitGroup context 갭 | 중간 | 안정성 |
-| 5 | gRPC insecure 연결 | 중간 | 보안 |
-| 6 | 단일 인스턴스 (수평 스케일링 불가) | 중간 | 확장성 |
-| 7 | Sidecar ATA→Owner 해석 불완전 | 낮음 | 정확성 |
-| 8 | SPL 토큰 메타데이터 없음 (symbol/name) | 낮음 | 기능 |
-| 9 | Rate limiting 없음 (RPC 호출) | 중간 | 안정성 |
-| 10 | 테스트 커버리지 0% | 높음 | 품질 |
+| # | 갭 | 영향도 | 카테고리 | 상태 |
+|---|------|-------|---------|------|
+| 1 | ~~재시도 로직 없음~~ | — | 안정성 | **해결됨** (`internal/pipeline/retry/`) |
+| 2 | DLQ 없음 (실패 배치 추적 불가) | 높음 | 운영성 | 미해결 |
+| 3 | ~~메트릭/모니터링 없음~~ | — | 운영성 | **해결됨** (`internal/metrics/`, Prometheus) |
+| 4 | Fetcher/Normalizer WaitGroup context 갭 | 중간 | 안정성 | 미해결 |
+| 5 | gRPC insecure 연결 | 중간 | 보안 | 미해결 |
+| 6 | 단일 인스턴스 (수평 스케일링 불가) | 중간 | 확장성 | 미해결 |
+| 7 | ~~Rate limiting 없음~~ | — | 안정성 | **해결됨** (`internal/chain/ratelimit/`) |
+| 8 | ~~테스트 커버리지 0%~~ | — | 품질 | **해결됨** (63개 테스트 파일) |
+| 9 | ~~EVM ChainAdapter 없음~~ | — | 기능 | **해결됨** (7개 체인 지원) |
+| 10 | ~~분산 트레이싱 없음~~ | — | 운영성 | **해결됨** (OpenTelemetry) |
 
-### 10.2 단기 개선 (프로덕션 전)
+### 10.2 남은 개선 사항
 
-1. **재시도 로직**: 지수 백오프 + jitter (RPC, gRPC 호출)
-2. **메트릭**: Prometheus 엔드포인트 (배치 처리량, 지연, 에러율, 잔액)
-3. **테스트**: 핵심 경로 단위 테스트 + integration 테스트 ([테스트 방법론](testing.md))
-4. **Rate limiting**: RPC 호출 속도 제한 (devnet 제한 준수)
-5. **WaitGroup → errgroup**: context 전파 갭 해결
-
-### 10.3 중기 (멀티체인 대비)
-
-1. **EVM ChainAdapter**: Ethereum, Polygon, Arbitrum 지원
-2. **Sidecar 디코더 확장**: ERC-20/ERC-721 Transfer 이벤트 파싱
-3. **chain_data 스키마 정의**: 체인별 JSONB 구조 문서화
-4. **다중 파이프라인**: 체인별 독립 파이프라인 인스턴스
-
-### 10.4 장기 (프로덕션 스케일)
-
-1. **Redis Streams**: 프로세스 분리 (Fetcher → Redis → Normalizer)
-2. **수평 스케일링**: 주소 범위별 파티셔닝
-3. **CDC (Change Data Capture)**: DB 변경 스트림 → 외부 소비자
-4. **Circuit Breaker**: RPC/sidecar 장애 격리
-5. **분산 트레이싱**: OpenTelemetry
+1. **DLQ (Dead Letter Queue)**: 실패 배치 추적 및 재처리 자동화
+2. **WaitGroup → errgroup**: Fetcher/Normalizer context 전파 갭 해결
+3. **gRPC TLS**: 프로덕션 환경 mTLS 적용
+4. **Redis Streams**: 프로세스 분리 (Fetcher → Redis → Normalizer)
+5. **수평 스케일링**: 주소 범위별 파티셔닝
+6. **CDC (Change Data Capture)**: DB 변경 스트림 → 외부 소비자
+7. **Circuit Breaker**: RPC/sidecar 장애 격리
 
 ---
 
@@ -1163,88 +1169,62 @@ service ChainDecoder {
 ```
 multichain-indexer/
 ├── cmd/indexer/
-│   └── main.go                         # 엔트리포인트 (184줄)
+│   └── main.go                         # 엔트리포인트
+├── configs/
+│   └── config.example.yaml             # YAML 설정 레퍼런스
 ├── internal/
+│   ├── addressindex/                   # 주소 인덱스 관리
+│   ├── admin/                          # Admin REST API (server, audit, ratelimit)
+│   ├── alert/                          # Slack/Webhook 알림 + per-key cooldown
+│   ├── cache/                          # LRU 캐시 유틸리티
 │   ├── config/
-│   │   └── config.go                   # 환경변수 로딩
+│   │   └── config.go                   # YAML + 환경변수 계층형 설정
 │   ├── domain/
-│   │   ├── event/
-│   │   │   ├── fetch_job.go            # FetchJob 이벤트
-│   │   │   ├── raw_batch.go            # RawBatch 이벤트
-│   │   │   └── normalized_batch.go     # NormalizedBatch 이벤트
-│   │   └── model/
-│   │       ├── chain.go                # 열거형 (Chain, Network, Status 등)
-│   │       ├── transaction.go          # Transaction 모델
-│   │       ├── balance_event.go        # BalanceEvent 모델 (signed delta)
-│   │       ├── token.go                # Token 모델
-│   │       ├── cursor.go               # AddressCursor, IndexerConfig, Watermark
-│   │       ├── watched_address.go      # WatchedAddress 모델
-│   │       └── balance.go              # Balance 모델
+│   │   ├── event/                      # FetchJob, RawBatch, NormalizedBatch
+│   │   └── model/                      # DB 모델 + Chain/Network 열거형
 │   ├── chain/
-│   │   ├── adapter.go                  # ChainAdapter 인터페이스 (31줄)
-│   │   └── solana/
-│   │       ├── adapter.go              # Solana 구현 (158줄)
-│   │       └── rpc/
-│   │           ├── client.go           # JSON-RPC 클라이언트
-│   │           ├── methods.go          # GetSlot, GetSignatures, GetTransaction
-│   │           └── types.go            # RPC 타입 정의
+│   │   ├── adapter.go                  # ChainAdapter + BlockScanAdapter 인터페이스
+│   │   ├── solana/                     # Solana (cursor-based)
+│   │   ├── base/                       # Base (block-scan)
+│   │   ├── btc/                        # BTC (block-scan)
+│   │   ├── ethereum/                   # Ethereum (block-scan)
+│   │   ├── polygon/                    # Polygon (block-scan)
+│   │   ├── arbitrum/                   # Arbitrum (block-scan)
+│   │   ├── bsc/                        # BSC (block-scan)
+│   │   └── ratelimit/                  # Per-chain RPC 속도 제한
+│   ├── metrics/                        # Prometheus 메트릭 정의
 │   ├── pipeline/
-│   │   ├── pipeline.go                 # 오케스트레이터 (126줄)
-│   │   ├── coordinator/
-│   │   │   └── coordinator.go          # Stage 1 (110줄)
-│   │   ├── fetcher/
-│   │   │   └── fetcher.go             # Stage 2 (133줄)
-│   │   ├── normalizer/
-│   │   │   └── normalizer.go          # Stage 3 (190줄)
-│   │   └── ingester/
-│   │       └── ingester.go            # Stage 4 (271줄)
+│   │   ├── pipeline.go                 # 파이프라인 오케스트레이터
+│   │   ├── registry.go                 # chain:network → Pipeline 레지스트리
+│   │   ├── health.go                   # Per-chain 건강 모니터링
+│   │   ├── config_watcher.go           # runtime_configs 폴링 (핫 리로드)
+│   │   ├── coordinator/                # Stage 1: 주소 스캔 + auto-tune
+│   │   ├── fetcher/                    # Stage 2: 병렬 RPC fetch
+│   │   ├── normalizer/                 # Stage 3: gRPC 디코드 + 정규화
+│   │   │   ├── normalizer_balance.go       # 공통 + Solana
+│   │   │   ├── normalizer_balance_evm.go   # EVM (Base/ETH/Polygon/...)
+│   │   │   └── normalizer_balance_btc.go   # BTC
+│   │   ├── ingester/                   # Stage 4: 벌크 DB 기록
+│   │   ├── finalizer/                  # 블록 최종성 승격
+│   │   ├── reorgdetector/             # 체인 reorg 감지 + 롤백
+│   │   ├── replay/                     # 히스토리 데이터 리플레이
+│   │   ├── retry/                      # 재시도 분류 (transient vs terminal)
+│   │   └── identity/                   # 공유 정규화 함수
+│   ├── reconciliation/                # 온체인 vs DB 잔액 검증
+│   ├── tracing/                        # OpenTelemetry 통합
 │   └── store/
-│       ├── redis/
-│       │   └── stream.go              # Redis (향후)
+│       ├── redis/                      # Redis 메시지 전송
 │       └── postgres/
-│           ├── db.go                  # 연결 풀
-│           ├── migrations/
-│           │   ├── 001_create_pipeline_tables.{up,down}.sql
-│           │   ├── 002_create_serving_tables.{up,down}.sql
-│           │   └── 003_balance_events.{up,down}.sql
-│           ├── transaction_repo.go
-│           ├── balance_event_repo.go
-│           ├── token_repo.go
-│           ├── balance_repo.go
-│           ├── cursor_repo.go
-│           ├── watched_address_repo.go
-│           └── indexer_config_repo.go
-├── proto/sidecar/v1/
-│   └── decoder.proto                  # gRPC 서비스 정의
-├── pkg/generated/sidecar/v1/          # Go protobuf 생성 코드
-├── sidecar/
-│   ├── src/
-│   │   ├── index.ts                   # gRPC 서버 시작
-│   │   ├── server.ts                  # proto-loader, 핸들러
-│   │   └── decoder/
-│   │       ├── index.ts               # 배치 디스패치
-│   │       └── solana/
-│   │           ├── transaction_decoder.ts  # 메타데이터 추출, outer instruction 구성
-│   │           └── plugin/
-│   │               ├── interface.ts        # EventPlugin 인터페이스
-│   │               ├── dispatcher.ts       # PluginDispatcher (priority + ownership)
-│   │               ├── registry.ts         # 플러그인 등록
-│   │               ├── types.ts            # BalanceEvent, ParsedOuterInstruction
-│   │               └── builtin/
-│   │                   ├── generic_spl_token.ts  # SPL Token / Token-2022
-│   │                   └── generic_system.ts     # System Program (SOL)
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── Dockerfile
-├── deployments/
-│   └── docker-compose.yaml
-├── docs/
-│   ├── architecture.md                # 이 문서
-│   ├── testing.md                     # 테스트 방법론
-│   ├── db-migration-rationale.md      # DB 모델 변경 비교
-│   └── diagrams/                      # draw.io 다이어그램
+│           ├── db.go                   # 연결 풀
+│           ├── migrations/             # 001~018 마이그레이션
+│           └── *_repo.go              # 11개 리포지토리
+├── proto/sidecar/v1/                   # Protobuf 정의
+├── pkg/generated/sidecar/v1/           # Go protobuf 생성 코드
+├── sidecar/                            # Node.js gRPC 디코더
+│   └── src/decoder/{solana,base,btc}/
+├── deployments/                        # Docker Compose + Helm
+├── test/loadtest/                      # 부하 테스트 도구
+├── docs/                               # 아키텍처, 테스트, 런북 등
 ├── Makefile
-├── go.mod
-├── go.sum
 └── CLAUDE.md
 ```

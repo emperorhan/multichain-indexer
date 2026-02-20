@@ -4,7 +4,9 @@ Backpressure-controlled parallel pipelining indexer for multi-chain custody serv
 
 Go 채널 기반의 4단계 파이프라인과 Node.js gRPC 사이드카로 구성된 멀티체인 블록체인 인덱서입니다. 각 스테이지는 독립적으로 스케일링되며, 버퍼링된 채널을 통해 자연스러운 backpressure를 전파합니다.
 
-> **Current Runtime Targets**: `solana-devnet`, `base-sepolia`, `btc-testnet`
+> **Supported Chains**: Solana, Base, Ethereum, BTC, Polygon, Arbitrum, BSC
+>
+> **Current Runtime Targets**: `solana-devnet`, `base-sepolia`, `btc-testnet`, `ethereum-mainnet`, `polygon-mainnet`, `arbitrum-mainnet`, `bsc-mainnet`
 >
 > 실행 범위는 환경변수로 선택합니다.
 > - `RUNTIME_DEPLOYMENT_MODE=like-group` + `RUNTIME_LIKE_GROUP=solana-like|evm-like|btc-like`
@@ -20,7 +22,7 @@ Go 채널 기반의 4단계 파이프라인과 Node.js gRPC 사이드카로 구�
 graph LR
     subgraph external_left [" "]
         RPC1["Solana RPC\n(JSON-RPC 2.0)"]
-        RPC2["Base RPC\n(JSON-RPC 2.0)"]
+        RPC2["EVM RPCs\n(Base/ETH/Polygon/\nArbitrum/BSC)"]
         RPC3["BTC RPC\n(JSON-RPC 2.0)"]
     end
 
@@ -309,7 +311,10 @@ erDiagram
     }
 ```
 
-**8 tables total** (4 pipeline state + 4 serving data) — 체인 수에 무관하게 고정.
+**11+ tables total** (pipeline state + serving data + operational) — 체인 수에 무관하게 고정.
+Core: `transactions`, `balance_events`, `balances`, `tokens`, `address_cursors`, `watched_addresses`, `indexer_configs`, `indexed_blocks`.
+Operational: `address_books`, `balance_reconciliation_snapshots`, `runtime_configs`.
+`balance_events`는 flat 테이블 (파티셔닝 제거됨), UNIQUE INDEX on `event_id`로 dedup.
 
 ---
 
@@ -424,110 +429,109 @@ make lint           # Run golangci-lint
 
 ```
 multichain-indexer/
-├── cmd/indexer/              # Entry point
+├── cmd/indexer/              # Entry point (main.go)
+├── configs/                  # YAML config example (config.example.yaml)
 ├── internal/
-│   ├── config/               # Environment config loading
-│   ├── domain/
-│   │   ├── model/            # DB models (8 types)
-│   │   └── event/            # Pipeline events (FetchJob, RawBatch, NormalizedBatch)
+│   ├── addressindex/         # Address index management
+│   ├── admin/                # Admin REST API (server, audit, rate limiting)
+│   ├── alert/                # Alert system (Slack, Webhook) with per-key cooldown
+│   ├── cache/                # LRU caching utilities
 │   ├── chain/
-│   │   ├── adapter.go        # ChainAdapter interface
-│   │   ├── solana/           # Solana adapter
-│   │   ├── base/             # Base(EVM-like) adapter
-│   │   └── btc/              # BTC adapter
+│   │   ├── adapter.go        # ChainAdapter + BlockScanAdapter interfaces
+│   │   ├── solana/           # Solana adapter (cursor-based)
+│   │   ├── base/             # Base adapter (block-scan)
+│   │   ├── btc/              # BTC adapter (block-scan)
+│   │   ├── ethereum/         # Ethereum adapter (block-scan)
+│   │   ├── polygon/          # Polygon adapter (block-scan)
+│   │   ├── arbitrum/         # Arbitrum adapter (block-scan)
+│   │   ├── bsc/              # BSC adapter (block-scan)
+│   │   └── ratelimit/        # Per-chain RPC rate limiting
+│   ├── config/               # YAML + env layered config loading
+│   ├── domain/
+│   │   ├── model/            # DB models + chain/network enums
+│   │   └── event/            # Pipeline events (FetchJob, RawBatch, NormalizedBatch)
+│   ├── metrics/              # Prometheus metrics definitions
 │   ├── pipeline/
 │   │   ├── pipeline.go       # Orchestrator (errgroup + channels)
-│   │   ├── coordinator/      # Stage 1: address scanning
+│   │   ├── registry.go       # Chain:Network → Pipeline registry
+│   │   ├── health.go         # Per-chain health monitoring (HEALTHY/UNHEALTHY/INACTIVE)
+│   │   ├── config_watcher.go # Hot config reload via runtime_configs polling
+│   │   ├── coordinator/      # Stage 1: address scanning + auto-tune
 │   │   ├── fetcher/          # Stage 2: parallel RPC fetch
-│   │   ├── normalizer/       # Stage 3: gRPC decode
-│   │   └── ingester/         # Stage 4: atomic DB write
-│   └── store/
-│       └── postgres/         # Repository implementations + migrations
+│   │   ├── normalizer/       # Stage 3: gRPC decode (balance event canonicalization)
+│   │   ├── ingester/         # Stage 4: atomic DB write (bulk operations)
+│   │   ├── finalizer/        # Block finality promotion
+│   │   ├── reorgdetector/    # Chain reorg detection + rollback
+│   │   ├── replay/           # Historical data replay service
+│   │   ├── retry/            # Retry classification (transient vs terminal)
+│   │   └── identity/         # Shared canonicalization functions
+│   ├── reconciliation/       # Balance reconciliation (on-chain vs DB)
+│   ├── store/
+│   │   └── postgres/         # 11 repository implementations + 18 migrations
+│   └── tracing/              # OpenTelemetry tracing integration
 ├── proto/sidecar/v1/         # Protobuf definitions
 ├── pkg/generated/            # Generated Go protobuf code
 ├── sidecar/                  # Node.js gRPC decoder (solana/base/btc)
-├── deployments/              # Docker Compose
-├── docs/                     # Architecture, testing, DB rationale
+├── deployments/              # Docker Compose + Helm charts
+├── docs/                     # Architecture, testing, runbook, etc.
+├── test/loadtest/            # Load testing tools
 └── Makefile
 ```
 
 ## Adding a New Chain
 
-`ChainAdapter` 인터페이스를 구현하면 파이프라인 코어 변경 없이 새 체인을 추가할 수 있습니다.
+`ChainAdapter` 인터페이스를 구현하면 파이프라인 코어 변경 없이 새 체인을 추가할 수 있습니다. EVM/BTC 계열은 `BlockScanAdapter`를 추가 구현하여 블록 범위 스캔을 지원합니다.
 
 ```go
+// 기본 인터페이스 (모든 체인)
 type ChainAdapter interface {
     Chain() string
     GetHeadSequence(ctx context.Context) (int64, error)
     FetchNewSignatures(ctx context.Context, address string, cursor *string, batchSize int) ([]SignatureInfo, error)
     FetchTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error)
 }
+
+// 블록 스캔 (EVM/BTC): 단일 블록 범위에서 모든 감시 주소 이벤트 수집
+type BlockScanAdapter interface {
+    ChainAdapter
+    ScanBlocks(ctx context.Context, startBlock, endBlock int64, watchedAddresses []string) ([]SignatureInfo, error)
+}
+
+// 선택적 확장 인터페이스
+type ReorgAwareAdapter interface { ... }     // Reorg 감지 + 롤백
+type BalanceQueryAdapter interface { ... }   // 온체인 잔액 조회 (reconciliation용)
 ```
 
-1. `internal/chain/<name>/adapter.go` — `ChainAdapter` 구현
+1. `internal/chain/<name>/adapter.go` — `ChainAdapter` (또는 `BlockScanAdapter`) 구현
 2. `sidecar/src/decoder/<name>/` — 체인 디코더 추가 + `sidecar/src/decoder/index.ts` 분기 추가
 3. `internal/config/config.go` + `cmd/indexer/main.go` — runtime target/like-group wiring 추가
-4. protobuf 계약 확장:
-   - 현재는 기존 RPC(`DecodeSolanaTransactionBatch`)로 호환 유지
-   - 계약 확장은 ADR(`docs/sidecar-deployment-decision.md`)의 chain-neutral 규칙을 따름
+4. `internal/pipeline/normalizer/normalizer_balance_*.go` — 체인별 balance event 정규화 로직 추가
 5. `chain_data` JSONB 구조 정의 + 테스트/런북 업데이트
 
-DDL 변경 없음. 기존 8개 테이블이 모든 체인을 수용합니다.
+DDL 변경 없음. 기존 테이블이 모든 체인을 수용합니다.
 
 ## Management Structure
 
-사람이 운영/의사결정할 때의 관리 구조는 아래 축으로 나뉩니다.
-
-1. 런타임 관리(서비스 경계/실행 범위)
-   - `RUNTIME_DEPLOYMENT_MODE`, `RUNTIME_LIKE_GROUP`, `RUNTIME_CHAIN_TARGET(S)`로 실행 범위를 관리
+1. **런타임 관리** (서비스 경계/실행 범위)
+   - `RUNTIME_DEPLOYMENT_MODE`, `RUNTIME_LIKE_GROUP`, `RUNTIME_CHAIN_TARGET(S)`로 실행 범위 관리
    - 코드 기준: `internal/config/config.go`, `cmd/indexer/main.go`
-2. 배포 관리(sidecar 단위 전략)
+2. **배포 관리** (sidecar 단위 전략)
    - 기본: 단일 sidecar 배포 단위
    - 분리 트리거/SLO/운영룰: `docs/sidecar-deployment-decision.md`
-3. 자율 에이전트 운영(Ralph loop)
-   - 역할: planner / developer / qa / manager
-   - 거버넌스 및 필수 검증: `AGENTS.md`, `docs/autonomy-policy.md`
-4. 장애 대응/검증 관리
+3. **장애 대응/검증 관리**
    - 운영 체크/복구: `docs/runbook.md`
    - 테스트 전략: `docs/testing.md`
-
-## Ralph Loop (Local First)
-
-로컬 Ralph 루프 기준으로 최소 실행 절차만 유지합니다.
-
-1. 초기화:
-   - `scripts/ralph_local_init.sh`
-2. 인증 확인:
-   - `scripts/codex_auth_status.sh --require-chatgpt`
-3. 데몬 시작:
-   - `scripts/ralph_local_daemon.sh start`
-4. 로컬 이슈 추가:
-   - `scripts/ralph_local_new_issue.sh developer "<title>"`
-5. 상태/로그:
-   - `scripts/ralph_local_daemon.sh status`
-   - `scripts/ralph_local_daemon.sh tail`
-6. 종료:
-   - `scripts/ralph_local_daemon.sh stop`
-
-신뢰 모드가 필요하면 시작 시 1회만 설정합니다.
-- `RALPH_LOCAL_TRUST_MODE=true scripts/ralph_local_daemon.sh start`
-
-GitHub 기반 루프(원격 runner, workflow 토글, auto-merge)는 기본 흐름에서 분리했고, 필요할 때만 아래 문서를 참고합니다.
-- `docs/autonomy-policy.md`
-- `docs/github-collaboration.md`
+   - 거버넌스: `AGENTS.md`, `docs/autonomy-policy.md`
 
 ## Docs
 
-- [Ralph Local Offline Mode](docs/ralph-local-offline-mode.md) — 로컬 루프 운영 정책(로컬 범위만)
-- [Ralph Local Script Map](docs/ralph-local-script-map.md) — 로컬 루프 기준 스크립트 분류표
-- [Ralph Loop Usage Guide](docs/ralph-loop-user-guide.md) — 시작/점검/중지 커맨드 요약
-- [Ralph Loop Troubleshooter](docs/ralph-loop-troubleshooter.md) — 실제 장애 원인/복구 체크리스트
-- [Architecture](docs/architecture.md) — 상세 아키텍처 명세서
-- [Sidecar Deployment Decision](docs/sidecar-deployment-decision.md) — sidecar 분리 트리거/SLO/운영 룰 ADR
+- [Architecture](docs/architecture.md) — 상세 아키텍처 명세서 (C4 모델, 파이프라인, DB 스키마)
 - [Testing](docs/testing.md) — 테스트 방법론 및 시나리오
-- [DB Migration Rationale](docs/db-migration-rationale.md) — AS-IS (JPA JOINED) → TO-BE (JSONB) 비교
-- [Roadmap](docs/roadmap.md) — 고도화 마일스톤과 우선순위
 - [Runbook](docs/runbook.md) — 장애 대응 및 복구 절차
+- [Roadmap](docs/roadmap.md) — 고도화 마일스톤과 우선순위
+- [DB Migration Rationale](docs/db-migration-rationale.md) — AS-IS (JPA JOINED) → TO-BE (JSONB) 비교
+- [Sidecar Deployment Decision](docs/sidecar-deployment-decision.md) — sidecar 분리 트리거/SLO/운영 룰 ADR
+- [PRD: Production Hardening](docs/prd-production-hardening.md) — 프로덕션 하드닝 요구사항
 - [Definition Of Done](docs/definition-of-done.md) — 작업 완료 기준
 - [GitHub Collaboration](docs/github-collaboration.md) — 이슈/PR/라벨/승인 운영 규칙
 - [Autonomy Policy](docs/autonomy-policy.md) — 에이전트 자율 실행 정책 및 큐 규칙
