@@ -49,6 +49,10 @@ cover.out
 logs/
 .testbed.pid
 
+# Evaluate
+evaluate
+test/evaluate/
+
 # AI tools
 .claude/
 .agent/
