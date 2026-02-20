@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/addressindex"
+	"github.com/emperorhan/multichain-indexer/internal/alert"
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
@@ -52,11 +55,14 @@ type Config struct {
 	ReorgDetectorInterval  time.Duration
 	FinalizerInterval      time.Duration
 	IndexedBlocksRetention int64
-	Fetcher                config.FetcherStageConfig
-	Normalizer             config.NormalizerStageConfig
-	Ingester               config.IngesterStageConfig
-	Health                 config.HealthStageConfig
-	ConfigWatcher          config.ConfigWatcherStageConfig
+	AddressIndex              config.AddressIndexConfig
+	Fetcher                   config.FetcherStageConfig
+	Normalizer                config.NormalizerStageConfig
+	Ingester                  config.IngesterStageConfig
+	Health                    config.HealthStageConfig
+	ConfigWatcher             config.ConfigWatcherStageConfig
+	ReorgDetectorMaxCheckDepth int
+	Alerter                   alert.Alerter
 }
 
 const streamBoundaryFetchToNormal = "fetcher-normalizer"
@@ -107,10 +113,12 @@ type Pipeline struct {
 	replayCh      chan replayOp
 	health        *PipelineHealth
 
-	// Activation control: allows runtime deactivation/reactivation.
-	active     atomic.Bool
-	activeMu   sync.Mutex
-	activeCh   chan struct{} // signaled when reactivated
+	// Activation control: uses sync.Cond to avoid signal loss.
+	active    atomic.Bool
+	activeMu  sync.Mutex
+	stateCond *sync.Cond
+	// stateFlag: 0=inactive, 1=active, -1=deactivation requested
+	stateFlag  atomic.Int32
 	deactiveCh chan struct{} // signaled when deactivated
 }
 
@@ -150,10 +158,11 @@ func New(
 		logger:     logger.With("component", "pipeline"),
 		replayCh:   make(chan replayOp, 1),
 		health:     health,
-		activeCh:   make(chan struct{}, 1),
 		deactiveCh: make(chan struct{}, 1),
 	}
+	p.stateCond = sync.NewCond(&p.activeMu)
 	p.active.Store(true)
+	p.stateFlag.Store(1)
 	return p
 }
 
@@ -174,11 +183,13 @@ func (p *Pipeline) Deactivate() {
 		return
 	}
 	p.active.Store(false)
+	p.stateFlag.Store(0)
 	p.health.SetStatus(HealthStatusInactive)
 	select {
 	case p.deactiveCh <- struct{}{}:
 	default:
 	}
+	p.stateCond.Broadcast()
 }
 
 // Activate reactivates a deactivated pipeline.
@@ -189,10 +200,8 @@ func (p *Pipeline) Activate() {
 		return
 	}
 	p.active.Store(true)
-	select {
-	case p.activeCh <- struct{}{}:
-	default:
-	}
+	p.stateFlag.Store(1)
+	p.stateCond.Broadcast()
 }
 
 // IsActive returns whether the pipeline is currently active.
@@ -235,17 +244,30 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			return err
 		}
 
-		// Wait if pipeline is deactivated.
+		// Wait if pipeline is deactivated — uses sync.Cond for signal safety.
 		if !p.active.Load() {
 			p.logger.Info("pipeline is deactivated, waiting for reactivation",
 				"chain", p.cfg.Chain, "network", p.cfg.Network)
+
+			// Wait for activation using sync.Cond (no signal loss)
+			activated := make(chan struct{})
+			go func() {
+				p.activeMu.Lock()
+				for p.stateFlag.Load() == 0 {
+					p.stateCond.Wait()
+				}
+				p.activeMu.Unlock()
+				close(activated)
+			}()
+
 			select {
-			case <-p.activeCh:
+			case <-activated:
 				p.logger.Info("pipeline reactivated",
 					"chain", p.cfg.Chain, "network", p.cfg.Network)
 				p.health.SetStatus(HealthStatusHealthy)
 				continue
 			case <-ctx.Done():
+				p.stateCond.Broadcast() // unblock waiting goroutine
 				return ctx.Err()
 			}
 		}
@@ -256,6 +278,11 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		runCtx, runCancel := context.WithCancel(ctx)
 		errCh := make(chan error, 1)
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					errCh <- fmt.Errorf("pipeline panic: %v\n%s", r, debug.Stack())
+				}
+			}()
 			errCh <- p.runPipeline(runCtx)
 		}()
 
@@ -440,6 +467,18 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		ingesterOpts = append(ingesterOpts, ingester.WithReplayService(p.replayService))
 	}
 	if isBlockScanAdapter {
+		addrIdx := addressindex.NewTieredIndex(p.repos.WatchedAddr, addressindex.TieredIndexConfig{
+			BloomExpectedItems: p.cfg.AddressIndex.BloomExpectedItems,
+			BloomFPR:           p.cfg.AddressIndex.BloomFPR,
+			LRUCapacity:        p.cfg.AddressIndex.LRUCapacity,
+			LRUTTL:             time.Duration(p.cfg.AddressIndex.LRUTTLSec) * time.Second,
+		})
+		if err := addrIdx.Reload(ctx, p.cfg.Chain, p.cfg.Network); err != nil {
+			p.logger.Warn("address index initial reload failed, continuing with empty index",
+				"chain", p.cfg.Chain, "network", p.cfg.Network, "error", err)
+		}
+		ingesterOpts = append(ingesterOpts, ingester.WithAddressIndex(addrIdx))
+		// Keep watchedAddrRepo as fallback
 		ingesterOpts = append(ingesterOpts, ingester.WithWatchedAddressRepo(p.repos.WatchedAddr))
 	}
 
@@ -526,6 +565,12 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 			reorgCh, p.cfg.ReorgDetectorInterval,
 			p.logger,
 		)
+		if p.cfg.ReorgDetectorMaxCheckDepth > 0 {
+			detector = detector.WithMaxCheckDepth(p.cfg.ReorgDetectorMaxCheckDepth)
+		}
+		if p.cfg.Alerter != nil {
+			detector = detector.WithAlerter(p.cfg.Alerter)
+		}
 		g.Go(func() error {
 			return detector.Run(gCtx)
 		})

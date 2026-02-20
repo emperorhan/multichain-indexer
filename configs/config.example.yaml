@@ -34,6 +34,8 @@ solana:
     burst: 20     # SOLANA_RPC_BURST
   max_page_size: 1000        # SOLANA_MAX_PAGE_SIZE
   max_concurrent_txs: 10     # SOLANA_MAX_CONCURRENT_TXS
+  block_scan_batch_size: 10    # SOLANA_BLOCK_SCAN_BATCH_SIZE
+  block_scan_concurrency: 10   # SOLANA_BLOCK_SCAN_CONCURRENCY — parallel slot fetches
 
 # Chain: Base (EVM L2)
 base:
@@ -146,6 +148,13 @@ pipeline:
   stream_namespace: "pipeline"       # PIPELINE_STREAM_NAMESPACE
   stream_session_id: ""              # PIPELINE_STREAM_SESSION_ID
 
+  # Address index (3-tier: bloom filter + LRU cache + DB)
+  address_index:
+    bloom_expected_items: 10000000  # ADDRESS_INDEX_BLOOM_EXPECTED_ITEMS
+    bloom_fpr: 0.001               # ADDRESS_INDEX_BLOOM_FPR
+    lru_capacity: 100000           # ADDRESS_INDEX_LRU_CAPACITY
+    lru_ttl_sec: 600               # ADDRESS_INDEX_LRU_TTL_SEC
+
   # Pipeline stage tuning: Fetcher
   fetcher:
     retry_max_attempts: 4              # FETCHER_RETRY_MAX_ATTEMPTS
@@ -184,6 +193,8 @@ server:
   admin_addr: ""             # ADMIN_ADDR (host:port or :port)
   admin_auth_user: ""        # ADMIN_AUTH_USER
   admin_auth_pass: ""        # ADMIN_AUTH_PASS
+  admin_rate_limit_enabled: true   # ADMIN_RATE_LIMIT_ENABLED (rate limit admin endpoints)
+  admin_require_auth: true         # ADMIN_REQUIRE_AUTH (require auth when admin_addr is set)
 
 # Logging
 log:
@@ -201,3 +212,11 @@ alert:
   slack_webhook_url: ""    # SLACK_WEBHOOK_URL
   webhook_url: ""          # ALERT_WEBHOOK_URL
   cooldown_ms: 1800000     # ALERT_COOLDOWN_MS (30 min default)
+
+# Reconciliation
+reconciliation:
+  interval_ms: 3600000       # RECONCILIATION_INTERVAL_MS (1 hour default)
+
+# Reorg Detector
+reorg_detector:
+  max_check_depth: 256       # REORG_DETECTOR_MAX_CHECK_DEPTH

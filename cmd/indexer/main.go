@@ -146,6 +146,10 @@ func logSecurityWarnings(cfg *config.Config, logger *slog.Logger) {
 		logger.Warn("SECURITY: /metrics endpoint has no authentication — set METRICS_AUTH_USER and METRICS_AUTH_PASS in production")
 	}
 	if cfg.Server.AdminAddr != "" && cfg.Server.AdminAuthUser == "" {
+		if cfg.Server.AdminRequireAuth {
+			logger.Error("SECURITY: admin API requires authentication but ADMIN_AUTH_USER is not set — set ADMIN_AUTH_USER and ADMIN_AUTH_PASS or set ADMIN_REQUIRE_AUTH=false")
+			os.Exit(1)
+		}
 		logger.Warn("SECURITY: admin API has no authentication — set ADMIN_AUTH_USER and ADMIN_AUTH_PASS in production")
 	}
 }
@@ -268,6 +272,7 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 	if cfg.Solana.MaxConcurrentTxs > 0 {
 		solanaOpts = append(solanaOpts, solana.WithMaxConcurrentTxs(cfg.Solana.MaxConcurrentTxs))
 	}
+	solanaOpts = append(solanaOpts, solana.WithNetwork(cfg.Solana.Network))
 	solanaAdapter := solana.NewAdapter(cfg.Solana.RPCURL, logger, solanaOpts...)
 	applyRateLimit(solanaAdapter, cfg.Solana.RateLimit, "solana")
 
@@ -542,6 +547,9 @@ func main() {
 		}
 	}
 
+	// Build alerter from config (needed by pipeline + reconciliation)
+	alerter := buildAlerter(cfg, logger)
+
 	// Create shared replay service
 	replayService := replay.NewService(db, repos.Balance, repos.Config, repos.IndexedBlock, logger)
 
@@ -550,10 +558,12 @@ func main() {
 	commitInterleaver := ingester.NewDeterministicMandatoryChainInterleaver(deterministicInterleaveMaxSkew)
 	for _, target := range targets {
 		pipelineCfg := pipeline.Config{
-			Chain:            target.chain,
-			Network:          target.network,
-			BatchSize:        cfg.Pipeline.BatchSize,
-			IndexingInterval: time.Duration(cfg.Pipeline.IndexingIntervalMs) * time.Millisecond,
+			Chain:                      target.chain,
+			Network:                    target.network,
+			BatchSize:                  cfg.Pipeline.BatchSize,
+			IndexingInterval:           time.Duration(cfg.Pipeline.IndexingIntervalMs) * time.Millisecond,
+			ReorgDetectorMaxCheckDepth: cfg.ReorgDetector.MaxCheckDepth,
+			Alerter:                    alerter,
 			CoordinatorAutoTune: pipeline.CoordinatorAutoTuneConfig{
 				Enabled:                    cfg.Pipeline.CoordinatorAutoTuneEnabled,
 				MinBatchSize:               cfg.Pipeline.CoordinatorAutoTuneMinBatchSize,
@@ -591,6 +601,7 @@ func main() {
 			ReorgDetectorInterval:  time.Duration(cfg.Pipeline.ReorgDetectorIntervalMs) * time.Millisecond,
 			FinalizerInterval:      time.Duration(cfg.Pipeline.FinalizerIntervalMs) * time.Millisecond,
 			IndexedBlocksRetention: int64(cfg.Pipeline.IndexedBlocksRetention),
+			AddressIndex:           cfg.Pipeline.AddressIndex,
 			Fetcher:                cfg.Pipeline.Fetcher,
 			Normalizer:             cfg.Pipeline.Normalizer,
 			Ingester:               cfg.Pipeline.Ingester,
@@ -618,9 +629,6 @@ func main() {
 		return runHealthServer(gCtx, cfg.Server.HealthPort, cfg.Server.MetricsAuthUser, cfg.Server.MetricsAuthPass, checker, logger)
 	})
 
-	// Build alerter from config
-	alerter := buildAlerter(cfg, logger)
-
 	// Build reconciliation service
 	reconService := reconciliation.NewService(
 		db.DB, repos.Balance, repos.WatchedAddr, repos.Token, alerter, logger,
@@ -631,6 +639,14 @@ func main() {
 		if bqa, ok := target.adapter.(chain.BalanceQueryAdapter); ok {
 			reconService.RegisterAdapter(target.chain, target.network, bqa)
 		}
+	}
+
+	// Start periodic reconciliation
+	if cfg.Reconciliation.IntervalMS > 0 {
+		reconInterval := time.Duration(cfg.Reconciliation.IntervalMS) * time.Millisecond
+		g.Go(func() error {
+			return reconService.RunPeriodic(gCtx, reconInterval)
+		})
 	}
 
 	// Address book repo
@@ -647,6 +663,10 @@ func main() {
 			admin.WithAddressBookRepo(addressBookRepo),
 		)
 		var adminHandler http.Handler = adminSrv.Handler()
+		adminHandler = admin.AuditMiddleware(logger, adminHandler)
+		if cfg.Server.AdminRateLimitEnabled {
+			adminHandler = admin.NewRateLimitMiddleware(logger).Wrap(adminHandler)
+		}
 		if cfg.Server.AdminAuthUser != "" && cfg.Server.AdminAuthPass != "" {
 			adminHandler = basicAuthMiddleware(cfg.Server.AdminAuthUser, cfg.Server.AdminAuthPass, adminHandler)
 		}

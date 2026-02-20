@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/addressindex"
 	"github.com/emperorhan/multichain-indexer/internal/cache"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
@@ -59,6 +60,7 @@ type Ingester struct {
 	deniedCache       *cache.LRU[string, bool]
 	replayService     *replay.Service
 	watchedAddrRepo   store.WatchedAddressRepository
+	addressIndex      addressindex.Index
 }
 
 type Option func(*Ingester)
@@ -108,6 +110,12 @@ func WithReplayService(svc *replay.Service) Option {
 func WithWatchedAddressRepo(repo store.WatchedAddressRepository) Option {
 	return func(ing *Ingester) {
 		ing.watchedAddrRepo = repo
+	}
+}
+
+func WithAddressIndex(idx addressindex.Index) Option {
+	return func(ing *Ingester) {
+		ing.addressIndex = idx
 	}
 }
 
@@ -470,13 +478,15 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		}
 	}
 
-	// Block-scan mode: resolve per-address wallet/org mapping from watched_addresses table
+	// Block-scan mode: resolve per-address wallet/org mapping.
+	// Prefer addressIndex (O(1) bloom → LRU → DB) over full table load.
 	type addrMeta struct {
 		walletID *string
 		orgID    *string
 	}
 	var blockScanAddrMap map[string]addrMeta
-	if batch.BlockScanMode && ing.watchedAddrRepo != nil {
+	if batch.BlockScanMode && ing.addressIndex == nil && ing.watchedAddrRepo != nil {
+		// Fallback: load all active addresses (legacy path)
 		activeAddrs, err := ing.watchedAddrRepo.GetActive(ctx, batch.Chain, batch.Network)
 		if err != nil {
 			return fmt.Errorf("fetch watched addresses for block-scan: %w", err)
@@ -779,13 +789,22 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		eventWalletID := batch.WalletID
 		eventOrgID := batch.OrgID
 		eventWatchedAddr := &batch.Address
-		if batch.BlockScanMode && blockScanAddrMap != nil {
-			if meta, ok := blockScanAddrMap[ec.be.Address]; ok {
-				eventWalletID = meta.walletID
-				eventOrgID = meta.orgID
-			}
+		if batch.BlockScanMode {
 			addr := ec.be.Address
 			eventWatchedAddr = &addr
+			if ing.addressIndex != nil {
+				// Fast path: 3-tier index (bloom → LRU → DB)
+				if wa := ing.addressIndex.Lookup(ctx, batch.Chain, batch.Network, ec.be.Address); wa != nil {
+					eventWalletID = wa.WalletID
+					eventOrgID = wa.OrganizationID
+				}
+			} else if blockScanAddrMap != nil {
+				// Legacy fallback: full address map
+				if meta, ok := blockScanAddrMap[ec.be.Address]; ok {
+					eventWalletID = meta.walletID
+					eventOrgID = meta.orgID
+				}
+			}
 		}
 
 		beModel := &model.BalanceEvent{
@@ -1042,6 +1061,12 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 	metrics.IngesterBalanceEventsWritten.WithLabelValues(batch.Chain.String(), batch.Network.String()).Add(float64(totalEvents))
 	metrics.PipelineCursorSequence.WithLabelValues(batch.Chain.String(), batch.Network.String(), batch.Address).Set(float64(batch.NewCursorSequence))
 
+	// E2E latency: oldest block_time in batch → now
+	if oldest := oldestBlockTime(batch); oldest != nil {
+		e2e := time.Since(*oldest).Seconds()
+		metrics.PipelineE2ELatencySeconds.WithLabelValues(batch.Chain.String(), batch.Network.String()).Observe(e2e)
+	}
+
 	ing.logger.Info("batch ingested",
 		"address", batch.Address,
 		"txs", len(batch.Transactions),
@@ -1147,7 +1172,7 @@ func (ing *Ingester) handleReorg(ctx context.Context, reorg event.ReorgEvent) er
 
 	// 5. Delete indexed blocks from fork block onward
 	if ing.blockRepo != nil {
-		if err := ing.blockRepo.DeleteFromBlockTx(ctx, dbTx, reorg.Chain, reorg.Network, reorg.ForkBlockNumber); err != nil {
+		if _, err := ing.blockRepo.DeleteFromBlockTx(ctx, dbTx, reorg.Chain, reorg.Network, reorg.ForkBlockNumber); err != nil {
 			return fmt.Errorf("delete reorg indexed blocks: %w", err)
 		}
 	}
@@ -2053,4 +2078,18 @@ func nativeTokenDecimals(ch model.Chain) int {
 	default:
 		return 18 // EVM chains
 	}
+}
+
+// oldestBlockTime returns the earliest block_time from the batch transactions.
+func oldestBlockTime(batch event.NormalizedBatch) *time.Time {
+	var oldest *time.Time
+	for _, tx := range batch.Transactions {
+		if tx.BlockTime == nil {
+			continue
+		}
+		if oldest == nil || tx.BlockTime.Before(*oldest) {
+			oldest = tx.BlockTime
+		}
+	}
+	return oldest
 }

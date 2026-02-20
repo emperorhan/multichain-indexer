@@ -134,16 +134,17 @@ func (r *IndexedBlockRepo) UpdateFinalityTx(ctx context.Context, tx *sql.Tx, cha
 	return nil
 }
 
-func (r *IndexedBlockRepo) DeleteFromBlockTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) error {
+func (r *IndexedBlockRepo) DeleteFromBlockTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) (int64, error) {
 	const query = `
 		DELETE FROM indexed_blocks
 		WHERE chain = $1 AND network = $2 AND block_number >= $3
 	`
-	_, err := tx.ExecContext(ctx, query, chain, network, fromBlock)
+	res, err := tx.ExecContext(ctx, query, chain, network, fromBlock)
 	if err != nil {
-		return fmt.Errorf("delete indexed blocks from %d: %w", fromBlock, err)
+		return 0, fmt.Errorf("delete indexed blocks from %d: %w", fromBlock, err)
 	}
-	return nil
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 func (r *IndexedBlockRepo) PurgeFinalizedBefore(ctx context.Context, chain model.Chain, network model.Network, beforeBlock int64) (int64, error) {

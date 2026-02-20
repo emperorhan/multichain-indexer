@@ -75,3 +75,23 @@ type InnerInstruction struct {
 	Index        int                    `json:"index"`
 	Instructions []json.RawMessage      `json:"instructions"`
 }
+
+// GetBlock types
+
+type GetBlockOpts struct {
+	Commitment         string // "confirmed" (default)
+	TransactionDetails string // "full" (default), "signatures", "none"
+}
+
+type BlockResult struct {
+	Blockhash         string             `json:"blockhash"`
+	PreviousBlockhash string             `json:"previousBlockhash"`
+	ParentSlot        int64              `json:"parentSlot"`
+	BlockTime         *int64             `json:"blockTime"`
+	Transactions      []BlockTransaction `json:"transactions,omitempty"`
+}
+
+type BlockTransaction struct {
+	Transaction json.RawMessage `json:"transaction"`
+	Meta        json.RawMessage `json:"meta"`
+}

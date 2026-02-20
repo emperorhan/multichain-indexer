@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"strings"
 
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"golang.org/x/time/rate"
@@ -29,4 +30,32 @@ func (l *Limiter) Wait(ctx context.Context) error {
 		return l.limiter.Wait(ctx)
 	}
 	return nil
+}
+
+// RecordRPCCall records an RPC call metric with status classification.
+func RecordRPCCall(chain, method string, err error) {
+	status := ClassifyRPCError(err)
+	metrics.RPCCallsTotal.WithLabelValues(chain, method, status).Inc()
+}
+
+// ClassifyRPCError classifies an RPC error into a category.
+func ClassifyRPCError(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	lower := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline exceeded"):
+		return "timeout"
+	case strings.Contains(lower, "rate limit") || strings.Contains(lower, "429") || strings.Contains(lower, "too many requests"):
+		return "rate_limited"
+	case strings.Contains(lower, "500") || strings.Contains(lower, "502") || strings.Contains(lower, "503") || strings.Contains(lower, "internal server error"):
+		return "server_error"
+	case strings.Contains(lower, "connection refused") || strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "network is unreachable") || strings.Contains(lower, "no such host") ||
+		strings.Contains(lower, "broken pipe") || strings.Contains(lower, "eof"):
+		return "network_error"
+	default:
+		return "client_error"
+	}
 }

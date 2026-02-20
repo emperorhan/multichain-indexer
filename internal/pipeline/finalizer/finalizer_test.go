@@ -64,8 +64,8 @@ func (f *fakeBlockRepo) GetByBlockNumber(_ context.Context, _ model.Chain, _ mod
 func (f *fakeBlockRepo) UpdateFinalityTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64, _ string) error {
 	return nil
 }
-func (f *fakeBlockRepo) DeleteFromBlockTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) error {
-	return nil
+func (f *fakeBlockRepo) DeleteFromBlockTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) (int64, error) {
+	return 0, nil
 }
 func (f *fakeBlockRepo) PurgeFinalizedBefore(_ context.Context, _ model.Chain, _ model.Network, beforeBlock int64) (int64, error) {
 	f.purgedBefore = beforeBlock

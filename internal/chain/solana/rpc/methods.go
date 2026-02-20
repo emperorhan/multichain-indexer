@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/emperorhan/multichain-indexer/internal/chain/ratelimit"
 )
 
 // GetSlot returns the current slot.
@@ -12,6 +14,7 @@ func (c *Client) GetSlot(ctx context.Context, commitment string) (int64, error) 
 		map[string]string{"commitment": commitment},
 	}
 	result, err := c.call(ctx, "getSlot", params)
+	ratelimit.RecordRPCCall("solana", "getSlot", err)
 	if err != nil {
 		return 0, fmt.Errorf("getSlot: %w", err)
 	}
@@ -43,6 +46,7 @@ func (c *Client) GetSignaturesForAddress(ctx context.Context, address string, op
 
 	params := []interface{}{address, config}
 	result, err := c.call(ctx, "getSignaturesForAddress", params)
+	ratelimit.RecordRPCCall("solana", "getSignaturesForAddress", err)
 	if err != nil {
 		return nil, fmt.Errorf("getSignaturesForAddress: %w", err)
 	}
@@ -64,6 +68,7 @@ type GetSignaturesOpts struct {
 func (c *Client) GetTransaction(ctx context.Context, signature string) (json.RawMessage, error) {
 	params := buildGetTransactionParams(signature)
 	result, err := c.call(ctx, "getTransaction", params)
+	ratelimit.RecordRPCCall("solana", "getTransaction", err)
 	if err != nil {
 		return nil, fmt.Errorf("getTransaction(%s): %w", signature, err)
 	}
@@ -81,6 +86,7 @@ func (c *Client) GetTransactions(ctx context.Context, signatures []string) ([]js
 	}
 
 	responses, err := c.callBatch(ctx, requests)
+	ratelimit.RecordRPCCall("solana", "getTransaction_batch", err)
 	if err != nil {
 		return nil, fmt.Errorf("getTransaction batch: %w", err)
 	}
@@ -93,6 +99,48 @@ func (c *Client) GetTransactions(ctx context.Context, signatures []string) ([]js
 		results[i] = response.Result
 	}
 	return results, nil
+}
+
+// GetBlock returns block data for a given slot.
+// Solana returns null for skipped slots — in that case we return (nil, nil).
+func (c *Client) GetBlock(ctx context.Context, slot int64, opts *GetBlockOpts) (*BlockResult, error) {
+	commitment := "confirmed"
+	txDetails := "full"
+	if opts != nil {
+		if opts.Commitment != "" {
+			commitment = opts.Commitment
+		}
+		if opts.TransactionDetails != "" {
+			txDetails = opts.TransactionDetails
+		}
+	}
+
+	params := []interface{}{
+		slot,
+		map[string]interface{}{
+			"encoding":                       "jsonParsed",
+			"commitment":                     commitment,
+			"transactionDetails":             txDetails,
+			"maxSupportedTransactionVersion": 0,
+		},
+	}
+
+	result, err := c.call(ctx, "getBlock", params)
+	ratelimit.RecordRPCCall("solana", "getBlock", err)
+	if err != nil {
+		return nil, fmt.Errorf("getBlock(%d): %w", slot, err)
+	}
+
+	// Skipped slot: Solana returns null
+	if string(result) == "null" || len(result) == 0 {
+		return nil, nil
+	}
+
+	var block BlockResult
+	if err := json.Unmarshal(result, &block); err != nil {
+		return nil, fmt.Errorf("unmarshal block(%d): %w", slot, err)
+	}
+	return &block, nil
 }
 
 func buildGetTransactionParams(signature string) []interface{} {

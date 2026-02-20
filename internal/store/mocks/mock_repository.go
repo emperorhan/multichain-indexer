@@ -302,6 +302,20 @@ func (mr *MockBalanceEventRepositoryMockRecorder) UpsertTx(ctx, tx, be any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTx", reflect.TypeOf((*MockBalanceEventRepository)(nil).UpsertTx), ctx, tx, be)
 }
 
+// RecalculateBalanceFieldsTx mocks base method.
+func (m *MockBalanceEventRepository) RecalculateBalanceFieldsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecalculateBalanceFieldsTx", ctx, tx, chain, network, fromBlock)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecalculateBalanceFieldsTx indicates an expected call of RecalculateBalanceFieldsTx.
+func (mr *MockBalanceEventRepositoryMockRecorder) RecalculateBalanceFieldsTx(ctx, tx, chain, network, fromBlock any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecalculateBalanceFieldsTx", reflect.TypeOf((*MockBalanceEventRepository)(nil).RecalculateBalanceFieldsTx), ctx, tx, chain, network, fromBlock)
+}
+
 // MockBalanceRepository is a mock of BalanceRepository interface.
 type MockBalanceRepository struct {
 	ctrl     *gomock.Controller

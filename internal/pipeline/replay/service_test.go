@@ -98,9 +98,9 @@ func (m *mockBlockRepo) UpdateFinalityTx(_ context.Context, _ *sql.Tx, _ model.C
 	return nil
 }
 
-func (m *mockBlockRepo) DeleteFromBlockTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) error {
+func (m *mockBlockRepo) DeleteFromBlockTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) (int64, error) {
 	m.deleteFromCalled = true
-	return nil
+	return 0, nil
 }
 
 func (m *mockBlockRepo) PurgeFinalizedBefore(_ context.Context, _ model.Chain, _ model.Network, _ int64) (int64, error) {

@@ -283,6 +283,10 @@ func (b *batchCapableClient) GetTransactions(_ context.Context, _ []string) ([]j
 	return b.results, nil
 }
 
+func (b *batchCapableClient) GetBlock(context.Context, int64, *rpc.GetBlockOpts) (*rpc.BlockResult, error) {
+	return nil, nil
+}
+
 func TestAdapter_FetchTransactions_BatchPreferred(t *testing.T) {
 	client := &batchCapableClient{
 		results: []json.RawMessage{
@@ -302,4 +306,179 @@ func TestAdapter_FetchTransactions_BatchPreferred(t *testing.T) {
 	require.Len(t, results, 2)
 	assert.True(t, client.batchCalled)
 	assert.False(t, client.singleCalled)
+}
+
+// --- ScanBlocks tests ---
+
+func makeBlockTx(sig string, accountKeys []string, preOwners, postOwners []string) rpc.BlockTransaction {
+	keysJSON := "["
+	for i, k := range accountKeys {
+		if i > 0 {
+			keysJSON += ","
+		}
+		keysJSON += `"` + k + `"`
+	}
+	keysJSON += "]"
+
+	txJSON := `{"signatures":["` + sig + `"],"message":{"accountKeys":` + keysJSON + `}}`
+
+	preBal := "["
+	for i, o := range preOwners {
+		if i > 0 {
+			preBal += ","
+		}
+		preBal += `{"owner":"` + o + `","accountIndex":0,"mint":"m","uiTokenAmount":{"uiAmount":1,"decimals":6,"amount":"1000000"},"programId":"p"}`
+	}
+	preBal += "]"
+
+	postBal := "["
+	for i, o := range postOwners {
+		if i > 0 {
+			postBal += ","
+		}
+		postBal += `{"owner":"` + o + `","accountIndex":0,"mint":"m","uiTokenAmount":{"uiAmount":1,"decimals":6,"amount":"1000000"},"programId":"p"}`
+	}
+	postBal += "]"
+
+	metaJSON := `{"preTokenBalances":` + preBal + `,"postTokenBalances":` + postBal + `}`
+
+	return rpc.BlockTransaction{
+		Transaction: json.RawMessage(txJSON),
+		Meta:        json.RawMessage(metaJSON),
+	}
+}
+
+func TestAdapter_ScanBlocks_HappyPath(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	adapter, mockClient := newTestAdapter(ctrl)
+
+	bt := int64(1700000000)
+	// Slot 100: tx with watched address in accountKeys
+	mockClient.EXPECT().GetBlock(gomock.Any(), int64(100), gomock.Any()).Return(&rpc.BlockResult{
+		Blockhash: "hash100",
+		BlockTime: &bt,
+		Transactions: []rpc.BlockTransaction{
+			makeBlockTx("sig100a", []string{"watched1", "other"}, nil, nil),
+			makeBlockTx("sig100b", []string{"other1", "other2"}, nil, nil),
+		},
+	}, nil)
+
+	// Slot 101: tx with watched address in postTokenBalances owner
+	mockClient.EXPECT().GetBlock(gomock.Any(), int64(101), gomock.Any()).Return(&rpc.BlockResult{
+		Blockhash: "hash101",
+		BlockTime: &bt,
+		Transactions: []rpc.BlockTransaction{
+			makeBlockTx("sig101a", []string{"ata_addr"}, nil, []string{"watched2"}),
+		},
+	}, nil)
+
+	// Slot 102: no watched addresses
+	mockClient.EXPECT().GetBlock(gomock.Any(), int64(102), gomock.Any()).Return(&rpc.BlockResult{
+		Blockhash: "hash102",
+		BlockTime: &bt,
+		Transactions: []rpc.BlockTransaction{
+			makeBlockTx("sig102a", []string{"unrelated"}, nil, nil),
+		},
+	}, nil)
+
+	sigs, err := adapter.ScanBlocks(context.Background(), 100, 102, []string{"watched1", "watched2"})
+	require.NoError(t, err)
+	require.Len(t, sigs, 2)
+	assert.Equal(t, "sig100a", sigs[0].Hash)
+	assert.Equal(t, int64(100), sigs[0].Sequence)
+	assert.Equal(t, "sig101a", sigs[1].Hash)
+	assert.Equal(t, int64(101), sigs[1].Sequence)
+}
+
+func TestAdapter_ScanBlocks_SkippedSlots(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	adapter, mockClient := newTestAdapter(ctrl)
+
+	bt := int64(1700000000)
+	// Slot 100: skipped (nil)
+	mockClient.EXPECT().GetBlock(gomock.Any(), int64(100), gomock.Any()).Return(nil, nil)
+	// Slot 101: has a tx
+	mockClient.EXPECT().GetBlock(gomock.Any(), int64(101), gomock.Any()).Return(&rpc.BlockResult{
+		Blockhash: "hash101",
+		BlockTime: &bt,
+		Transactions: []rpc.BlockTransaction{
+			makeBlockTx("sig101", []string{"watched1"}, nil, nil),
+		},
+	}, nil)
+	// Slot 102: skipped
+	mockClient.EXPECT().GetBlock(gomock.Any(), int64(102), gomock.Any()).Return(nil, nil)
+
+	sigs, err := adapter.ScanBlocks(context.Background(), 100, 102, []string{"watched1"})
+	require.NoError(t, err)
+	require.Len(t, sigs, 1)
+	assert.Equal(t, "sig101", sigs[0].Hash)
+}
+
+func TestAdapter_ScanBlocks_SPLTokenOwnerMatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	adapter, mockClient := newTestAdapter(ctrl)
+
+	bt := int64(1700000000)
+	// accountKeys has only ATA, but postTokenBalances.owner has the watched address
+	mockClient.EXPECT().GetBlock(gomock.Any(), int64(200), gomock.Any()).Return(&rpc.BlockResult{
+		Blockhash: "hash200",
+		BlockTime: &bt,
+		Transactions: []rpc.BlockTransaction{
+			makeBlockTx("sigSPL", []string{"ata_address", "token_program"}, []string{"sender_owner"}, []string{"watched_wallet"}),
+		},
+	}, nil)
+
+	sigs, err := adapter.ScanBlocks(context.Background(), 200, 200, []string{"watched_wallet"})
+	require.NoError(t, err)
+	require.Len(t, sigs, 1)
+	assert.Equal(t, "sigSPL", sigs[0].Hash)
+}
+
+func TestAdapter_ScanBlocks_NativeSOLTransfer(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	adapter, mockClient := newTestAdapter(ctrl)
+
+	bt := int64(1700000000)
+	mockClient.EXPECT().GetBlock(gomock.Any(), int64(300), gomock.Any()).Return(&rpc.BlockResult{
+		Blockhash: "hash300",
+		BlockTime: &bt,
+		Transactions: []rpc.BlockTransaction{
+			makeBlockTx("sigNative", []string{"sender", "watched_recipient", "system_program"}, nil, nil),
+		},
+	}, nil)
+
+	sigs, err := adapter.ScanBlocks(context.Background(), 300, 300, []string{"watched_recipient"})
+	require.NoError(t, err)
+	require.Len(t, sigs, 1)
+	assert.Equal(t, "sigNative", sigs[0].Hash)
+}
+
+func TestAdapter_ScanBlocks_NoWatchedAddresses(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	adapter, _ := newTestAdapter(ctrl)
+
+	sigs, err := adapter.ScanBlocks(context.Background(), 100, 200, []string{})
+	require.NoError(t, err)
+	assert.Empty(t, sigs)
+}
+
+func TestAdapter_ScanBlocks_EmptyRange(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	adapter, _ := newTestAdapter(ctrl)
+
+	sigs, err := adapter.ScanBlocks(context.Background(), 200, 100, []string{"addr1"})
+	require.NoError(t, err)
+	assert.Empty(t, sigs)
+}
+
+func TestAdapter_ScanBlocks_RPCError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	adapter, mockClient := newTestAdapter(ctrl)
+
+	mockClient.EXPECT().GetBlock(gomock.Any(), int64(100), gomock.Any()).
+		Return(nil, errors.New("rpc unavailable"))
+
+	_, err := adapter.ScanBlocks(context.Background(), 100, 100, []string{"addr1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rpc unavailable")
 }

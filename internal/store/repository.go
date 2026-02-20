@@ -49,6 +49,7 @@ type BulkUpsertEventResult struct {
 type BalanceEventRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (UpsertResult, error)
 	BulkUpsertTx(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (BulkUpsertEventResult, error)
+	RecalculateBalanceFieldsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) error
 }
 
 // BalanceKey uniquely identifies a balance record.
@@ -112,7 +113,7 @@ type IndexedBlockRepository interface {
 	GetUnfinalized(ctx context.Context, chain model.Chain, network model.Network) ([]model.IndexedBlock, error)
 	GetByBlockNumber(ctx context.Context, chain model.Chain, network model.Network, blockNumber int64) (*model.IndexedBlock, error)
 	UpdateFinalityTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, upToBlock int64, newState string) error
-	DeleteFromBlockTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) error
+	DeleteFromBlockTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) (int64, error)
 	PurgeFinalizedBefore(ctx context.Context, chain model.Chain, network model.Network, beforeBlock int64) (int64, error)
 }
 

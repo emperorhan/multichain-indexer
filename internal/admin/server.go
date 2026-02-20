@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -269,12 +270,13 @@ func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 // --- Replay endpoints ---
 
 type replayRequest struct {
-	Chain     string `json:"chain"`
-	Network   string `json:"network"`
-	FromBlock *int64 `json:"from_block"`
-	DryRun    bool   `json:"dry_run"`
-	Force     bool   `json:"force"`
-	Reason    string `json:"reason"`
+	Chain        string `json:"chain"`
+	Network      string `json:"network"`
+	FromBlock    *int64 `json:"from_block"`
+	DryRun       bool   `json:"dry_run"`
+	Force        bool   `json:"force"`
+	ConfirmForce bool   `json:"confirm_force"`
+	Reason       string `json:"reason"`
 }
 
 func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
@@ -311,6 +313,14 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 
 	if !s.replayReq.HasPipeline(chain, network) {
 		http.Error(w, `{"error":"pipeline not found for chain/network"}`, http.StatusNotFound)
+		return
+	}
+
+	// Safety check: force + non-dry-run requires explicit confirm_force
+	if req.Force && !req.DryRun && !req.ConfirmForce {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `{"error":"force=true with dry_run=false requires confirm_force=true","warning":"This will permanently delete data from block %d"}`, *req.FromBlock)
 		return
 	}
 

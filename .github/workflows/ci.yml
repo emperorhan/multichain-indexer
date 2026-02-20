@@ -1,7 +1,10 @@
 name: CI
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -11,8 +14,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      sidecar: ${{ steps.filter.outputs.sidecar }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Path filter
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+            sidecar:
+              - 'sidecar/**'
+
   go-test-build:
     name: Go Test + Build
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,14 +54,25 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
-      - name: Run Go tests
-        run: go test ./... -v -race -count=1
+      - name: Run Go tests with coverage
+        run: go test ./... -race -count=1 -coverprofile=coverage.out
+
+      - name: Print coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+        continue-on-error: true
 
       - name: Build indexer
         run: go build ./cmd/indexer
 
   go-lint:
     name: Go Lint
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -54,6 +92,8 @@ jobs:
 
   sidecar-test-build:
     name: Sidecar Test + Build
+    needs: changes
+    if: needs.changes.outputs.sidecar == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:

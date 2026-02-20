@@ -50,6 +50,7 @@ func (c *Client) SetRateLimiter(l *ratelimit.Limiter) {
 func (c *Client) call(ctx context.Context, method string, params []interface{}) (json.RawMessage, error) {
 	if c.limiter != nil {
 		if err := c.limiter.Wait(ctx); err != nil {
+			ratelimit.RecordRPCCall("evm", method, err)
 			return nil, fmt.Errorf("rate limiter: %w", err)
 		}
 	}
@@ -69,28 +70,35 @@ func (c *Client) call(ctx context.Context, method string, params []interface{}) 
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		ratelimit.RecordRPCCall("evm", method, err)
 		return nil, fmt.Errorf("http request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		ratelimit.RecordRPCCall("evm", method, err)
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, string(respBody))
+		callErr := fmt.Errorf("http status %d: %s", resp.StatusCode, string(respBody))
+		ratelimit.RecordRPCCall("evm", method, callErr)
+		return nil, callErr
 	}
 
 	var rpcResp Response
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
+		ratelimit.RecordRPCCall("evm", method, err)
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
 	if rpcResp.Error != nil {
+		ratelimit.RecordRPCCall("evm", method, rpcResp.Error)
 		return nil, rpcResp.Error
 	}
 
+	ratelimit.RecordRPCCall("evm", method, nil)
 	return rpcResp.Result, nil
 }
 

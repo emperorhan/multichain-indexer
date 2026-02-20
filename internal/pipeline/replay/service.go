@@ -241,9 +241,11 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 
 	// Step 5: Delete indexed blocks from fromBlock onward
 	if s.blockRepo != nil {
-		if err := s.blockRepo.DeleteFromBlockTx(ctx, dbTx, req.Chain, req.Network, req.FromBlock); err != nil {
+		blocksDeleted, err := s.blockRepo.DeleteFromBlockTx(ctx, dbTx, req.Chain, req.Network, req.FromBlock)
+		if err != nil {
 			return nil, fmt.Errorf("delete indexed blocks: %w", err)
 		}
+		result.PurgedBlocks = blocksDeleted
 	}
 
 	// Step 6: Rewind cursors for affected addresses (skip for block-scan mode)
@@ -285,6 +287,10 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 	networkStr := string(req.Network)
 	metrics.ReplayPurgesTotal.WithLabelValues(chainStr, networkStr).Inc()
 	metrics.ReplayPurgedEventsTotal.WithLabelValues(chainStr, networkStr).Add(float64(result.PurgedEvents))
+	metrics.ReplayBalancesReversedTotal.WithLabelValues(chainStr, networkStr).Add(float64(result.ReversedBalances))
+	metrics.ReplayTransactionsDeletedTotal.WithLabelValues(chainStr, networkStr).Add(float64(result.PurgedTransactions))
+	metrics.ReplayBlocksDeletedTotal.WithLabelValues(chainStr, networkStr).Add(float64(result.PurgedBlocks))
+	metrics.ReplayCursorsRewoundTotal.WithLabelValues(chainStr, networkStr).Add(float64(result.CursorsRewound))
 	metrics.ReplayPurgeDurationSeconds.WithLabelValues(chainStr, networkStr).Observe(time.Since(start).Seconds())
 
 	s.logger.Info("purge completed",

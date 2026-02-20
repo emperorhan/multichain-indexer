@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/cache"
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	chainmocks "github.com/emperorhan/multichain-indexer/internal/chain/mocks"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
@@ -26,9 +27,10 @@ func TestProcessJob_HappyPath(t *testing.T) {
 
 	rawBatchCh := make(chan event.RawBatch, 1)
 	f := &Fetcher{
-		adapter:    mockAdapter,
-		rawBatchCh: rawBatchCh,
-		logger:     slog.Default(),
+		adapter:            mockAdapter,
+		rawBatchCh:         rawBatchCh,
+		logger:             slog.Default(),
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	walletID := "wallet-1"
@@ -87,9 +89,10 @@ func TestProcessJob_NoSignatures(t *testing.T) {
 
 	rawBatchCh := make(chan event.RawBatch, 1)
 	f := &Fetcher{
-		adapter:    mockAdapter,
-		rawBatchCh: rawBatchCh,
-		logger:     slog.Default(),
+		adapter:            mockAdapter,
+		rawBatchCh:         rawBatchCh,
+		logger:             slog.Default(),
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	job := event.FetchJob{
@@ -118,9 +121,10 @@ func TestProcessJob_FetchSignaturesError(t *testing.T) {
 	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
 
 	f := &Fetcher{
-		adapter:          mockAdapter,
-		logger:           slog.Default(),
-		retryMaxAttempts: 1,
+		adapter:            mockAdapter,
+		logger:             slog.Default(),
+		retryMaxAttempts:   1,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	job := event.FetchJob{
@@ -144,9 +148,10 @@ func TestProcessJob_FetchTransactionsError(t *testing.T) {
 	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
 
 	f := &Fetcher{
-		adapter:          mockAdapter,
-		logger:           slog.Default(),
-		retryMaxAttempts: 1,
+		adapter:            mockAdapter,
+		logger:             slog.Default(),
+		retryMaxAttempts:   1,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	job := event.FetchJob{
@@ -194,11 +199,12 @@ func TestFetcher_Worker_ReturnsErrorOnProcessJobFailure(t *testing.T) {
 	jobCh := make(chan event.FetchJob, 1)
 	rawBatchCh := make(chan event.RawBatch, 1)
 	f := &Fetcher{
-		adapter:          mockAdapter,
-		jobCh:            jobCh,
-		rawBatchCh:       rawBatchCh,
-		logger:           slog.Default(),
-		retryMaxAttempts: 1,
+		adapter:            mockAdapter,
+		jobCh:              jobCh,
+		rawBatchCh:         rawBatchCh,
+		logger:             slog.Default(),
+		retryMaxAttempts:   1,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	jobCh <- event.FetchJob{
@@ -226,13 +232,14 @@ func TestProcessJob_RetryBackoffAndAdaptiveReduction(t *testing.T) {
 	rawBatchCh := make(chan event.RawBatch, 1)
 	var delays []time.Duration
 	f := &Fetcher{
-		adapter:          mockAdapter,
-		rawBatchCh:       rawBatchCh,
-		logger:           slog.Default(),
-		retryMaxAttempts: 3,
-		backoffInitial:   10 * time.Millisecond,
-		backoffMax:       40 * time.Millisecond,
-		adaptiveMinBatch: 1,
+		adapter:            mockAdapter,
+		rawBatchCh:         rawBatchCh,
+		logger:             slog.Default(),
+		retryMaxAttempts:   3,
+		backoffInitial:     10 * time.Millisecond,
+		backoffMax:         40 * time.Millisecond,
+		adaptiveMinBatch:   1,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 		sleepFn: func(_ context.Context, d time.Duration) error {
 			delays = append(delays, d)
 			return nil
@@ -285,13 +292,14 @@ func TestProcessJob_AdaptiveBatchStateAcrossRuns(t *testing.T) {
 	rawBatchCh := make(chan event.RawBatch, 1)
 	var delays []time.Duration
 	f := &Fetcher{
-		adapter:          mockAdapter,
-		rawBatchCh:       rawBatchCh,
-		logger:           slog.Default(),
-		retryMaxAttempts: 3,
-		backoffInitial:   5 * time.Millisecond,
-		backoffMax:       20 * time.Millisecond,
-		adaptiveMinBatch: 1,
+		adapter:            mockAdapter,
+		rawBatchCh:         rawBatchCh,
+		logger:             slog.Default(),
+		retryMaxAttempts:   3,
+		backoffInitial:     5 * time.Millisecond,
+		backoffMax:         20 * time.Millisecond,
+		adaptiveMinBatch:   1,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 		sleepFn: func(_ context.Context, d time.Duration) error {
 			delays = append(delays, d)
 			return nil
@@ -343,8 +351,9 @@ func TestProcessJob_AdaptiveBatchStateAcrossRuns(t *testing.T) {
 
 func TestFetcher_RetryDelay_ExponentialWithCap(t *testing.T) {
 	f := &Fetcher{
-		backoffInitial: 10 * time.Millisecond,
-		backoffMax:     25 * time.Millisecond,
+		backoffInitial:     10 * time.Millisecond,
+		backoffMax:         25 * time.Millisecond,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	assert.Equal(t, 10*time.Millisecond, f.retryDelay(1))
@@ -389,12 +398,13 @@ func TestProcessJob_TerminalSignatureFetchError_NoRetryAcrossMandatoryChains(t *
 
 			sleepCalls := 0
 			f := &Fetcher{
-				adapter:          mockAdapter,
-				rawBatchCh:       rawBatchCh,
-				logger:           slog.Default(),
-				retryMaxAttempts: 3,
-				backoffInitial:   time.Millisecond,
-				backoffMax:       2 * time.Millisecond,
+				adapter:            mockAdapter,
+				rawBatchCh:         rawBatchCh,
+				logger:             slog.Default(),
+				retryMaxAttempts:   3,
+				backoffInitial:     time.Millisecond,
+				backoffMax:         2 * time.Millisecond,
+				batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 				sleepFn: func(context.Context, time.Duration) error {
 					sleepCalls++
 					return nil
@@ -467,13 +477,14 @@ func TestProcessJob_TransientSignatureFetchRetryAcrossMandatoryChains(t *testing
 
 			var delays []time.Duration
 			f := &Fetcher{
-				adapter:          mockAdapter,
-				rawBatchCh:       rawBatchCh,
-				logger:           slog.Default(),
-				retryMaxAttempts: 2,
-				backoffInitial:   5 * time.Millisecond,
-				backoffMax:       20 * time.Millisecond,
-				adaptiveMinBatch: 1,
+				adapter:            mockAdapter,
+				rawBatchCh:         rawBatchCh,
+				logger:             slog.Default(),
+				retryMaxAttempts:   2,
+				backoffInitial:     5 * time.Millisecond,
+				backoffMax:         20 * time.Millisecond,
+				adaptiveMinBatch:   1,
+				batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 				sleepFn: func(_ context.Context, d time.Duration) error {
 					delays = append(delays, d)
 					return nil
@@ -514,12 +525,13 @@ func TestProcessJob_TransientSignatureFetchExhaustion_StageDiagnostic(t *testing
 	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
 
 	f := &Fetcher{
-		adapter:          mockAdapter,
-		logger:           slog.Default(),
-		retryMaxAttempts: 2,
-		backoffInitial:   time.Millisecond,
-		backoffMax:       2 * time.Millisecond,
-		sleepFn:          func(context.Context, time.Duration) error { return nil },
+		adapter:            mockAdapter,
+		logger:             slog.Default(),
+		retryMaxAttempts:   2,
+		backoffInitial:     time.Millisecond,
+		backoffMax:         2 * time.Millisecond,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
+		sleepFn:            func(context.Context, time.Duration) error { return nil },
 	}
 
 	job := event.FetchJob{
@@ -546,9 +558,10 @@ func TestProcessJob_BaseCanonicalizesOptionalPrefixCursorAlias(t *testing.T) {
 	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
 
 	f := &Fetcher{
-		adapter:    mockAdapter,
-		rawBatchCh: make(chan event.RawBatch, 1),
-		logger:     slog.Default(),
+		adapter:            mockAdapter,
+		rawBatchCh:         make(chan event.RawBatch, 1),
+		logger:             slog.Default(),
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	cursor := "ABCDEF1234"
@@ -615,10 +628,11 @@ func TestProcessJob_CursorBoundaryOverlapSuppressedAndProgressesAcrossMandatoryC
 
 			rawBatchCh := make(chan event.RawBatch, 1)
 			f := &Fetcher{
-				adapter:          mockAdapter,
-				rawBatchCh:       rawBatchCh,
-				logger:           slog.Default(),
-				retryMaxAttempts: 1,
+				adapter:            mockAdapter,
+				rawBatchCh:         rawBatchCh,
+				logger:             slog.Default(),
+				retryMaxAttempts:   1,
+				batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 			}
 
 			job := event.FetchJob{
@@ -721,10 +735,11 @@ func TestProcessJob_SeamCarryoverSuppressesPreCursorSequenceWhenNewerSignaturesE
 
 			rawBatchCh := make(chan event.RawBatch, 1)
 			f := &Fetcher{
-				adapter:          mockAdapter,
-				rawBatchCh:       rawBatchCh,
-				logger:           slog.Default(),
-				retryMaxAttempts: 1,
+				adapter:            mockAdapter,
+				rawBatchCh:         rawBatchCh,
+				logger:             slog.Default(),
+				retryMaxAttempts:   1,
+				batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 			}
 
 			job := event.FetchJob{
@@ -865,10 +880,11 @@ func TestProcessJob_SeamCarryoverDeterministicPermutationsAcrossMandatoryChains(
 
 		rawBatchCh := make(chan event.RawBatch, 1)
 		f := &Fetcher{
-			adapter:          mockAdapter,
-			rawBatchCh:       rawBatchCh,
-			logger:           slog.Default(),
-			retryMaxAttempts: 1,
+			adapter:            mockAdapter,
+			rawBatchCh:         rawBatchCh,
+			logger:             slog.Default(),
+			retryMaxAttempts:   1,
+			batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 		}
 
 		cursor := tc.cursor
@@ -1006,10 +1022,11 @@ func TestProcessJob_AdaptiveBatchCarryoverPreservesAcrossAliasRepresentativeSwit
 
 		rawBatchCh := make(chan event.RawBatch, 2)
 		f := &Fetcher{
-			adapter:          mockAdapter,
-			rawBatchCh:       rawBatchCh,
-			logger:           slog.Default(),
-			retryMaxAttempts: 1,
+			adapter:            mockAdapter,
+			rawBatchCh:         rawBatchCh,
+			logger:             slog.Default(),
+			retryMaxAttempts:   1,
+			batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 		}
 
 		canonicalFetchAddress := canonicalizeWatchedAddressIdentity(tc.chain, tc.addressA)
@@ -1068,10 +1085,11 @@ func TestProcessJob_AdaptiveBatchStateUsesChainNetworkScopeForAliasCanonicalized
 	mockAdapter := chainmocks.NewMockChainAdapter(ctrl)
 	rawBatchCh := make(chan event.RawBatch, 2)
 	f := &Fetcher{
-		adapter:          mockAdapter,
-		rawBatchCh:       rawBatchCh,
-		logger:           slog.Default(),
-		retryMaxAttempts: 1,
+		adapter:            mockAdapter,
+		rawBatchCh:         rawBatchCh,
+		logger:             slog.Default(),
+		retryMaxAttempts:   1,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	address := " shared-chain-network-addr "
@@ -1139,10 +1157,11 @@ func TestProcessJob_SeamCarryoverKeepsPreCursorSequenceWhenNoNewerSignatures(t *
 
 	rawBatchCh := make(chan event.RawBatch, 1)
 	f := &Fetcher{
-		adapter:          mockAdapter,
-		rawBatchCh:       rawBatchCh,
-		logger:           slog.Default(),
-		retryMaxAttempts: 1,
+		adapter:            mockAdapter,
+		rawBatchCh:         rawBatchCh,
+		logger:             slog.Default(),
+		retryMaxAttempts:   1,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	cursor := "sol-reorg-boundary"
@@ -1232,10 +1251,11 @@ func TestProcessJob_BoundaryPartitionVarianceConvergesAcrossMandatoryChains(t *t
 
 		rawBatchCh := make(chan event.RawBatch, len(jobs))
 		f := &Fetcher{
-			adapter:          mockAdapter,
-			rawBatchCh:       rawBatchCh,
-			logger:           slog.Default(),
-			retryMaxAttempts: 1,
+			adapter:            mockAdapter,
+			rawBatchCh:         rawBatchCh,
+			logger:             slog.Default(),
+			retryMaxAttempts:   1,
+			batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 		}
 
 		for i, job := range jobs {
@@ -1414,10 +1434,11 @@ func TestProcessJob_CanonicalizesFetchOrderAndSuppressesOverlapDuplicatesAcrossM
 
 		rawBatchCh := make(chan event.RawBatch, 1)
 		f := &Fetcher{
-			adapter:          mockAdapter,
-			rawBatchCh:       rawBatchCh,
-			logger:           slog.Default(),
-			retryMaxAttempts: 1,
+			adapter:            mockAdapter,
+			rawBatchCh:         rawBatchCh,
+			logger:             slog.Default(),
+			retryMaxAttempts:   1,
+			batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 		}
 
 		job := event.FetchJob{
@@ -1604,10 +1625,11 @@ func TestProcessJob_PinnedCutoffPaginationPermutationsConvergeAcrossMandatoryCha
 
 		rawBatchCh := make(chan event.RawBatch, len(specs))
 		f := &Fetcher{
-			adapter:          &deterministicCutoffAdapter{chain: tc.chain, signatures: tc.signatures},
-			rawBatchCh:       rawBatchCh,
-			logger:           slog.Default(),
-			retryMaxAttempts: 1,
+			adapter:            &deterministicCutoffAdapter{chain: tc.chain, signatures: tc.signatures},
+			rawBatchCh:         rawBatchCh,
+			logger:             slog.Default(),
+			retryMaxAttempts:   1,
+			batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 		}
 
 		collected := make([]string, 0, len(tc.expectedHashes))
@@ -1712,10 +1734,11 @@ func TestProcessJob_PinnedCutoffLateAppendDeferredWithoutDuplicateAcrossMandator
 		t.Run(tc.name, func(t *testing.T) {
 			rawBatchCh := make(chan event.RawBatch, 2)
 			f := &Fetcher{
-				adapter:          &deterministicCutoffAdapter{chain: tc.chain, signatures: tc.signatures},
-				rawBatchCh:       rawBatchCh,
-				logger:           slog.Default(),
-				retryMaxAttempts: 1,
+				adapter:            &deterministicCutoffAdapter{chain: tc.chain, signatures: tc.signatures},
+				rawBatchCh:         rawBatchCh,
+				logger:             slog.Default(),
+				retryMaxAttempts:   1,
+				batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 			}
 
 			first := event.FetchJob{
@@ -1810,10 +1833,11 @@ func TestProcessJob_PinnedCutoffReplayResumeConvergesAcrossMandatoryChains(t *te
 		t.Helper()
 		rawBatchCh := make(chan event.RawBatch, len(jobs))
 		f := &Fetcher{
-			adapter:          &deterministicCutoffAdapter{chain: tc.chain, signatures: tc.signatures},
-			rawBatchCh:       rawBatchCh,
-			logger:           slog.Default(),
-			retryMaxAttempts: 1,
+			adapter:            &deterministicCutoffAdapter{chain: tc.chain, signatures: tc.signatures},
+			rawBatchCh:         rawBatchCh,
+			logger:             slog.Default(),
+			retryMaxAttempts:   1,
+			batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 		}
 
 		out := make([]string, 0, len(tc.expectedHashes))
@@ -1881,10 +1905,11 @@ func TestProcessJob_CutoffPostFilterDefersOutOfRangeSignaturesWhenAdapterIsNotCu
 
 	rawBatchCh := make(chan event.RawBatch, 1)
 	f := &Fetcher{
-		adapter:          mockAdapter,
-		rawBatchCh:       rawBatchCh,
-		logger:           slog.Default(),
-		retryMaxAttempts: 1,
+		adapter:            mockAdapter,
+		rawBatchCh:         rawBatchCh,
+		logger:             slog.Default(),
+		retryMaxAttempts:   1,
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	job := event.FetchJob{

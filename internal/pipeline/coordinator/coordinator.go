@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
@@ -26,7 +27,7 @@ type Coordinator struct {
 	network         model.Network
 	watchedAddrRepo store.WatchedAddressRepository
 	cursorRepo      store.CursorRepository
-	batchSize       int
+	batchSize       atomic.Int32
 	interval        time.Duration
 	jobCh           chan<- event.FetchJob
 	logger          *slog.Logger
@@ -66,16 +67,17 @@ func New(
 	jobCh chan<- event.FetchJob,
 	logger *slog.Logger,
 ) *Coordinator {
-	return &Coordinator{
+	c := &Coordinator{
 		chain:           chain,
 		network:         network,
 		watchedAddrRepo: watchedAddrRepo,
 		cursorRepo:      cursorRepo,
-		batchSize:       batchSize,
 		interval:        interval,
 		jobCh:           jobCh,
 		logger:          logger.With("component", "coordinator"),
 	}
+	c.batchSize.Store(int32(batchSize))
+	return c
 }
 
 func (c *Coordinator) WithHeadProvider(provider headSequenceProvider) *Coordinator {
@@ -202,9 +204,9 @@ func (c *Coordinator) withAutoTune(cfg AutoTuneConfig, warmState *AutoTuneRestar
 		}
 	}
 	if useBoundedWarmStart {
-		c.autoTune = autotune.NewWithRestartSeed(c.batchSize, cfg, seedBatch)
+		c.autoTune = autotune.NewWithRestartSeed(int(c.batchSize.Load()), cfg, seedBatch)
 	} else {
-		c.autoTune = autotune.NewWithSeed(c.batchSize, cfg, seedBatch)
+		c.autoTune = autotune.NewWithSeed(int(c.batchSize.Load()), cfg, seedBatch)
 	}
 	if c.autoTune != nil {
 		c.autoTune.ReconcileOverrideTransition(overrideTransition)
@@ -248,9 +250,8 @@ func (c *Coordinator) UpdateBatchSize(newBatchSize int) {
 	if newBatchSize <= 0 {
 		return
 	}
-	old := c.batchSize
-	c.batchSize = newBatchSize
-	if old != newBatchSize {
+	old := c.batchSize.Swap(int32(newBatchSize))
+	if int(old) != newBatchSize {
 		c.logger.Info("coordinator batch size updated", "old", old, "new", newBatchSize)
 	}
 }
@@ -414,7 +415,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 		})
 	}
 
-	batchSize := c.batchSize
+	batchSize := int(c.batchSize.Load())
 	if c.autoTune != nil && len(jobs) > 0 {
 		rpcErrorRateBps := 0
 		dbCommitLatencyP95Ms := 0
@@ -538,7 +539,7 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 
 	// Cap the scan range by batchSize (blocks per tick).
 	endBlock := head
-	batchSize := c.batchSize
+	batchSize := int(c.batchSize.Load())
 	if c.autoTune != nil {
 		batchSize, _ = c.autoTune.Resolve(autotune.Inputs{
 			Chain:              c.chain.String(),
@@ -552,7 +553,7 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 		})
 	}
 	if batchSize <= 0 {
-		batchSize = c.batchSize
+		batchSize = int(c.batchSize.Load())
 	}
 	if endBlock > 0 && endBlock-startBlock+1 > int64(batchSize) {
 		endBlock = startBlock + int64(batchSize) - 1

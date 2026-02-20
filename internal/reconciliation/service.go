@@ -258,3 +258,45 @@ func (s *Service) HasAdapter(ch model.Chain, net model.Network) bool {
 func (s *Service) ReconcileAny(ctx context.Context, ch model.Chain, net model.Network) (any, error) {
 	return s.Reconcile(ctx, ch, net)
 }
+
+// RunPeriodic runs reconciliation for all registered adapters at the given interval.
+// It blocks until the context is cancelled.
+func (s *Service) RunPeriodic(ctx context.Context, interval time.Duration) error {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+
+	s.logger.Info("periodic reconciliation started", "interval", interval)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("periodic reconciliation stopping")
+			return ctx.Err()
+		case <-ticker.C:
+			for key, _ := range s.adapters {
+				parts := splitAdapterKey(key)
+				if parts == nil {
+					continue
+				}
+				ch, net := model.Chain(parts[0]), model.Network(parts[1])
+				if _, err := s.Reconcile(ctx, ch, net); err != nil {
+					s.logger.Warn("periodic reconciliation failed",
+						"chain", ch, "network", net, "error", err)
+				}
+			}
+		}
+	}
+}
+
+func splitAdapterKey(key string) []string {
+	for i := 0; i < len(key); i++ {
+		if key[i] == ':' {
+			return []string{key[:i], key[i+1:]}
+		}
+	}
+	return nil
+}

@@ -19,6 +19,7 @@ type RPCClient interface {
 	GetSlot(ctx context.Context, commitment string) (int64, error)
 	GetSignaturesForAddress(ctx context.Context, address string, opts *GetSignaturesOpts) ([]SignatureInfo, error)
 	GetTransaction(ctx context.Context, signature string) (json.RawMessage, error)
+	GetBlock(ctx context.Context, slot int64, opts *GetBlockOpts) (*BlockResult, error)
 }
 
 type Client struct {

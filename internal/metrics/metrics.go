@@ -233,6 +233,13 @@ var (
 		Help:      "Current number of unfinalized indexed blocks",
 	}, []string{"chain", "network"})
 
+	ReorgDetectorRPCErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "reorg_detector",
+		Name:      "rpc_errors_total",
+		Help:      "Total RPC errors encountered during reorg detection",
+	}, []string{"chain", "network"})
+
 	// Finalizer
 	FinalizerPromotionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "indexer",
@@ -300,6 +307,34 @@ var (
 		Help:      "Total replay dry run operations executed",
 	}, []string{"chain", "network"})
 
+	ReplayBalancesReversedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "replay",
+		Name:      "balances_reversed_total",
+		Help:      "Total balance deltas reversed during replay purge operations",
+	}, []string{"chain", "network"})
+
+	ReplayTransactionsDeletedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "replay",
+		Name:      "transactions_deleted_total",
+		Help:      "Total transactions deleted during replay purge operations",
+	}, []string{"chain", "network"})
+
+	ReplayBlocksDeletedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "replay",
+		Name:      "blocks_deleted_total",
+		Help:      "Total indexed blocks deleted during replay purge operations",
+	}, []string{"chain", "network"})
+
+	ReplayCursorsRewoundTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "replay",
+		Name:      "cursors_rewound_total",
+		Help:      "Total address cursors rewound during replay purge operations",
+	}, []string{"chain", "network"})
+
 	// Alerts
 	AlertsSentTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "indexer",
@@ -314,6 +349,77 @@ var (
 		Name:      "cooldown_skipped_total",
 		Help:      "Total alerts skipped due to cooldown",
 	}, []string{"channel", "alert_type"})
+
+	// Address index
+	AddressIndexBloomRejects = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "address_index",
+		Name:      "bloom_rejects_total",
+		Help:      "Total addresses rejected by bloom filter (definite non-members)",
+	}, []string{"chain", "network"})
+
+	AddressIndexDBLookups = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "address_index",
+		Name:      "db_lookups_total",
+		Help:      "Total address lookups that fell through to database",
+	}, []string{"chain", "network"})
+
+	// Solana block scan
+	SolanaBlockScanSkippedSlots = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "solana",
+		Name:      "block_scan_skipped_slots_total",
+		Help:      "Total skipped slots encountered during Solana block scanning",
+	}, []string{"network"})
+
+	// Balance event bulk insert
+	BalanceEventBulkInsertSize = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "indexer",
+		Subsystem: "balance_event",
+		Name:      "bulk_insert_size",
+		Help:      "Number of events per bulk insert batch",
+		Buckets:   []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 1500},
+	}, []string{"chain", "network"})
+
+	// Pipeline E2E latency
+	PipelineE2ELatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "indexer",
+		Subsystem: "pipeline",
+		Name:      "e2e_latency_seconds",
+		Help:      "End-to-end latency from block production to DB commit",
+		Buckets:   []float64{0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
+	}, []string{"chain", "network"})
+
+	// RPC call metrics
+	RPCCallsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "rpc",
+		Name:      "calls_total",
+		Help:      "Total RPC calls by chain, method, and status",
+	}, []string{"chain", "method", "status"})
+
+	// Address index LRU hit ratio
+	AddressIndexLRUHitRatio = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Subsystem: "address_index",
+		Name:      "lru_hit_ratio",
+		Help:      "LRU cache hit ratio for address index lookups",
+	}, []string{"chain", "network"})
+
+	AddressIndexLRUHits = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "address_index",
+		Name:      "lru_hits_total",
+		Help:      "Total LRU cache hits for address index lookups",
+	}, []string{"chain", "network"})
+
+	AddressIndexLRUMisses = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "address_index",
+		Name:      "lru_misses_total",
+		Help:      "Total LRU cache misses for address index lookups",
+	}, []string{"chain", "network"})
 
 	// Reconciliation
 	ReconciliationRunsTotal = promauto.NewCounterVec(prometheus.CounterOpts{

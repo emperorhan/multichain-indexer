@@ -30,10 +30,12 @@ type Config struct {
 	BSC      BSCConfig      `yaml:"bsc"`
 	Runtime  RuntimeConfig  `yaml:"runtime"`
 	Pipeline PipelineConfig `yaml:"pipeline"`
-	Server   ServerConfig   `yaml:"server"`
-	Log      LogConfig      `yaml:"log"`
-	Tracing  TracingConfig  `yaml:"tracing"`
-	Alert    AlertConfig    `yaml:"alert"`
+	Server         ServerConfig         `yaml:"server"`
+	Log            LogConfig            `yaml:"log"`
+	Tracing        TracingConfig        `yaml:"tracing"`
+	Alert          AlertConfig          `yaml:"alert"`
+	Reconciliation ReconciliationConfig `yaml:"reconciliation"`
+	ReorgDetector  ReorgDetectorConfig  `yaml:"reorg_detector"`
 }
 
 type AlertConfig struct {
@@ -72,11 +74,13 @@ type RPCRateLimitConfig struct {
 }
 
 type SolanaConfig struct {
-	RPCURL           string             `yaml:"rpc_url"`
-	Network          string             `yaml:"network"`
-	RateLimit        RPCRateLimitConfig `yaml:"rate_limit"`
-	MaxPageSize      int                `yaml:"max_page_size"`
-	MaxConcurrentTxs int                `yaml:"max_concurrent_txs"`
+	RPCURL               string             `yaml:"rpc_url"`
+	Network              string             `yaml:"network"`
+	RateLimit            RPCRateLimitConfig `yaml:"rate_limit"`
+	MaxPageSize          int                `yaml:"max_page_size"`
+	MaxConcurrentTxs     int                `yaml:"max_concurrent_txs"`
+	BlockScanBatchSize   int                `yaml:"block_scan_batch_size"`
+	BlockScanConcurrency int                `yaml:"block_scan_concurrency"`
 }
 
 type BaseConfig struct {
@@ -178,6 +182,14 @@ type ConfigWatcherStageConfig struct {
 	IntervalSec int `yaml:"interval_sec"`
 }
 
+// AddressIndexConfig configures the 3-tier address index (bloom + LRU + DB).
+type AddressIndexConfig struct {
+	BloomExpectedItems int     `yaml:"bloom_expected_items"` // default 10_000_000
+	BloomFPR           float64 `yaml:"bloom_fpr"`            // default 0.001
+	LRUCapacity        int     `yaml:"lru_capacity"`         // default 100_000
+	LRUTTLSec          int     `yaml:"lru_ttl_sec"`          // default 600
+}
+
 type PipelineConfig struct {
 	ReorgDetectorIntervalMs                       int      `yaml:"reorg_detector_interval_ms"`
 	FinalizerIntervalMs                           int      `yaml:"finalizer_interval_ms"`
@@ -216,6 +228,7 @@ type PipelineConfig struct {
 	StreamTransportEnabled                        bool     `yaml:"stream_transport_enabled"`
 	StreamNamespace                               string   `yaml:"stream_namespace"`
 	StreamSessionID                               string   `yaml:"stream_session_id"`
+	AddressIndex                                  AddressIndexConfig       `yaml:"address_index"`
 	Fetcher                                       FetcherStageConfig       `yaml:"fetcher"`
 	Normalizer                                    NormalizerStageConfig    `yaml:"normalizer"`
 	Ingester                                      IngesterStageConfig      `yaml:"ingester"`
@@ -224,12 +237,24 @@ type PipelineConfig struct {
 }
 
 type ServerConfig struct {
-	HealthPort      int    `yaml:"health_port"`
-	MetricsAuthUser string `yaml:"metrics_auth_user"`
-	MetricsAuthPass string `yaml:"metrics_auth_pass"`
-	AdminAddr       string `yaml:"admin_addr"`
-	AdminAuthUser   string `yaml:"admin_auth_user"`
-	AdminAuthPass   string `yaml:"admin_auth_pass"`
+	HealthPort            int    `yaml:"health_port"`
+	MetricsAuthUser       string `yaml:"metrics_auth_user"`
+	MetricsAuthPass       string `yaml:"metrics_auth_pass"`
+	AdminAddr             string `yaml:"admin_addr"`
+	AdminAuthUser         string `yaml:"admin_auth_user"`
+	AdminAuthPass         string `yaml:"admin_auth_pass"`
+	AdminRateLimitEnabled bool   `yaml:"admin_rate_limit_enabled"`
+	AdminRequireAuth      bool   `yaml:"admin_require_auth"`
+}
+
+// ReconciliationConfig holds settings for periodic balance reconciliation.
+type ReconciliationConfig struct {
+	IntervalMS int `yaml:"interval_ms"`
+}
+
+// ReorgDetectorConfig holds extra settings for the reorg detector.
+type ReorgDetectorConfig struct {
+	MaxCheckDepth int `yaml:"max_check_depth"`
 }
 
 type LogConfig struct {
@@ -337,6 +362,8 @@ func applyEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Solana.RateLimit.Burst, "SOLANA_RPC_BURST")
 	overrideInt(&cfg.Solana.MaxPageSize, "SOLANA_MAX_PAGE_SIZE")
 	overrideInt(&cfg.Solana.MaxConcurrentTxs, "SOLANA_MAX_CONCURRENT_TXS")
+	overrideInt(&cfg.Solana.BlockScanBatchSize, "SOLANA_BLOCK_SCAN_BATCH_SIZE")
+	overrideInt(&cfg.Solana.BlockScanConcurrency, "SOLANA_BLOCK_SCAN_CONCURRENCY")
 
 	// Base
 	overrideStrAny(&cfg.Base.RPCURL, "BASE_SEPOLIA_RPC_URL", "BASE_RPC_URL")
@@ -439,6 +466,12 @@ func applyEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Pipeline.Health.UnhealthyThreshold, "HEALTH_UNHEALTHY_THRESHOLD")
 	overrideInt(&cfg.Pipeline.ConfigWatcher.IntervalSec, "CONFIG_WATCHER_INTERVAL_SEC")
 
+	// Address index
+	overrideInt(&cfg.Pipeline.AddressIndex.BloomExpectedItems, "ADDRESS_INDEX_BLOOM_EXPECTED_ITEMS")
+	overrideFloat64(&cfg.Pipeline.AddressIndex.BloomFPR, "ADDRESS_INDEX_BLOOM_FPR")
+	overrideInt(&cfg.Pipeline.AddressIndex.LRUCapacity, "ADDRESS_INDEX_LRU_CAPACITY")
+	overrideInt(&cfg.Pipeline.AddressIndex.LRUTTLSec, "ADDRESS_INDEX_LRU_TTL_SEC")
+
 	// Watched addresses
 	overrideCSVList(&cfg.Pipeline.SolanaWatchedAddresses, "SOLANA_WATCHED_ADDRESSES", "WATCHED_ADDRESSES")
 	overrideCSVList(&cfg.Pipeline.BaseWatchedAddresses, "BASE_WATCHED_ADDRESSES")
@@ -470,6 +503,16 @@ func applyEnvOverrides(cfg *Config) {
 	overrideStr(&cfg.Alert.WebhookURL, "ALERT_WEBHOOK_URL")
 	overrideInt(&cfg.Alert.CooldownMS, "ALERT_COOLDOWN_MS")
 
+	// Reconciliation
+	overrideInt(&cfg.Reconciliation.IntervalMS, "RECONCILIATION_INTERVAL_MS")
+
+	// Reorg detector
+	overrideInt(&cfg.ReorgDetector.MaxCheckDepth, "REORG_DETECTOR_MAX_CHECK_DEPTH")
+
+	// Admin security
+	overrideBool(&cfg.Server.AdminRateLimitEnabled, "ADMIN_RATE_LIMIT_ENABLED")
+	overrideBool(&cfg.Server.AdminRequireAuth, "ADMIN_REQUIRE_AUTH")
+
 	// Normalize chain targets
 	if len(cfg.Runtime.ChainTargets) > 0 {
 		cfg.Runtime.ChainTargets = normalizeCSVValues(cfg.Runtime.ChainTargets)
@@ -498,6 +541,8 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.Solana.RateLimit.Burst, 20)
 	setDefault(&cfg.Solana.MaxPageSize, 1000)
 	setDefault(&cfg.Solana.MaxConcurrentTxs, 10)
+	setDefault(&cfg.Solana.BlockScanBatchSize, 10)
+	setDefault(&cfg.Solana.BlockScanConcurrency, 10)
 
 	// Base
 	setDefaultStr(&cfg.Base.Network, "sepolia")
@@ -591,6 +636,12 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.Pipeline.Health.UnhealthyThreshold, 5)
 	setDefault(&cfg.Pipeline.ConfigWatcher.IntervalSec, 30)
 
+	// Address index
+	setDefault(&cfg.Pipeline.AddressIndex.BloomExpectedItems, 10_000_000)
+	setDefaultFloat(&cfg.Pipeline.AddressIndex.BloomFPR, 0.001)
+	setDefault(&cfg.Pipeline.AddressIndex.LRUCapacity, 100_000)
+	setDefault(&cfg.Pipeline.AddressIndex.LRUTTLSec, 600)
+
 	// Server
 	setDefault(&cfg.Server.HealthPort, 8080)
 
@@ -602,6 +653,20 @@ func applyDefaults(cfg *Config) {
 
 	// Alert
 	setDefault(&cfg.Alert.CooldownMS, 1800000)
+
+	// Reconciliation
+	setDefault(&cfg.Reconciliation.IntervalMS, 3600000) // 1 hour
+
+	// Reorg detector
+	setDefault(&cfg.ReorgDetector.MaxCheckDepth, 256)
+
+	// Admin security defaults
+	if !cfg.Server.AdminRateLimitEnabled && cfg.Server.AdminAddr != "" {
+		cfg.Server.AdminRateLimitEnabled = true
+	}
+	if !cfg.Server.AdminRequireAuth && cfg.Server.AdminAddr != "" {
+		cfg.Server.AdminRequireAuth = true
+	}
 }
 
 // computeDerived calculates derived Duration fields from integer config values.

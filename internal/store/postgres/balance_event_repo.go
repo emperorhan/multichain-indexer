@@ -5,9 +5,22 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/store"
+)
+
+const (
+	// colsPerEvent is the number of columns in the VALUES clause for balance_events.
+	colsPerEvent = 33
+	// bulkChunkSize is the maximum number of events per multi-VALUES INSERT.
+	// PostgreSQL supports up to 65535 parameters; 33 cols × 1500 = 49500 < 65535.
+	bulkChunkSize = 1500
+	// smallBatchThreshold: batches at or below this size use the per-event path
+	// which provides finality crossing detection.
+	smallBatchThreshold = 5
 )
 
 type BalanceEventRepo struct {
@@ -152,13 +165,26 @@ func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.B
 	return store.UpsertResult{FinalityCrossed: finalityCrossed}, nil
 }
 
-// BulkUpsertTx upserts multiple balance events by delegating to UpsertTx for each event
-// and aggregating the results.
+// BulkUpsertTx upserts multiple balance events.
+// For small batches (≤5), it delegates to the per-event UpsertTx path which
+// provides finality crossing detection. For larger batches, it uses a
+// multi-VALUES INSERT...ON CONFLICT for dramatically fewer round trips.
 func (r *BalanceEventRepo) BulkUpsertTx(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 	if len(events) == 0 {
 		return store.BulkUpsertEventResult{}, nil
 	}
 
+	// Small batch: per-event path for finality crossing detection
+	if len(events) <= smallBatchThreshold {
+		return r.bulkUpsertPerEvent(ctx, tx, events)
+	}
+
+	// Large batch: multi-VALUES bulk insert
+	return r.bulkUpsertMultiValues(ctx, tx, events)
+}
+
+// bulkUpsertPerEvent is the original per-event loop used for small batches.
+func (r *BalanceEventRepo) bulkUpsertPerEvent(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 	var result store.BulkUpsertEventResult
 	for _, ev := range events {
 		ur, err := r.UpsertTx(ctx, tx, ev)
@@ -172,6 +198,194 @@ func (r *BalanceEventRepo) BulkUpsertTx(ctx context.Context, tx *sql.Tx, events 
 			result.FinalityCrossedCount++
 		}
 	}
+	return result, nil
+}
+
+// bulkUpsertMultiValues uses a multi-VALUES INSERT...ON CONFLICT statement,
+// processing events in chunks of bulkChunkSize to stay within PostgreSQL's
+// 65535 parameter limit.
+func (r *BalanceEventRepo) bulkUpsertMultiValues(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
+	var result store.BulkUpsertEventResult
+
+	if len(events) > 0 {
+		chain := string(events[0].Chain)
+		network := string(events[0].Network)
+		metrics.BalanceEventBulkInsertSize.WithLabelValues(chain, network).Observe(float64(len(events)))
+	}
+
+	for i := 0; i < len(events); i += bulkChunkSize {
+		end := i + bulkChunkSize
+		if end > len(events) {
+			end = len(events)
+		}
+		chunk := events[i:end]
+
+		inserted, err := r.execBulkChunk(ctx, tx, chunk)
+		if err != nil {
+			return result, err
+		}
+		result.InsertedCount += inserted
+	}
 
 	return result, nil
+}
+
+// execBulkChunk executes a single multi-VALUES INSERT...ON CONFLICT for a chunk of events.
+func (r *BalanceEventRepo) execBulkChunk(ctx context.Context, tx *sql.Tx, chunk []*model.BalanceEvent) (int, error) {
+	// Build parameterized VALUES clause
+	var sb strings.Builder
+	sb.WriteString(`
+		INSERT INTO balance_events (
+			chain, network, transaction_id, tx_hash,
+			outer_instruction_index, inner_instruction_index,
+			token_id, activity_type, event_action, program_id,
+			address, counterparty_address, delta, balance_before, balance_after,
+			watched_address, wallet_id, organization_id,
+			block_cursor, block_time, chain_data, balance_applied,
+			event_id, block_hash, tx_index, event_path, event_path_type,
+			actor_address, asset_type, asset_id,
+			finality_state, decoder_version, schema_version
+		) VALUES `)
+
+	args := make([]interface{}, 0, len(chunk)*colsPerEvent)
+	for idx, be := range chunk {
+		if idx > 0 {
+			sb.WriteString(", ")
+		}
+		base := idx * colsPerEvent
+		sb.WriteString("(")
+		for j := 0; j < colsPerEvent; j++ {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(&sb, "$%d", base+j+1)
+		}
+		sb.WriteString(")")
+
+		args = append(args,
+			be.Chain,                 // $1
+			be.Network,               // $2
+			be.TransactionID,         // $3
+			be.TxHash,                // $4
+			be.OuterInstructionIndex, // $5
+			be.InnerInstructionIndex, // $6
+			be.TokenID,               // $7
+			be.ActivityType,          // $8
+			be.EventAction,           // $9
+			be.ProgramID,             // $10
+			be.Address,               // $11
+			be.CounterpartyAddress,   // $12
+			be.Delta,                 // $13
+			be.BalanceBefore,         // $14
+			be.BalanceAfter,          // $15
+			be.WatchedAddress,        // $16
+			be.WalletID,              // $17
+			be.OrganizationID,        // $18
+			be.BlockCursor,           // $19
+			be.BlockTime,             // $20
+			be.ChainData,             // $21
+			be.BalanceApplied,        // $22
+			be.EventID,               // $23
+			be.BlockHash,             // $24
+			be.TxIndex,               // $25
+			be.EventPath,             // $26
+			be.EventPathType,         // $27
+			be.ActorAddress,          // $28
+			be.AssetType,             // $29
+			be.AssetID,               // $30
+			be.FinalityState,         // $31
+			be.DecoderVersion,        // $32
+			be.SchemaVersion,         // $33
+		)
+	}
+
+	sb.WriteString(`
+		ON CONFLICT (event_id) WHERE event_id <> '' DO UPDATE SET
+			finality_state = EXCLUDED.finality_state,
+			balance_applied = CASE
+				WHEN EXCLUDED.balance_applied AND NOT balance_events.balance_applied THEN true
+				ELSE balance_events.balance_applied
+			END,
+			block_hash = COALESCE(NULLIF(EXCLUDED.block_hash, ''), balance_events.block_hash),
+			tx_index = CASE
+				WHEN EXCLUDED.tx_index <> 0 THEN EXCLUDED.tx_index
+				ELSE balance_events.tx_index
+			END,
+			block_cursor = GREATEST(balance_events.block_cursor, EXCLUDED.block_cursor),
+			block_time = GREATEST(balance_events.block_time, COALESCE(EXCLUDED.block_time, balance_events.block_time)),
+			chain_data = COALESCE(EXCLUDED.chain_data, balance_events.chain_data),
+			decoder_version = COALESCE(NULLIF(EXCLUDED.decoder_version, ''), balance_events.decoder_version),
+			schema_version = COALESCE(NULLIF(EXCLUDED.schema_version, ''), balance_events.schema_version)
+		WHERE
+			CASE LOWER(COALESCE(TRIM(EXCLUDED.finality_state), ''))
+				WHEN 'finalized' THEN 4
+				WHEN 'safe' THEN 3
+				WHEN 'confirmed' THEN 2
+				WHEN 'processed' THEN 1
+				WHEN 'latest' THEN 1
+				WHEN 'pending' THEN 1
+				WHEN 'unsafe' THEN 1
+				ELSE 0
+			END >=
+			CASE LOWER(COALESCE(TRIM(balance_events.finality_state), ''))
+				WHEN 'finalized' THEN 4
+				WHEN 'safe' THEN 3
+				WHEN 'confirmed' THEN 2
+				WHEN 'processed' THEN 1
+				WHEN 'latest' THEN 1
+				WHEN 'pending' THEN 1
+				WHEN 'unsafe' THEN 1
+				ELSE 0
+			END
+		RETURNING (xmax = 0) AS inserted
+	`)
+
+	rows, err := tx.QueryContext(ctx, sb.String(), args...)
+	if err != nil {
+		return 0, fmt.Errorf("bulk upsert balance events: %w", err)
+	}
+	defer rows.Close()
+
+	insertedCount := 0
+	for rows.Next() {
+		var inserted bool
+		if err := rows.Scan(&inserted); err != nil {
+			return 0, fmt.Errorf("bulk upsert scan: %w", err)
+		}
+		if inserted {
+			insertedCount++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("bulk upsert rows: %w", err)
+	}
+
+	return insertedCount, nil
+}
+
+// RecalculateBalanceFieldsTx recalculates balance_before/balance_after for all
+// applied balance events from fromBlock onward, using a window function to chain
+// each event's balance_after to the next event's balance_before.
+func (r *BalanceEventRepo) RecalculateBalanceFieldsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) error {
+	_, err := tx.ExecContext(ctx, `
+		WITH ordered AS (
+			SELECT id, address, token_id,
+				LAG(balance_after) OVER (
+					PARTITION BY address, token_id
+					ORDER BY block_cursor, tx_index, event_path
+				) AS prev_balance_after
+			FROM balance_events
+			WHERE chain = $1 AND network = $2 AND block_cursor >= $3
+				AND balance_applied = true
+		)
+		UPDATE balance_events be
+		SET balance_before = COALESCE(o.prev_balance_after, '0'),
+			balance_after = COALESCE(o.prev_balance_after, '0')::numeric + be.delta::numeric
+		FROM ordered o
+		WHERE be.id = o.id AND o.prev_balance_after IS NOT NULL
+	`, chain, network, fromBlock)
+	if err != nil {
+		return fmt.Errorf("recalculate balance fields: %w", err)
+	}
+	return nil
 }

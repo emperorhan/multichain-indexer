@@ -111,6 +111,13 @@ func (w *ConfigWatcher) poll(ctx context.Context) {
 		return
 	}
 
+	// Clean up orphan keys that no longer exist in the active config set.
+	for key := range w.lastSeen {
+		if _, exists := configs[key]; !exists {
+			delete(w.lastSeen, key)
+		}
+	}
+
 	for key, value := range configs {
 		if w.lastSeen[key] == value {
 			continue

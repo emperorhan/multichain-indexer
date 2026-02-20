@@ -42,6 +42,21 @@ func (m *MockRPCClient) EXPECT() *MockRPCClientMockRecorder {
 	return m.recorder
 }
 
+// GetBlock mocks base method.
+func (m *MockRPCClient) GetBlock(ctx context.Context, slot int64, opts *rpc.GetBlockOpts) (*rpc.BlockResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBlock", ctx, slot, opts)
+	ret0, _ := ret[0].(*rpc.BlockResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetBlock indicates an expected call of GetBlock.
+func (mr *MockRPCClientMockRecorder) GetBlock(ctx, slot, opts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBlock", reflect.TypeOf((*MockRPCClient)(nil).GetBlock), ctx, slot, opts)
+}
+
 // GetSignaturesForAddress mocks base method.
 func (m *MockRPCClient) GetSignaturesForAddress(ctx context.Context, address string, opts *rpc.GetSignaturesOpts) ([]rpc.SignatureInfo, error) {
 	m.ctrl.T.Helper()

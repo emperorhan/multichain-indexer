@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/cache"
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -48,8 +48,7 @@ type Fetcher struct {
 	boundaryOverlapLookahead  int
 	sleepFn                   func(ctx context.Context, d time.Duration) error
 
-	batchStateMu       sync.Mutex
-	batchSizeByAddress map[string]int
+	batchSizeByAddress *cache.LRU[string, int]
 }
 
 type Option func(*Fetcher)
@@ -113,7 +112,7 @@ func New(
 		backoffInitial:     defaultBackoffInitial,
 		backoffMax:         defaultBackoffMax,
 		adaptiveMinBatch:   defaultAdaptiveMinBatch,
-		batchSizeByAddress: make(map[string]int),
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -565,26 +564,19 @@ func (f *Fetcher) resolveBatchSize(chain model.Chain, network model.Network, add
 		hardCap = 1
 	}
 
-	f.batchStateMu.Lock()
-	defer f.batchStateMu.Unlock()
-
-	if f.batchSizeByAddress == nil {
-		f.batchSizeByAddress = make(map[string]int)
-	}
-
 	key := f.batchStateKey(chain, network, address)
-	size, ok := f.batchSizeByAddress[key]
+	size, ok := f.batchSizeByAddress.Get(key)
 	if !ok || size <= 0 {
-		f.batchSizeByAddress[key] = hardCap
+		f.batchSizeByAddress.Put(key, hardCap)
 		return hardCap
 	}
 	if size > hardCap {
 		size = hardCap
-		f.batchSizeByAddress[key] = size
+		f.batchSizeByAddress.Put(key, size)
 	}
 	if size < f.effectiveAdaptiveMinBatch() {
 		size = f.effectiveAdaptiveMinBatch()
-		f.batchSizeByAddress[key] = size
+		f.batchSizeByAddress.Put(key, size)
 	}
 	return size
 }
@@ -596,14 +588,7 @@ func (f *Fetcher) setAdaptiveBatchSize(chain model.Chain, network model.Network,
 	if size < f.effectiveAdaptiveMinBatch() {
 		size = f.effectiveAdaptiveMinBatch()
 	}
-
-	f.batchStateMu.Lock()
-	defer f.batchStateMu.Unlock()
-
-	if f.batchSizeByAddress == nil {
-		f.batchSizeByAddress = make(map[string]int)
-	}
-	f.batchSizeByAddress[f.batchStateKey(chain, network, address)] = size
+	f.batchSizeByAddress.Put(f.batchStateKey(chain, network, address), size)
 }
 
 func (f *Fetcher) updateAdaptiveBatchSize(

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/cache"
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -299,7 +300,7 @@ func BenchmarkCanonicalizeWatchedAddressIdentity(b *testing.B) {
 func BenchmarkResolveBatchSize(b *testing.B) {
 	f := &Fetcher{
 		adaptiveMinBatch:   1,
-		batchSizeByAddress: make(map[string]int),
+		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
 	b.ResetTimer()
