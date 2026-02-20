@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -442,7 +443,7 @@ func (s *interleaveState) rollbackFromCursor(
 
 	for eventID, record := range toDelete {
 		tuple := record.Tuple
-		invertedDelta, err := negateDecimalString(tuple.Delta)
+		invertedDelta, err := identity.NegateDecimalString(tuple.Delta)
 		if err != nil {
 			return nil, 0, err
 		}

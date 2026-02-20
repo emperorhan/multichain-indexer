@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/emperorhan/multichain-indexer/internal/store"
@@ -561,9 +562,9 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 			firstSeq := tc.previousSequence + 1
 			secondSeq := tc.previousSequence + 2
 			thirdSeq := tc.previousSequence + 3
-			canonicalFirst := canonicalSignatureIdentity(tc.chain, tc.firstSig)
-			canonicalSecond := canonicalSignatureIdentity(tc.chain, tc.secondSig)
-			canonicalThird := canonicalSignatureIdentity(tc.chain, tc.thirdSig)
+			canonicalFirst := identity.CanonicalSignatureIdentity(tc.chain, tc.firstSig)
+			canonicalSecond := identity.CanonicalSignatureIdentity(tc.chain, tc.secondSig)
+			canonicalThird := identity.CanonicalSignatureIdentity(tc.chain, tc.thirdSig)
 			require.NotEmpty(t, canonicalFirst)
 			require.NotEmpty(t, canonicalSecond)
 			require.NotEmpty(t, canonicalThird)
@@ -588,7 +589,7 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 				thirdEventID:  {},
 			}
 
-			previousCursor := canonicalSignatureIdentity(tc.chain, "cursor-prev")
+			previousCursor := identity.CanonicalSignatureIdentity(tc.chain, "cursor-prev")
 			if previousCursor == "" {
 				previousCursor = "cursor-prev"
 			}
@@ -893,7 +894,7 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			canonicalHash := func(hash string) string {
-				canonical := canonicalSignatureIdentity(tc.chain, hash)
+				canonical := identity.CanonicalSignatureIdentity(tc.chain, hash)
 				if canonical != "" {
 					return canonical
 				}
@@ -2035,7 +2036,7 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 	}
 
 	eventIDFor := func(txHash, path string, category model.ActivityType) string {
-		canonicalTx := canonicalSignatureIdentity(model.ChainBTC, txHash)
+		canonicalTx := identity.CanonicalSignatureIdentity(model.ChainBTC, txHash)
 		return strings.Join([]string{
 			string(model.ChainBTC),
 			string(model.NetworkTestnet),
@@ -2295,7 +2296,7 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 		eventSetEqual(baseline.tupleKeys, multiBlockReorg.tupleKeys) &&
 		eventSetEqual(baseline.tupleKeys, restartFromRollbackAnchor.tupleKeys)
 	chainAdapterRuntimeWiredOK := restartFromRollbackAnchor.cursorSequence == 102 &&
-		restartFromRollbackAnchor.cursorValue == canonicalSignatureIdentity(model.ChainBTC, "btc-new-102") &&
+		restartFromRollbackAnchor.cursorValue == identity.CanonicalSignatureIdentity(model.ChainBTC, "btc-new-102") &&
 		restartFromRollbackAnchor.watermark == 102
 
 	assert.True(t, canonicalEventIDUniqueOK, "%s | %s canonical_event_id_unique_ok", runID, recoveryPermutation)
@@ -2305,7 +2306,7 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 	assert.True(t, reorgRecoveryDeterministicOK, "%s | %s reorg_recovery_deterministic_ok", runID, recoveryPermutation)
 	assert.True(t, chainAdapterRuntimeWiredOK, "%s | %s chain_adapter_runtime_wired_ok", runID, recoveryPermutation)
 
-	expectedCursor := canonicalSignatureIdentity(model.ChainBTC, "btc-new-102")
+	expectedCursor := identity.CanonicalSignatureIdentity(model.ChainBTC, "btc-new-102")
 	assert.Equal(t, expectedCursor, baseline.cursorValue)
 	assert.Equal(t, expectedCursor, oneBlockReorg.cursorValue)
 	assert.Equal(t, expectedCursor, multiBlockReorg.cursorValue)
@@ -3978,6 +3979,6 @@ func TestIngester_Run_ReturnsErrorOnProcessBatchFailure(t *testing.T) {
 }
 
 func TestCanonicalSignatureIdentity_BTC(t *testing.T) {
-	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
-	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
+	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
+	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
 }

@@ -55,6 +55,5 @@ func TestTokenTypeConstants(t *testing.T) {
 }
 
 func TestAddressSourceConstants(t *testing.T) {
-	assert.Equal(t, AddressSource("db"), AddressSourceDB)
 	assert.Equal(t, AddressSource("env"), AddressSourceEnv)
 }

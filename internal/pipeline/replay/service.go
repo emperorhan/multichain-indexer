@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"math/big"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/google/uuid"
@@ -192,7 +192,7 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 		if !be.balanceApplied {
 			continue
 		}
-		invertedDelta, err := negateDecimalString(be.delta)
+		invertedDelta, err := identity.NegateDecimalString(be.delta)
 		if err != nil {
 			return nil, fmt.Errorf("negate delta for %s: %w", be.txHash, err)
 		}
@@ -206,7 +206,7 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 		}
 		reversedCount++
 
-		if isStakingActivity(be.activityType) {
+		if identity.IsStakingActivity(be.activityType) {
 			if err := s.balanceRepo.AdjustBalanceTx(
 				ctx, dbTx,
 				req.Chain, req.Network, be.address,
@@ -355,19 +355,6 @@ func (s *Service) fetchRollbackEvents(
 		events = append(events, e)
 	}
 	return events, rows.Err()
-}
-
-func negateDecimalString(value string) (string, error) {
-	var delta big.Int
-	if _, ok := delta.SetString(value, 10); !ok {
-		return "", fmt.Errorf("invalid decimal value: %s", value)
-	}
-	delta.Neg(&delta)
-	return delta.String(), nil
-}
-
-func isStakingActivity(activityType model.ActivityType) bool {
-	return activityType == model.ActivityStake || activityType == model.ActivityUnstake
 }
 
 // queryCount is a helper to execute a COUNT query using a read-only transaction.

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 	"github.com/stretchr/testify/assert"
 )
@@ -273,10 +274,10 @@ func TestIsEVMChain_AllEVMChains(t *testing.T) {
 	}
 
 	for _, chain := range evmChains {
-		assert.True(t, isEVMChain(chain), "expected %s to be EVM chain", chain)
+		assert.True(t, identity.IsEVMChain(chain), "expected %s to be EVM chain", chain)
 	}
 
 	for _, chain := range nonEVMChains {
-		assert.False(t, isEVMChain(chain), "expected %s to NOT be EVM chain", chain)
+		assert.False(t, identity.IsEVMChain(chain), "expected %s to NOT be EVM chain", chain)
 	}
 }

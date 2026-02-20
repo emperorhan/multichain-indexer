@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/normalizer/mocks"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
@@ -4624,9 +4625,9 @@ func TestProcessBatch_DeferredRecoveryBackfillPermutationsConvergeAcrossMandator
 			secondSeq := tc.previousSequence + 2
 			thirdSeq := tc.previousSequence + 3
 
-			canonicalFirst := canonicalSignatureIdentity(tc.chain, tc.firstSig)
-			canonicalSecond := canonicalSignatureIdentity(tc.chain, tc.secondSig)
-			canonicalThird := canonicalSignatureIdentity(tc.chain, tc.thirdSig)
+			canonicalFirst := identity.CanonicalSignatureIdentity(tc.chain, tc.firstSig)
+			canonicalSecond := identity.CanonicalSignatureIdentity(tc.chain, tc.secondSig)
+			canonicalThird := identity.CanonicalSignatureIdentity(tc.chain, tc.thirdSig)
 			require.NotEmpty(t, canonicalFirst)
 			require.NotEmpty(t, canonicalSecond)
 			require.NotEmpty(t, canonicalThird)
@@ -4734,7 +4735,7 @@ func TestProcessBatch_DeferredRecoveryBackfillPermutationsConvergeAcrossMandator
 			recoveredTxHashes := txHashes(recovered)
 			assert.Contains(t, recoveredTxHashes, canonicalSecond)
 			assert.Contains(t, recoveredTxHashes, canonicalThird)
-			assert.NotContains(t, recoveredTxHashes, canonicalSignatureIdentity(tc.chain, tc.orphanSig))
+			assert.NotContains(t, recoveredTxHashes, identity.CanonicalSignatureIdentity(tc.chain, tc.orphanSig))
 
 			require.NotNil(t, recovered.NewCursorValue)
 			assert.Equal(t, degraded.NewCursorSequence, recovered.NewCursorSequence)
@@ -7233,8 +7234,8 @@ func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMa
 }
 
 func TestCanonicalSignatureIdentity_BTCTxIDIsLowercased(t *testing.T) {
-	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
-	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
+	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
+	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
 }
 
 func TestProcessBatch_BTCReplayResumeDeterministicTupleEquivalenceAndNoDuplicateCanonicalIDs(t *testing.T) {
@@ -7303,7 +7304,7 @@ func TestProcessBatch_BTCReplayResumeDeterministicTupleEquivalenceAndNoDuplicate
 		Times(3).
 		DoAndReturn(func(_ context.Context, req *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
 			require.Len(t, req.GetTransactions(), 1)
-			assert.Equal(t, "abcd9001", canonicalSignatureIdentity(model.ChainBTC, req.GetTransactions()[0].GetSignature()))
+			assert.Equal(t, "abcd9001", identity.CanonicalSignatureIdentity(model.ChainBTC, req.GetTransactions()[0].GetSignature()))
 			return response, nil
 		})
 
@@ -7712,8 +7713,8 @@ func TestProcessBatch_BTCTopologyParityLikeGroupVsIndependent_CanonicalTupleEqui
 				for idx, f := range expectedPartition {
 					assert.Equal(
 						t,
-						canonicalSignatureIdentity(model.ChainBTC, f.signature),
-						canonicalSignatureIdentity(model.ChainBTC, req.GetTransactions()[idx].GetSignature()),
+						identity.CanonicalSignatureIdentity(model.ChainBTC, f.signature),
+						identity.CanonicalSignatureIdentity(model.ChainBTC, req.GetTransactions()[idx].GetSignature()),
 					)
 					results = append(results, buildResult(f))
 				}
@@ -8165,8 +8166,8 @@ func TestProcessBatch_MandatoryChainTopologyABCParityReplayResume_CanonicalIDAnd
 					expectedSignature := signatureForMode(mode, tc.fixtures[fixtureIdx])
 					assert.Equal(
 						t,
-						canonicalSignatureIdentity(tc.chain, expectedSignature),
-						canonicalSignatureIdentity(tc.chain, req.GetTransactions()[idx].GetSignature()),
+						identity.CanonicalSignatureIdentity(tc.chain, expectedSignature),
+						identity.CanonicalSignatureIdentity(tc.chain, req.GetTransactions()[idx].GetSignature()),
 					)
 					results = append(results, tc.fixtures[fixtureIdx].result)
 				}

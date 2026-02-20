@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
@@ -18569,7 +18570,7 @@ func lagAwareMinSequence(active []model.WatchedAddress, cursorRepo *inMemoryCurs
 }
 
 func syntheticCursorValue(chain model.Chain, seq int64) string {
-	if isEVMChain(chain) {
+	if identity.IsEVMChain(chain) {
 		return fmt.Sprintf("0x%064x", seq)
 	}
 	return fmt.Sprintf("sig-%d", seq)

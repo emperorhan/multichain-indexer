@@ -13,6 +13,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 )
 
 func buildCanonicalSolanaBalanceEvents(
@@ -1181,7 +1182,7 @@ func shouldReplaceCanonicalSolanaEvent(
 
 func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, activityType model.ActivityType) string {
 	canonicalTxHash := strings.TrimSpace(txHash)
-	canonicalTxHash = canonicalSignatureIdentity(chain, canonicalTxHash)
+	canonicalTxHash = identity.CanonicalSignatureIdentity(chain, canonicalTxHash)
 	if canonicalTxHash == "" {
 		canonicalTxHash = strings.TrimSpace(txHash)
 	}

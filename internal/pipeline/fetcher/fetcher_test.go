@@ -12,6 +12,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	chainmocks "github.com/emperorhan/multichain-indexer/internal/chain/mocks"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/stretchr/testify/assert"
@@ -1244,7 +1245,7 @@ func TestProcessJob_BoundaryPartitionVarianceConvergesAcrossMandatoryChains(t *t
 			}
 
 			expectedHashes := canonicalizeSignatures(tc.chain, sigResponses[i])
-			expectedHashes = suppressBoundaryCursorSignatures(tc.chain, expectedHashes, canonicalizeCursorValue(tc.chain, job.CursorValue), job.CursorSequence)
+			expectedHashes = suppressBoundaryCursorSignatures(tc.chain, expectedHashes, identity.CanonicalizeCursorValue(tc.chain, job.CursorValue), job.CursorSequence)
 			if len(expectedHashes) > job.BatchSize {
 				expectedHashes = expectedHashes[:job.BatchSize]
 			}
@@ -1512,10 +1513,10 @@ func (a *deterministicCutoffAdapter) FetchNewSignaturesWithCutoff(
 
 	start := 0
 	if cursor != nil {
-		cursorIdentity := canonicalSignatureIdentity(a.chain, *cursor)
+		cursorIdentity := identity.CanonicalSignatureIdentity(a.chain, *cursor)
 		if cursorIdentity != "" {
 			for idx, sig := range filtered {
-				if canonicalSignatureIdentity(a.chain, sig.Hash) == cursorIdentity {
+				if identity.CanonicalSignatureIdentity(a.chain, sig.Hash) == cursorIdentity {
 					// Include cursor overlap so fetcher boundary suppression is exercised.
 					start = idx
 					break
@@ -1921,12 +1922,12 @@ func signatureSequenceForCursor(chainID model.Chain, sigs []chain.SignatureInfo,
 	if cursor == nil {
 		return 0
 	}
-	cursorIdentity := canonicalSignatureIdentity(chainID, *cursor)
+	cursorIdentity := identity.CanonicalSignatureIdentity(chainID, *cursor)
 	if cursorIdentity == "" {
 		return 0
 	}
 	for _, sig := range sigs {
-		if canonicalSignatureIdentity(chainID, sig.Hash) == cursorIdentity {
+		if identity.CanonicalSignatureIdentity(chainID, sig.Hash) == cursorIdentity {
 			return sig.Sequence
 		}
 	}
@@ -1934,13 +1935,13 @@ func signatureSequenceForCursor(chainID model.Chain, sigs []chain.SignatureInfo,
 }
 
 func TestCanonicalSignatureIdentity_BTC(t *testing.T) {
-	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
-	assert.Equal(t, "abcdef0011", canonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
+	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
+	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))
 }
 
 func TestCanonicalizeCursorValue_BTC(t *testing.T) {
 	cursor := "ABCDEF0099"
-	canonical := canonicalizeCursorValue(model.ChainBTC, &cursor)
+	canonical := identity.CanonicalizeCursorValue(model.ChainBTC, &cursor)
 	require.NotNil(t, canonical)
 	assert.Equal(t, "abcdef0099", *canonical)
 }

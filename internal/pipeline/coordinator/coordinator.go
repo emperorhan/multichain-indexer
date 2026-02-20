@@ -11,6 +11,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	autotune "github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/tracing"
@@ -629,7 +630,7 @@ func reconcileCheckpointCursor(
 	}
 
 	reconciled := *cursor
-	reconciledCursorValue := canonicalizeCursorValue(chain, cursor.CursorValue)
+	reconciledCursorValue := identity.CanonicalizeCursorValue(chain, cursor.CursorValue)
 
 	if cursor.CursorSequence < 0 {
 		reconciled.CursorValue = nil
@@ -849,7 +850,7 @@ func lagAwareCursorValue(chain model.Chain, cursor *model.AddressCursor) *string
 	if cursor == nil {
 		return nil
 	}
-	return canonicalizeCursorValue(chain, cursor.CursorValue)
+	return identity.CanonicalizeCursorValue(chain, cursor.CursorValue)
 }
 
 func resolveCandidateCursor(chain model.Chain, candidate watchedAddressCandidate) (*string, int64) {
@@ -889,7 +890,7 @@ func stableAddressScopeOrderKey(chain model.Chain, network model.Network, addres
 
 func stableAddressOrderKey(chain model.Chain, address string) string {
 	trimmed := strings.TrimSpace(address)
-	if isEVMChain(chain) {
+	if identity.IsEVMChain(chain) {
 		return strings.ToLower(trimmed)
 	}
 	return trimmed
@@ -900,7 +901,7 @@ func canonicalWatchedAddressIdentity(chain model.Chain, address string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if !isEVMChain(chain) {
+	if !identity.IsEVMChain(chain) {
 		return trimmed
 	}
 
@@ -908,7 +909,7 @@ func canonicalWatchedAddressIdentity(chain model.Chain, address string) string {
 	if withoutPrefix == "" {
 		return ""
 	}
-	if isHexString(withoutPrefix) {
+	if identity.IsHexString(withoutPrefix) {
 		return "0x" + strings.ToLower(withoutPrefix)
 	}
 	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
@@ -917,75 +918,13 @@ func canonicalWatchedAddressIdentity(chain model.Chain, address string) string {
 	return strings.ToLower(trimmed)
 }
 
-func canonicalizeCursorValue(chain model.Chain, cursor *string) *string {
-	if cursor == nil {
-		return nil
-	}
-	value := canonicalSignatureIdentity(chain, *cursor)
-	if value == "" {
-		return nil
-	}
-	return &value
-}
-
-func canonicalSignatureIdentity(chain model.Chain, hash string) string {
-	trimmed := strings.TrimSpace(hash)
-	if trimmed == "" {
-		return ""
-	}
-	if chain == model.ChainBTC {
-		withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
-		if withoutPrefix == "" {
-			return ""
-		}
-		return strings.ToLower(withoutPrefix)
-	}
-	if !isEVMChain(chain) {
-		return trimmed
-	}
-
-	withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
-	if withoutPrefix == "" {
-		return ""
-	}
-	if isHexString(withoutPrefix) {
-		return "0x" + strings.ToLower(withoutPrefix)
-	}
-	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
-		return "0x" + strings.ToLower(withoutPrefix)
-	}
-	return trimmed
-}
-
-func isEVMChain(chain model.Chain) bool {
-	switch chain {
-	case model.ChainBase, model.ChainEthereum, model.ChainPolygon, model.ChainArbitrum, model.ChainBSC:
-		return true
-	default:
-		return false
-	}
-}
-
-func isHexString(v string) bool {
-	for _, ch := range v {
-		switch {
-		case ch >= '0' && ch <= '9':
-		case ch >= 'a' && ch <= 'f':
-		case ch >= 'A' && ch <= 'F':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 func isCrossChainCursorValueShape(chain model.Chain, cursor string) bool {
 	trimmed := strings.TrimSpace(cursor)
 	if trimmed == "" {
 		return false
 	}
 
-	if isEVMChain(chain) {
+	if identity.IsEVMChain(chain) {
 		if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
 			return false
 		}
@@ -1003,7 +942,7 @@ func looksLikeEVMHash(value string) bool {
 		return false
 	}
 	hexPortion := strings.TrimPrefix(strings.TrimPrefix(value, "0x"), "0X")
-	return hexPortion != "" && isHexString(hexPortion)
+	return hexPortion != "" && identity.IsHexString(hexPortion)
 }
 
 func isBase58String(v string) bool {

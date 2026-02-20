@@ -300,21 +300,6 @@ var (
 		Help:      "Total replay dry run operations executed",
 	}, []string{"chain", "network"})
 
-	// Pipeline health
-	PipelineHealthStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "indexer",
-		Subsystem: "pipeline",
-		Name:      "health_status",
-		Help:      "Pipeline health status (0=UNKNOWN, 1=HEALTHY, 2=UNHEALTHY, 3=INACTIVE)",
-	}, []string{"chain", "network"})
-
-	PipelineConsecutiveFailures = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "indexer",
-		Subsystem: "pipeline",
-		Name:      "consecutive_failures",
-		Help:      "Number of consecutive pipeline failures",
-	}, []string{"chain", "network"})
-
 	// Alerts
 	AlertsSentTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "indexer",

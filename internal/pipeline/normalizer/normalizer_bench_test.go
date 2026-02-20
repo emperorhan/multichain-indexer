@@ -8,6 +8,7 @@ import (
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 )
 
@@ -362,7 +363,7 @@ func BenchmarkBuildCanonicalSolanaBalanceEvents_MixedEvents(b *testing.B) {
 func BenchmarkCanonicalSignatureIdentity_Solana(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = canonicalSignatureIdentity(model.ChainSolana, "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tJ")
+		_ = identity.CanonicalSignatureIdentity(model.ChainSolana, "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tJ")
 	}
 }
 
@@ -371,6 +372,6 @@ func BenchmarkCanonicalSignatureIdentity_Solana(b *testing.B) {
 func BenchmarkCanonicalSignatureIdentity_EVM(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = canonicalSignatureIdentity(model.ChainEthereum, "0xABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890")
+		_ = identity.CanonicalSignatureIdentity(model.ChainEthereum, "0xABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890")
 	}
 }

@@ -1,5 +1,0 @@
-# One Base Sepolia EVM address per line.
-# Manager loop reads this file when BASE_WHITELIST_CSV is not set.
-# Example:
-# 0x1111111111111111111111111111111111111111
-# 0x2222222222222222222222222222222222222222

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/google/uuid"
 )
@@ -128,7 +129,7 @@ func TestNegateDecimalString(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
-			got, err := negateDecimalString(tc.input)
+			got, err := identity.NegateDecimalString(tc.input)
 			if tc.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -159,7 +160,7 @@ func TestIsStakingActivity(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(string(tc.activity), func(t *testing.T) {
-			if got := isStakingActivity(tc.activity); got != tc.expected {
+			if got := identity.IsStakingActivity(tc.activity); got != tc.expected {
 				t.Errorf("expected %v, got %v", tc.expected, got)
 			}
 		})

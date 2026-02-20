@@ -12,6 +12,7 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"google.golang.org/protobuf/proto"
 )
@@ -23,7 +24,7 @@ func canonicalizeBatchSignatures(chainID model.Chain, sigs []event.SignatureInfo
 
 	byIdentity := make(map[string]event.SignatureInfo, len(sigs))
 	for _, sig := range sigs {
-		identity := canonicalSignatureIdentity(chainID, sig.Hash)
+		identity := identity.CanonicalSignatureIdentity(chainID, sig.Hash)
 		if identity == "" {
 			continue
 		}
@@ -57,56 +58,15 @@ func shouldReplaceCanonicalSignature(existing, incoming event.SignatureInfo) boo
 	return incoming.Hash < existing.Hash
 }
 
-func canonicalizeCursorValue(chainID model.Chain, cursor *string) *string {
-	if cursor == nil {
-		return nil
-	}
-	identity := canonicalSignatureIdentity(chainID, *cursor)
-	if identity == "" {
-		return nil
-	}
-	value := identity
-	return &value
-}
-
-func canonicalSignatureIdentity(chainID model.Chain, hash string) string {
-	trimmed := strings.TrimSpace(hash)
-	if trimmed == "" {
-		return ""
-	}
-	if chainID == model.ChainBTC {
-		withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
-		if withoutPrefix == "" {
-			return ""
-		}
-		return strings.ToLower(withoutPrefix)
-	}
-	if !isEVMChain(chainID) {
-		return trimmed
-	}
-
-	withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
-	if withoutPrefix == "" {
-		return ""
-	}
-	if isHexString(withoutPrefix) {
-		return "0x" + strings.ToLower(withoutPrefix)
-	}
-	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
-		return "0x" + strings.ToLower(withoutPrefix)
-	}
-	return trimmed
-}
-
 func canonicalizeAddressIdentity(chainID model.Chain, value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return ""
 	}
-	if !isEVMChain(chainID) {
+	if !identity.IsEVMChain(chainID) {
 		return trimmed
 	}
-	identity := canonicalSignatureIdentity(chainID, trimmed)
+	identity := identity.CanonicalSignatureIdentity(chainID, trimmed)
 	if identity == "" {
 		return trimmed
 	}
@@ -211,14 +171,14 @@ func shouldReplaceDecodedResult(chainID model.Chain, existing, incoming *sidecar
 		return incomingFee < existingFee
 	}
 
-	existingPayer := canonicalSignatureIdentity(chainID, existing.FeePayer)
-	incomingPayer := canonicalSignatureIdentity(chainID, incoming.FeePayer)
+	existingPayer := identity.CanonicalSignatureIdentity(chainID, existing.FeePayer)
+	incomingPayer := identity.CanonicalSignatureIdentity(chainID, incoming.FeePayer)
 	if existingPayer != incomingPayer {
 		return incomingPayer < existingPayer
 	}
 
-	incomingHash := canonicalSignatureIdentity(chainID, incoming.TxHash)
-	existingHash := canonicalSignatureIdentity(chainID, existing.TxHash)
+	incomingHash := identity.CanonicalSignatureIdentity(chainID, incoming.TxHash)
+	existingHash := identity.CanonicalSignatureIdentity(chainID, existing.TxHash)
 	if incomingHash != existingHash {
 		return incomingHash < existingHash
 	}
@@ -470,7 +430,7 @@ func mergeDecodedCoverageEventMetadata(chainID model.Chain, preferred, additiona
 	}
 	preferredHadCompleteFeeSplit := false
 	additionalHasCompleteFeeSplit := false
-	if isEVMChain(chainID) {
+	if identity.IsEVMChain(chainID) {
 		_, preferredHasExecution := deriveBaseExecutionFeeFromMetadata(preferred.Metadata)
 		_, preferredHasData := deriveBaseDataFee(preferred.Metadata)
 		preferredHadCompleteFeeSplit = preferredHasExecution && preferredHasData
@@ -490,7 +450,7 @@ func mergeDecodedCoverageEventMetadata(chainID model.Chain, preferred, additiona
 		preferred.Metadata[key] = value
 	}
 
-	if !isEVMChain(chainID) {
+	if !identity.IsEVMChain(chainID) {
 		return
 	}
 	// If alias metadata contributes a complete fee split while the preferred
@@ -576,7 +536,7 @@ func decodedCoverageEventHasPathHint(chainID model.Chain, be *sidecarv1.BalanceE
 	if be == nil {
 		return false
 	}
-	if isEVMChain(chainID) {
+	if identity.IsEVMChain(chainID) {
 		return resolveBaseMetadataEventPath(be.Metadata) != ""
 	}
 	if chainID == model.ChainSolana {
@@ -725,7 +685,7 @@ func decodedEventPath(chainID model.Chain, be *sidecarv1.BalanceEventInfo) strin
 	if be == nil {
 		return ""
 	}
-	if isEVMChain(chainID) {
+	if identity.IsEVMChain(chainID) {
 		if metadataPath := resolveBaseMetadataEventPath(be.Metadata); metadataPath != "" {
 			return metadataPath
 		}
@@ -794,7 +754,7 @@ func classifyDecodeErrors(
 		if decErr == nil {
 			continue
 		}
-		signatureKey := canonicalSignatureIdentity(chainID, decErr.Signature)
+		signatureKey := identity.CanonicalSignatureIdentity(chainID, decErr.Signature)
 		if signatureKey == "" {
 			signatureKey = fmt.Sprintf("<unknown:%03d>", idx)
 		}
@@ -843,15 +803,6 @@ func formatDecodeDiagnostics(errorBySignature map[string]string) string {
 		diagnostics = append(diagnostics, fmt.Sprintf("%s=%s", signature, errorBySignature[signature]))
 	}
 	return strings.Join(diagnostics, ",")
-}
-
-func isEVMChain(chainID model.Chain) bool {
-	switch chainID {
-	case model.ChainBase, model.ChainEthereum, model.ChainPolygon, model.ChainArbitrum, model.ChainBSC:
-		return true
-	default:
-		return false
-	}
 }
 
 func shouldReplaceCanonicalBaseEvent(existing, incoming event.NormalizedBalanceEvent) bool {

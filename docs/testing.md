@@ -538,7 +538,7 @@ func TestIngester_ProcessBatch_Integration(t *testing.T) {
             TxHash: "sig1", BlockCursor: 100, FeeAmount: "5000",
             FeePayer: "watched_addr_1", Status: model.TxStatusSuccess,
             Transfers: []event.NormalizedTransfer{{
-                InstructionIndex: 0, ContractAddress: model.SolanaNativeMint,
+                InstructionIndex: 0, ContractAddress: "11111111111111111111111111111111",
                 FromAddress: "sender", ToAddress: "watched_addr_1",
                 Amount: "1000000000", TokenType: model.TokenTypeNative,
                 TokenDecimals: 9,

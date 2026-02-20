@@ -26,6 +26,3 @@ type Token struct {
 	CreatedAt       time.Time       `db:"created_at"`
 	UpdatedAt       time.Time       `db:"updated_at"`
 }
-
-// Solana native SOL mint address
-const SolanaNativeMint = "11111111111111111111111111111111"

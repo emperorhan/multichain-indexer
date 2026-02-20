@@ -7,8 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "test": "vitest run",
-    "proto": "grpc_tools_node_protoc --proto_path=../proto --js_out=import_style=commonjs,binary:./src/generated --grpc_out=grpc_js:./src/generated --ts_out=grpc_js:./src/generated ../proto/sidecar/v1/decoder.proto"
+    "test": "vitest run"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.6",
