@@ -1,4 +1,4 @@
-.PHONY: build run test test-sidecar lint proto migrate migrate-down sidecar-build sidecar-run docker-up docker-down mock-gen docker-build-indexer
+.PHONY: build run test test-sidecar lint proto migrate migrate-down sidecar-build sidecar-run docker-up docker-down mock-gen docker-build-indexer evaluate
 
 # Go
 BINARY_NAME=multichain-indexer
@@ -70,3 +70,7 @@ docker-logs:
 
 docker-build-indexer:
 	docker build -t multichain-indexer:latest .
+
+# Evaluation
+evaluate:
+	go run ./test/evaluate $(EVAL_ARGS)

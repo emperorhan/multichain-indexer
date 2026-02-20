@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/google/uuid"
@@ -18,13 +19,6 @@ type WatchedAddressRepository interface {
 	GetActive(ctx context.Context, chain model.Chain, network model.Network) ([]model.WatchedAddress, error)
 	Upsert(ctx context.Context, addr *model.WatchedAddress) error
 	FindByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) (*model.WatchedAddress, error)
-}
-
-// CursorRepository provides access to address cursor data.
-type CursorRepository interface {
-	Get(ctx context.Context, chain model.Chain, network model.Network, address string) (*model.AddressCursor, error)
-	UpsertTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, cursorValue *string, cursorSequence int64, itemsProcessed int64) error
-	EnsureExists(ctx context.Context, chain model.Chain, network model.Network, address string) error
 }
 
 // TransactionRepository provides access to transaction data.
@@ -135,4 +129,45 @@ type IndexedBlockRepository interface {
 // RuntimeConfigRepository provides access to runtime-overridable configuration.
 type RuntimeConfigRepository interface {
 	GetActive(ctx context.Context, chain model.Chain, network model.Network) (map[string]string, error)
+}
+
+// DashboardTokenBalance represents a single token balance for a watched address.
+type DashboardTokenBalance struct {
+	TokenSymbol string    `json:"token_symbol"`
+	TokenName   string    `json:"token_name"`
+	Decimals    int       `json:"decimals"`
+	Amount      string    `json:"amount"`
+	BalanceType string    `json:"balance_type"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// DashboardAddressBalance groups balances by watched address.
+type DashboardAddressBalance struct {
+	Address  string                  `json:"address"`
+	Label    *string                 `json:"label,omitempty"`
+	WalletID *string                 `json:"wallet_id,omitempty"`
+	Balances []DashboardTokenBalance `json:"balances"`
+}
+
+// DashboardEvent represents a recent balance event for the dashboard.
+type DashboardEvent struct {
+	TxHash              string     `json:"tx_hash"`
+	Address             string     `json:"address"`
+	CounterpartyAddress string     `json:"counterparty_address"`
+	ActivityType        string     `json:"activity_type"`
+	Delta               string     `json:"delta"`
+	TokenSymbol         string     `json:"token_symbol"`
+	Decimals            int        `json:"decimals"`
+	BlockCursor         int64      `json:"block_cursor"`
+	BlockTime           *time.Time `json:"block_time"`
+	FinalityState       string     `json:"finality_state"`
+	CreatedAt           time.Time  `json:"created_at"`
+}
+
+// DashboardRepository provides read-only access to dashboard data.
+type DashboardRepository interface {
+	GetBalanceSummary(ctx context.Context, chain model.Chain, network model.Network) ([]DashboardAddressBalance, error)
+	GetRecentEvents(ctx context.Context, chain model.Chain, network model.Network, address string, limit, offset int) ([]DashboardEvent, int, error)
+	GetAllWatermarks(ctx context.Context) ([]model.PipelineWatermark, error)
+	CountWatchedAddresses(ctx context.Context) (int, error)
 }

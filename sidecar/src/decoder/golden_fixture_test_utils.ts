@@ -22,7 +22,7 @@ export interface GoldenFixtureSummaryRow {
 
 interface GoldenFixtureBatchInput {
   signature: string;
-  rawJson: Buffer | string;
+  rawJson: Buffer;
 }
 
 function compareGoldenFixturesByCanonicalSeed(left: GoldenFixtureCase, right: GoldenFixtureCase): number {

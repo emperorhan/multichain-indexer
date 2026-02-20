@@ -6,8 +6,16 @@ rule_files:
   - alerts.yaml
 
 scrape_configs:
+  # Docker Compose 내부 indexer (컨테이너로 실행 시)
   - job_name: multichain-indexer
     static_configs:
       - targets: ["indexer:8080"]
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  # 로컬 실행 indexer (go run ./cmd/indexer 시)
+  - job_name: multichain-indexer-local
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
     metrics_path: /metrics
     scrape_interval: 10s

@@ -45,6 +45,10 @@ loadtest
 cover.out
 *.zip
 
+# Testbed
+logs/
+.testbed.pid
+
 # AI tools
 .claude/
 .agent/

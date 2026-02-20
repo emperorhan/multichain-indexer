@@ -127,73 +127,6 @@ func (mr *MockWatchedAddressRepositoryMockRecorder) Upsert(ctx, addr any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Upsert", reflect.TypeOf((*MockWatchedAddressRepository)(nil).Upsert), ctx, addr)
 }
 
-// MockCursorRepository is a mock of CursorRepository interface.
-type MockCursorRepository struct {
-	ctrl     *gomock.Controller
-	recorder *MockCursorRepositoryMockRecorder
-	isgomock struct{}
-}
-
-// MockCursorRepositoryMockRecorder is the mock recorder for MockCursorRepository.
-type MockCursorRepositoryMockRecorder struct {
-	mock *MockCursorRepository
-}
-
-// NewMockCursorRepository creates a new mock instance.
-func NewMockCursorRepository(ctrl *gomock.Controller) *MockCursorRepository {
-	mock := &MockCursorRepository{ctrl: ctrl}
-	mock.recorder = &MockCursorRepositoryMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockCursorRepository) EXPECT() *MockCursorRepositoryMockRecorder {
-	return m.recorder
-}
-
-// EnsureExists mocks base method.
-func (m *MockCursorRepository) EnsureExists(ctx context.Context, chain model.Chain, network model.Network, address string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnsureExists", ctx, chain, network, address)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// EnsureExists indicates an expected call of EnsureExists.
-func (mr *MockCursorRepositoryMockRecorder) EnsureExists(ctx, chain, network, address any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureExists", reflect.TypeOf((*MockCursorRepository)(nil).EnsureExists), ctx, chain, network, address)
-}
-
-// Get mocks base method.
-func (m *MockCursorRepository) Get(ctx context.Context, chain model.Chain, network model.Network, address string) (*model.AddressCursor, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Get", ctx, chain, network, address)
-	ret0, _ := ret[0].(*model.AddressCursor)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// Get indicates an expected call of Get.
-func (mr *MockCursorRepositoryMockRecorder) Get(ctx, chain, network, address any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockCursorRepository)(nil).Get), ctx, chain, network, address)
-}
-
-// UpsertTx mocks base method.
-func (m *MockCursorRepository) UpsertTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, cursorValue *string, cursorSequence, itemsProcessed int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpsertTx", ctx, tx, chain, network, address, cursorValue, cursorSequence, itemsProcessed)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// UpsertTx indicates an expected call of UpsertTx.
-func (mr *MockCursorRepositoryMockRecorder) UpsertTx(ctx, tx, chain, network, address, cursorValue, cursorSequence, itemsProcessed any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTx", reflect.TypeOf((*MockCursorRepository)(nil).UpsertTx), ctx, tx, chain, network, address, cursorValue, cursorSequence, itemsProcessed)
-}
-
 // MockTransactionRepository is a mock of TransactionRepository interface.
 type MockTransactionRepository struct {
 	ctrl     *gomock.Controller
@@ -651,4 +584,89 @@ func (m *MockIndexerConfigRepository) Upsert(ctx context.Context, c *model.Index
 func (mr *MockIndexerConfigRepositoryMockRecorder) Upsert(ctx, c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Upsert", reflect.TypeOf((*MockIndexerConfigRepository)(nil).Upsert), ctx, c)
+}
+
+// MockDashboardRepository is a mock of DashboardRepository interface.
+type MockDashboardRepository struct {
+	ctrl     *gomock.Controller
+	recorder *MockDashboardRepositoryMockRecorder
+	isgomock struct{}
+}
+
+// MockDashboardRepositoryMockRecorder is the mock recorder for MockDashboardRepository.
+type MockDashboardRepositoryMockRecorder struct {
+	mock *MockDashboardRepository
+}
+
+// NewMockDashboardRepository creates a new mock instance.
+func NewMockDashboardRepository(ctrl *gomock.Controller) *MockDashboardRepository {
+	mock := &MockDashboardRepository{ctrl: ctrl}
+	mock.recorder = &MockDashboardRepositoryMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockDashboardRepository) EXPECT() *MockDashboardRepositoryMockRecorder {
+	return m.recorder
+}
+
+// GetBalanceSummary mocks base method.
+func (m *MockDashboardRepository) GetBalanceSummary(ctx context.Context, chain model.Chain, network model.Network) ([]store.DashboardAddressBalance, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBalanceSummary", ctx, chain, network)
+	ret0, _ := ret[0].([]store.DashboardAddressBalance)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetBalanceSummary indicates an expected call of GetBalanceSummary.
+func (mr *MockDashboardRepositoryMockRecorder) GetBalanceSummary(ctx, chain, network any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBalanceSummary", reflect.TypeOf((*MockDashboardRepository)(nil).GetBalanceSummary), ctx, chain, network)
+}
+
+// GetRecentEvents mocks base method.
+func (m *MockDashboardRepository) GetRecentEvents(ctx context.Context, chain model.Chain, network model.Network, address string, limit, offset int) ([]store.DashboardEvent, int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRecentEvents", ctx, chain, network, address, limit, offset)
+	ret0, _ := ret[0].([]store.DashboardEvent)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetRecentEvents indicates an expected call of GetRecentEvents.
+func (mr *MockDashboardRepositoryMockRecorder) GetRecentEvents(ctx, chain, network, address, limit, offset any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRecentEvents", reflect.TypeOf((*MockDashboardRepository)(nil).GetRecentEvents), ctx, chain, network, address, limit, offset)
+}
+
+// GetAllWatermarks mocks base method.
+func (m *MockDashboardRepository) GetAllWatermarks(ctx context.Context) ([]model.PipelineWatermark, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllWatermarks", ctx)
+	ret0, _ := ret[0].([]model.PipelineWatermark)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllWatermarks indicates an expected call of GetAllWatermarks.
+func (mr *MockDashboardRepositoryMockRecorder) GetAllWatermarks(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllWatermarks", reflect.TypeOf((*MockDashboardRepository)(nil).GetAllWatermarks), ctx)
+}
+
+// CountWatchedAddresses mocks base method.
+func (m *MockDashboardRepository) CountWatchedAddresses(ctx context.Context) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountWatchedAddresses", ctx)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountWatchedAddresses indicates an expected call of CountWatchedAddresses.
+func (mr *MockDashboardRepositoryMockRecorder) CountWatchedAddresses(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountWatchedAddresses", reflect.TypeOf((*MockDashboardRepository)(nil).CountWatchedAddresses), ctx)
 }

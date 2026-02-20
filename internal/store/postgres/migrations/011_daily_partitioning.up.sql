@@ -115,7 +115,10 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE balance_events RENAME TO balance_events_monthly_old;
 ALTER TABLE balance_events_daily RENAME TO balance_events;
 
--- Rename the default partition to match the new parent name.
+-- Rename the old default partition (from migration 007) to avoid name collision.
+ALTER TABLE balance_events_default RENAME TO balance_events_monthly_old_default;
+
+-- Rename the new daily default partition to match the new parent name.
 ALTER TABLE balance_events_daily_default RENAME TO balance_events_default;
 
 -- Step 7: Create partition manager function for auto-creating future daily partitions.

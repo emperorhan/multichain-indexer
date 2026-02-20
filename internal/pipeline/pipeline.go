@@ -62,6 +62,7 @@ type Config struct {
 	Health                    config.HealthStageConfig
 	ConfigWatcher             config.ConfigWatcherStageConfig
 	ReorgDetectorMaxCheckDepth int
+	MaxInitialLookbackBlocks   int
 	Alerter                   alert.Alerter
 }
 
@@ -129,7 +130,6 @@ type streamCheckpointManager interface {
 
 type Repos struct {
 	WatchedAddr   store.WatchedAddressRepository
-	Cursor        store.CursorRepository
 	Transaction   store.TransactionRepository
 	BalanceEvent  store.BalanceEventRepository
 	Balance       store.BalanceRepository
@@ -369,7 +369,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 
 	coord := coordinator.New(
 		p.cfg.Chain, p.cfg.Network,
-		p.repos.WatchedAddr, p.repos.Cursor,
+		p.repos.WatchedAddr,
 		p.cfg.BatchSize, p.cfg.IndexingInterval,
 		jobCh, p.logger,
 	).WithHeadProvider(p.adapter).WithAutoTune(coordinator.AutoTuneConfig{
@@ -393,9 +393,12 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		PolicyActivationHoldTicks:  p.cfg.CoordinatorAutoTune.PolicyActivationHoldTicks,
 	}).WithAutoTuneSignalSource(autoTuneSignalCollector)
 
-	// Enable block-scan mode for EVM/BTC adapters
+	// Enable block-scan mode for EVM/BTC/Solana adapters
 	if isBlockScanAdapter {
 		coord = coord.WithBlockScanMode(p.repos.Config)
+		if p.cfg.MaxInitialLookbackBlocks > 0 {
+			coord = coord.WithMaxInitialLookbackBlocks(int64(p.cfg.MaxInitialLookbackBlocks))
+		}
 	}
 
 	fetchOpts := []fetcher.Option{
@@ -486,7 +489,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		p.db,
 		p.repos.Transaction, p.repos.BalanceEvent,
 		p.repos.Balance, p.repos.Token,
-		p.repos.Cursor, p.repos.Config,
+		p.repos.Config,
 		normalizedCh, p.logger,
 		ingesterOpts...,
 	)

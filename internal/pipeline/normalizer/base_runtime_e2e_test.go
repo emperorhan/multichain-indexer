@@ -231,7 +231,6 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 			}
 			return result, nil
 		})
-	mockCursorRepo := storemocks.NewMockCursorRepository(ctrl)
 	mockConfigRepo := storemocks.NewMockIndexerConfigRepository(ctrl)
 
 	fakeDB := openE2EFakeDB(t)
@@ -299,10 +298,6 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 			return nil
 		}).Times(1)
 
-	mockCursorRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, watchedAddress, gomock.Any(), cursorSequence, int64(1)).
-		Return(nil).Times(1)
-
 	mockConfigRepo.EXPECT().
 		UpdateWatermarkTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, cursorSequence).
 		Return(nil).Times(1)
@@ -314,7 +309,6 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 		mockBERepo,
 		mockBalanceRepo,
 		mockTokenRepo,
-		mockCursorRepo,
 		mockConfigRepo,
 		ingestInputCh,
 		slog.Default(),

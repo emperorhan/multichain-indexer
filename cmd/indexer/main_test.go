@@ -622,7 +622,6 @@ func TestSelectRuntimeTargets_FailsWhenUnknownTargetRequested(t *testing.T) {
 func TestSyncWatchedAddresses_UpsertsAndInitializesCursors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedRepo := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursorRepo := storemocks.NewMockCursorRepository(ctrl)
 
 	chain := model.ChainBase
 	network := model.NetworkSepolia
@@ -640,14 +639,7 @@ func TestSyncWatchedAddresses_UpsertsAndInitializesCursors(t *testing.T) {
 			return nil
 		})
 
-	for _, addr := range addresses {
-		mockCursorRepo.EXPECT().
-			EnsureExists(gomock.Any(), chain, network, addr).
-			Return(nil).
-			Times(1)
-	}
-
-	err := syncWatchedAddresses(context.Background(), mockWatchedRepo, mockCursorRepo, chain, network, addresses)
+	err := syncWatchedAddresses(context.Background(), mockWatchedRepo, chain, network, addresses)
 	require.NoError(t, err)
 	require.Len(t, seen, len(addresses))
 
@@ -667,7 +659,6 @@ func TestSyncWatchedAddresses_UpsertsAndInitializesCursors(t *testing.T) {
 func TestSyncWatchedAddresses_StopsOnUpsertFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedRepo := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursorRepo := storemocks.NewMockCursorRepository(ctrl)
 
 	chain := model.ChainSolana
 	network := model.NetworkDevnet
@@ -678,32 +669,9 @@ func TestSyncWatchedAddresses_StopsOnUpsertFailure(t *testing.T) {
 		Return(errors.New("upsert failed")).
 		Times(1)
 
-	err := syncWatchedAddresses(context.Background(), mockWatchedRepo, mockCursorRepo, chain, network, addresses)
+	err := syncWatchedAddresses(context.Background(), mockWatchedRepo, chain, network, addresses)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "upsert watched address")
-}
-
-func TestSyncWatchedAddresses_StopsOnEnsureExistsFailure(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mockWatchedRepo := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursorRepo := storemocks.NewMockCursorRepository(ctrl)
-
-	chain := model.ChainBase
-	network := model.NetworkSepolia
-	addresses := []string{"0xabc"}
-
-	mockWatchedRepo.EXPECT().
-		Upsert(gomock.Any(), gomock.Any()).
-		Return(nil).
-		Times(1)
-	mockCursorRepo.EXPECT().
-		EnsureExists(gomock.Any(), chain, network, addresses[0]).
-		Return(errors.New("cursor failed")).
-		Times(1)
-
-	err := syncWatchedAddresses(context.Background(), mockWatchedRepo, mockCursorRepo, chain, network, addresses)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ensure cursor")
 }
 
 func TestMaskCredentials(t *testing.T) {

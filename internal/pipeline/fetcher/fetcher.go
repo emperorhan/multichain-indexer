@@ -374,6 +374,7 @@ func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job
 		NewCursorValue:    &cursorValue,
 		NewCursorSequence: newest.Sequence,
 		BlockScanMode:     true,
+		WatchedAddresses:  job.WatchedAddresses,
 	}
 
 	select {

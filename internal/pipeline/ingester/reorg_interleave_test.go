@@ -58,7 +58,6 @@ func buildReorgIngester(
 		&interleaveBalanceEventRepo{state: state},
 		&interleaveBalanceRepo{state: state},
 		&interleaveTokenRepo{state: state},
-		&interleaveCursorRepo{state: state},
 		&interleaveConfigRepo{state: state},
 		inputCh,
 		slog.Default(),
@@ -198,12 +197,10 @@ func TestReorgRollback_SingleChainCursorRegressionRewindAndConverge(t *testing.T
 	}
 	assert.NotEmpty(t, postReorgEvents, "should have events from the new fork")
 
-	// Verify cursor converged.
-	cursors := state.snapshotCursors()
-	cursorKey := fmt.Sprintf("solana-devnet|%s", address)
-	if cursor, exists := cursors[cursorKey]; exists && cursor != nil {
-		assert.Equal(t, int64(100), cursor.CursorSequence)
-	}
+	// Verify watermark converged (cursors are no longer managed by the ingester).
+	watermarks := state.snapshotWatermarks()
+	wmKey := "solana-devnet"
+	assert.Contains(t, watermarks, wmKey, "watermark should exist for solana-devnet")
 }
 
 func TestReorgRollback_BTCCompetingBranchReplay(t *testing.T) {

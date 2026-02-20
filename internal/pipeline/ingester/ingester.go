@@ -44,7 +44,6 @@ type Ingester struct {
 	balanceEventRepo  store.BalanceEventRepository
 	balanceRepo       store.BalanceRepository
 	tokenRepo         store.TokenRepository
-	cursorRepo        store.CursorRepository
 	configRepo        store.IndexerConfigRepository
 	normalizedCh      <-chan event.NormalizedBatch
 	reorgCh           <-chan event.ReorgEvent
@@ -140,7 +139,6 @@ func New(
 	balanceEventRepo store.BalanceEventRepository,
 	balanceRepo store.BalanceRepository,
 	tokenRepo store.TokenRepository,
-	cursorRepo store.CursorRepository,
 	configRepo store.IndexerConfigRepository,
 	normalizedCh <-chan event.NormalizedBatch,
 	logger *slog.Logger,
@@ -152,7 +150,6 @@ func New(
 		balanceEventRepo: balanceEventRepo,
 		balanceRepo:      balanceRepo,
 		tokenRepo:        tokenRepo,
-		cursorRepo:       cursorRepo,
 		configRepo:       configRepo,
 		normalizedCh:     normalizedCh,
 		logger:           logger.With("component", "ingester"),
@@ -978,17 +975,6 @@ func (ing *Ingester) writeBulkAndCommit(ctx context.Context, bc *batchContext) (
 		}
 	}
 
-	if !batch.BlockScanMode && batch.NewCursorValue != nil {
-		if err := ing.cursorRepo.UpsertTx(
-			ctx, bc.dbTx, batch.Chain, batch.Network, batch.Address,
-			batch.NewCursorValue, batch.NewCursorSequence, int64(len(batch.Transactions)),
-		); err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return 0, fmt.Errorf("update cursor: %w", err)
-		}
-	}
-
 	if err := ing.configRepo.UpdateWatermarkTx(ctx, bc.dbTx, batch.Chain, batch.Network, batch.NewCursorSequence); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -1413,26 +1399,6 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 		rewindWatermarkSequence = 0
 	}
 
-	// Skip per-address cursor rewind for block-scan mode (watermark is the only checkpoint)
-	if !batch.BlockScanMode {
-		rewindCursorValue, rewindCursorSequence, err := ing.findRewindCursor(
-			ctx, dbTx, batch.Chain, batch.Network, batch.Address, forkCursor,
-			batch.NewCursorValue, batch.NewCursorSequence,
-		)
-		if err != nil {
-			return fmt.Errorf("find rewind cursor: %w", err)
-		}
-
-		if err := ing.cursorRepo.UpsertTx(
-			ctx, dbTx,
-			batch.Chain, batch.Network, batch.Address,
-			rewindCursorValue, rewindCursorSequence, 0,
-		); err != nil {
-			return fmt.Errorf("rewind cursor: %w", err)
-		}
-		rewindWatermarkSequence = rewindCursorSequence
-	}
-
 	if err := ing.configRepo.UpdateWatermarkTx(
 		ctx, dbTx,
 		batch.Chain, batch.Network, rewindWatermarkSequence,
@@ -1677,74 +1643,7 @@ func (ing *Ingester) reconcileAmbiguousCommitOutcome(
 		return false, nil
 	}
 
-	// Block-scan mode: check watermark instead of per-address cursor
-	if batch.BlockScanMode {
-		return ing.reconcileBlockScanCommit(ctx, batch, commitErr)
-	}
-
-	expectedCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
-	if expectedCursor == nil {
-		return false, retry.Terminal(fmt.Errorf(
-			"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=missing_expected_cursor expected_seq=%d commit_err=%w",
-			batch.Chain,
-			batch.Network,
-			batch.Address,
-			batch.NewCursorSequence,
-			commitErr,
-		))
-	}
-
-	cursor, err := ing.cursorRepo.Get(ctx, batch.Chain, batch.Network, batch.Address)
-	if err != nil {
-		return false, retry.Terminal(fmt.Errorf(
-			"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=cursor_probe_failed expected_seq=%d expected_cursor=%s commit_err=%v: %w",
-			batch.Chain,
-			batch.Network,
-			batch.Address,
-			batch.NewCursorSequence,
-			*expectedCursor,
-			commitErr,
-			err,
-		))
-	}
-
-	if cursorMatchesCommitBoundary(batch.Chain, cursor, expectedCursor, batch.NewCursorSequence) {
-		return true, nil
-	}
-
-	observedSeq := int64(-1)
-	observedCursor := "<nil>"
-	if cursor != nil {
-		observedSeq = cursor.CursorSequence
-		if normalized := identity.CanonicalizeCursorValue(batch.Chain, cursor.CursorValue); normalized != nil {
-			observedCursor = *normalized
-		}
-	}
-	if cursor != nil && cursor.CursorSequence > batch.NewCursorSequence {
-		return false, retry.Terminal(fmt.Errorf(
-			"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=cursor_ahead_ambiguous expected_seq=%d expected_cursor=%s observed_seq=%d observed_cursor=%s commit_err=%w",
-			batch.Chain,
-			batch.Network,
-			batch.Address,
-			batch.NewCursorSequence,
-			*expectedCursor,
-			observedSeq,
-			observedCursor,
-			commitErr,
-		))
-	}
-
-	return false, retry.Terminal(fmt.Errorf(
-		"commit_ambiguity_unresolved chain=%s network=%s address=%s reason=cursor_mismatch expected_seq=%d expected_cursor=%s observed_seq=%d observed_cursor=%s commit_err=%w",
-		batch.Chain,
-		batch.Network,
-		batch.Address,
-		batch.NewCursorSequence,
-		*expectedCursor,
-		observedSeq,
-		observedCursor,
-		commitErr,
-	))
+	return ing.reconcileBlockScanCommit(ctx, batch, commitErr)
 }
 
 // reconcileBlockScanCommit checks the watermark to determine if an ambiguous commit succeeded.
@@ -1773,25 +1672,6 @@ func (ing *Ingester) reconcileBlockScanCommit(
 	))
 }
 
-func cursorMatchesCommitBoundary(
-	chain model.Chain,
-	cursor *model.AddressCursor,
-	expectedCursor *string,
-	expectedSeq int64,
-) bool {
-	if cursor == nil || expectedCursor == nil {
-		return false
-	}
-	if cursor.CursorSequence != expectedSeq {
-		return false
-	}
-
-	observedCursor := identity.CanonicalizeCursorValue(chain, cursor.CursorValue)
-	if observedCursor == nil {
-		return false
-	}
-	return *observedCursor == *expectedCursor
-}
 
 func isAmbiguousCommitAckError(err error) bool {
 	if err == nil {

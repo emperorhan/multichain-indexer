@@ -492,7 +492,6 @@ func initDatabase(cfg *config.Config, logger *slog.Logger) (*postgres.DB, error)
 func initRepositories(db *postgres.DB) *pipeline.Repos {
 	return &pipeline.Repos{
 		WatchedAddr:   postgres.NewWatchedAddressRepo(db),
-		Cursor:        postgres.NewCursorRepo(db),
 		Transaction:   postgres.NewTransactionRepo(db),
 		BalanceEvent:  postgres.NewBalanceEventRepo(db),
 		Balance:       postgres.NewBalanceRepo(db),
@@ -556,12 +555,34 @@ func buildPipelineConfig(
 		ReorgDetectorInterval:  time.Duration(cfg.Pipeline.ReorgDetectorIntervalMs) * time.Millisecond,
 		FinalizerInterval:      time.Duration(cfg.Pipeline.FinalizerIntervalMs) * time.Millisecond,
 		IndexedBlocksRetention: int64(cfg.Pipeline.IndexedBlocksRetention),
-		AddressIndex:           cfg.Pipeline.AddressIndex,
-		Fetcher:                cfg.Pipeline.Fetcher,
-		Normalizer:             cfg.Pipeline.Normalizer,
-		Ingester:               cfg.Pipeline.Ingester,
-		Health:                 cfg.Pipeline.Health,
-		ConfigWatcher:          cfg.Pipeline.ConfigWatcher,
+		AddressIndex:               cfg.Pipeline.AddressIndex,
+		Fetcher:                    cfg.Pipeline.Fetcher,
+		Normalizer:                 cfg.Pipeline.Normalizer,
+		Ingester:                   cfg.Pipeline.Ingester,
+		Health:                     cfg.Pipeline.Health,
+		ConfigWatcher:              cfg.Pipeline.ConfigWatcher,
+		MaxInitialLookbackBlocks:   resolveMaxInitialLookbackBlocks(cfg, target.chain),
+	}
+}
+
+func resolveMaxInitialLookbackBlocks(cfg *config.Config, ch model.Chain) int {
+	switch ch {
+	case model.ChainSolana:
+		return cfg.Solana.MaxInitialLookbackBlocks
+	case model.ChainBase:
+		return cfg.Base.MaxInitialLookbackBlocks
+	case model.ChainEthereum:
+		return cfg.Ethereum.MaxInitialLookbackBlocks
+	case model.ChainBTC:
+		return cfg.BTC.MaxInitialLookbackBlocks
+	case model.ChainPolygon:
+		return cfg.Polygon.MaxInitialLookbackBlocks
+	case model.ChainArbitrum:
+		return cfg.Arbitrum.MaxInitialLookbackBlocks
+	case model.ChainBSC:
+		return cfg.BSC.MaxInitialLookbackBlocks
+	default:
+		return 0
 	}
 }
 
@@ -620,7 +641,7 @@ func run() error {
 	)
 
 	for _, target := range targets {
-		if err := syncWatchedAddresses(context.Background(), repos.WatchedAddr, repos.Cursor, target.chain, target.network, target.watched); err != nil {
+		if err := syncWatchedAddresses(context.Background(), repos.WatchedAddr, target.chain, target.network, target.watched); err != nil {
 			return fmt.Errorf("sync watched addresses %s/%s: %w", target.chain, target.network, err)
 		}
 	}
@@ -676,11 +697,13 @@ func run() error {
 		replayAdapter := pipeline.NewRegistryReplayAdapter(registry, replayService, repos.Config)
 		healthAdapter := pipeline.NewRegistryHealthAdapter(registry)
 		addressBookRepo := postgres.NewAddressBookRepo(db.DB)
+		dashboardRepo := postgres.NewDashboardRepo(db.DB)
 		adminSrv := admin.NewServer(repos.WatchedAddr, repos.Config, logger,
 			admin.WithReplayRequester(replayAdapter),
 			admin.WithHealthProvider(healthAdapter),
 			admin.WithReconcileRequester(reconService),
 			admin.WithAddressBookRepo(addressBookRepo),
+			admin.WithDashboardRepo(dashboardRepo),
 		)
 		var adminHandler http.Handler = adminSrv.Handler()
 		adminHandler = admin.AuditMiddleware(logger, adminHandler)
@@ -885,7 +908,6 @@ func runtimeTargetKey(chain model.Chain, network model.Network) string {
 func syncWatchedAddresses(
 	ctx context.Context,
 	repo store.WatchedAddressRepository,
-	cursorRepo store.CursorRepository,
 	chain model.Chain,
 	network model.Network,
 	addresses []string,
@@ -900,10 +922,6 @@ func syncWatchedAddresses(
 		}
 		if err := repo.Upsert(ctx, wa); err != nil {
 			return fmt.Errorf("upsert watched address %s: %w", addr, err)
-		}
-		// Ensure cursor exists
-		if err := cursorRepo.EnsureExists(ctx, chain, network, addr); err != nil {
-			return fmt.Errorf("ensure cursor for %s: %w", addr, err)
 		}
 	}
 	slog.Info("synced watched addresses from env", "chain", chain, "network", network, "count", len(addresses))

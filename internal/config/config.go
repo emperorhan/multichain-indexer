@@ -74,13 +74,14 @@ type RPCRateLimitConfig struct {
 }
 
 type SolanaConfig struct {
-	RPCURL               string             `yaml:"rpc_url"`
-	Network              string             `yaml:"network"`
-	RateLimit            RPCRateLimitConfig `yaml:"rate_limit"`
-	MaxPageSize          int                `yaml:"max_page_size"`
-	MaxConcurrentTxs     int                `yaml:"max_concurrent_txs"`
-	BlockScanBatchSize   int                `yaml:"block_scan_batch_size"`
-	BlockScanConcurrency int                `yaml:"block_scan_concurrency"`
+	RPCURL                   string             `yaml:"rpc_url"`
+	Network                  string             `yaml:"network"`
+	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
+	MaxPageSize              int                `yaml:"max_page_size"`
+	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
+	BlockScanBatchSize       int                `yaml:"block_scan_batch_size"`
+	BlockScanConcurrency     int                `yaml:"block_scan_concurrency"`
+	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
 }
 
 type BaseConfig struct {
@@ -375,6 +376,7 @@ func applyChainEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Solana.MaxConcurrentTxs, "SOLANA_MAX_CONCURRENT_TXS")
 	overrideInt(&cfg.Solana.BlockScanBatchSize, "SOLANA_BLOCK_SCAN_BATCH_SIZE")
 	overrideInt(&cfg.Solana.BlockScanConcurrency, "SOLANA_BLOCK_SCAN_CONCURRENCY")
+	overrideInt(&cfg.Solana.MaxInitialLookbackBlocks, "SOLANA_MAX_INITIAL_LOOKBACK_BLOCKS")
 
 	// Base
 	overrideStrAny(&cfg.Base.RPCURL, "BASE_SEPOLIA_RPC_URL", "BASE_RPC_URL")
@@ -561,6 +563,7 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.Solana.MaxConcurrentTxs, 10)
 	setDefault(&cfg.Solana.BlockScanBatchSize, 10)
 	setDefault(&cfg.Solana.BlockScanConcurrency, 10)
+	setDefault(&cfg.Solana.MaxInitialLookbackBlocks, 100)
 
 	// Base
 	setDefaultStr(&cfg.Base.Network, "sepolia")
@@ -678,12 +681,16 @@ func applyDefaults(cfg *Config) {
 	// Reorg detector
 	setDefault(&cfg.ReorgDetector.MaxCheckDepth, 256)
 
-	// Admin security defaults
+	// Admin security defaults — only apply when not explicitly disabled via env.
 	if !cfg.Server.AdminRateLimitEnabled && cfg.Server.AdminAddr != "" {
-		cfg.Server.AdminRateLimitEnabled = true
+		if _, ok := os.LookupEnv("ADMIN_RATE_LIMIT_ENABLED"); !ok {
+			cfg.Server.AdminRateLimitEnabled = true
+		}
 	}
 	if !cfg.Server.AdminRequireAuth && cfg.Server.AdminAddr != "" {
-		cfg.Server.AdminRequireAuth = true
+		if _, ok := os.LookupEnv("ADMIN_REQUIRE_AUTH"); !ok {
+			cfg.Server.AdminRequireAuth = true
+		}
 	}
 }
 
@@ -1049,10 +1056,10 @@ func parseRuntimeTargetKey(target string) (string, string, error) {
 	chain := strings.TrimSpace(parts[0])
 	network := strings.TrimSpace(parts[1])
 	supportedNetworks := map[string]map[string]bool{
-		"solana":   {"devnet": true},
+		"solana":   {"devnet": true, "mainnet": true},
 		"base":     {"sepolia": true},
 		"ethereum": {"mainnet": true},
-		"btc":      {"testnet": true},
+		"btc":      {"testnet": true, "mainnet": true},
 		"polygon":  {"mainnet": true, "amoy": true},
 		"arbitrum": {"mainnet": true, "sepolia": true},
 		"bsc":      {"mainnet": true, "testnet": true},

@@ -19,12 +19,24 @@ func buildCanonicalBTCBalanceEvents(
 	rawEvents []*sidecarv1.BalanceEventInfo,
 	watchedAddress string,
 ) []event.NormalizedBalanceEvent {
-	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	normalizedEvents := buildRawBalanceEvents(rawEvents, watchedAddress, false)
+	return buildCanonicalBTCBalanceEventsMulti(chain, network, txHash, txStatus, feePayer, feeAmount, finalityState, rawEvents, map[string]struct{}{watchedAddress: {}})
+}
 
-	// Fee events: only emit if feePayer is the watched address
-	if feePayer == watchedAddress && shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount, normalizedEvents) && !hasBTCFeeEvent(normalizedEvents, feePayer) {
-		normalizedEvents = append(normalizedEvents, buildBTCFeeBalanceEvent(feePayer, feeAmount))
+func buildCanonicalBTCBalanceEventsMulti(
+	chain model.Chain,
+	network model.Network,
+	txHash, txStatus, feePayer, feeAmount, finalityState string,
+	rawEvents []*sidecarv1.BalanceEventInfo,
+	watchedAddresses map[string]struct{},
+) []event.NormalizedBalanceEvent {
+	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
+	normalizedEvents := buildRawBalanceEventsMulti(rawEvents, watchedAddresses, false)
+
+	// Fee events: only emit if feePayer is one of the watched addresses
+	if _, ok := watchedAddresses[feePayer]; ok {
+		if shouldEmitBTCFeeEvent(txStatus, feePayer, feeAmount, normalizedEvents) && !hasBTCFeeEvent(normalizedEvents, feePayer) {
+			normalizedEvents = append(normalizedEvents, buildBTCFeeBalanceEvent(feePayer, feeAmount))
+		}
 	}
 
 	return canonicalizeBTCBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)

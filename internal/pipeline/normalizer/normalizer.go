@@ -267,9 +267,13 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	callCtx, cancel := context.WithTimeout(grpcCtx, n.sidecarTimeout)
 	defer cancel()
 
+	watchedAddrs := []string{batch.Address}
+	if batch.BlockScanMode && len(batch.WatchedAddresses) > 0 {
+		watchedAddrs = batch.WatchedAddresses
+	}
 	resp, err := client.DecodeSolanaTransactionBatch(callCtx, &sidecarv1.DecodeSolanaTransactionBatchRequest{
 		Transactions:     rawTxs,
-		WatchedAddresses: []string{batch.Address},
+		WatchedAddresses: watchedAddrs,
 	})
 	if err != nil {
 		grpcSpan.RecordError(err)
@@ -342,6 +346,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		NewCursorValue:         canonicalPrevCursor,
 		NewCursorSequence:      batch.PreviousCursorSequence,
 		BlockScanMode:          batch.BlockScanMode,
+		WatchedAddresses:       batch.WatchedAddresses,
 	}
 	if normalized.NewCursorValue == nil {
 		normalized.NewCursorValue = canonicalNewCursor
@@ -480,10 +485,14 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 		tx.Err = result.Error
 	}
 
+	// In block-scan mode, resolve watched addresses from the batch;
+	// in per-address mode, use the single batch.Address.
+	watchedAddrs := resolveWatchedAddressSet(batch)
+
 	isBaseChain := identity.IsEVMChain(batch.Chain)
 	isBTCChain := batch.Chain == model.ChainBTC
 	if isBaseChain {
-		tx.BalanceEvents = buildCanonicalBaseBalanceEvents(
+		tx.BalanceEvents = buildCanonicalBaseBalanceEventsMulti(
 			batch.Chain,
 			batch.Network,
 			txHash,
@@ -492,10 +501,10 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			result.FeeAmount,
 			finalityState,
 			result.BalanceEvents,
-			batch.Address,
+			watchedAddrs,
 		)
 	} else if isBTCChain {
-		tx.BalanceEvents = buildCanonicalBTCBalanceEvents(
+		tx.BalanceEvents = buildCanonicalBTCBalanceEventsMulti(
 			batch.Chain,
 			batch.Network,
 			txHash,
@@ -504,10 +513,10 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			result.FeeAmount,
 			finalityState,
 			result.BalanceEvents,
-			batch.Address,
+			watchedAddrs,
 		)
 	} else {
-		tx.BalanceEvents = buildCanonicalSolanaBalanceEvents(
+		tx.BalanceEvents = buildCanonicalSolanaBalanceEventsMulti(
 			batch.Chain,
 			batch.Network,
 			txHash,
@@ -516,11 +525,30 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 			result.FeeAmount,
 			finalityState,
 			result.BalanceEvents,
-			batch.Address,
+			watchedAddrs,
 		)
 	}
 
 	return tx
+}
+
+// resolveWatchedAddressSet returns the set of watched addresses for the batch.
+// In block-scan mode, this comes from the batch's WatchedAddresses field;
+// in per-address mode, it's just the single batch.Address.
+func resolveWatchedAddressSet(batch event.RawBatch) map[string]struct{} {
+	if batch.BlockScanMode && len(batch.WatchedAddresses) > 0 {
+		set := make(map[string]struct{}, len(batch.WatchedAddresses))
+		for _, addr := range batch.WatchedAddresses {
+			if addr != "" {
+				set[addr] = struct{}{}
+			}
+		}
+		return set
+	}
+	if batch.Address != "" {
+		return map[string]struct{}{batch.Address: {}}
+	}
+	return map[string]struct{}{}
 }
 
 func resolveResultFinalityState(chainID model.Chain, result *sidecarv1.TransactionResult) string {

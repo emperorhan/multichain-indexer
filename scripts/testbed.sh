@@ -24,6 +24,62 @@ warn() { echo -e "${YELLOW}[testbed]${NC} $*"; }
 err()  { echo -e "${RED}[testbed]${NC} $*" >&2; }
 info() { echo -e "${CYAN}[testbed]${NC} $*"; }
 
+LOGDIR="$PROJECT_ROOT/logs"
+PID_FILE="$PROJECT_ROOT/.testbed.pid"
+
+# _exec_indexer: run indexer binary, optionally in background with -d flag
+# Usage: _exec_indexer ENV_VAR1=val ENV_VAR2=val
+_exec_indexer() {
+    if [ "${RUN_DETACH:-false}" = "true" ]; then
+        mkdir -p "$LOGDIR"
+        local logfile="$LOGDIR/indexer-$(date +%Y%m%d-%H%M%S).log"
+
+        env "$@" "$PROJECT_ROOT/bin/indexer" > "$logfile" 2>&1 &
+        local pid=$!
+        echo "$pid" > "$PID_FILE"
+
+        echo ""
+        log "Indexer running in background (PID: $pid)"
+        info "Log file: $logfile"
+        echo ""
+        echo "  Tail logs:   tail -f $logfile"
+        echo "  Stop:        $0 stop"
+        echo "  Status:      $0 status"
+        echo "  Query DB:    $0 query"
+        echo ""
+    else
+        env "$@" "$PROJECT_ROOT/bin/indexer"
+    fi
+}
+
+cmd_stop() {
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid=$(cat "$PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            log "Stopping indexer (PID: $pid)..."
+            kill "$pid"
+            # Wait up to 10s for graceful shutdown
+            local i=0
+            while kill -0 "$pid" 2>/dev/null && [ $i -lt 10 ]; do
+                sleep 1
+                i=$((i + 1))
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+                warn "Forcing kill..."
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+            log "Indexer stopped."
+        else
+            warn "Indexer process (PID: $pid) not running."
+        fi
+        rm -f "$PID_FILE"
+    else
+        warn "No PID file found. Indexer may not be running in background."
+        echo "  To stop a foreground indexer, press Ctrl+C."
+    fi
+}
+
 # ============================================================
 # Commands
 # ============================================================
@@ -79,10 +135,26 @@ cmd_up() {
 
 cmd_run() {
     local chain="${1:-all}"
+    local detach="${RUN_DETACH:-false}"
+
+    # Parse -d flag
+    if [ "$chain" = "-d" ]; then
+        detach=true
+        chain="${2:-all}"
+    fi
 
     log "Building indexer..."
     (cd "$PROJECT_ROOT" && go build -o bin/indexer ./cmd/indexer)
 
+    if [ "$detach" = "true" ]; then
+        RUN_DETACH=true _cmd_run_chain "$chain"
+    else
+        _cmd_run_chain "$chain"
+    fi
+}
+
+_cmd_run_chain() {
+    local chain="$1"
     case "$chain" in
         all)
             cmd_run_all
@@ -98,7 +170,7 @@ cmd_run() {
             ;;
         *)
             err "Unknown chain: $chain"
-            echo "  Usage: $0 run [all|solana|ethereum|btc]"
+            echo "  Usage: $0 run [-d] [all|solana|ethereum|btc]"
             exit 1
             ;;
     esac
@@ -160,15 +232,15 @@ cmd_run_all() {
     print_watched_addresses "${chains_available[@]}"
     echo ""
 
-    CONFIG_FILE="$CONFIG_FILE" \
-    RUNTIME_LIKE_GROUP="" \
-    RUNTIME_CHAIN_TARGETS="$targets" \
-    ADMIN_REQUIRE_AUTH=false \
-    SOLANA_RPC_URL="${SOLANA_RPC_URL:-}" \
-    ETH_RPC_URL="${ETH_RPC_URL:-}" \
-    ETHEREUM_RPC_URL="${ETHEREUM_RPC_URL:-}" \
-    BTC_RPC_URL="${BTC_RPC_URL:-}" \
-        "$PROJECT_ROOT/bin/indexer"
+    _exec_indexer \
+        CONFIG_FILE="$CONFIG_FILE" \
+        RUNTIME_LIKE_GROUP="" \
+        RUNTIME_CHAIN_TARGETS="$targets" \
+        ADMIN_REQUIRE_AUTH=false \
+        SOLANA_RPC_URL="${SOLANA_RPC_URL:-}" \
+        ETH_RPC_URL="${ETH_RPC_URL:-}" \
+        ETHEREUM_RPC_URL="${ETHEREUM_RPC_URL:-}" \
+        BTC_RPC_URL="${BTC_RPC_URL:-}"
 }
 
 cmd_run_solana() {
@@ -185,12 +257,12 @@ cmd_run_solana() {
     echo "  7VHUFJHWu2CuExkJcJrzhQPJ2oygupd2fDnjThLk64aR    (USDC reserve)"
     echo ""
 
-    CONFIG_FILE="$CONFIG_FILE" \
-    RUNTIME_LIKE_GROUP="" \
-    RUNTIME_CHAIN_TARGETS="solana-mainnet" \
-    ADMIN_REQUIRE_AUTH=false \
-    SOLANA_RPC_URL="${SOLANA_RPC_URL:-}" \
-        "$PROJECT_ROOT/bin/indexer"
+    _exec_indexer \
+        CONFIG_FILE="$CONFIG_FILE" \
+        RUNTIME_LIKE_GROUP="" \
+        RUNTIME_CHAIN_TARGETS="solana-mainnet" \
+        ADMIN_REQUIRE_AUTH=false \
+        SOLANA_RPC_URL="${SOLANA_RPC_URL:-}"
 }
 
 cmd_run_ethereum() {
@@ -220,13 +292,13 @@ cmd_run_ethereum() {
     echo "  0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2  (WETH)"
     echo ""
 
-    CONFIG_FILE="$CONFIG_FILE" \
-    RUNTIME_LIKE_GROUP="" \
-    RUNTIME_CHAIN_TARGETS="ethereum-mainnet" \
-    ADMIN_REQUIRE_AUTH=false \
-    ETH_RPC_URL="$ETH_RPC_URL" \
-    ETHEREUM_RPC_URL="$ETHEREUM_RPC_URL" \
-        "$PROJECT_ROOT/bin/indexer"
+    _exec_indexer \
+        CONFIG_FILE="$CONFIG_FILE" \
+        RUNTIME_LIKE_GROUP="" \
+        RUNTIME_CHAIN_TARGETS="ethereum-mainnet" \
+        ADMIN_REQUIRE_AUTH=false \
+        ETH_RPC_URL="$ETH_RPC_URL" \
+        ETHEREUM_RPC_URL="$ETHEREUM_RPC_URL"
 }
 
 cmd_run_btc() {
@@ -253,12 +325,12 @@ cmd_run_btc() {
     echo "  bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h      (SegWit bech32)"
     echo ""
 
-    CONFIG_FILE="$CONFIG_FILE" \
-    RUNTIME_LIKE_GROUP="" \
-    RUNTIME_CHAIN_TARGETS="btc-mainnet" \
-    ADMIN_REQUIRE_AUTH=false \
-    BTC_RPC_URL="$BTC_RPC_URL" \
-        "$PROJECT_ROOT/bin/indexer"
+    _exec_indexer \
+        CONFIG_FILE="$CONFIG_FILE" \
+        RUNTIME_LIKE_GROUP="" \
+        RUNTIME_CHAIN_TARGETS="btc-mainnet" \
+        ADMIN_REQUIRE_AUTH=false \
+        BTC_RPC_URL="$BTC_RPC_URL"
 }
 
 print_start_positions() {
@@ -309,6 +381,19 @@ print_watched_addresses() {
                 ;;
         esac
     done
+}
+
+cmd_logs() {
+    local logfile
+    logfile=$(ls -t "$LOGDIR"/indexer-*.log 2>/dev/null | head -1)
+    if [ -z "$logfile" ]; then
+        err "No log files found in $LOGDIR/"
+        exit 1
+    fi
+    log "Tailing: $logfile"
+    log "Press Ctrl+C to stop tailing (indexer keeps running)"
+    echo ""
+    tail -f "$logfile"
 }
 
 cmd_status() {
@@ -366,11 +451,19 @@ cmd_status() {
 
     # Indexer (local process)
     if curl -s http://localhost:8080/healthz >/dev/null 2>&1; then
-        echo -e "  ${GREEN}●${NC} Indexer       http://localhost:8080"
+        local pid_info=""
+        if [ -f "$PID_FILE" ]; then
+            local pid
+            pid=$(cat "$PID_FILE")
+            if kill -0 "$pid" 2>/dev/null; then
+                pid_info=" (background, PID: $pid)"
+            fi
+        fi
+        echo -e "  ${GREEN}●${NC} Indexer       http://localhost:8080${pid_info}"
         echo -e "    Admin API:  http://localhost:9091"
         echo -e "    Metrics:    http://localhost:8080/metrics"
     else
-        echo -e "  ${YELLOW}●${NC} Indexer       NOT RUNNING (start with: $0 run [all|solana|ethereum|btc])"
+        echo -e "  ${YELLOW}●${NC} Indexer       NOT RUNNING (start with: $0 run [-d] [all|solana|ethereum|btc])"
     fi
 
     echo ""
@@ -458,27 +551,36 @@ usage() {
     echo ""
     echo "Commands:"
     echo "  up                  Start infrastructure (PostgreSQL, Redis, Prometheus, Grafana, Sidecar)"
-    echo "  run [chain]         Build and run indexer"
+    echo "  run [-d] [chain]    Build and run indexer (-d = background/detach)"
     echo "                        all       — 3-chain simultaneous (default)"
     echo "                        solana    — Solana mainnet only (free RPC)"
     echo "                        ethereum  — Ethereum mainnet only (requires ETH_RPC_URL)"
     echo "                        btc       — BTC mainnet only (requires BTC_RPC_URL)"
+    echo "  stop                Stop background indexer"
+    echo "  logs                Tail latest indexer log file"
     echo "  status              Show status of all services and DB counts"
     echo "  query               Query database for indexed data"
     echo "  down                Stop all services"
     echo "  reset               Stop all services and delete all data"
     echo ""
-    echo "Quick start (3-chain simultaneous):"
+    echo "Quick start (foreground):"
     echo "  $0 up"
     echo "  ETH_RPC_URL=https://... BTC_RPC_URL=https://... $0 run"
     echo ""
+    echo "Quick start (background — recommended):"
+    echo "  $0 up"
+    echo "  ETH_RPC_URL=https://... BTC_RPC_URL=https://... $0 run -d"
+    echo "  $0 logs     # tail logs"
+    echo "  $0 query    # check DB"
+    echo "  $0 stop     # stop indexer"
+    echo ""
     echo "Solana only (no API key needed):"
     echo "  $0 up"
-    echo "  $0 run solana"
+    echo "  $0 run -d solana"
     echo ""
     echo "Individual chains:"
-    echo "  ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/KEY $0 run ethereum"
-    echo "  BTC_RPC_URL=https://go.getblock.io/KEY $0 run btc"
+    echo "  ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/KEY $0 run -d ethereum"
+    echo "  BTC_RPC_URL=https://go.getblock.io/KEY $0 run -d btc"
     echo ""
 }
 
@@ -488,7 +590,9 @@ usage() {
 
 case "${1:-}" in
     up)     cmd_up ;;
-    run)    cmd_run "${2:-all}" ;;
+    run)    shift; cmd_run "$@" ;;
+    stop)   cmd_stop ;;
+    logs)   cmd_logs ;;
     status) cmd_status ;;
     query)  cmd_query ;;
     down)   cmd_down ;;

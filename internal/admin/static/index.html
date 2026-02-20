@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multichain Indexer Dashboard</title>
+    <link rel="stylesheet" href="/dashboard/dashboard.css">
+</head>
+<body>
+    <header>
+        <h1>Multichain Indexer</h1>
+        <div class="header-meta">
+            <span id="server-time"></span>
+            <span id="poll-status" class="badge badge-ok">LIVE</span>
+        </div>
+    </header>
+
+    <nav class="tabs">
+        <a href="#overview" class="tab active" data-tab="overview">Overview</a>
+        <a href="#balances" class="tab" data-tab="balances">Balances</a>
+        <a href="#events" class="tab" data-tab="events">Events</a>
+    </nav>
+
+    <main>
+        <!-- Overview Tab -->
+        <section id="tab-overview" class="tab-content active">
+            <div class="stat-bar">
+                <div class="stat-card">
+                    <div class="stat-label">Pipelines</div>
+                    <div class="stat-value" id="stat-pipelines">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Watched Addresses</div>
+                    <div class="stat-value" id="stat-addresses">-</div>
+                </div>
+            </div>
+            <div id="pipeline-cards" class="pipeline-grid"></div>
+        </section>
+
+        <!-- Balances Tab -->
+        <section id="tab-balances" class="tab-content">
+            <div class="controls">
+                <select id="bal-chain">
+                    <option value="">Chain</option>
+                    <option value="solana">Solana</option>
+                    <option value="base">Base</option>
+                    <option value="ethereum">Ethereum</option>
+                    <option value="btc">BTC</option>
+                    <option value="polygon">Polygon</option>
+                    <option value="arbitrum">Arbitrum</option>
+                    <option value="bsc">BSC</option>
+                </select>
+                <select id="bal-network">
+                    <option value="">Network</option>
+                    <option value="mainnet">Mainnet</option>
+                    <option value="devnet">Devnet</option>
+                    <option value="testnet">Testnet</option>
+                    <option value="sepolia">Sepolia</option>
+                    <option value="amoy">Amoy</option>
+                </select>
+            </div>
+            <div id="balances-content"></div>
+        </section>
+
+        <!-- Events Tab -->
+        <section id="tab-events" class="tab-content">
+            <div class="controls">
+                <select id="evt-chain">
+                    <option value="">Chain</option>
+                    <option value="solana">Solana</option>
+                    <option value="base">Base</option>
+                    <option value="ethereum">Ethereum</option>
+                    <option value="btc">BTC</option>
+                    <option value="polygon">Polygon</option>
+                    <option value="arbitrum">Arbitrum</option>
+                    <option value="bsc">BSC</option>
+                </select>
+                <select id="evt-network">
+                    <option value="">Network</option>
+                    <option value="mainnet">Mainnet</option>
+                    <option value="devnet">Devnet</option>
+                    <option value="testnet">Testnet</option>
+                    <option value="sepolia">Sepolia</option>
+                    <option value="amoy">Amoy</option>
+                </select>
+                <input id="evt-address" type="text" placeholder="Filter by address (optional)">
+            </div>
+            <div id="events-content"></div>
+            <div id="events-pagination" class="pagination"></div>
+        </section>
+    </main>
+
+    <script src="/dashboard/dashboard.js"></script>
+</body>
+</html>

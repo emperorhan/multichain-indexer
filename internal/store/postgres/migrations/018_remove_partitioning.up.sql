@@ -114,6 +114,9 @@ ALTER TABLE balance_events RENAME TO balance_events_partitioned_old;
 ALTER TABLE balance_events_flat RENAME TO balance_events;
 
 -- Step 4: Create unique constraint on event_id (non-empty only).
+-- Drop legacy constraint from migration 005 (lives on balance_events_old after 007 rename).
+-- Must use DROP CONSTRAINT because it was created via ALTER TABLE ADD CONSTRAINT.
+ALTER TABLE IF EXISTS balance_events_old DROP CONSTRAINT IF EXISTS uq_balance_events_event_id;
 CREATE UNIQUE INDEX uq_balance_events_event_id
     ON balance_events (event_id)
     WHERE event_id <> '';

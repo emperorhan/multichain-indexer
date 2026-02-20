@@ -56,6 +56,14 @@ type ReconcileRequester interface {
 	HasAdapter(chain model.Chain, network model.Network) bool
 }
 
+// DashboardDataProvider provides read-only data for the admin dashboard UI.
+type DashboardDataProvider interface {
+	GetBalanceSummary(ctx context.Context, chain model.Chain, network model.Network) ([]store.DashboardAddressBalance, error)
+	GetRecentEvents(ctx context.Context, chain model.Chain, network model.Network, address string, limit, offset int) ([]store.DashboardEvent, int, error)
+	GetAllWatermarks(ctx context.Context) ([]model.PipelineWatermark, error)
+	CountWatchedAddresses(ctx context.Context) (int, error)
+}
+
 // Server provides an HTTP-based admin API for operational management.
 type Server struct {
 	watchedAddrRepo store.WatchedAddressRepository
@@ -64,6 +72,7 @@ type Server struct {
 	healthProvider  HealthProvider
 	reconcileReq    ReconcileRequester
 	addressBookRepo AddressBookRepo
+	dashboardRepo   DashboardDataProvider
 	logger          *slog.Logger
 }
 
@@ -109,6 +118,11 @@ func WithAddressBookRepo(repo AddressBookRepo) ServerOption {
 	return func(s *Server) { s.addressBookRepo = repo }
 }
 
+// WithDashboardRepo sets the dashboard data provider on the admin server.
+func WithDashboardRepo(repo DashboardDataProvider) ServerOption {
+	return func(s *Server) { s.dashboardRepo = repo }
+}
+
 // Handler returns the HTTP handler for the admin API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -122,6 +136,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/v1/address-books", s.handleListAddressBooks)
 	mux.HandleFunc("POST /admin/v1/address-books", s.handleAddAddressBook)
 	mux.HandleFunc("DELETE /admin/v1/address-books", s.handleDeleteAddressBook)
+
+	// Dashboard API + static files
+	mux.HandleFunc("GET /admin/v1/dashboard/overview", s.handleDashboardOverview)
+	mux.HandleFunc("GET /admin/v1/dashboard/balances", s.handleDashboardBalances)
+	mux.HandleFunc("GET /admin/v1/dashboard/events", s.handleDashboardEvents)
+	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", http.FileServer(http.FS(staticFS))))
+	mux.HandleFunc("/dashboard", s.handleDashboardIndex)
+
 	return mux
 }
 

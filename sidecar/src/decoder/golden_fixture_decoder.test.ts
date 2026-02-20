@@ -69,7 +69,7 @@ describe('golden fixture decoder determinism', () => {
       const desc = decodeAndSortFixtureRows([...subset].sort((left, right) => right.fixture_seed - left.fixture_seed));
       expect(asc).toEqual(desc);
 
-      const ids = collectCanonicalEventIds(decodeAndSortFixtureRows(subset));
+      const ids = collectCanonicalEventIds(decodeGoldenFixtureRows(subset));
       expect(new Set(ids).size).toBe(ids.length);
     }
 

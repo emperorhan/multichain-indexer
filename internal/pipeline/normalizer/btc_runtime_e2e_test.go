@@ -244,7 +244,6 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 			}
 			return result, nil
 		})
-	mockCursorRepo := storemocks.NewMockCursorRepository(ctrl)
 	mockConfigRepo := storemocks.NewMockIndexerConfigRepository(ctrl)
 
 	fakeDB := openE2EFakeDB(t)
@@ -302,10 +301,6 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 			return nil
 		}).Times(1)
 
-	mockCursorRepo.EXPECT().
-		UpsertTx(gomock.Any(), gomock.Any(), model.ChainBTC, model.NetworkMainnet, watchedAddress, gomock.Any(), cursorSequence, int64(1)).
-		Return(nil).Times(1)
-
 	mockConfigRepo.EXPECT().
 		UpdateWatermarkTx(gomock.Any(), gomock.Any(), model.ChainBTC, model.NetworkMainnet, cursorSequence).
 		Return(nil).Times(1)
@@ -313,7 +308,7 @@ func TestBTCFetchDecodeNormalizeIngestE2E(t *testing.T) {
 	ingestInputCh := make(chan event.NormalizedBatch, 1)
 	ing := ingester.New(
 		mockDB, mockTxRepo, mockBERepo, mockBalanceRepo,
-		mockTokenRepo, mockCursorRepo, mockConfigRepo,
+		mockTokenRepo, mockConfigRepo,
 		ingestInputCh, slog.Default(),
 	)
 

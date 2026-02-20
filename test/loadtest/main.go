@@ -93,7 +93,6 @@ func main() {
 	balanceEventRepo := postgres.NewBalanceEventRepo(db)
 	balanceRepo := postgres.NewBalanceRepo(db)
 	tokenRepo := postgres.NewTokenRepo(db)
-	cursorRepo := postgres.NewCursorRepo(db)
 	configRepo := postgres.NewIndexerConfigRepo(db)
 
 	// Ensure the indexer_configs row exists for watermark updates.
@@ -140,7 +139,7 @@ func main() {
 		// Create a per-worker ingester with its own channel.
 		ch := make(chan event.NormalizedBatch, 8)
 		ing := ingester.New(
-			db, txRepo, balanceEventRepo, balanceRepo, tokenRepo, cursorRepo, configRepo,
+			db, txRepo, balanceEventRepo, balanceRepo, tokenRepo, configRepo,
 			ch, logger.With("worker", workerID),
 		)
 

@@ -81,7 +81,6 @@ func newIngesterMocks(t *testing.T) (
 	*storemocks.MockBalanceEventRepository,
 	*storemocks.MockBalanceRepository,
 	*storemocks.MockTokenRepository,
-	*storemocks.MockCursorRepository,
 	*storemocks.MockIndexerConfigRepository,
 ) {
 	ctrl := gomock.NewController(t)
@@ -111,7 +110,6 @@ func newIngesterMocks(t *testing.T) (
 		storemocks.NewMockBalanceEventRepository(ctrl),
 		mockBalanceRepo,
 		mockTokenRepo,
-		storemocks.NewMockCursorRepository(ctrl),
 		storemocks.NewMockIndexerConfigRepository(ctrl)
 }
 
@@ -121,39 +119,6 @@ func setupBeginTx(mockDB *storemocks.MockTxBeginner) {
 		DoAndReturn(func(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
 			return fakeDB.BeginTx(ctx, opts)
 		})
-}
-
-type testCursorStateRepo struct {
-	LastValue    *string
-	LastSequence int64
-	Upserts      []int64
-}
-
-func (r *testCursorStateRepo) Get(_ context.Context, _ model.Chain, _ model.Network, _ string) (*model.AddressCursor, error) {
-	return nil, nil
-}
-
-func (r *testCursorStateRepo) UpsertTx(
-	_ context.Context,
-	_ *sql.Tx,
-	_ model.Chain,
-	_ model.Network,
-	_ string,
-	cursorValue *string,
-	cursorSequence int64,
-	_ int64,
-) error {
-	if cursorValue != nil {
-		v := *cursorValue
-		r.LastValue = &v
-	}
-	r.LastSequence = cursorSequence
-	r.Upserts = append(r.Upserts, cursorSequence)
-	return nil
-}
-
-func (r *testCursorStateRepo) EnsureExists(_ context.Context, _ model.Chain, _ model.Network, _ string) error {
-	return nil
 }
 
 type testIndexerConfigStateRepo struct {
@@ -332,11 +297,11 @@ func TestRollbackForkCursorSequence_BTCEarliestCompetingWindow(t *testing.T) {
 }
 
 func TestProcessBatch_ReorgDrift_TriggersDeterministicRollbackPath(t *testing.T) {
-	ctrl, mockDB, _, _, _, _, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, _, _, _, _, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, nil, nil, nil, nil, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, nil, nil, nil, nil, mockConfigRepo, normalizedCh, slog.Default())
 	// Keep SQL path unchanged; replace only rollback path for deterministic simulation.
 	rollbackCalls := 0
 	ing.reorgHandler = func(ctx context.Context, tx *sql.Tx, got event.NormalizedBatch) error {
@@ -378,13 +343,12 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
 
-	cursorRepo := &testCursorStateRepo{}
 	configRepo := &testIndexerConfigStateRepo{}
 	// Seed a high-watermark state to emulate previously observed progress.
 	configRepo.HighestWatermark = 300
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, cursorRepo, configRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, configRepo, normalizedCh, slog.Default())
 
 	seedCursor := "seed_sig"
 	seedCursorSeq := int64(300)
@@ -421,8 +385,6 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 		Return(make(map[string]uuid.UUID), nil)
 
 	require.NoError(t, ing.processBatch(context.Background(), seedBatch))
-	assert.Equal(t, int64(300), cursorRepo.LastSequence)
-	assert.Equal(t, []int64{300}, cursorRepo.Upserts)
 	assert.Equal(t, int64(300), configRepo.HighestWatermark)
 	assert.Equal(t, []int64{300}, configRepo.Requested)
 	assert.Equal(t, []int64{300}, configRepo.Applied)
@@ -435,7 +397,7 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 		if err := configRepo.UpdateWatermarkTx(ctx, tx, got.Chain, got.Network, rewindSigSeq); err != nil {
 			return err
 		}
-		return cursorRepo.UpsertTx(ctx, tx, got.Chain, got.Network, got.Address, &rewindSig, rewindSigSeq, 0)
+		return nil
 	}
 
 	newSig := "post_recovery_sig"
@@ -450,9 +412,7 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 	}
 	setupBeginTx(mockDB)
 	require.NoError(t, ing.processBatch(context.Background(), recoveryBatch))
-	assert.Equal(t, int64(100), cursorRepo.LastSequence)
 	assert.Equal(t, int64(300), configRepo.HighestWatermark)
-	assert.Equal(t, []int64{300, 100}, cursorRepo.Upserts)
 	assert.Equal(t, []int64{300, 100}, configRepo.Requested)
 	assert.Equal(t, []int64{300, 300}, configRepo.Applied)
 
@@ -491,8 +451,6 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 		Return(make(map[string]uuid.UUID), nil)
 
 	require.NoError(t, ing.processBatch(context.Background(), replayBatch))
-	assert.Equal(t, int64(300), cursorRepo.LastSequence)
-	assert.Equal(t, []int64{300, 100, 300}, cursorRepo.Upserts)
 	assert.Equal(t, int64(300), configRepo.HighestWatermark)
 	assert.Equal(t, []int64{300, 100, 300}, configRepo.Requested)
 	assert.Equal(t, []int64{300, 300, 300}, configRepo.Applied)
@@ -503,9 +461,6 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 	for i := 1; i < len(configRepo.Applied); i++ {
 		assert.GreaterOrEqual(t, configRepo.Applied[i], configRepo.Applied[i-1])
 	}
-
-	assert.Greater(t, cursorRepo.Upserts[2], cursorRepo.Upserts[1])
-	assert.GreaterOrEqual(t, configRepo.HighestWatermark, cursorRepo.Upserts[2])
 }
 
 func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcrossMandatoryChains(t *testing.T) {
@@ -556,8 +511,8 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
-			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+			_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, nil, slog.Default())
 
 			firstSeq := tc.previousSequence + 1
 			secondSeq := tc.previousSequence + 2
@@ -765,14 +720,6 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 				}).
 				Times(2)
 
-			cursorWrites := make([]int64, 0, 2)
-			mockCursorRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.address, &canonicalThird, thirdSeq, gomock.Any()).
-				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
-					cursorWrites = append(cursorWrites, thirdSeq)
-					return nil
-				}).
-				Times(2)
 			mockConfigRepo.EXPECT().
 				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, thirdSeq).
 				Return(nil).
@@ -783,8 +730,6 @@ func TestProcessBatch_DeferredRecoveryReplay_DeduplicatesAndPreservesCursorAcros
 
 			assert.Equal(t, expectedEventIDs, insertedEventIDs, "deferred recovery replay must reconcile to fully decodable logical event set")
 			assert.Equal(t, 2, adjustments, "bulk adjust is called once per batch with aggregated deltas")
-			require.Len(t, cursorWrites, 2)
-			assert.GreaterOrEqual(t, cursorWrites[1], cursorWrites[0], "cursor progression must remain monotonic across deferred-recovery boundary")
 		})
 	}
 }
@@ -827,14 +772,11 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 		categoryCounts map[model.ActivityType]int
 		balanceByActor map[string]string
 
-		cursorValue    string
-		cursorSequence int64
-		watermark      int64
+		watermark int64
 
 		insertedCount  int
 		upsertAttempts int
 
-		cursorWrites    []int64
 		watermarkWrites []int64
 	}
 
@@ -967,7 +909,6 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 					&interleaveBalanceEventRepo{state: state},
 					&interleaveBalanceRepo{state: state},
 					&interleaveTokenRepo{state: state},
-					&interleaveCursorRepo{state: state},
 					&interleaveConfigRepo{state: state},
 					nil,
 					slog.Default(),
@@ -993,35 +934,23 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 				}
 
 				chainKey := interleaveKey(tc.chain, tc.network)
-				cursorKey := chainKey + "|" + tc.address
 
-				cursors := state.snapshotCursors()
 				watermarks := state.snapshotWatermarks()
 
 				state.mu.Lock()
 				insertedCount := len(state.insertedEvents)
 				upsertAttempts := state.upsertAttempts
-				cursorWrites := append([]int64(nil), state.cursorWrites[cursorKey]...)
 				watermarkWrites := append([]int64(nil), state.watermarkWrites[chainKey]...)
 				state.mu.Unlock()
-
-				require.Len(t, cursors, 1)
-				cursor, exists := cursors[cursorKey]
-				require.True(t, exists)
-				require.NotNil(t, cursor)
-				require.NotNil(t, cursor.CursorValue)
 
 				return overlapResult{
 					tupleKeys:       tupleKeys,
 					eventIDs:        eventIDs,
 					categoryCounts:  categoryCounts,
 					balanceByActor:  balanceByActor,
-					cursorValue:     *cursor.CursorValue,
-					cursorSequence:  cursor.CursorSequence,
 					watermark:       watermarks[chainKey],
 					insertedCount:   insertedCount,
 					upsertAttempts:  upsertAttempts,
-					cursorWrites:    cursorWrites,
 					watermarkWrites: watermarkWrites,
 				}
 			}
@@ -1070,12 +999,6 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 			assert.Equal(t, baseline.balanceByActor, backfillFirst.balanceByActor)
 			assert.Equal(t, baseline.balanceByActor, interleaved.balanceByActor)
 
-			assert.Equal(t, baseline.cursorValue, liveFirst.cursorValue)
-			assert.Equal(t, baseline.cursorValue, backfillFirst.cursorValue)
-			assert.Equal(t, baseline.cursorValue, interleaved.cursorValue)
-			assert.Equal(t, baseline.cursorSequence, liveFirst.cursorSequence)
-			assert.Equal(t, baseline.cursorSequence, backfillFirst.cursorSequence)
-			assert.Equal(t, baseline.cursorSequence, interleaved.cursorSequence)
 			assert.Equal(t, baseline.watermark, liveFirst.watermark)
 			assert.Equal(t, baseline.watermark, backfillFirst.watermark)
 			assert.Equal(t, baseline.watermark, interleaved.watermark)
@@ -1089,10 +1012,6 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 			assert.GreaterOrEqual(t, backfillFirst.upsertAttempts, backfillFirst.insertedCount)
 			assert.GreaterOrEqual(t, interleaved.upsertAttempts, interleaved.insertedCount)
 
-			assertMonotonicWrites(t, map[string][]int64{"cursor": baseline.cursorWrites}, tc.name+" baseline cursor")
-			assertMonotonicWrites(t, map[string][]int64{"cursor": liveFirst.cursorWrites}, tc.name+" live-first cursor")
-			assertMonotonicWrites(t, map[string][]int64{"cursor": backfillFirst.cursorWrites}, tc.name+" backfill-first cursor")
-			assertMonotonicWrites(t, map[string][]int64{"cursor": interleaved.cursorWrites}, tc.name+" interleaved cursor")
 			assertMonotonicWrites(t, map[string][]int64{"watermark": baseline.watermarkWrites}, tc.name+" baseline watermark")
 			assertMonotonicWrites(t, map[string][]int64{"watermark": liveFirst.watermarkWrites}, tc.name+" live-first watermark")
 			assertMonotonicWrites(t, map[string][]int64{"watermark": backfillFirst.watermarkWrites}, tc.name+" backfill-first watermark")
@@ -1102,18 +1021,17 @@ func TestProcessBatch_LiveBackfillOverlapPermutationsConvergeAcrossMandatoryChai
 }
 
 func TestProcessBatch_BaseAliasCanonicalizesTxHashAndCursor(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	tokenID := uuid.New()
 	aliasTxHash := "ABCDEF"
 	canonicalTxHash := "0xabcdef"
 	cursorAlias := "ABCDEF"
-	canonicalCursor := "0xabcdef"
 
 	batch := event.NormalizedBatch{
 		Chain:   model.ChainBase,
@@ -1184,14 +1102,6 @@ func TestProcessBatch_BaseAliasCanonicalizesTxHashAndCursor(t *testing.T) {
 		).
 		Return(nil)
 
-	mockCursorRepo.EXPECT().
-		UpsertTx(
-			gomock.Any(), gomock.Any(),
-			model.ChainBase, model.NetworkSepolia, "0x1111111111111111111111111111111111111111",
-			&canonicalCursor, int64(150), int64(1),
-		).
-		Return(nil)
-
 	mockConfigRepo.EXPECT().
 		UpdateWatermarkTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, int64(150)).
 		Return(nil)
@@ -1200,11 +1110,11 @@ func TestProcessBatch_BaseAliasCanonicalizesTxHashAndCursor(t *testing.T) {
 }
 
 func TestProcessBatch_Deposit(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	tokenID := uuid.New()
@@ -1301,12 +1211,6 @@ func TestProcessBatch_Deposit(t *testing.T) {
 		return nil
 	})
 
-	mockCursorRepo.EXPECT().UpsertTx(
-		gomock.Any(), gomock.Any(),
-		model.ChainSolana, model.NetworkDevnet, "addr1",
-		&cursorVal, int64(100), int64(1),
-	).Return(nil)
-
 	mockConfigRepo.EXPECT().UpdateWatermarkTx(
 		gomock.Any(), gomock.Any(),
 		model.ChainSolana, model.NetworkDevnet, int64(100),
@@ -1317,11 +1221,11 @@ func TestProcessBatch_Deposit(t *testing.T) {
 }
 
 func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	tokenID := uuid.New()
@@ -1437,9 +1341,6 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 		return nil
 	})
 
-	mockCursorRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil)
-
 	mockConfigRepo.EXPECT().UpdateWatermarkTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
@@ -1448,11 +1349,11 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 }
 
 func TestProcessBatch_NoEvents(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 
@@ -1499,11 +1400,11 @@ func TestProcessBatch_NoEvents(t *testing.T) {
 }
 
 func TestProcessBatch_DuplicateEventReplayIsNoop(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	tokenID := uuid.New()
@@ -1576,12 +1477,6 @@ func TestProcessBatch_DuplicateEventReplayIsNoop(t *testing.T) {
 		model.ChainSolana, model.NetworkDevnet, gomock.Any(),
 	).Return(nil)
 
-	mockCursorRepo.EXPECT().UpsertTx(
-		gomock.Any(), gomock.Any(),
-		model.ChainSolana, model.NetworkDevnet, "addr1",
-		&cursorVal, int64(100), int64(1),
-	).Return(nil)
-
 	mockConfigRepo.EXPECT().UpdateWatermarkTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
@@ -1631,11 +1526,11 @@ func TestProcessBatch_MixedFinalityReplayPromotesWithoutDoubleApplyAcrossMandato
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 			_ = ctrl
 
 			normalizedCh := make(chan event.NormalizedBatch, 1)
-			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 			txID := uuid.New()
 			tokenID := uuid.New()
@@ -1729,11 +1624,6 @@ func TestProcessBatch_MixedFinalityReplayPromotesWithoutDoubleApplyAcrossMandato
 				Return(nil).
 				Times(2)
 
-			mockCursorRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.address, &cursorValue, tc.cursor, int64(1)).
-				Return(nil).
-				Times(2)
-
 			mockConfigRepo.EXPECT().
 				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.cursor).
 				Return(nil).
@@ -1791,11 +1681,11 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 			_ = ctrl
 
 			normalizedCh := make(chan event.NormalizedBatch, 1)
-			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 			for i := 0; i < 6; i++ {
 				setupBeginTx(mockDB)
@@ -1940,15 +1830,6 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 				}).
 				Times(4)
 
-			cursorWrites := make([]int64, 0, 4)
-			mockCursorRepo.EXPECT().
-				UpsertTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.address, gomock.Any(), gomock.Any(), int64(1)).
-				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ string, _ *string, cursorSeq int64, _ int64) error {
-					cursorWrites = append(cursorWrites, cursorSeq)
-					return nil
-				}).
-				Times(4)
-
 			watermarkWrites := make([]int64, 0, 4)
 			mockConfigRepo.EXPECT().
 				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, gomock.Any()).
@@ -1973,7 +1854,6 @@ func TestProcessBatch_RollbackAfterFinalityConvergesWithoutDoubleApplyAcrossMand
 
 			assert.Equal(t, []int64{100, 100}, rollbackForkSequences)
 			assert.Equal(t, []string{"-1", "-1", "-2", "-2"}, appliedDeltas)
-			assert.Equal(t, []int64{120, 120, 110, 110}, cursorWrites)
 			assert.Equal(t, []int64{120, 120, 110, 110}, watermarkWrites)
 			assert.Equal(t, []string{tc.preForkEventID, tc.preForkEventID, tc.postForkEventID, tc.postForkEventID}, writtenEventIDs)
 			assert.Equal(t, []string{"confirmed", "finalized", "finalized", "finalized"}, writtenFinality)
@@ -1994,10 +1874,7 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 		eventIDs              map[string]struct{}
 		eventIDCounts         map[string]int
 		totalDelta            string
-		cursorValue           string
-		cursorSequence        int64
 		watermark             int64
-		cursorWrites          []int64
 		watermarkWrites       []int64
 		rollbackForkSequences []int64
 	}
@@ -2105,7 +1982,6 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 		db := openFakeDB()
 		t.Cleanup(func() { _ = db.Close() })
 
-		cursorRepo := &interleaveCursorRepo{state: state}
 		configRepo := &interleaveConfigRepo{state: state}
 
 		ing := New(
@@ -2114,7 +1990,6 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 			&interleaveBalanceEventRepo{state: state},
 			&interleaveBalanceRepo{state: state},
 			&interleaveTokenRepo{state: state},
-			cursorRepo,
 			configRepo,
 			nil,
 			slog.Default(),
@@ -2123,14 +1998,11 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 		rollbackForkSequences := make([]int64, 0, 2)
 		ing.reorgHandler = func(ctx context.Context, tx *sql.Tx, got event.NormalizedBatch) error {
 			rollbackForkSequences = append(rollbackForkSequences, got.PreviousCursorSequence)
-			rewindValue, rewindSequence, err := state.rollbackFromCursor(got.Chain, got.Network, got.Address, got.PreviousCursorSequence)
+			_, _, err := state.rollbackFromCursor(got.Chain, got.Network, got.Address, got.PreviousCursorSequence)
 			if err != nil {
 				return err
 			}
-			if err := cursorRepo.UpsertTx(ctx, tx, got.Chain, got.Network, got.Address, rewindValue, rewindSequence, 0); err != nil {
-				return err
-			}
-			if err := configRepo.UpdateWatermarkTx(ctx, tx, got.Chain, got.Network, rewindSequence); err != nil {
+			if err := configRepo.UpdateWatermarkTx(ctx, tx, got.Chain, got.Network, got.PreviousCursorSequence-1); err != nil {
 				return err
 			}
 			return nil
@@ -2155,15 +2027,9 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 		}
 
 		chainKey := interleaveKey(model.ChainBTC, model.NetworkTestnet)
-		cursorKey := chainKey + "|btc-reorg-addr"
-		cursors := state.snapshotCursors()
 		watermarks := state.snapshotWatermarks()
-		require.Contains(t, cursors, cursorKey)
-		require.NotNil(t, cursors[cursorKey])
-		require.NotNil(t, cursors[cursorKey].CursorValue)
 
 		state.mu.Lock()
-		cursorWrites := append([]int64(nil), state.cursorWrites[cursorKey]...)
 		watermarkWrites := append([]int64(nil), state.watermarkWrites[chainKey]...)
 		state.mu.Unlock()
 
@@ -2172,10 +2038,7 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 			eventIDs:              eventIDs,
 			eventIDCounts:         eventIDCounts,
 			totalDelta:            totalDelta,
-			cursorValue:           *cursors[cursorKey].CursorValue,
-			cursorSequence:        cursors[cursorKey].CursorSequence,
 			watermark:             watermarks[chainKey],
-			cursorWrites:          cursorWrites,
 			watermarkWrites:       watermarkWrites,
 			rollbackForkSequences: rollbackForkSequences,
 		}
@@ -2287,51 +2150,30 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 	replayIdempotentOK := eventSetEqual(baseline.eventIDs, oneBlockReorg.eventIDs) &&
 		eventSetEqual(baseline.eventIDs, multiBlockReorg.eventIDs) &&
 		eventSetEqual(baseline.eventIDs, restartFromRollbackAnchor.eventIDs)
-	cursorMonotonicOK := seqWritesMonotonic(restartFromRollbackAnchor.cursorWrites) &&
-		seqWritesMonotonic(restartFromRollbackAnchor.watermarkWrites)
+	watermarkMonotonicOK := seqWritesMonotonic(restartFromRollbackAnchor.watermarkWrites)
 	signedDeltaConservationOK := baseline.totalDelta == oneBlockReorg.totalDelta &&
 		baseline.totalDelta == multiBlockReorg.totalDelta &&
 		baseline.totalDelta == restartFromRollbackAnchor.totalDelta
 	reorgRecoveryDeterministicOK := eventSetEqual(baseline.tupleKeys, oneBlockReorg.tupleKeys) &&
 		eventSetEqual(baseline.tupleKeys, multiBlockReorg.tupleKeys) &&
 		eventSetEqual(baseline.tupleKeys, restartFromRollbackAnchor.tupleKeys)
-	chainAdapterRuntimeWiredOK := restartFromRollbackAnchor.cursorSequence == 102 &&
-		restartFromRollbackAnchor.cursorValue == identity.CanonicalSignatureIdentity(model.ChainBTC, "btc-new-102") &&
-		restartFromRollbackAnchor.watermark == 102
+	watermarkWiredOK := restartFromRollbackAnchor.watermark == 102
 
 	assert.True(t, canonicalEventIDUniqueOK, "%s | %s canonical_event_id_unique_ok", runID, recoveryPermutation)
 	assert.True(t, replayIdempotentOK, "%s | %s replay_idempotent_ok", runID, recoveryPermutation)
-	assert.True(t, cursorMonotonicOK, "%s | %s cursor_monotonic_ok", runID, recoveryPermutation)
+	assert.True(t, watermarkMonotonicOK, "%s | %s watermark_monotonic_ok", runID, recoveryPermutation)
 	assert.True(t, signedDeltaConservationOK, "%s | %s signed_delta_conservation_ok", runID, recoveryPermutation)
 	assert.True(t, reorgRecoveryDeterministicOK, "%s | %s reorg_recovery_deterministic_ok", runID, recoveryPermutation)
-	assert.True(t, chainAdapterRuntimeWiredOK, "%s | %s chain_adapter_runtime_wired_ok", runID, recoveryPermutation)
+	assert.True(t, watermarkWiredOK, "%s | %s watermark_wired_ok", runID, recoveryPermutation)
 
-	expectedCursor := identity.CanonicalSignatureIdentity(model.ChainBTC, "btc-new-102")
-	assert.Equal(t, expectedCursor, baseline.cursorValue)
-	assert.Equal(t, expectedCursor, oneBlockReorg.cursorValue)
-	assert.Equal(t, expectedCursor, multiBlockReorg.cursorValue)
-	assert.Equal(t, expectedCursor, restartFromRollbackAnchor.cursorValue)
-	assert.Equal(t, int64(102), baseline.cursorSequence)
-	assert.Equal(t, int64(102), oneBlockReorg.cursorSequence)
-	assert.Equal(t, int64(102), multiBlockReorg.cursorSequence)
-	assert.Equal(t, int64(102), restartFromRollbackAnchor.cursorSequence)
 	assert.Equal(t, int64(102), baseline.watermark)
 	assert.Equal(t, int64(102), oneBlockReorg.watermark)
 	assert.Equal(t, int64(102), multiBlockReorg.watermark)
 	assert.Equal(t, int64(102), restartFromRollbackAnchor.watermark)
 
-	assert.Equal(t, []int64{101, 102}, baseline.cursorWrites)
-	assert.Equal(t, []int64{102, 100, 101, 102}, oneBlockReorg.cursorWrites)
-	assert.Equal(t, []int64{102, 0, 101, 102}, multiBlockReorg.cursorWrites)
-	assert.Equal(t, []int64{102, 102, 102, 102}, restartFromRollbackAnchor.cursorWrites)
-	assert.Equal(t, []int64{101, 102}, baseline.watermarkWrites)
-	assert.Equal(t, []int64{102, 102, 102, 102}, oneBlockReorg.watermarkWrites)
-	assert.Equal(t, []int64{102, 102, 102, 102}, multiBlockReorg.watermarkWrites)
-	assert.Equal(t, []int64{102, 102, 102, 102}, restartFromRollbackAnchor.watermarkWrites)
 	assertMonotonicWrites(t, map[string][]int64{"one-block": oneBlockReorg.watermarkWrites}, "btc one-block watermark")
 	assertMonotonicWrites(t, map[string][]int64{"multi-block": multiBlockReorg.watermarkWrites}, "btc multi-block watermark")
 	assertMonotonicWrites(t, map[string][]int64{"rollback-anchor": restartFromRollbackAnchor.watermarkWrites}, "btc rollback-anchor watermark")
-	assertMonotonicWrites(t, map[string][]int64{"restart-anchor cursor": restartFromRollbackAnchor.cursorWrites}, "btc rollback-anchor cursor")
 
 	assert.Equal(t, []int64{101}, oneBlockReorg.rollbackForkSequences)
 	assert.Equal(t, []int64{100}, multiBlockReorg.rollbackForkSequences)
@@ -2339,11 +2181,11 @@ func TestProcessBatch_BTCCompetingBranchReorgPermutationsConvergeDeterministical
 }
 
 func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	tokenID := uuid.New()
@@ -2461,20 +2303,6 @@ func TestProcessBatch_BaseReplay_SecondPassSkipsBalanceAdjust(t *testing.T) {
 		}).
 		Times(2)
 
-	mockCursorRepo.EXPECT().
-		UpsertTx(
-			gomock.Any(),
-			gomock.Any(),
-			model.ChainBase,
-			model.NetworkSepolia,
-			"0x1111111111111111111111111111111111111111",
-			&cursorVal,
-			int64(200),
-			int64(1),
-		).
-		Return(nil).
-		Times(2)
-
 	mockConfigRepo.EXPECT().
 		UpdateWatermarkTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkSepolia, int64(200)).
 		Return(nil).
@@ -2526,11 +2354,11 @@ func TestProcessBatch_RestartFromBoundaryReplay_NoDoubleApplyAcrossMandatoryChai
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 			_ = ctrl
 
 			normalizedCh := make(chan event.NormalizedBatch, 1)
-			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 			txID := uuid.New()
 			tokenID := uuid.New()
@@ -2620,15 +2448,6 @@ func TestProcessBatch_RestartFromBoundaryReplay_NoDoubleApplyAcrossMandatoryChai
 				Return(nil).
 				Times(2)
 
-			mockCursorRepo.EXPECT().
-				UpsertTx(
-					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					&cursorValue, tc.blockCursor, int64(1),
-				).
-				Return(nil).
-				Times(2)
-
 			mockConfigRepo.EXPECT().
 				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
 				Return(nil).
@@ -2697,11 +2516,11 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 			_ = ctrl
 
 			normalizedCh := make(chan event.NormalizedBatch, 1)
-			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 			ing.retryMaxAttempts = 2
 			ing.retryDelayStart = 0
 			ing.retryDelayMax = 0
@@ -2803,26 +2622,19 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 				Return(nil).
 				Times(2)
 
-			cursorAttempts := 0
-			mockCursorRepo.EXPECT().
-				UpsertTx(
-					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					&tc.cursorValue, tc.blockCursor, int64(1),
-				).
-				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
-					cursorAttempts++
-					if cursorAttempts == 1 {
-						return retry.Transient(errors.New("transient cursor write timeout"))
+			// First watermark update returns a transient error to trigger retry;
+			// second attempt succeeds.
+			watermarkCall := 0
+			mockConfigRepo.EXPECT().
+				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
+				DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) error {
+					watermarkCall++
+					if watermarkCall == 1 {
+						return retry.Transient(errors.New("transient watermark failure"))
 					}
 					return nil
 				}).
 				Times(2)
-
-			mockConfigRepo.EXPECT().
-				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
-				Return(nil).
-				Times(1)
 
 			normalizedCh <- batch
 			close(normalizedCh)
@@ -2830,7 +2642,6 @@ func TestIngester_Run_TransientPreCommitFailureRetriesDeterministically(t *testi
 			require.NoError(t, ing.Run(context.Background()))
 			require.Len(t, tuples, 2)
 			assert.Equal(t, tuples[0], tuples[1], "canonical tuple changed between fail-first and retry attempts")
-			assert.Equal(t, 2, cursorAttempts)
 		})
 	}
 }
@@ -2915,10 +2726,10 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_ReconcilesAcrossMandatoryChain
 			t.Cleanup(clearFakeCommitErrors)
 			setFakeCommitErrors(tc.commitErr)
 
-			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 			_ = ctrl
 
-			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, nil, slog.Default())
 
 			txID := uuid.New()
 			tokenID := uuid.New()
@@ -2992,29 +2803,16 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_ReconcilesAcrossMandatoryChain
 				Return(nil).
 				Times(1)
 
-			mockCursorRepo.EXPECT().
-				UpsertTx(
-					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					&tc.cursorValue, tc.blockCursor, int64(1),
-				).
-				Return(nil).
-				Times(1)
-
 			mockConfigRepo.EXPECT().
 				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
 				Return(nil).
 				Times(1)
 
-			mockCursorRepo.EXPECT().
-				Get(gomock.Any(), tc.chain, tc.network, tc.address).
-				Return(&model.AddressCursor{
-					Chain:          tc.chain,
-					Network:        tc.network,
-					Address:        tc.address,
-					CursorValue:    &tc.cursorValue,
-					CursorSequence: tc.blockCursor,
-				}, nil).
+			// After ambiguous commit, reconcileBlockScanCommit probes watermark.
+			// Return a watermark >= batch sequence to indicate commit succeeded.
+			mockConfigRepo.EXPECT().
+				GetWatermark(gomock.Any(), tc.chain, tc.network).
+				Return(&model.PipelineWatermark{IngestedSequence: tc.blockCursor}, nil).
 				Times(1)
 
 			require.NoError(t, ing.processBatch(context.Background(), batch))
@@ -3095,10 +2893,10 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_PermutationsConvergeCanonicalT
 				setFakeCommitErrors(p.commitErr)
 				t.Cleanup(clearFakeCommitErrors)
 
-				ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+				ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 				_ = ctrl
 
-				ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+				ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, nil, slog.Default())
 
 				txID := uuid.New()
 				tokenID := uuid.New()
@@ -3182,29 +2980,15 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_PermutationsConvergeCanonicalT
 					Return(nil).
 					Times(1)
 
-				mockCursorRepo.EXPECT().
-					UpsertTx(
-						gomock.Any(), gomock.Any(),
-						tc.chain, tc.network, tc.address,
-						&tc.cursorExpected, tc.blockCursor, int64(1),
-					).
-					Return(nil).
-					Times(1)
-
 				mockConfigRepo.EXPECT().
 					UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
 					Return(nil).
 					Times(1)
 
-				mockCursorRepo.EXPECT().
-					Get(gomock.Any(), tc.chain, tc.network, tc.address).
-					Return(&model.AddressCursor{
-						Chain:          tc.chain,
-						Network:        tc.network,
-						Address:        tc.address,
-						CursorValue:    &tc.cursorExpected,
-						CursorSequence: tc.blockCursor,
-					}, nil).
+				// After ambiguous commit, reconcileBlockScanCommit probes watermark.
+				mockConfigRepo.EXPECT().
+					GetWatermark(gomock.Any(), tc.chain, tc.network).
+					Return(&model.PipelineWatermark{IngestedSequence: tc.blockCursor}, nil).
 					Times(1)
 
 				require.NoError(t, ing.processBatch(context.Background(), batch))
@@ -3273,10 +3057,10 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_CursorAheadFailsClosedAcrossMa
 			t.Cleanup(clearFakeCommitErrors)
 			setFakeCommitErrors(tc.commitErr)
 
-			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 			_ = ctrl
 
-			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, nil, slog.Default())
 
 			txID := uuid.New()
 			tokenID := uuid.New()
@@ -3358,46 +3142,26 @@ func TestIngester_ProcessBatch_AmbiguousCommitAck_CursorAheadFailsClosedAcrossMa
 				Return(nil).
 				Times(2)
 
-			cursorWrites := make([]int64, 0, 2)
-			mockCursorRepo.EXPECT().
-				UpsertTx(
-					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					&tc.cursorValue, tc.blockCursor, int64(1),
-				).
-				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
-					cursorWrites = append(cursorWrites, tc.blockCursor)
-					return nil
-				}).
-				Times(2)
-
 			mockConfigRepo.EXPECT().
 				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
 				Return(nil).
 				Times(2)
 
-			observedSequence := tc.blockCursor + 5
-			mockCursorRepo.EXPECT().
-				Get(gomock.Any(), tc.chain, tc.network, tc.address).
-				Return(&model.AddressCursor{
-					Chain:          tc.chain,
-					Network:        tc.network,
-					Address:        tc.address,
-					CursorValue:    &tc.observedCursor,
-					CursorSequence: observedSequence,
-				}, nil).
+			// After ambiguous commit, reconcileBlockScanCommit probes watermark.
+			// Return a lower watermark to simulate commit did not succeed (fail-closed).
+			mockConfigRepo.EXPECT().
+				GetWatermark(gomock.Any(), tc.chain, tc.network).
+				Return(&model.PipelineWatermark{IngestedSequence: tc.blockCursor - 1}, nil).
 				Times(1)
 
 			err := ing.processBatch(context.Background(), batch)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "commit_ambiguity_unresolved")
-			assert.Contains(t, err.Error(), "reason=cursor_ahead_ambiguous")
+			assert.Contains(t, err.Error(), "reason=watermark_mismatch")
 
 			// Replay after a fail-closed ambiguity decision must remain idempotent.
 			require.NoError(t, ing.processBatch(context.Background(), batch))
 			assert.Equal(t, 1, insertedCount, "replay should not duplicate canonical IDs when first commit outcome was ambiguous")
-			require.Len(t, cursorWrites, 2)
-			assert.GreaterOrEqual(t, cursorWrites[1], cursorWrites[0], "cursor progression must remain monotonic across ambiguous boundary replay")
 		})
 	}
 }
@@ -3454,10 +3218,10 @@ func TestIngester_ProcessBatch_AmbiguousCommitRetryAfterUnknown_DeduplicatesAcro
 			t.Cleanup(clearFakeCommitErrors)
 			setFakeCommitErrors(tc.commitErr)
 
-			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 			_ = ctrl
 
-			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, nil, slog.Default())
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, nil, slog.Default())
 			ing.retryMaxAttempts = 3
 			ing.retryDelayStart = 0
 			ing.retryDelayMax = 0
@@ -3545,27 +3309,16 @@ func TestIngester_ProcessBatch_AmbiguousCommitRetryAfterUnknown_DeduplicatesAcro
 				Return(nil).
 				Times(2)
 
-			cursorWrites := make([]int64, 0, 2)
-			mockCursorRepo.EXPECT().
-				UpsertTx(
-					gomock.Any(), gomock.Any(),
-					tc.chain, tc.network, tc.address,
-					&tc.cursorValue, tc.blockCursor, int64(1),
-				).
-				DoAndReturn(func(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
-					cursorWrites = append(cursorWrites, tc.blockCursor)
-					return nil
-				}).
-				Times(2)
-
 			mockConfigRepo.EXPECT().
 				UpdateWatermarkTx(gomock.Any(), gomock.Any(), tc.chain, tc.network, tc.blockCursor).
 				Return(nil).
 				Times(2)
 
-			mockCursorRepo.EXPECT().
-				Get(gomock.Any(), tc.chain, tc.network, tc.address).
-				Return(nil, errors.New("cursor probe unavailable")).
+			// After ambiguous commit, reconcileBlockScanCommit probes watermark.
+			// Return a lower watermark to simulate commit did not succeed (fail-closed terminal).
+			mockConfigRepo.EXPECT().
+				GetWatermark(gomock.Any(), tc.chain, tc.network).
+				Return(&model.PipelineWatermark{IngestedSequence: tc.blockCursor - 1}, nil).
 				Times(1)
 
 			err := ing.processBatchWithRetry(context.Background(), batch)
@@ -3578,8 +3331,6 @@ func TestIngester_ProcessBatch_AmbiguousCommitRetryAfterUnknown_DeduplicatesAcro
 
 			assert.Equal(t, 2, totalUpserts)
 			assert.Equal(t, 1, insertedCount, "retry-after-unknown replay must not duplicate canonical IDs")
-			require.Len(t, cursorWrites, 2)
-			assert.GreaterOrEqual(t, cursorWrites[1], cursorWrites[0], "cursor progression must stay monotonic on replay")
 		})
 	}
 }
@@ -3634,10 +3385,10 @@ func TestIngester_ProcessBatchWithRetry_TerminalFailure_NoRetryAcrossMandatoryCh
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+			_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 
 			normalizedCh := make(chan event.NormalizedBatch, 1)
-			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+			ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 			ing.retryMaxAttempts = 3
 			ing.retryDelayStart = time.Millisecond
 			ing.retryDelayMax = 2 * time.Millisecond
@@ -3679,10 +3430,10 @@ func TestIngester_ProcessBatchWithRetry_TerminalFailure_NoRetryAcrossMandatoryCh
 }
 
 func TestIngester_ProcessBatchWithRetry_TransientExhaustion_StageDiagnostic(t *testing.T) {
-	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 	ing.retryMaxAttempts = 2
 	ing.retryDelayStart = 0
 	ing.retryDelayMax = 0
@@ -3703,11 +3454,11 @@ func TestIngester_ProcessBatchWithRetry_TransientExhaustion_StageDiagnostic(t *t
 }
 
 func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
-	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 	_ = ctrl
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	cursorVal := "sig1"
@@ -3745,9 +3496,6 @@ func TestProcessBatch_NoFeeDeduction_FailedTx(t *testing.T) {
 	mockTokenRepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(make(map[string]uuid.UUID), nil)
 
-	mockCursorRepo.EXPECT().UpsertTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil)
-
 	mockConfigRepo.EXPECT().UpdateWatermarkTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
@@ -3784,10 +3532,10 @@ func TestAddDecimalStrings(t *testing.T) {
 }
 
 func TestProcessBatch_BeginTxError(t *testing.T) {
-	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	batch := event.NormalizedBatch{
 		Chain:   model.ChainSolana,
@@ -3804,10 +3552,10 @@ func TestProcessBatch_BeginTxError(t *testing.T) {
 }
 
 func TestProcessBatch_UpsertTxError(t *testing.T) {
-	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	batch := event.NormalizedBatch{
 		Chain:   model.ChainSolana,
@@ -3835,10 +3583,10 @@ func TestProcessBatch_UpsertTxError(t *testing.T) {
 }
 
 func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransitionError(t *testing.T) {
-	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	txID := uuid.New()
 	tokenID := uuid.New()
@@ -3913,14 +3661,6 @@ func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransition
 		Return(errors.New("insufficient balance for adjustment")).
 		Times(1)
 
-	mockCursorRepo.EXPECT().
-		UpsertTx(
-			gomock.Any(), gomock.Any(),
-			gomock.Any(), gomock.Any(), gomock.Any(),
-			gomock.Any(), gomock.Any(), gomock.Any(),
-		).
-		Times(0)
-
 	mockConfigRepo.EXPECT().
 		UpdateWatermarkTx(
 			gomock.Any(), gomock.Any(),
@@ -3934,10 +3674,10 @@ func TestProcessBatch_FailFastDoesNotAdvanceCursorOrWatermarkOnBalanceTransition
 }
 
 func TestIngester_Run_ContextCancel(t *testing.T) {
-	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -3947,10 +3687,10 @@ func TestIngester_Run_ContextCancel(t *testing.T) {
 }
 
 func TestIngester_Run_ReturnsErrorOnProcessBatchFailure(t *testing.T) {
-	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo := newIngesterMocks(t)
+	_, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newIngesterMocks(t)
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
-	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockCursorRepo, mockConfigRepo, normalizedCh, slog.Default())
+	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo, normalizedCh, slog.Default())
 	ing.retryMaxAttempts = 1
 
 	normalizedCh <- event.NormalizedBatch{

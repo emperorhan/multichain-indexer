@@ -28,9 +28,7 @@ type triChainSnapshot struct {
 	eventIDCounts   map[string]int
 	categoryCounts  map[string]int
 	btcTotalDelta   string
-	cursorSeq       map[string]int64
 	watermarks      map[string]int64
-	cursorWrites    map[string][]int64
 	watermarkWrites map[string][]int64
 	insertedCount   int
 	upsertAttempts  int
@@ -62,7 +60,6 @@ func TestTriChainInterleaving_CompletionOrderPermutationsConvergeDeterministical
 	assert.Equal(t, 0, tupleDiffCount(permutationA.tupleKeys, permutationB.tupleKeys))
 	assert.Equal(t, 0, tupleDiffCount(permutationA.eventIDs, permutationB.eventIDs))
 	assert.Equal(t, permutationA.categoryCounts, permutationB.categoryCounts)
-	assert.Equal(t, permutationA.cursorSeq, permutationB.cursorSeq)
 	assert.Equal(t, permutationA.watermarks, permutationB.watermarks)
 
 	assert.Equal(t, 8, len(permutationA.eventIDs))
@@ -71,20 +68,12 @@ func TestTriChainInterleaving_CompletionOrderPermutationsConvergeDeterministical
 	assert.Equal(t, 1, permutationA.categoryCounts[chainCategoryKey(model.ChainBase, model.ActivityFeeDataL1)])
 	assert.Equal(t, "-1", permutationA.btcTotalDelta)
 
-	solKey := fmt.Sprintf("%s|%s", interleaveKey(model.ChainSolana, model.NetworkDevnet), triChainAddress(model.ChainSolana))
-	baseKey := fmt.Sprintf("%s|%s", interleaveKey(model.ChainBase, model.NetworkSepolia), triChainAddress(model.ChainBase))
-	btcKey := fmt.Sprintf("%s|%s", interleaveKey(model.ChainBTC, model.NetworkTestnet), triChainAddress(model.ChainBTC))
-	assert.Equal(t, int64(101), permutationA.cursorSeq[solKey])
-	assert.Equal(t, int64(201), permutationA.cursorSeq[baseKey])
-	assert.Equal(t, int64(301), permutationA.cursorSeq[btcKey])
 	assert.Equal(t, int64(101), permutationA.watermarks[interleaveKey(model.ChainSolana, model.NetworkDevnet)])
 	assert.Equal(t, int64(201), permutationA.watermarks[interleaveKey(model.ChainBase, model.NetworkSepolia)])
 	assert.Equal(t, int64(301), permutationA.watermarks[interleaveKey(model.ChainBTC, model.NetworkTestnet)])
 
 	assertNoDuplicateEventIDs(t, permutationA.eventIDCounts)
-	assertMonotonicWrites(t, permutationA.cursorWrites, "tri-chain permutationA cursor writes")
 	assertMonotonicWrites(t, permutationA.watermarkWrites, "tri-chain permutationA watermark writes")
-	assertMonotonicWrites(t, permutationB.cursorWrites, "tri-chain permutationB cursor writes")
 	assertMonotonicWrites(t, permutationB.watermarkWrites, "tri-chain permutationB watermark writes")
 }
 
@@ -110,9 +99,6 @@ func TestTriChainInterleaving_BacklogRetryPressurePreservesIsolationAndReplayDet
 	assert.Equal(t, 1, first.categoryCounts[chainCategoryKey(model.ChainBase, model.ActivityFeeExecutionL2)])
 	assert.Equal(t, 1, first.categoryCounts[chainCategoryKey(model.ChainBase, model.ActivityFeeDataL1)])
 
-	btcCursorKey := fmt.Sprintf("%s|%s", btcChainKey, triChainAddress(model.ChainBTC))
-	_, btcCursorWritten := first.cursorSeq[btcCursorKey]
-	assert.False(t, btcCursorWritten, "btc failed-path must not advance cursor")
 	_, btcWatermarkWritten := first.watermarks[btcChainKey]
 	assert.False(t, btcWatermarkWritten, "btc failed-path must not advance watermark")
 
@@ -138,7 +124,6 @@ func TestTriChainInterleaving_BacklogRetryPressurePreservesIsolationAndReplayDet
 	assert.Equal(t, int64(301), second.watermarks[interleaveKey(model.ChainBTC, model.NetworkTestnet)])
 
 	assert.GreaterOrEqual(t, second.upsertAttempts, second.insertedCount)
-	assertMonotonicWrites(t, second.cursorWrites, "tri-chain backlog cursor writes")
 	assertMonotonicWrites(t, second.watermarkWrites, "tri-chain backlog watermark writes")
 }
 
@@ -221,7 +206,6 @@ func TestTriChainInterleaving_LateArrivalPermutationsConvergeDeterministically(t
 	assert.Equal(t, onTime.tupleKeys, delayed.tupleKeys)
 	assert.Equal(t, onTime.eventIDs, delayed.eventIDs)
 	assert.Equal(t, onTime.categoryCounts, delayed.categoryCounts)
-	assert.Equal(t, onTime.cursorSeq, delayed.cursorSeq)
 	assert.Equal(t, onTime.watermarks, delayed.watermarks)
 	assert.Equal(t, onTime.btcTotalDelta, delayed.btcTotalDelta)
 
@@ -232,7 +216,6 @@ func TestTriChainInterleaving_LateArrivalPermutationsConvergeDeterministically(t
 	assert.Equal(t, "-1", delayed.btcTotalDelta)
 
 	assertNoDuplicateEventIDs(t, delayed.eventIDCounts)
-	assertMonotonicWrites(t, delayed.cursorWrites, "tri-chain late-arrival delayed cursor writes")
 	assertMonotonicWrites(t, delayed.watermarkWrites, "tri-chain late-arrival delayed watermark writes")
 }
 
@@ -300,13 +283,11 @@ func TestTriChainInterleaving_OneChainDelayedClosurePressureStaysIsolated(t *tes
 	assert.Equal(t, baseline.eventIDs, afterLateArrival.eventIDs)
 	assert.Equal(t, baseline.tupleKeys, afterLateArrival.tupleKeys)
 	assert.Equal(t, baseline.categoryCounts, afterLateArrival.categoryCounts)
-	assert.Equal(t, baseline.cursorSeq, afterLateArrival.cursorSeq)
 	assert.Equal(t, baseline.watermarks, afterLateArrival.watermarks)
 	assert.Equal(t, chainEventIDSubset(beforeLateArrival.eventIDs, model.ChainSolana), chainEventIDSubset(afterLateArrival.eventIDs, model.ChainSolana))
 	assert.Equal(t, chainEventIDSubset(beforeLateArrival.eventIDs, model.ChainBase), chainEventIDSubset(afterLateArrival.eventIDs, model.ChainBase))
 
 	assertNoDuplicateEventIDs(t, afterLateArrival.eventIDCounts)
-	assertMonotonicWrites(t, afterLateArrival.cursorWrites, "tri-chain one-chain-late cursor writes")
 	assertMonotonicWrites(t, afterLateArrival.watermarkWrites, "tri-chain one-chain-late watermark writes")
 }
 
@@ -345,12 +326,8 @@ func TestTriChainInterleaving_FailFastNoProgressAndDeterministicReplayPerMandato
 			assert.Equal(t, 0, chainEventCount(first, tc), "failed chain must not emit materialized tuples on failure")
 			assert.Equal(t, len(baseline.eventIDs)-chainEventCount(baseline, tc), len(first.eventIDs), "only failed chain should be missing")
 
-			failCursorKey := fmt.Sprintf("%s|%s", failChainKey, triChainAddress(tc))
-			_, failCursorWritten := first.cursorSeq[failCursorKey]
-			assert.False(t, failCursorWritten, "failed-path must not advance failed chain cursor")
 			_, failWatermarkWritten := first.watermarks[failChainKey]
 			assert.False(t, failWatermarkWritten, "failed-path must not advance failed chain watermark")
-			assert.Empty(t, first.cursorWrites[failCursorKey], "failed chain cursor writes must be absent on failed-path")
 			assert.Empty(t, first.watermarkWrites[failChainKey], "failed chain watermark writes must be absent on failed-path")
 
 			for _, peerChain := range mandatoryChains {
@@ -364,9 +341,7 @@ func TestTriChainInterleaving_FailFastNoProgressAndDeterministicReplayPerMandato
 					"peer chain should remain progressive while one chain fails",
 				)
 
-				peerCursorKey := fmt.Sprintf("%s|%s", interleaveKey(peerChain, triChainNetwork(peerChain)), triChainAddress(peerChain))
 				peerWatermarkKey := interleaveKey(peerChain, triChainNetwork(peerChain))
-				assert.Equal(t, baseline.cursorSeq[peerCursorKey], first.cursorSeq[peerCursorKey], "peer cursor should not regress on unrelated failure")
 				assert.Equal(t, baseline.watermarks[peerWatermarkKey], first.watermarks[peerWatermarkKey], "peer watermark should not regress on unrelated failure")
 			}
 
@@ -378,11 +353,9 @@ func TestTriChainInterleaving_FailFastNoProgressAndDeterministicReplayPerMandato
 			assert.Equal(t, baseline.eventIDs, recovered.eventIDs)
 			assert.Equal(t, baseline.tupleKeys, recovered.tupleKeys)
 			assert.Equal(t, baseline.eventIDCounts, recovered.eventIDCounts)
-			assert.Equal(t, baseline.cursorSeq, recovered.cursorSeq)
 			assert.Equal(t, baseline.watermarks, recovered.watermarks)
 			assert.Equal(t, baseline.btcTotalDelta, recovered.btcTotalDelta)
 			assertNoDuplicateEventIDs(t, recovered.eventIDCounts)
-			assertMonotonicWrites(t, recovered.cursorWrites, "tri-chain "+string(tc)+" replay cursor writes")
 			assertMonotonicWrites(t, recovered.watermarkWrites, "tri-chain "+string(tc)+" replay watermark writes")
 		})
 	}
@@ -425,12 +398,10 @@ func TestTriChainInterleaving_FailFastRestartPermutationRevalidation(t *testing.
 			assert.Equal(t, baseline.tupleKeys, replay.tupleKeys)
 			assert.Equal(t, baseline.eventIDs, replay.eventIDs)
 			assert.Equal(t, baseline.categoryCounts, replay.categoryCounts)
-			assert.Equal(t, baseline.cursorSeq, replay.cursorSeq)
 			assert.Equal(t, baseline.watermarks, replay.watermarks)
 			assert.Equal(t, baseline.btcTotalDelta, replay.btcTotalDelta)
 
 			assertNoDuplicateEventIDs(t, replay.eventIDCounts)
-			assertMonotonicWrites(t, replay.cursorWrites, "tri-chain "+permutation+" cursor writes")
 			assertMonotonicWrites(t, replay.watermarkWrites, "tri-chain "+permutation+" watermark writes")
 		})
 	}
@@ -452,12 +423,8 @@ func TestTriChainInterleaving_FailFastRestartPermutationRevalidation(t *testing.
 					assert.Equal(t, 0, chainEventCount(first, tc))
 					assert.Equal(t, len(baseline.eventIDs)-chainEventCount(baseline, tc), len(first.eventIDs))
 
-					failCursorKey := fmt.Sprintf("%s|%s", failChainKey, triChainAddress(tc))
-					_, failCursorWritten := first.cursorSeq[failCursorKey]
-					assert.False(t, failCursorWritten)
 					_, failWatermarkWritten := first.watermarks[failChainKey]
 					assert.False(t, failWatermarkWritten)
-					assert.Empty(t, first.cursorWrites[failCursorKey])
 					assert.Empty(t, first.watermarkWrites[failChainKey])
 
 					for _, peerChain := range mandatoryChains {
@@ -466,9 +433,7 @@ func TestTriChainInterleaving_FailFastRestartPermutationRevalidation(t *testing.
 						}
 						assert.Equal(t, chainEventCount(baseline, peerChain), chainEventCount(first, peerChain))
 
-						peerCursorKey := fmt.Sprintf("%s|%s", interleaveKey(peerChain, triChainNetwork(peerChain)), triChainAddress(peerChain))
 						peerWatermarkKey := interleaveKey(peerChain, triChainNetwork(peerChain))
-						assert.Equal(t, baseline.cursorSeq[peerCursorKey], first.cursorSeq[peerCursorKey])
 						assert.Equal(t, baseline.watermarks[peerWatermarkKey], first.watermarks[peerWatermarkKey])
 					}
 
@@ -480,12 +445,10 @@ func TestTriChainInterleaving_FailFastRestartPermutationRevalidation(t *testing.
 					assert.Equal(t, baseline.eventIDs, recovered.eventIDs)
 					assert.Equal(t, baseline.tupleKeys, recovered.tupleKeys)
 					assert.Equal(t, baseline.eventIDCounts, recovered.eventIDCounts)
-					assert.Equal(t, baseline.cursorSeq, recovered.cursorSeq)
 					assert.Equal(t, baseline.watermarks, recovered.watermarks)
 					assert.Equal(t, baseline.btcTotalDelta, recovered.btcTotalDelta)
 
 					assertNoDuplicateEventIDs(t, recovered.eventIDCounts)
-					assertMonotonicWrites(t, recovered.cursorWrites, "tri-chain "+string(tc)+" "+permutation+" replay cursor writes")
 					assertMonotonicWrites(t, recovered.watermarkWrites, "tri-chain "+string(tc)+" "+permutation+" replay watermark writes")
 				})
 			}
@@ -630,7 +593,6 @@ func newTriChainIngesters(t *testing.T, state *interleaveState, maxSkew time.Dur
 	beRepo := &interleaveBalanceEventRepo{state: state}
 	balanceRepo := &interleaveBalanceRepo{state: state}
 	tokenRepo := &interleaveTokenRepo{state: state}
-	cursorRepo := &interleaveCursorRepo{state: state}
 	configRepo := &interleaveConfigRepo{state: state}
 	interleaver := NewDeterministicMandatoryChainInterleaver(maxSkew)
 
@@ -641,7 +603,6 @@ func newTriChainIngesters(t *testing.T, state *interleaveState, maxSkew time.Dur
 			beRepo,
 			balanceRepo,
 			tokenRepo,
-			cursorRepo,
 			configRepo,
 			nil,
 			slog.Default(),
@@ -914,25 +875,11 @@ func snapshotTriChainState(state *interleaveState) triChainSnapshot {
 		}
 	}
 
-	cursors := state.snapshotCursors()
-	cursorSeq := make(map[string]int64, len(cursors))
-	for key, cursor := range cursors {
-		if cursor == nil {
-			continue
-		}
-		cursorSeq[key] = cursor.CursorSequence
-	}
-
 	watermarks := state.snapshotWatermarks()
 
 	state.mu.Lock()
 	insertedCount := len(state.insertedEvents)
 	upsertAttempts := state.upsertAttempts
-	cursorWrites := make(map[string][]int64, len(state.cursorWrites))
-	for key, writes := range state.cursorWrites {
-		copied := append([]int64(nil), writes...)
-		cursorWrites[key] = copied
-	}
 	watermarkWrites := make(map[string][]int64, len(state.watermarkWrites))
 	for key, writes := range state.watermarkWrites {
 		copied := append([]int64(nil), writes...)
@@ -946,9 +893,7 @@ func snapshotTriChainState(state *interleaveState) triChainSnapshot {
 		eventIDCounts:   eventIDCounts,
 		categoryCounts:  categoryCounts,
 		btcTotalDelta:   btcTotalDelta,
-		cursorSeq:       cursorSeq,
 		watermarks:      watermarks,
-		cursorWrites:    cursorWrites,
 		watermarkWrites: watermarkWrites,
 		insertedCount:   insertedCount,
 		upsertAttempts:  upsertAttempts,

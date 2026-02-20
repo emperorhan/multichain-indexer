@@ -24,18 +24,29 @@ func buildRawBalanceEvents(
 	watchedAddress string,
 	handleSelfTransfer bool,
 ) []event.NormalizedBalanceEvent {
+	return buildRawBalanceEventsMulti(rawEvents, map[string]struct{}{watchedAddress: {}}, handleSelfTransfer)
+}
+
+// buildRawBalanceEventsMulti converts sidecar raw events into NormalizedBalanceEvents,
+// filtering by a set of watched addresses.
+func buildRawBalanceEventsMulti(
+	rawEvents []*sidecarv1.BalanceEventInfo,
+	watchedAddresses map[string]struct{},
+	handleSelfTransfer bool,
+) []event.NormalizedBalanceEvent {
 	normalizedEvents := make([]event.NormalizedBalanceEvent, 0, len(rawEvents)+2)
 
 	for _, be := range rawEvents {
 		if be == nil {
 			continue
 		}
-		if be.Address != watchedAddress {
+		if _, ok := watchedAddresses[be.Address]; !ok {
 			continue
 		}
 		category := model.EventCategory(be.EventCategory)
 
-		if handleSelfTransfer && category == model.EventCategoryTransfer && be.CounterpartyAddress == watchedAddress {
+		_, counterpartyIsWatched := watchedAddresses[be.CounterpartyAddress]
+		if handleSelfTransfer && category == model.EventCategoryTransfer && be.CounterpartyAddress == be.Address {
 			chainData, _ := json.Marshal(be.Metadata)
 			normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
 				OuterInstructionIndex: int(be.OuterInstructionIndex),
@@ -56,8 +67,9 @@ func buildRawBalanceEvents(
 			})
 			continue
 		}
+		_ = counterpartyIsWatched
 
-		activityType := model.ClassifyActivity(category, be.Delta, be.Address == watchedAddress)
+		activityType := model.ClassifyActivity(category, be.Delta, true)
 		chainData, _ := json.Marshal(be.Metadata)
 
 		normalizedEvents = append(normalizedEvents, event.NormalizedBalanceEvent{
@@ -91,12 +103,24 @@ func buildCanonicalSolanaBalanceEvents(
 	rawEvents []*sidecarv1.BalanceEventInfo,
 	watchedAddress string,
 ) []event.NormalizedBalanceEvent {
-	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	normalizedEvents := buildRawBalanceEvents(rawEvents, watchedAddress, true)
+	return buildCanonicalSolanaBalanceEventsMulti(chain, network, txHash, txStatus, feePayer, feeAmount, finalityState, rawEvents, map[string]struct{}{watchedAddress: {}})
+}
 
-	// Fee events: only emit if feePayer is the watched address
-	if feePayer == watchedAddress && shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount) && !hasSolanaFeeEvent(normalizedEvents, feePayer) {
-		normalizedEvents = append(normalizedEvents, buildSolanaFeeBalanceEvent(feePayer, feeAmount))
+func buildCanonicalSolanaBalanceEventsMulti(
+	chain model.Chain,
+	network model.Network,
+	txHash, txStatus, feePayer, feeAmount, finalityState string,
+	rawEvents []*sidecarv1.BalanceEventInfo,
+	watchedAddresses map[string]struct{},
+) []event.NormalizedBalanceEvent {
+	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
+	normalizedEvents := buildRawBalanceEventsMulti(rawEvents, watchedAddresses, true)
+
+	// Fee events: only emit if feePayer is one of the watched addresses
+	if _, ok := watchedAddresses[feePayer]; ok {
+		if shouldEmitSolanaFeeEvent(txStatus, feePayer, feeAmount) && !hasSolanaFeeEvent(normalizedEvents, feePayer) {
+			normalizedEvents = append(normalizedEvents, buildSolanaFeeBalanceEvent(feePayer, feeAmount))
+		}
 	}
 
 	return canonicalizeSolanaBalanceEvents(chain, network, txHash, finalityState, normalizedEvents)

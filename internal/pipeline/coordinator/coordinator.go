@@ -26,7 +26,6 @@ type Coordinator struct {
 	chain           model.Chain
 	network         model.Network
 	watchedAddrRepo store.WatchedAddressRepository
-	cursorRepo      store.CursorRepository
 	batchSize       atomic.Int32
 	intervalNs      atomic.Int64 // nanoseconds, accessed atomically
 	jobCh           chan<- event.FetchJob
@@ -35,10 +34,8 @@ type Coordinator struct {
 	autoTune        *autotune.Controller
 	autoTuneSignals autotune.AutoTuneSignalSource
 
-	// Block-scan mode: used for block-based chains (EVM, BTC) where a single
-	// scan per block range replaces per-address cursor iteration.
-	blockScanMode bool
-	configRepo    store.IndexerConfigRepository
+	configRepo               store.IndexerConfigRepository
+	maxInitialLookbackBlocks int64
 }
 
 type headSequenceProvider interface {
@@ -61,7 +58,6 @@ func New(
 	chain model.Chain,
 	network model.Network,
 	watchedAddrRepo store.WatchedAddressRepository,
-	cursorRepo store.CursorRepository,
 	batchSize int,
 	interval time.Duration,
 	jobCh chan<- event.FetchJob,
@@ -71,7 +67,6 @@ func New(
 		chain:           chain,
 		network:         network,
 		watchedAddrRepo: watchedAddrRepo,
-		cursorRepo:      cursorRepo,
 		jobCh:           jobCh,
 		logger:          logger.With("component", "coordinator"),
 	}
@@ -85,12 +80,18 @@ func (c *Coordinator) WithHeadProvider(provider headSequenceProvider) *Coordinat
 	return c
 }
 
-// WithBlockScanMode enables block-scan mode for block-based chains.
-// In this mode, the coordinator reads the pipeline watermark and emits a
-// single FetchJob covering the block range for all watched addresses.
+// WithBlockScanMode configures the indexer config repository used for
+// reading the pipeline watermark. All chains use block-scan mode exclusively.
 func (c *Coordinator) WithBlockScanMode(configRepo store.IndexerConfigRepository) *Coordinator {
-	c.blockScanMode = true
 	c.configRepo = configRepo
+	return c
+}
+
+// WithMaxInitialLookbackBlocks sets the maximum number of blocks to look back
+// from the chain head when no watermark exists (first run). Prevents scanning
+// from genesis on mainnet chains.
+func (c *Coordinator) WithMaxInitialLookbackBlocks(n int64) *Coordinator {
+	c.maxInitialLookbackBlocks = n
 	return c
 }
 
@@ -321,175 +322,7 @@ func (c *Coordinator) tick(ctx context.Context) error {
 	)
 	defer span.End()
 
-	if c.blockScanMode {
-		return c.tickBlockScan(ctx, span)
-	}
-
-	addresses, err := c.watchedAddrRepo.GetActive(ctx, c.chain, c.network)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return err
-	}
-	if len(addresses) == 0 {
-		return nil
-	}
-
-	fetchCutoffSeq := int64(0)
-	if c.headProvider != nil {
-		fetchCutoffSeq, err = c.headProvider.GetHeadSequence(ctx)
-		if err != nil {
-			err = fmt.Errorf("resolve tick cutoff head: %w", err)
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return err
-		}
-		if fetchCutoffSeq < 0 {
-			fetchCutoffSeq = 0
-		}
-	}
-
-	groups := groupWatchedAddresses(c.chain, c.network, addresses)
-	c.logger.Debug("creating fetch jobs", "address_count", len(addresses), "fan_in_group_count", len(groups))
-
-	jobs := make([]event.FetchJob, 0, len(groups))
-	minCursorSequence := int64(0)
-	hasMinCursor := false
-	for _, group := range groups {
-		candidates := make([]watchedAddressCandidate, 0, len(group.members))
-		for _, member := range group.members {
-			cursor, err := c.cursorRepo.Get(ctx, c.chain, c.network, member.Address)
-			if err != nil {
-				return fmt.Errorf("get cursor %s: %w", member.Address, err)
-			}
-			reconciledCursor, recoveryMode, err := reconcileCheckpointCursor(c.chain, c.network, member.Address, cursor)
-			if err != nil {
-				return fmt.Errorf("checkpoint integrity validation failed for %s: %w", member.Address, err)
-			}
-			if recoveryMode != "" {
-				c.logger.Warn("checkpoint integrity recovery applied",
-					"mode", recoveryMode,
-					"chain", c.chain,
-					"network", c.network,
-					"address", member.Address,
-				)
-			}
-			candidates = append(candidates, watchedAddressCandidate{
-				address: member,
-				cursor:  reconciledCursor,
-			})
-		}
-
-		representative, cursorValue, cursorSequence := resolveLagAwareCandidate(c.chain, c.network, group.identity, candidates)
-		if len(group.members) > 1 {
-			c.logger.Warn("coordinator fan-in overlap collision resolved deterministically",
-				"chain", c.chain,
-				"network", c.network,
-				"identity", group.identity,
-				"candidate_count", len(candidates),
-				"candidate_addresses", fanInCandidateAddresses(candidates),
-				"candidate_scope_keys", fanInCandidateScopeKeys(c.chain, c.network, candidates),
-				"candidate_cursor_sequences", fanInCandidateCursorSequences(candidates),
-				"candidate_cursor_values", fanInCandidateCursorValues(c.chain, candidates),
-				"selected_address", representative.address.Address,
-				"selected_scope_key", stableAddressScopeOrderKey(c.chain, c.network, representative.address.Address),
-				"selected_cursor_sequence", cursorSequence,
-				"selected_cursor_value", derefCursorValue(cursorValue),
-			)
-		}
-
-		if !hasMinCursor || cursorSequence < minCursorSequence {
-			minCursorSequence = cursorSequence
-			hasMinCursor = true
-		}
-
-		jobs = append(jobs, event.FetchJob{
-			Chain:          c.chain,
-			Network:        c.network,
-			Address:        representative.address.Address,
-			CursorValue:    cursorValue,
-			CursorSequence: cursorSequence,
-			FetchCutoffSeq: fetchCutoffSeq,
-			WalletID:       representative.address.WalletID,
-			OrgID:          representative.address.OrganizationID,
-		})
-	}
-
-	batchSize := int(c.batchSize.Load())
-	if c.autoTune != nil && len(jobs) > 0 {
-		rpcErrorRateBps := 0
-		dbCommitLatencyP95Ms := 0
-		if c.autoTuneSignals != nil {
-			snapshot := c.autoTuneSignals.Snapshot(c.chain.String(), c.network.String())
-			rpcErrorRateBps = snapshot.RPCErrorRateBps
-			dbCommitLatencyP95Ms = snapshot.DBCommitLatencyP95Ms
-		}
-
-		resolved, diagnostics := c.autoTune.Resolve(autotune.Inputs{
-			Chain:                c.chain.String(),
-			Network:              c.network.String(),
-			HasHeadSignal:        c.headProvider != nil,
-			HeadSequence:         fetchCutoffSeq,
-			HasMinCursorSignal:   hasMinCursor,
-			MinCursorSequence:    minCursorSequence,
-			QueueDepth:           len(c.jobCh),
-			QueueCapacity:        cap(c.jobCh),
-			RPCErrorRateBps:      rpcErrorRateBps,
-			DBCommitLatencyP95Ms: dbCommitLatencyP95Ms,
-			DecisionEpochMs:      time.Now().UnixMilli(),
-		})
-		batchSize = resolved
-		c.logger.Debug("coordinator auto-tune decision",
-			"chain", c.chain,
-			"network", c.network,
-			"lag_sequence", diagnostics.LagSequence,
-			"queue_depth", diagnostics.QueueDepth,
-			"queue_capacity", diagnostics.QueueCapacity,
-			"telemetry_state", diagnostics.TelemetryState,
-			"override_state", diagnostics.OverrideState,
-			"signal", diagnostics.Signal,
-			"decision", diagnostics.Decision,
-			"batch_before", diagnostics.BatchBefore,
-			"batch_after", diagnostics.BatchAfter,
-			"streak", diagnostics.Streak,
-			"cooldown", diagnostics.Cooldown,
-			"telemetry_stale_ticks", diagnostics.TelemetryStaleTicks,
-			"telemetry_recovery_ticks", diagnostics.TelemetryRecoveryTicks,
-			"override_release_ticks", diagnostics.OverrideReleaseTicks,
-			"policy_version", diagnostics.PolicyVersion,
-			"policy_manifest_digest", diagnostics.PolicyManifestDigest,
-			"policy_epoch", diagnostics.PolicyEpoch,
-			"policy_activation_ticks", diagnostics.PolicyActivationTicks,
-			"decision_inputs_hash", diagnostics.DecisionInputsHash,
-			"local_inputs_digest", diagnostics.LocalInputsDigest,
-			"decision_inputs_chain_scoped", diagnostics.DecisionInputsChainScoped,
-			"decision_scope", diagnostics.DecisionScope,
-			"cross_chain_reads", diagnostics.CrossChainReads,
-			"cross_chain_writes", diagnostics.CrossChainWrites,
-			"changed_peer_cursor", diagnostics.ChangedPeerCursor,
-			"changed_peer_watermark", diagnostics.ChangedPeerWatermark,
-			"decision_outputs", diagnostics.DecisionOutputs,
-			"decision_epoch_ms", diagnostics.DecisionEpochMs,
-			"decision_sequence", diagnostics.DecisionSequence,
-		)
-	}
-
-	for _, job := range jobs {
-		job.BatchSize = batchSize
-		select {
-		case c.jobCh <- job:
-			metrics.CoordinatorJobsCreated.WithLabelValues(c.chain.String(), c.network.String()).Inc()
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-
-	span.SetAttributes(
-		attribute.Int("address_count", len(addresses)),
-		attribute.Int("group_count", len(groups)),
-	)
-
-	return nil
+	return c.tickBlockScan(ctx, span)
 }
 
 // tickBlockScan emits a single FetchJob covering a block range for all watched
@@ -522,12 +355,31 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 
 	// Read watermark as the start block.
 	startBlock := int64(0)
+	hasWatermark := false
 	if c.configRepo != nil {
 		wm, wmErr := c.configRepo.GetWatermark(ctx, c.chain, c.network)
 		if wmErr != nil {
 			c.logger.Warn("block-scan watermark read failed, starting from 0", "error", wmErr)
 		} else if wm != nil && wm.IngestedSequence > 0 {
 			startBlock = wm.IngestedSequence + 1
+			hasWatermark = true
+		}
+	}
+
+	// On first run (no watermark), start from near the chain head instead of
+	// genesis to avoid scanning millions of historical blocks.
+	if !hasWatermark && head > 0 && c.maxInitialLookbackBlocks > 0 {
+		tipStart := head - c.maxInitialLookbackBlocks + 1
+		if tipStart < 0 {
+			tipStart = 0
+		}
+		if tipStart > startBlock {
+			c.logger.Info("block-scan: no watermark, starting near chain head",
+				"head", head,
+				"lookback_blocks", c.maxInitialLookbackBlocks,
+				"start_block", tipStart,
+			)
+			startBlock = tipStart
 		}
 	}
 

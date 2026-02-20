@@ -19,13 +19,24 @@ func buildCanonicalBaseBalanceEvents(
 	rawEvents []*sidecarv1.BalanceEventInfo,
 	watchedAddress string,
 ) []event.NormalizedBalanceEvent {
+	return buildCanonicalBaseBalanceEventsMulti(chain, network, txHash, txStatus, feePayer, feeAmount, finalityState, rawEvents, map[string]struct{}{watchedAddress: {}})
+}
+
+func buildCanonicalBaseBalanceEventsMulti(
+	chain model.Chain,
+	network model.Network,
+	txHash, txStatus, feePayer, feeAmount, finalityState string,
+	rawEvents []*sidecarv1.BalanceEventInfo,
+	watchedAddresses map[string]struct{},
+) []event.NormalizedBalanceEvent {
 	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	normalizedEvents := buildRawBalanceEvents(rawEvents, watchedAddress, true)
+	normalizedEvents := buildRawBalanceEventsMulti(rawEvents, watchedAddresses, true)
 	meta := collectBaseMetadata(rawEvents)
 	missingDataFee := !hasBaseDataFee(meta)
 	eventPath := resolveBaseFeeEventPath(meta)
 
-	if feePayer == watchedAddress && shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount) {
+	_, feePayerIsWatched := watchedAddresses[feePayer]
+	if feePayerIsWatched && shouldEmitBaseFeeEvent(txStatus, feePayer, feeAmount) {
 		nativeToken := evmNativeToken(chain)
 		if isEVML1Chain(chain) {
 			normalizedEvents = append(normalizedEvents, buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath, nativeToken))

@@ -170,7 +170,7 @@ func TestLoad_RejectsUnsupportedRuntimeTargetNetwork(t *testing.T) {
 	t.Setenv("BASE_SEPOLIA_RPC_URL", "https://base-sepolia.example")
 	t.Setenv("BTC_TESTNET_RPC_URL", "https://btc-testnet.example")
 	t.Setenv("SIDECAR_ADDR", "sidecar:50051")
-	t.Setenv("RUNTIME_CHAIN_TARGET", "solana-mainnet")
+	t.Setenv("RUNTIME_CHAIN_TARGET", "solana-fakenet")
 
 	_, err := Load()
 	require.Error(t, err)

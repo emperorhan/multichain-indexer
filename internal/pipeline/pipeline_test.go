@@ -37,7 +37,6 @@ func TestNew_SmokeTest(t *testing.T) {
 
 	repos := &Repos{
 		WatchedAddr:  storemocks.NewMockWatchedAddressRepository(ctrl),
-		Cursor:       storemocks.NewMockCursorRepository(ctrl),
 		Transaction:  storemocks.NewMockTransactionRepository(ctrl),
 		BalanceEvent: storemocks.NewMockBalanceEventRepository(ctrl),
 		Balance:      storemocks.NewMockBalanceRepository(ctrl),
@@ -73,7 +72,6 @@ func TestPipeline_Run_ImmediateCancel(t *testing.T) {
 
 	repos := &Repos{
 		WatchedAddr:  mockWatchedAddr,
-		Cursor:       storemocks.NewMockCursorRepository(ctrl),
 		Transaction:  storemocks.NewMockTransactionRepository(ctrl),
 		BalanceEvent: storemocks.NewMockBalanceEventRepository(ctrl),
 		Balance:      storemocks.NewMockBalanceRepository(ctrl),
@@ -118,7 +116,6 @@ func TestPipeline_Run_StreamTransportRequiresBackend(t *testing.T) {
 
 	repos := &Repos{
 		WatchedAddr:  mockWatchedAddr,
-		Cursor:       storemocks.NewMockCursorRepository(ctrl),
 		Transaction:  storemocks.NewMockTransactionRepository(ctrl),
 		BalanceEvent: storemocks.NewMockBalanceEventRepository(ctrl),
 		Balance:      storemocks.NewMockBalanceRepository(ctrl),
@@ -161,7 +158,6 @@ func TestPipeline_Run_RawBatchTransportParity_MandatoryChains_StreamVsInMemory(t
 
 	repos := &Repos{
 		WatchedAddr:  mockRepo,
-		Cursor:       storemocks.NewMockCursorRepository(ctrl),
 		Transaction:  storemocks.NewMockTransactionRepository(ctrl),
 		BalanceEvent: storemocks.NewMockBalanceEventRepository(ctrl),
 		Balance:      storemocks.NewMockBalanceRepository(ctrl),

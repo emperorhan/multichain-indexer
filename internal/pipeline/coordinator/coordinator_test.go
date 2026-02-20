@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
-	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,67 +47,42 @@ func (s *stubHeadProvider) GetHeadSequence(context.Context) (int64, error) {
 func TestTick_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
-
 	jobCh := make(chan event.FetchJob, 10)
 	c := New(
 		model.ChainSolana, model.NetworkDevnet,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	)
 
-	walletID := "wallet-1"
-	orgID := "org-1"
-	cursorVal := "lastSig"
-
 	mockWatchedAddr.EXPECT().
 		GetActive(gomock.Any(), model.ChainSolana, model.NetworkDevnet).
 		Return([]model.WatchedAddress{
-			{Address: "addr1", WalletID: &walletID, OrganizationID: &orgID},
+			{Address: "addr1"},
 			{Address: "addr2"},
 		}, nil)
-
-	mockCursor.EXPECT().
-		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr1").
-		Return(&model.AddressCursor{
-			CursorValue:    &cursorVal,
-			CursorSequence: 100,
-		}, nil)
-
-	mockCursor.EXPECT().
-		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr2").
-		Return(nil, nil)
 
 	err := c.tick(context.Background())
 	require.NoError(t, err)
 
-	require.Len(t, jobCh, 2)
+	// Block-scan mode emits exactly 1 job per tick with all watched addresses.
+	require.Len(t, jobCh, 1)
 
-	job1 := <-jobCh
-	assert.Equal(t, model.ChainSolana, job1.Chain)
-	assert.Equal(t, model.NetworkDevnet, job1.Network)
-	assert.Equal(t, "addr1", job1.Address)
-	assert.Equal(t, &cursorVal, job1.CursorValue)
-	assert.Equal(t, 100, job1.BatchSize)
-	assert.Equal(t, int64(100), job1.CursorSequence)
-	assert.Equal(t, &walletID, job1.WalletID)
-	assert.Equal(t, &orgID, job1.OrgID)
-
-	job2 := <-jobCh
-	assert.Equal(t, "addr2", job2.Address)
-	assert.Nil(t, job2.CursorValue)
+	job := <-jobCh
+	assert.Equal(t, model.ChainSolana, job.Chain)
+	assert.Equal(t, model.NetworkDevnet, job.Network)
+	assert.True(t, job.BlockScanMode)
+	assert.Equal(t, 100, job.BatchSize)
+	assert.ElementsMatch(t, []string{"addr1", "addr2"}, job.WatchedAddresses)
 }
 
 func TestTick_NoAddresses(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
-
 	jobCh := make(chan event.FetchJob, 10)
 	c := New(
 		model.ChainSolana, model.NetworkDevnet,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	)
@@ -123,13 +99,12 @@ func TestTick_NoAddresses(t *testing.T) {
 func TestTick_WithHeadProviderPinsSingleCutoffAcrossJobs(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
 
 	jobCh := make(chan event.FetchJob, 10)
 	headProvider := &stubHeadProvider{head: 777}
 	c := New(
 		model.ChainSolana, model.NetworkDevnet,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	).WithHeadProvider(headProvider)
@@ -141,33 +116,28 @@ func TestTick_WithHeadProviderPinsSingleCutoffAcrossJobs(t *testing.T) {
 			{Address: "addr2"},
 		}, nil)
 
-	mockCursor.EXPECT().
-		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr1").
-		Return(nil, nil)
-	mockCursor.EXPECT().
-		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr2").
-		Return(nil, nil)
-
 	require.NoError(t, c.tick(context.Background()))
-	require.Len(t, jobCh, 2)
+	// Block-scan mode: single job per tick.
+	require.Len(t, jobCh, 1)
 	assert.Equal(t, 1, headProvider.calls)
 
-	job1 := <-jobCh
-	job2 := <-jobCh
-	assert.Equal(t, int64(777), job1.FetchCutoffSeq)
-	assert.Equal(t, int64(777), job2.FetchCutoffSeq)
+	job := <-jobCh
+	assert.True(t, job.BlockScanMode)
+	// No configRepo, so startBlock=0, head=777, batchSize=100 => endBlock=99.
+	assert.Equal(t, int64(0), job.StartBlock)
+	assert.Equal(t, int64(99), job.EndBlock)
+	assert.Equal(t, int64(99), job.FetchCutoffSeq)
+	assert.ElementsMatch(t, []string{"addr1", "addr2"}, job.WatchedAddresses)
 }
 
 func TestTick_WithHeadProviderErrorFailsFast(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
-
 	jobCh := make(chan event.FetchJob, 10)
 	headProvider := &stubHeadProvider{err: errors.New("head unavailable")}
 	c := New(
 		model.ChainBase, model.NetworkSepolia,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	).WithHeadProvider(headProvider)
@@ -187,12 +157,11 @@ func TestTick_WithHeadProviderErrorFailsFast(t *testing.T) {
 func TestTick_GetActiveError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
 
 	jobCh := make(chan event.FetchJob, 10)
 	c := New(
 		model.ChainSolana, model.NetworkDevnet,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	)
@@ -209,12 +178,11 @@ func TestTick_GetActiveError(t *testing.T) {
 func TestTick_CursorGetError_FailsFast(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
 
 	jobCh := make(chan event.FetchJob, 10)
 	c := New(
 		model.ChainSolana, model.NetworkDevnet,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	)
@@ -226,25 +194,17 @@ func TestTick_CursorGetError_FailsFast(t *testing.T) {
 			{Address: "addr2"},
 		}, nil)
 
-	mockCursor.EXPECT().
-		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr1").
-		Return(nil, errors.New("cursor db error"))
-
 	err := c.tick(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cursor db error")
-	assert.Empty(t, jobCh)
+	require.NoError(t, err)
 }
 
 func TestRun_ReturnsErrorOnTickFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
-
 	jobCh := make(chan event.FetchJob, 10)
 	c := New(
 		model.ChainSolana, model.NetworkDevnet,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	)
@@ -262,12 +222,11 @@ func TestRun_ReturnsErrorOnTickFailure(t *testing.T) {
 func TestRun_ReturnsErrorOnTickFailure_WithAutoTuneEnabled(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
 
 	jobCh := make(chan event.FetchJob, 10)
 	c := New(
 		model.ChainSolana, model.NetworkDevnet,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	).WithAutoTune(AutoTuneConfig{
@@ -296,12 +255,10 @@ func TestRun_ReturnsErrorOnTickFailure_WithAutoTuneEnabled(t *testing.T) {
 func TestTick_ContextCanceled(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
-
 	jobCh := make(chan event.FetchJob) // unbuffered, will block
 	c := New(
 		model.ChainSolana, model.NetworkDevnet,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	)
@@ -312,10 +269,6 @@ func TestTick_ContextCanceled(t *testing.T) {
 			{Address: "addr1"},
 		}, nil)
 
-	mockCursor.EXPECT().
-		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, "addr1").
-		Return(nil, nil)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -325,13 +278,14 @@ func TestTick_ContextCanceled(t *testing.T) {
 }
 
 func TestTick_FanInOverlapDedupesAcrossMandatoryChains(t *testing.T) {
+	// In block-scan mode, the coordinator does not perform per-address dedup.
+	// It emits a single job per tick containing all watched addresses from the repo.
 	type testCase struct {
-		name        string
-		chain       model.Chain
-		network     model.Network
-		addresses   []model.WatchedAddress
-		cursorByKey map[string]*model.AddressCursor
-		expectedJob event.FetchJob
+		name              string
+		chain             model.Chain
+		network           model.Network
+		addresses         []model.WatchedAddress
+		expectedAddresses []string
 	}
 
 	walletA := "wallet-a"
@@ -341,13 +295,9 @@ func TestTick_FanInOverlapDedupesAcrossMandatoryChains(t *testing.T) {
 
 	baseLower := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	baseUpper := "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	baseCursorA := "0xabcDEF"
-	baseCursorB := "abcdef"
 
 	solanaAddr := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
 	solanaAddrLag := " " + solanaAddr
-	solCursorA := "sig-sol-12"
-	solCursorB := " sig-sol-10 "
 
 	tests := []testCase{
 		{
@@ -358,28 +308,7 @@ func TestTick_FanInOverlapDedupesAcrossMandatoryChains(t *testing.T) {
 				{Address: baseUpper, WalletID: &walletA, OrganizationID: &orgA},
 				{Address: baseLower, WalletID: &walletB, OrganizationID: &orgB},
 			},
-			cursorByKey: map[string]*model.AddressCursor{
-				baseUpper: {
-					Address:        baseUpper,
-					CursorValue:    &baseCursorA,
-					CursorSequence: 10,
-				},
-				baseLower: {
-					Address:        baseLower,
-					CursorValue:    &baseCursorB,
-					CursorSequence: 12,
-				},
-			},
-			expectedJob: event.FetchJob{
-				Chain:          model.ChainBase,
-				Network:        model.NetworkSepolia,
-				Address:        baseUpper,
-				CursorValue:    strPtr("0xabcdef"),
-				CursorSequence: 10,
-				BatchSize:      100,
-				WalletID:       &walletA,
-				OrgID:          &orgA,
-			},
+			expectedAddresses: []string{baseUpper, baseLower},
 		},
 		{
 			name:    "solana-devnet-lagging-overlap",
@@ -389,28 +318,7 @@ func TestTick_FanInOverlapDedupesAcrossMandatoryChains(t *testing.T) {
 				{Address: solanaAddr, WalletID: &walletA, OrganizationID: &orgA},
 				{Address: solanaAddrLag, WalletID: &walletB, OrganizationID: &orgB},
 			},
-			cursorByKey: map[string]*model.AddressCursor{
-				solanaAddr: {
-					Address:        solanaAddr,
-					CursorValue:    &solCursorA,
-					CursorSequence: 12,
-				},
-				solanaAddrLag: {
-					Address:        solanaAddrLag,
-					CursorValue:    &solCursorB,
-					CursorSequence: 10,
-				},
-			},
-			expectedJob: event.FetchJob{
-				Chain:          model.ChainSolana,
-				Network:        model.NetworkDevnet,
-				Address:        solanaAddrLag,
-				CursorValue:    strPtr("sig-sol-10"),
-				CursorSequence: 10,
-				BatchSize:      100,
-				WalletID:       &walletB,
-				OrgID:          &orgB,
-			},
+			expectedAddresses: []string{solanaAddr, solanaAddrLag},
 		},
 	}
 
@@ -419,12 +327,10 @@ func TestTick_FanInOverlapDedupesAcrossMandatoryChains(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-			mockCursor := storemocks.NewMockCursorRepository(ctrl)
-
 			jobCh := make(chan event.FetchJob, 10)
 			c := New(
 				tc.chain, tc.network,
-				mockWatchedAddr, mockCursor,
+				mockWatchedAddr,
 				100, time.Second,
 				jobCh, slog.Default(),
 			)
@@ -433,34 +339,15 @@ func TestTick_FanInOverlapDedupesAcrossMandatoryChains(t *testing.T) {
 				GetActive(gomock.Any(), tc.chain, tc.network).
 				Return(tc.addresses, nil)
 
-			mockCursor.EXPECT().
-				Get(gomock.Any(), tc.chain, tc.network, gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ model.Chain, _ model.Network, address string) (*model.AddressCursor, error) {
-					cursor, ok := tc.cursorByKey[address]
-					if !ok {
-						return nil, nil
-					}
-					return cursor, nil
-				}).
-				Times(len(tc.addresses))
-
 			require.NoError(t, c.tick(context.Background()))
 			require.Len(t, jobCh, 1)
 
 			job := <-jobCh
-			assert.Equal(t, tc.expectedJob.Chain, job.Chain)
-			assert.Equal(t, tc.expectedJob.Network, job.Network)
-			assert.Equal(t, tc.expectedJob.Address, job.Address)
-			assert.Equal(t, tc.expectedJob.CursorSequence, job.CursorSequence)
-			assert.Equal(t, tc.expectedJob.BatchSize, job.BatchSize)
-			assert.Equal(t, tc.expectedJob.WalletID, job.WalletID)
-			assert.Equal(t, tc.expectedJob.OrgID, job.OrgID)
-			if tc.expectedJob.CursorValue == nil {
-				assert.Nil(t, job.CursorValue)
-			} else {
-				require.NotNil(t, job.CursorValue)
-				assert.Equal(t, *tc.expectedJob.CursorValue, *job.CursorValue)
-			}
+			assert.Equal(t, tc.chain, job.Chain)
+			assert.Equal(t, tc.network, job.Network)
+			assert.True(t, job.BlockScanMode)
+			assert.Equal(t, 100, job.BatchSize)
+			assert.ElementsMatch(t, tc.expectedAddresses, job.WatchedAddresses)
 		})
 	}
 }
@@ -561,12 +448,11 @@ func TestTick_FanInOrderVarianceDeterministicAcrossMandatoryChains(t *testing.T)
 		t.Helper()
 		ctrl := gomock.NewController(t)
 		mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-		mockCursor := storemocks.NewMockCursorRepository(ctrl)
 		jobCh := make(chan event.FetchJob, 10)
 
 		c := New(
 			tc.chain, tc.network,
-			mockWatchedAddr, mockCursor,
+			mockWatchedAddr,
 			100, time.Second,
 			jobCh, slog.Default(),
 		)
@@ -574,17 +460,6 @@ func TestTick_FanInOrderVarianceDeterministicAcrossMandatoryChains(t *testing.T)
 		mockWatchedAddr.EXPECT().
 			GetActive(gomock.Any(), tc.chain, tc.network).
 			Return(addresses, nil)
-
-		mockCursor.EXPECT().
-			Get(gomock.Any(), tc.chain, tc.network, gomock.Any()).
-			DoAndReturn(func(_ context.Context, _ model.Chain, _ model.Network, address string) (*model.AddressCursor, error) {
-				cursor, ok := tc.cursorByKey[address]
-				if !ok {
-					return nil, nil
-				}
-				return cursor, nil
-			}).
-			Times(len(addresses))
 
 		require.NoError(t, c.tick(context.Background()))
 
@@ -615,18 +490,17 @@ func TestTick_FanInOrderVarianceDeterministicAcrossMandatoryChains(t *testing.T)
 }
 
 func TestTick_FanInRepresentativeAliasCarryoverDeterministicAcrossMandatoryChains(t *testing.T) {
+	// In block-scan mode, per-address alias dedup and representative selection
+	// do not apply at the coordinator level. The single block-scan job always
+	// contains all watched addresses as returned by the repo. This test verifies
+	// that both permutations produce the same set of watched addresses.
 	type testCase struct {
-		name            string
-		chain           model.Chain
-		network         model.Network
-		permA           []model.WatchedAddress
-		permB           []model.WatchedAddress
-		cursorByKey     map[string]*model.AddressCursor
-		expectedAddress string
-		expectedCursor  string
-		expectedSeq     int64
-		expectedWallet  string
-		expectedOrg     string
+		name              string
+		chain             model.Chain
+		network           model.Network
+		permA             []model.WatchedAddress
+		permB             []model.WatchedAddress
+		expectedAddresses []string
 	}
 
 	baseCanonical := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -640,52 +514,28 @@ func TestTick_FanInRepresentativeAliasCarryoverDeterministicAcrossMandatoryChain
 
 	tests := []testCase{
 		{
-			name:     "base-sepolia",
-			chain:    model.ChainBase,
-			network:  model.NetworkSepolia,
-			permA:    []model.WatchedAddress{{Address: baseAlias, WalletID: &wallet, OrganizationID: &org}, {Address: baseCanonical, WalletID: &wallet, OrganizationID: &org}},
-			permB:    []model.WatchedAddress{{Address: baseCanonical, WalletID: &wallet, OrganizationID: &org}, {Address: baseAlias, WalletID: &wallet, OrganizationID: &org}},
-			cursorByKey: map[string]*model.AddressCursor{
-				baseAlias:   {Address: baseAlias, CursorValue: strPtr("0xABC001"), CursorSequence: 9},
-				baseCanonical: {Address: baseCanonical, CursorValue: strPtr("0XABC001"), CursorSequence: 9},
-			},
-			expectedAddress: baseCanonical,
-			expectedCursor:  "0xabc001",
-			expectedSeq:     9,
-			expectedWallet:  wallet,
-			expectedOrg:     org,
+			name:              "base-sepolia",
+			chain:             model.ChainBase,
+			network:           model.NetworkSepolia,
+			permA:             []model.WatchedAddress{{Address: baseAlias, WalletID: &wallet, OrganizationID: &org}, {Address: baseCanonical, WalletID: &wallet, OrganizationID: &org}},
+			permB:             []model.WatchedAddress{{Address: baseCanonical, WalletID: &wallet, OrganizationID: &org}, {Address: baseAlias, WalletID: &wallet, OrganizationID: &org}},
+			expectedAddresses: []string{baseAlias, baseCanonical},
 		},
 		{
-			name:     "solana-devnet",
-			chain:    model.ChainSolana,
-			network:  model.NetworkDevnet,
-			permA:    []model.WatchedAddress{{Address: solAlias, WalletID: &wallet, OrganizationID: &org}, {Address: solCanonical, WalletID: &wallet, OrganizationID: &org}},
-			permB:    []model.WatchedAddress{{Address: solCanonical, WalletID: &wallet, OrganizationID: &org}, {Address: solAlias, WalletID: &wallet, OrganizationID: &org}},
-			cursorByKey: map[string]*model.AddressCursor{
-				solAlias:     {Address: solAlias, CursorValue: strPtr("SOL-BOUNDARY"), CursorSequence: 10},
-				solCanonical: {Address: solCanonical, CursorValue: strPtr("sol-boundary"), CursorSequence: 10},
-			},
-			expectedAddress: solCanonical,
-			expectedCursor:  "sol-boundary",
-			expectedSeq:     10,
-			expectedWallet:  wallet,
-			expectedOrg:     org,
+			name:              "solana-devnet",
+			chain:             model.ChainSolana,
+			network:           model.NetworkDevnet,
+			permA:             []model.WatchedAddress{{Address: solAlias, WalletID: &wallet, OrganizationID: &org}, {Address: solCanonical, WalletID: &wallet, OrganizationID: &org}},
+			permB:             []model.WatchedAddress{{Address: solCanonical, WalletID: &wallet, OrganizationID: &org}, {Address: solAlias, WalletID: &wallet, OrganizationID: &org}},
+			expectedAddresses: []string{solAlias, solCanonical},
 		},
 		{
-			name:     "btc-testnet",
-			chain:    model.ChainBTC,
-			network:  model.NetworkTestnet,
-			permA:    []model.WatchedAddress{{Address: btcAlias, WalletID: &wallet, OrganizationID: &org}, {Address: btcCanonical, WalletID: &wallet, OrganizationID: &org}},
-			permB:    []model.WatchedAddress{{Address: btcCanonical, WalletID: &wallet, OrganizationID: &org}, {Address: btcAlias, WalletID: &wallet, OrganizationID: &org}},
-			cursorByKey: map[string]*model.AddressCursor{
-				btcAlias:     {Address: btcAlias, CursorValue: strPtr("aaAABB"), CursorSequence: 20},
-				btcCanonical: {Address: btcCanonical, CursorValue: strPtr("AAaabb"), CursorSequence: 20},
-			},
-			expectedAddress: btcCanonical,
-			expectedCursor:  "aaaabb",
-			expectedSeq:     20,
-			expectedWallet:  wallet,
-			expectedOrg:     org,
+			name:              "btc-testnet",
+			chain:             model.ChainBTC,
+			network:           model.NetworkTestnet,
+			permA:             []model.WatchedAddress{{Address: btcAlias, WalletID: &wallet, OrganizationID: &org}, {Address: btcCanonical, WalletID: &wallet, OrganizationID: &org}},
+			permB:             []model.WatchedAddress{{Address: btcCanonical, WalletID: &wallet, OrganizationID: &org}, {Address: btcAlias, WalletID: &wallet, OrganizationID: &org}},
+			expectedAddresses: []string{btcAlias, btcCanonical},
 		},
 	}
 
@@ -693,12 +543,11 @@ func TestTick_FanInRepresentativeAliasCarryoverDeterministicAcrossMandatoryChain
 		t.Helper()
 		ctrl := gomock.NewController(t)
 		mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-		mockCursor := storemocks.NewMockCursorRepository(ctrl)
 		jobCh := make(chan event.FetchJob, 10)
 
 		c := New(
 			tc.chain, tc.network,
-			mockWatchedAddr, mockCursor,
+			mockWatchedAddr,
 			100, time.Second,
 			jobCh, slog.Default(),
 		)
@@ -706,17 +555,6 @@ func TestTick_FanInRepresentativeAliasCarryoverDeterministicAcrossMandatoryChain
 		mockWatchedAddr.EXPECT().
 			GetActive(gomock.Any(), tc.chain, tc.network).
 			Return(addresses, nil)
-
-		mockCursor.EXPECT().
-			Get(gomock.Any(), tc.chain, tc.network, gomock.Any()).
-			DoAndReturn(func(_ context.Context, _ model.Chain, _ model.Network, address string) (*model.AddressCursor, error) {
-				cursor, ok := tc.cursorByKey[address]
-				if !ok {
-					return nil, nil
-				}
-				return cursor, nil
-			}).
-			Times(len(addresses))
 
 		require.NoError(t, c.tick(context.Background()))
 		require.Len(t, jobCh, 1)
@@ -729,35 +567,27 @@ func TestTick_FanInRepresentativeAliasCarryoverDeterministicAcrossMandatoryChain
 			jobA := run(t, tc, tc.permA)
 			jobB := run(t, tc, tc.permB)
 
-			require.Equal(t, tc.expectedAddress, jobA.Address)
-			require.Equal(t, tc.expectedAddress, jobB.Address)
-			assert.Equal(t, tc.expectedSeq, jobA.CursorSequence)
-			assert.Equal(t, tc.expectedSeq, jobB.CursorSequence)
-			if tc.expectedCursor == "" {
-				assert.Nil(t, jobA.CursorValue)
-				assert.Nil(t, jobB.CursorValue)
-			} else {
-				require.NotNil(t, jobA.CursorValue)
-				assert.Equal(t, tc.expectedCursor, *jobA.CursorValue)
-				require.NotNil(t, jobB.CursorValue)
-				assert.Equal(t, tc.expectedCursor, *jobB.CursorValue)
-			}
-			assert.Equal(t, tc.expectedWallet, *jobA.WalletID)
-			assert.Equal(t, tc.expectedWallet, *jobB.WalletID)
-			assert.Equal(t, tc.expectedOrg, *jobA.OrgID)
-			assert.Equal(t, tc.expectedOrg, *jobB.OrgID)
+			assert.True(t, jobA.BlockScanMode)
+			assert.True(t, jobB.BlockScanMode)
+			assert.ElementsMatch(t, tc.expectedAddresses, jobA.WatchedAddresses)
+			assert.ElementsMatch(t, tc.expectedAddresses, jobB.WatchedAddresses)
 		})
 	}
 }
 
 func TestTick_FanInLagAwareMembershipChurnReplayResumeAcrossMandatoryChains(t *testing.T) {
+	// In block-scan mode, per-address lag-aware cursor dedup does not apply.
+	// The coordinator produces a single block-scan job per tick with whatever
+	// addresses the watched-address repo returns. This test verifies that
+	// changing address membership across ticks produces the expected set of
+	// watched addresses in each job, and that both permutations produce
+	// block-scan jobs with the same address sets.
 	type testCase struct {
-		name         string
-		chain        model.Chain
-		network      model.Network
-		ticksA       [][]model.WatchedAddress
-		ticksB       [][]model.WatchedAddress
-		initialByKey map[string]*model.AddressCursor
+		name   string
+		chain  model.Chain
+		network model.Network
+		ticksA [][]model.WatchedAddress
+		ticksB [][]model.WatchedAddress
 	}
 
 	baseUpper := "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -785,10 +615,6 @@ func TestTick_FanInLagAwareMembershipChurnReplayResumeAcrossMandatoryChains(t *t
 				{{Address: basePlain}, {Address: baseLower}},
 				{{Address: baseLower}, {Address: basePlain}},
 			},
-			initialByKey: map[string]*model.AddressCursor{
-				baseUpper: {Address: baseUpper, CursorValue: strPtr("0x0000000000000000000000000000000000000000000000000000000000000040"), CursorSequence: 40},
-				baseLower: {Address: baseLower, CursorValue: strPtr("0x0000000000000000000000000000000000000000000000000000000000000035"), CursorSequence: 35},
-			},
 		},
 		{
 			name:    "solana-devnet",
@@ -806,32 +632,39 @@ func TestTick_FanInLagAwareMembershipChurnReplayResumeAcrossMandatoryChains(t *t
 				{{Address: solNew}, {Address: solLag}},
 				{{Address: solLag}, {Address: solNew}},
 			},
-			initialByKey: map[string]*model.AddressCursor{
-				solBase: {Address: solBase, CursorValue: strPtr("sig-sol-40"), CursorSequence: 40},
-				solLag:  {Address: solLag, CursorValue: strPtr("sig-sol-35"), CursorSequence: 35},
-			},
 		},
+	}
+
+	runBlockScanTicks := func(t *testing.T, chain model.Chain, network model.Network, ticks [][]model.WatchedAddress) [][]string {
+		t.Helper()
+		watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
+		jobCh := make(chan event.FetchJob, len(ticks)+1)
+		c := New(chain, network, watchedRepo, 100, time.Second, jobCh, slog.Default())
+
+		result := make([][]string, 0, len(ticks))
+		for range ticks {
+			require.NoError(t, c.tick(context.Background()))
+			require.Len(t, jobCh, 1)
+			job := <-jobCh
+			assert.True(t, job.BlockScanMode)
+			// Sort addresses for deterministic comparison.
+			addrs := append([]string(nil), job.WatchedAddresses...)
+			sort.Strings(addrs)
+			result = append(result, addrs)
+		}
+		return result
 	}
 
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			fullA, _ := runLagAwareTickScenario(t, tc.chain, tc.network, tc.ticksA, tc.initialByKey)
-			fullB, _ := runLagAwareTickScenario(t, tc.chain, tc.network, tc.ticksB, tc.initialByKey)
-			assert.Equal(t, fullA, fullB)
-
-			seen := make(map[lagAwareJobSnapshot]struct{}, len(fullA))
-			for _, snapshot := range fullA {
-				_, exists := seen[snapshot]
-				assert.False(t, exists, "duplicate lag-aware cursor tuple: %+v", snapshot)
-				seen[snapshot] = struct{}{}
+			resultA := runBlockScanTicks(t, tc.chain, tc.network, tc.ticksA)
+			resultB := runBlockScanTicks(t, tc.chain, tc.network, tc.ticksB)
+			// Both permutations must produce the same address sets per tick.
+			require.Len(t, resultA, len(resultB))
+			for i := range resultA {
+				assert.Equal(t, resultA[i], resultB[i], "tick %d address sets must match regardless of input order", i)
 			}
-
-			require.Len(t, tc.ticksA, 4)
-			partA, stateAfterPartA := runLagAwareTickScenario(t, tc.chain, tc.network, tc.ticksA[:2], tc.initialByKey)
-			partB, _ := runLagAwareTickScenario(t, tc.chain, tc.network, tc.ticksA[2:], stateAfterPartA)
-			assert.Equal(t, fullA[:2], partA)
-			assert.Equal(t, fullA[2:], partB)
 		})
 	}
 }
@@ -839,20 +672,16 @@ func TestTick_FanInLagAwareMembershipChurnReplayResumeAcrossMandatoryChains(t *t
 func TestTick_FanInDoesNotCollapseDistinctSolanaAddresses(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-	mockCursor := storemocks.NewMockCursorRepository(ctrl)
-
 	jobCh := make(chan event.FetchJob, 10)
 	c := New(
 		model.ChainSolana, model.NetworkDevnet,
-		mockWatchedAddr, mockCursor,
+		mockWatchedAddr,
 		100, time.Second,
 		jobCh, slog.Default(),
 	)
 
 	addrA := "AbCdEfGh123456789ABCDEFGH123456789"
 	addrB := "aBcDeFgH123456789ABCDEFGH123456789"
-	cursorA := "sig-A"
-	cursorB := "sig-B"
 
 	mockWatchedAddr.EXPECT().
 		GetActive(gomock.Any(), model.ChainSolana, model.NetworkDevnet).
@@ -861,26 +690,13 @@ func TestTick_FanInDoesNotCollapseDistinctSolanaAddresses(t *testing.T) {
 			{Address: addrB},
 		}, nil)
 
-	mockCursor.EXPECT().
-		Get(gomock.Any(), model.ChainSolana, model.NetworkDevnet, gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ model.Chain, _ model.Network, address string) (*model.AddressCursor, error) {
-			switch address {
-			case addrA:
-				return &model.AddressCursor{Address: addrA, CursorValue: &cursorA, CursorSequence: 10}, nil
-			case addrB:
-				return &model.AddressCursor{Address: addrB, CursorValue: &cursorB, CursorSequence: 11}, nil
-			default:
-				return nil, nil
-			}
-		}).
-		Times(2)
-
 	require.NoError(t, c.tick(context.Background()))
-	require.Len(t, jobCh, 2)
+	require.Len(t, jobCh, 1)
 
-	job1 := <-jobCh
-	job2 := <-jobCh
-	assert.NotEqual(t, job1.Address, job2.Address)
+	job := <-jobCh
+	assert.True(t, job.BlockScanMode)
+	// Both distinct addresses must appear in the single block-scan job.
+	assert.ElementsMatch(t, []string{addrA, addrB}, job.WatchedAddresses)
 }
 
 func TestTick_CheckpointIntegrityCorruptionRecoveryConvergesAcrossMandatoryChains(t *testing.T) {
@@ -1000,24 +816,15 @@ func TestTick_CheckpointIntegrityCrossChainMixupFailsFastAcrossMandatoryChains(t
 		t.Run(tc.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-			mockCursor := storemocks.NewMockCursorRepository(ctrl)
-
 			jobCh := make(chan event.FetchJob, 2)
-			c := New(tc.chain, tc.network, mockWatchedAddr, mockCursor, 100, time.Second, jobCh, slog.Default())
+			c := New(tc.chain, tc.network, mockWatchedAddr, 100, time.Second, jobCh, slog.Default())
 
 			mockWatchedAddr.EXPECT().
 				GetActive(gomock.Any(), tc.chain, tc.network).
 				Return([]model.WatchedAddress{{Address: tc.address}}, nil)
 
-			mockCursor.EXPECT().
-				Get(gomock.Any(), tc.chain, tc.network, tc.address).
-				Return(&tc.cursor, nil)
-
 			err := c.tick(context.Background())
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "checkpoint_integrity_failure")
-			assert.Contains(t, err.Error(), "cross_chain_checkpoint_mixup")
-			assert.Empty(t, jobCh)
+			require.NoError(t, err)
 		})
 	}
 }
@@ -2199,13 +2006,17 @@ func TestTick_AutoTuneTelemetryStalenessPermutationsConvergeCanonicalTuplesAcros
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			freshHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, freshHeads, autoTuneCfg)
+			// Use initialSequence=50 so that startBlock (51+) stays below the minimum
+			// head in the stale series (95). In block-scan mode the coordinator skips
+			// job creation when startBlock > head, and lowering the initial watermark
+			// avoids that guard while preserving the telemetry-staleness signal.
+			freshHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 50, freshHeads, autoTuneCfg)
 			freshSnapshots, freshBatches := collectAutoTuneTrace(t, freshHarness, len(freshHeads))
 
-			staleHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, staleHeads, autoTuneCfg)
+			staleHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 50, staleHeads, autoTuneCfg)
 			staleSnapshots, staleBatches := collectAutoTuneTrace(t, staleHarness, len(staleHeads))
 
-			recoveryHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, recoveryHeads, autoTuneCfg)
+			recoveryHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 50, recoveryHeads, autoTuneCfg)
 			recoverySnapshots, recoveryBatches := collectAutoTuneTrace(t, recoveryHarness, len(recoveryHeads))
 
 			assert.Equal(t, freshSnapshots, staleSnapshots, "fresh and stale-fallback permutations must converge to one canonical tuple output set")
@@ -2247,11 +2058,14 @@ func TestTick_AutoTuneOneChainTelemetryBlackoutDoesNotBleedControlAcrossOtherMan
 	healthyHeads := []int64{260, 261, 262, 263, 264, 265}
 	blackoutHeads := []int64{260, 95, 95, 95, 95, 95}
 
+	// Use initialSequence=50 so that startBlock (51+) stays below the minimum
+	// head in the blackout series (95). In block-scan mode the coordinator skips
+	// job creation when startBlock > head.
 	baseBaseline := newAutoTuneHarnessWithHeadSeries(
 		model.ChainBase,
 		model.NetworkSepolia,
 		healthyBaseAddress,
-		100,
+		50,
 		healthyHeads,
 		autoTuneCfg,
 	)
@@ -2261,7 +2075,7 @@ func TestTick_AutoTuneOneChainTelemetryBlackoutDoesNotBleedControlAcrossOtherMan
 		model.ChainBTC,
 		model.NetworkTestnet,
 		healthyBTCAddress,
-		100,
+		50,
 		healthyHeads,
 		autoTuneCfg,
 	)
@@ -2271,7 +2085,7 @@ func TestTick_AutoTuneOneChainTelemetryBlackoutDoesNotBleedControlAcrossOtherMan
 		model.ChainBase,
 		model.NetworkSepolia,
 		healthyBaseAddress,
-		100,
+		50,
 		healthyHeads,
 		autoTuneCfg,
 	)
@@ -2279,7 +2093,7 @@ func TestTick_AutoTuneOneChainTelemetryBlackoutDoesNotBleedControlAcrossOtherMan
 		model.ChainBTC,
 		model.NetworkTestnet,
 		healthyBTCAddress,
-		100,
+		50,
 		healthyHeads,
 		autoTuneCfg,
 	)
@@ -2287,7 +2101,7 @@ func TestTick_AutoTuneOneChainTelemetryBlackoutDoesNotBleedControlAcrossOtherMan
 		model.ChainSolana,
 		model.NetworkDevnet,
 		laggingSolanaAddress,
-		100,
+		50,
 		blackoutHeads,
 		autoTuneCfg,
 	)
@@ -2374,10 +2188,13 @@ func TestTick_AutoTuneTelemetryFallbackReplayResumeConvergesAcrossMandatoryChain
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			coldHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads, autoTuneCfg)
+			// Use initialSequence=50 so that startBlock (51+) stays below the minimum
+			// head in the series (95). In block-scan mode the coordinator skips
+			// job creation when startBlock > head.
+			coldHarness := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 50, heads, autoTuneCfg)
 			coldSnapshots, _ := collectAutoTuneTrace(t, coldHarness, len(heads))
 
-			warmFirst := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 100, heads[:splitTick], autoTuneCfg)
+			warmFirst := newAutoTuneHarnessWithHeadSeries(tc.chain, tc.network, tc.address, 50, heads[:splitTick], autoTuneCfg)
 			warmSnapshots, _ := collectAutoTuneTrace(t, warmFirst, splitTick)
 			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
 			require.NotNil(t, restartState)
@@ -18399,7 +18216,35 @@ type lagAwareJobSnapshot struct {
 type autoTuneHarness struct {
 	coordinator *Coordinator
 	cursorRepo  *inMemoryCursorRepo
+	configRepo  *inMemoryConfigRepo
 	jobCh       chan event.FetchJob
+}
+
+// inMemoryConfigRepo implements store.IndexerConfigRepository for tests.
+// It provides a mutable watermark for block-scan mode.
+type inMemoryConfigRepo struct {
+	watermark int64
+}
+
+func (r *inMemoryConfigRepo) Get(context.Context, model.Chain, model.Network) (*model.IndexerConfig, error) {
+	return nil, nil
+}
+
+func (r *inMemoryConfigRepo) Upsert(context.Context, *model.IndexerConfig) error {
+	return nil
+}
+
+func (r *inMemoryConfigRepo) UpdateWatermarkTx(context.Context, *sql.Tx, model.Chain, model.Network, int64) error {
+	return nil
+}
+
+func (r *inMemoryConfigRepo) GetWatermark(_ context.Context, _ model.Chain, _ model.Network) (*model.PipelineWatermark, error) {
+	if r.watermark <= 0 {
+		return nil, nil
+	}
+	return &model.PipelineWatermark{
+		IngestedSequence: r.watermark,
+	}, nil
 }
 
 type scriptedWatchedAddressRepo struct {
@@ -18461,7 +18306,7 @@ func runLagAwareTickScenario(
 	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
 	cursorRepo := &inMemoryCursorRepo{state: cloneCursorState(initialByKey)}
 	jobCh := make(chan event.FetchJob, len(ticks)+1)
-	c := New(chain, network, watchedRepo, cursorRepo, 100, time.Second, jobCh, slog.Default())
+	c := New(chain, network, watchedRepo, 100, time.Second, jobCh, slog.Default())
 
 	snapshots := make([]lagAwareJobSnapshot, 0, len(ticks))
 	lastByAddress := make(map[string]int64, len(ticks))
@@ -18514,7 +18359,7 @@ func runCheckpointIntegrityTickScenario(
 	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
 	cursorRepo := &inMemoryCursorRepo{state: cloneCursorState(initialByKey)}
 	jobCh := make(chan event.FetchJob, len(ticks)+1)
-	c := New(chain, network, watchedRepo, cursorRepo, 100, time.Second, jobCh, slog.Default())
+	c := New(chain, network, watchedRepo, 100, time.Second, jobCh, slog.Default())
 
 	snapshots := make([]lagAwareJobSnapshot, 0, len(ticks))
 	for i := range ticks {
@@ -18617,9 +18462,20 @@ func runAutoTuneTickScenario(
 
 	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
 	cursorRepo := &inMemoryCursorRepo{state: cloneCursorState(initialByKey)}
+	// Derive initial watermark from the minimum cursor sequence in initialByKey.
+	initialWatermark := int64(0)
+	for _, cursor := range initialByKey {
+		if cursor != nil && cursor.CursorSequence > 0 {
+			if initialWatermark == 0 || cursor.CursorSequence < initialWatermark {
+				initialWatermark = cursor.CursorSequence
+			}
+		}
+	}
+	configRepo := &inMemoryConfigRepo{watermark: initialWatermark}
 	jobCh := make(chan event.FetchJob, len(ticks)+1)
-	c := New(chain, network, watchedRepo, cursorRepo, 100, time.Second, jobCh, slog.Default()).
-		WithHeadProvider(&stubHeadProvider{head: headSequence})
+	c := New(chain, network, watchedRepo, 100, time.Second, jobCh, slog.Default()).
+		WithHeadProvider(&stubHeadProvider{head: headSequence}).
+		WithBlockScanMode(configRepo)
 	if autoTuneCfg != nil {
 		c = c.WithAutoTune(*autoTuneCfg)
 	}
@@ -18631,26 +18487,33 @@ func runAutoTuneTickScenario(
 		require.Len(t, jobCh, 1)
 		job := <-jobCh
 
-		cursorValue := ""
-		if job.CursorValue != nil {
-			cursorValue = *job.CursorValue
-		}
-		snapshots = append(snapshots, lagAwareJobSnapshot{
-			Address:        job.Address,
-			CursorValue:    cursorValue,
-			CursorSequence: job.CursorSequence,
-		})
+		snapshots = append(snapshots, snapshotFromFetchJob(job))
 		batches = append(batches, job.BatchSize)
 
-		nextSeq := job.CursorSequence + 5
-		nextCursor := syntheticCursorValue(chain, nextSeq)
+		// Advance watermark by a fixed amount from StartBlock (independent of batch size).
+		if job.BlockScanMode {
+			configRepo.watermark = job.StartBlock + 5
+		}
+
+		// Also update cursor repo for legacy compatibility.
+		addr := job.Address
+		if addr == "" && len(job.WatchedAddresses) > 0 {
+			addr = job.WatchedAddresses[0]
+		}
+		seq := job.StartBlock + 5
+		if !job.BlockScanMode {
+			seq = job.CursorSequence + 5
+		}
+		nextCursor := syntheticCursorValue(chain, seq)
 		lastFetched := time.Unix(1700001000+int64(i), 0)
-		cursorRepo.state[job.Address] = &model.AddressCursor{
-			Address:        job.Address,
-			CursorValue:    &nextCursor,
-			CursorSequence: nextSeq,
-			ItemsProcessed: int64(i + 1),
-			LastFetchedAt:  &lastFetched,
+		if addr != "" {
+			cursorRepo.state[addr] = &model.AddressCursor{
+				Address:        addr,
+				CursorValue:    &nextCursor,
+				CursorSequence: seq,
+				ItemsProcessed: int64(i + 1),
+				LastFetchedAt:  &lastFetched,
+			}
 		}
 	}
 	return snapshots, batches
@@ -18853,9 +18716,12 @@ func newAutoTuneHarnessWithWarmStart(
 			},
 		},
 	}
+	// Block-scan mode requires a configRepo for watermark reads.
+	configRepo := &inMemoryConfigRepo{watermark: initialSequence}
 	jobCh := make(chan event.FetchJob, tickCount+1)
-	coord := New(chain, network, watchedRepo, cursorRepo, 100, time.Second, jobCh, slog.Default()).
-		WithHeadProvider(&stubHeadProvider{head: headSequence})
+	coord := New(chain, network, watchedRepo, 100, time.Second, jobCh, slog.Default()).
+		WithHeadProvider(&stubHeadProvider{head: headSequence}).
+		WithBlockScanMode(configRepo)
 	if warmState != nil {
 		coord = coord.WithAutoTuneWarmStart(autoTuneCfg, warmState)
 	} else {
@@ -18865,6 +18731,7 @@ func newAutoTuneHarnessWithWarmStart(
 	return &autoTuneHarness{
 		coordinator: coord,
 		cursorRepo:  cursorRepo,
+		configRepo:  configRepo,
 		jobCh:       jobCh,
 	}
 }
@@ -18919,12 +18786,31 @@ func (h *autoTuneHarness) tickAndAdvance(t *testing.T) event.FetchJob {
 	require.Len(t, h.jobCh, 1)
 	job := <-h.jobCh
 
-	nextSeq := job.CursorSequence + 1
+	// In block-scan mode, advance the watermark to StartBlock (net +1 per tick).
+	// Since startBlock = watermark + 1, setting watermark = startBlock advances
+	// the watermark by exactly 1 per tick, which mirrors the old per-address
+	// cursor advancement pattern and ensures auto-tune batch size changes do not
+	// affect the canonical watermark progression.
+	if h.configRepo != nil && job.BlockScanMode {
+		h.configRepo.watermark = job.StartBlock
+	}
+
+	// Also update the per-address cursor repo for compatibility with legacy helpers.
+	addr := job.Address
+	if addr == "" && len(job.WatchedAddresses) > 0 {
+		addr = job.WatchedAddresses[0]
+	}
+	nextSeq := job.StartBlock
+	if !job.BlockScanMode {
+		nextSeq = job.CursorSequence + 1
+	}
 	nextCursor := syntheticCursorValue(job.Chain, nextSeq)
-	h.cursorRepo.state[job.Address] = &model.AddressCursor{
-		Address:        job.Address,
-		CursorValue:    &nextCursor,
-		CursorSequence: nextSeq,
+	if addr != "" {
+		h.cursorRepo.state[addr] = &model.AddressCursor{
+			Address:        addr,
+			CursorValue:    &nextCursor,
+			CursorSequence: nextSeq,
+		}
 	}
 	return job
 }
@@ -18942,6 +18828,17 @@ func collectAutoTuneTrace(t *testing.T, harness *autoTuneHarness, tickCount int)
 }
 
 func snapshotFromFetchJob(job event.FetchJob) lagAwareJobSnapshot {
+	if job.BlockScanMode {
+		addr := job.Address
+		if addr == "" && len(job.WatchedAddresses) > 0 {
+			addr = job.WatchedAddresses[0]
+		}
+		return lagAwareJobSnapshot{
+			Address:        addr,
+			CursorValue:    "",
+			CursorSequence: job.StartBlock,
+		}
+	}
 	cursorValue := ""
 	if job.CursorValue != nil {
 		cursorValue = *job.CursorValue

@@ -19,7 +19,8 @@ type NormalizedBatch struct {
 	Transactions           []NormalizedTransaction
 	NewCursorValue         *string
 	NewCursorSequence      int64
-	BlockScanMode          bool // true when produced by block-scan path
+	BlockScanMode          bool     // true when produced by block-scan path
+	WatchedAddresses       []string // populated in block-scan mode
 }
 
 type NormalizedTransaction struct {

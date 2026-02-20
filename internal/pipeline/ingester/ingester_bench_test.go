@@ -83,7 +83,6 @@ func newBenchIngester(b *testing.B) (*Ingester, func() *interleaveState) {
 		&interleaveBalanceEventRepo{state: state},
 		&interleaveBalanceRepo{state: state},
 		&interleaveTokenRepo{state: state},
-		&interleaveCursorRepo{state: state},
 		&interleaveConfigRepo{state: state},
 		nil,
 		slog.Default(),
@@ -95,7 +94,6 @@ func newBenchIngester(b *testing.B) (*Ingester, func() *interleaveState) {
 		ing.balanceEventRepo = &interleaveBalanceEventRepo{state: s}
 		ing.balanceRepo = &interleaveBalanceRepo{state: s}
 		ing.tokenRepo = &interleaveTokenRepo{state: s}
-		ing.cursorRepo = &interleaveCursorRepo{state: s}
 		ing.configRepo = &interleaveConfigRepo{state: s}
 		return s
 	}
