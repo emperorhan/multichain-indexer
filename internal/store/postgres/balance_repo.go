@@ -218,7 +218,7 @@ func (r *BalanceRepo) BulkAdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain
 			unnest($9::text[]),
 			unnest($10::text[])
 		ON CONFLICT (chain, network, address, token_id, balance_type) DO UPDATE SET
-			amount = balances.amount + EXCLUDED.amount,
+			amount = GREATEST(0, balances.amount + EXCLUDED.amount),
 			last_updated_cursor = GREATEST(balances.last_updated_cursor, EXCLUDED.last_updated_cursor),
 			last_updated_tx_hash = EXCLUDED.last_updated_tx_hash,
 			updated_at = now()
