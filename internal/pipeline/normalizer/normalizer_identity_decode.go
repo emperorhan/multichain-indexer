@@ -31,6 +31,7 @@ func canonicalizeBatchSignatures(chainID model.Chain, sigs []event.SignatureInfo
 		candidate := event.SignatureInfo{
 			Hash:     identity,
 			Sequence: sig.Sequence,
+			Time:     sig.Time,
 		}
 		existing, ok := byIdentity[identity]
 		if !ok || shouldReplaceCanonicalSignature(existing, candidate) {
