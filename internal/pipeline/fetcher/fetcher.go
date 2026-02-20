@@ -241,6 +241,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 		sigInfos[i] = event.SignatureInfo{
 			Hash:     sig.Hash,
 			Sequence: sig.Sequence,
+			Time:     sig.Time,
 		}
 	}
 
@@ -283,16 +284,34 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 
 // processBlockScanJob handles a block-scan mode FetchJob by calling ScanBlocks
 // on the adapter and then FetchTransactions for all discovered signatures.
+// Transient errors (e.g. HTTP 429) are retried with exponential backoff.
 func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job event.FetchJob) error {
 	scanner, ok := f.adapter.(blockScanAdapter)
 	if !ok {
 		return fmt.Errorf("adapter does not implement BlockScanAdapter for chain %s", job.Chain)
 	}
 
-	sigs, err := scanner.ScanBlocks(ctx, job.StartBlock, job.EndBlock, job.WatchedAddresses)
-	f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
-	if err != nil {
-		return fmt.Errorf("block-scan ScanBlocks: %w", err)
+	maxAttempts := f.effectiveRetryMaxAttempts()
+
+	// ScanBlocks with retry.
+	var sigs []chain.SignatureInfo
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var err error
+		sigs, err = scanner.ScanBlocks(ctx, job.StartBlock, job.EndBlock, job.WatchedAddresses)
+		f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
+		if err == nil {
+			break
+		}
+		decision := retry.Classify(err)
+		if !decision.IsTransient() || attempt == maxAttempts {
+			return fmt.Errorf("block-scan ScanBlocks: %w", err)
+		}
+		delay := f.retryDelay(attempt)
+		log.Warn("block-scan ScanBlocks transient error, retrying",
+			"attempt", attempt, "delay", delay, "error", err)
+		if sleepErr := f.sleep(ctx, delay); sleepErr != nil {
+			return sleepErr
+		}
 	}
 
 	if len(sigs) == 0 {
@@ -309,16 +328,30 @@ func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job
 		return nil
 	}
 
-	// Fetch raw transactions.
+	// Fetch raw transactions with retry.
 	sigHashes := make([]string, len(sigs))
 	for i, sig := range sigs {
 		sigHashes[i] = sig.Hash
 	}
 
-	rawTxs, err := f.adapter.FetchTransactions(ctx, sigHashes)
-	f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
-	if err != nil {
-		return fmt.Errorf("block-scan FetchTransactions: %w", err)
+	var rawTxs []json.RawMessage
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var err error
+		rawTxs, err = f.adapter.FetchTransactions(ctx, sigHashes)
+		f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
+		if err == nil {
+			break
+		}
+		decision := retry.Classify(err)
+		if !decision.IsTransient() || attempt == maxAttempts {
+			return fmt.Errorf("block-scan FetchTransactions: %w", err)
+		}
+		delay := f.retryDelay(attempt)
+		log.Warn("block-scan FetchTransactions transient error, retrying",
+			"attempt", attempt, "delay", delay, "error", err)
+		if sleepErr := f.sleep(ctx, delay); sleepErr != nil {
+			return sleepErr
+		}
 	}
 
 	sigInfos := make([]event.SignatureInfo, len(sigs))
@@ -326,6 +359,7 @@ func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job
 		sigInfos[i] = event.SignatureInfo{
 			Hash:     sig.Hash,
 			Sequence: sig.Sequence,
+			Time:     sig.Time,
 		}
 	}
 

@@ -317,6 +317,8 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 		candidates[hash] = existing
 	}
 
+	blockTimeByNum := make(map[int64]*time.Time)
+
 	for blockNum := startBlock; blockNum <= endBlock; blockNum++ {
 		block, err := a.client.GetBlockByNumber(ctx, blockNum, true)
 		if err != nil {
@@ -331,6 +333,7 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 			parsedTime := time.Unix(ts, 0)
 			blockTime = &parsedTime
 		}
+		blockTimeByNum[blockNum] = blockTime
 
 		for _, tx := range block.Transactions {
 			if tx == nil || strings.TrimSpace(tx.Hash) == "" {
@@ -372,7 +375,7 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 				if err != nil {
 					txIndex = -1
 				}
-				upsertCandidate(entry.TransactionHash, blockNum, txIndex, nil)
+				upsertCandidate(entry.TransactionHash, blockNum, txIndex, blockTimeByNum[blockNum])
 			}
 		}
 	}

@@ -410,7 +410,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		}
 		result = n.reconcileCoverageRegressionFlap(log, batch, signatureKey, result)
 
-		normalized.Transactions = append(normalized.Transactions, n.normalizedTxFromResult(batch, result))
+		normalized.Transactions = append(normalized.Transactions, n.normalizedTxFromResult(batch, result, sig.Time))
 		if shouldAdvanceCanonicalCursor(normalized.NewCursorSequence, normalized.NewCursorValue, sig.Sequence, signatureKey) {
 			cursorValue := signatureKey
 			normalized.NewCursorValue = &cursorValue
@@ -455,7 +455,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	return nil
 }
 
-func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sidecarv1.TransactionResult) event.NormalizedTransaction {
+func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sidecarv1.TransactionResult, sigTime *time.Time) event.NormalizedTransaction {
 	txHash := identity.CanonicalSignatureIdentity(batch.Chain, result.TxHash)
 	if txHash == "" {
 		txHash = strings.TrimSpace(result.TxHash)
@@ -473,6 +473,8 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 	if result.BlockTime != 0 {
 		bt := time.Unix(result.BlockTime, 0)
 		tx.BlockTime = &bt
+	} else if sigTime != nil {
+		tx.BlockTime = sigTime
 	}
 	if result.Error != nil {
 		tx.Err = result.Error

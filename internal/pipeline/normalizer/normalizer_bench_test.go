@@ -160,7 +160,7 @@ func BenchmarkNormalizedTxFromResult(b *testing.B) {
 		b.Run(fmt.Sprintf("events_%d", count), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				_ = n.normalizedTxFromResult(batch, result)
+				_ = n.normalizedTxFromResult(batch, result, nil)
 			}
 		})
 	}
@@ -266,7 +266,7 @@ func BenchmarkNormalizedTxFromResult_EVM(b *testing.B) {
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = n.normalizedTxFromResult(batch, result)
+		_ = n.normalizedTxFromResult(batch, result, nil)
 	}
 }
 

@@ -2,6 +2,7 @@ package event
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 )
@@ -24,5 +25,6 @@ type RawBatch struct {
 
 type SignatureInfo struct {
 	Hash     string
-	Sequence int64 // slot or block number
+	Sequence int64      // slot or block number
+	Time     *time.Time // block time if available (used as fallback when sidecar omits it)
 }
