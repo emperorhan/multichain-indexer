@@ -39,6 +39,14 @@ type ReorgAwareAdapter interface {
 	GetFinalizedBlockNumber(ctx context.Context) (int64, error)
 }
 
+// BlockScanAdapter extends ChainAdapter with block-range scanning.
+// EVM and BTC adapters implement this to allow a single scan per block range
+// instead of per-address cursor-based fetching.
+type BlockScanAdapter interface {
+	ChainAdapter
+	ScanBlocks(ctx context.Context, startBlock, endBlock int64, watchedAddresses []string) ([]SignatureInfo, error)
+}
+
 // BalanceQueryAdapter extends ChainAdapter with on-chain balance queries
 // for reconciliation purposes.
 type BalanceQueryAdapter interface {

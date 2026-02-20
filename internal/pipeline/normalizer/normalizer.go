@@ -326,6 +326,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		PreviousCursorSequence: batch.PreviousCursorSequence,
 		NewCursorValue:         canonicalPrevCursor,
 		NewCursorSequence:      batch.PreviousCursorSequence,
+		BlockScanMode:          batch.BlockScanMode,
 	}
 	if normalized.NewCursorValue == nil {
 		normalized.NewCursorValue = canonicalNewCursor

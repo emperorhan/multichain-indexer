@@ -73,6 +73,7 @@ const defaultBTCFinalityConfirmations = 6
 
 var _ chain.ChainAdapter = (*Adapter)(nil)
 var _ chain.ReorgAwareAdapter = (*Adapter)(nil)
+var _ chain.BlockScanAdapter = (*Adapter)(nil)
 
 func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
 	if logger == nil {
@@ -266,6 +267,137 @@ func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address stri
 		"head_block", head,
 		"cutoff_seq", cutoffSeq,
 		"candidate_count", len(candidates),
+	)
+
+	return signatures, nil
+}
+
+// ScanBlocks scans a block range for transactions touching any of the watched addresses.
+// Returns all matching signatures in oldest-first order without per-address cursor logic.
+func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, watchedAddresses []string) ([]chain.SignatureInfo, error) {
+	if startBlock > endBlock || len(watchedAddresses) == 0 {
+		return []chain.SignatureInfo{}, nil
+	}
+
+	addrSet := make(map[string]struct{}, len(watchedAddresses))
+	for _, addr := range watchedAddresses {
+		normalized := normalizeAddressIdentity(addr)
+		if normalized != "" {
+			addrSet[normalized] = struct{}{}
+		}
+	}
+
+	candidates := make(map[string]candidateSignature)
+	prevoutCache := map[string]resolvedPrevout{}
+
+	for blockNum := startBlock; blockNum <= endBlock; blockNum++ {
+		blockHash, err := a.client.GetBlockHash(ctx, blockNum)
+		if err != nil {
+			return nil, fmt.Errorf("scan get block hash %d: %w", blockNum, err)
+		}
+		block, err := a.client.GetBlock(ctx, blockHash, blockVerbosityTxObjects)
+		if err != nil {
+			return nil, fmt.Errorf("scan get block %d: %w", blockNum, err)
+		}
+		if block == nil {
+			continue
+		}
+
+		height := blockNum
+		if block.Height > 0 || blockNum == 0 {
+			height = block.Height
+		}
+		blockTime := unixTimePtr(block.Time)
+
+		for txIndex, tx := range block.Tx {
+			if tx == nil {
+				continue
+			}
+			txid := canonicalTxID(tx.Txid)
+			if txid == "" {
+				continue
+			}
+
+			touches := false
+			// Check outputs
+			for _, vout := range tx.Vout {
+				if vout == nil {
+					continue
+				}
+				for _, address := range allOutputAddresses(vout.ScriptPubKey) {
+					if _, ok := addrSet[normalizeAddressIdentity(address)]; ok {
+						touches = true
+						break
+					}
+				}
+				if touches {
+					break
+				}
+			}
+
+			// Check inputs
+			if !touches {
+				for _, vin := range tx.Vin {
+					if vin == nil || strings.TrimSpace(vin.Coinbase) != "" {
+						continue
+					}
+					prevout, ok, err := a.resolveInputPrevout(ctx, vin, prevoutCache)
+					if err != nil {
+						return nil, fmt.Errorf("scan resolve prevout tx=%s: %w", txid, err)
+					}
+					if ok {
+						if _, match := addrSet[normalizeAddressIdentity(prevout.address)]; match {
+							touches = true
+							break
+						}
+					}
+				}
+			}
+
+			if !touches {
+				continue
+			}
+
+			txTime := txTimePointer(tx, blockTime)
+			if _, exists := candidates[txid]; !exists {
+				candidates[txid] = candidateSignature{
+					hash:      txid,
+					blockNum:  height,
+					txIndex:   txIndex,
+					blockTime: txTime,
+				}
+			}
+		}
+	}
+
+	ordered := make([]candidateSignature, 0, len(candidates))
+	for _, candidate := range candidates {
+		ordered = append(ordered, candidate)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].blockNum != ordered[j].blockNum {
+			return ordered[i].blockNum < ordered[j].blockNum
+		}
+		if ordered[i].txIndex != ordered[j].txIndex {
+			return ordered[i].txIndex < ordered[j].txIndex
+		}
+		return ordered[i].hash < ordered[j].hash
+	})
+
+	signatures := make([]chain.SignatureInfo, 0, len(ordered))
+	for _, candidate := range ordered {
+		signatures = append(signatures, chain.SignatureInfo{
+			Hash:     candidate.hash,
+			Sequence: candidate.blockNum,
+			Time:     candidate.blockTime,
+		})
+	}
+
+	a.logger.Info("scanned blocks",
+		"start_block", startBlock,
+		"end_block", endBlock,
+		"address_count", len(watchedAddresses),
+		"signatures", len(signatures),
 	)
 
 	return signatures, nil

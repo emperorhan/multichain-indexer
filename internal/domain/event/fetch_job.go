@@ -13,4 +13,11 @@ type FetchJob struct {
 	BatchSize      int
 	WalletID       *string
 	OrgID          *string
+
+	// BlockScanMode fields — used for block-based chains (EVM, BTC)
+	// where a single scan covers all watched addresses.
+	BlockScanMode    bool
+	StartBlock       int64
+	EndBlock         int64
+	WatchedAddresses []string
 }

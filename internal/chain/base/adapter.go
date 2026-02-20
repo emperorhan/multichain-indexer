@@ -29,6 +29,7 @@ type Adapter struct {
 
 var _ chain.ChainAdapter = (*Adapter)(nil)
 var _ chain.ReorgAwareAdapter = (*Adapter)(nil)
+var _ chain.BlockScanAdapter = (*Adapter)(nil)
 
 func NewAdapter(rpcURL string, logger *slog.Logger) *Adapter {
 	return NewAdapterWithChain("base", rpcURL, logger)
@@ -256,6 +257,138 @@ func (a *Adapter) GetBlockHash(ctx context.Context, blockNumber int64) (string, 
 
 func (a *Adapter) GetFinalizedBlockNumber(ctx context.Context) (int64, error) {
 	return a.client.GetFinalizedBlockNumber(ctx)
+}
+
+// ScanBlocks scans a block range for transactions touching any of the watched addresses.
+// Returns all matching signatures in oldest-first order without per-address cursor logic.
+func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, watchedAddresses []string) ([]chain.SignatureInfo, error) {
+	if startBlock > endBlock || len(watchedAddresses) == 0 {
+		return []chain.SignatureInfo{}, nil
+	}
+
+	addrSet := make(map[string]struct{}, len(watchedAddresses))
+	for _, addr := range watchedAddresses {
+		addrSet[strings.ToLower(strings.TrimSpace(addr))] = struct{}{}
+	}
+
+	candidates := make(map[string]candidateSignature)
+
+	upsertCandidate := func(hash string, blockNum, txIndex int64, blockTime *time.Time) {
+		if strings.TrimSpace(hash) == "" {
+			return
+		}
+		existing, ok := candidates[hash]
+		if !ok {
+			candidates[hash] = candidateSignature{
+				hash:      hash,
+				blockNum:  blockNum,
+				txIndex:   txIndex,
+				blockTime: blockTime,
+			}
+			return
+		}
+		if existing.blockNum > blockNum || (existing.blockNum == blockNum && compareTxIndex(existing.txIndex, txIndex) > 0) {
+			existing.blockNum = blockNum
+			existing.txIndex = txIndex
+		}
+		if existing.blockTime == nil && blockTime != nil {
+			existing.blockTime = blockTime
+		}
+		candidates[hash] = existing
+	}
+
+	for blockNum := startBlock; blockNum <= endBlock; blockNum++ {
+		block, err := a.client.GetBlockByNumber(ctx, blockNum, true)
+		if err != nil {
+			return nil, fmt.Errorf("scan block %d: %w", blockNum, err)
+		}
+		if block == nil {
+			continue
+		}
+
+		var blockTime *time.Time
+		if ts, err := parseHexInt64(block.Timestamp); err == nil && ts > 0 {
+			parsedTime := time.Unix(ts, 0)
+			blockTime = &parsedTime
+		}
+
+		for _, tx := range block.Transactions {
+			if tx == nil || strings.TrimSpace(tx.Hash) == "" {
+				continue
+			}
+			txIndex, err := parseHexInt64(tx.TransactionIndex)
+			if err != nil {
+				txIndex = -1
+			}
+
+			from := strings.ToLower(strings.TrimSpace(tx.From))
+			to := strings.ToLower(strings.TrimSpace(tx.To))
+			_, fromMatch := addrSet[from]
+			_, toMatch := addrSet[to]
+			if !fromMatch && !toMatch {
+				continue
+			}
+
+			upsertCandidate(tx.Hash, blockNum, txIndex, blockTime)
+		}
+	}
+
+	// Also check logs for ERC-20 Transfer events touching watched addresses.
+	for addr := range addrSet {
+		if topic := addressTopic(addr); topic != "" {
+			logs, err := a.fetchAddressTopicLogs(ctx, startBlock, endBlock, topic)
+			if err != nil {
+				return nil, fmt.Errorf("scan logs for %s: %w", addr, err)
+			}
+			for _, entry := range logs {
+				if entry == nil || strings.TrimSpace(entry.TransactionHash) == "" {
+					continue
+				}
+				blockNum, err := parseHexInt64(entry.BlockNumber)
+				if err != nil {
+					continue
+				}
+				txIndex, err := parseHexInt64(entry.TransactionIndex)
+				if err != nil {
+					txIndex = -1
+				}
+				upsertCandidate(entry.TransactionHash, blockNum, txIndex, nil)
+			}
+		}
+	}
+
+	ordered := make([]candidateSignature, 0, len(candidates))
+	for _, candidate := range candidates {
+		ordered = append(ordered, candidate)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].blockNum != ordered[j].blockNum {
+			return ordered[i].blockNum < ordered[j].blockNum
+		}
+		cmp := compareTxIndex(ordered[i].txIndex, ordered[j].txIndex)
+		if cmp != 0 {
+			return cmp < 0
+		}
+		return ordered[i].hash < ordered[j].hash
+	})
+
+	signatures := make([]chain.SignatureInfo, 0, len(ordered))
+	for _, candidate := range ordered {
+		signatures = append(signatures, chain.SignatureInfo{
+			Hash:     candidate.hash,
+			Sequence: candidate.blockNum,
+			Time:     candidate.blockTime,
+		})
+	}
+
+	a.logger.Info("scanned blocks",
+		"start_block", startBlock,
+		"end_block", endBlock,
+		"address_count", len(watchedAddresses),
+		"signatures", len(signatures),
+	)
+
+	return signatures, nil
 }
 
 func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error) {

@@ -32,6 +32,11 @@ type Coordinator struct {
 	headProvider    headSequenceProvider
 	autoTune        *autotune.Controller
 	autoTuneSignals autotune.AutoTuneSignalSource
+
+	// Block-scan mode: used for block-based chains (EVM, BTC) where a single
+	// scan per block range replaces per-address cursor iteration.
+	blockScanMode bool
+	configRepo    store.IndexerConfigRepository
 }
 
 type headSequenceProvider interface {
@@ -74,6 +79,15 @@ func New(
 
 func (c *Coordinator) WithHeadProvider(provider headSequenceProvider) *Coordinator {
 	c.headProvider = provider
+	return c
+}
+
+// WithBlockScanMode enables block-scan mode for block-based chains.
+// In this mode, the coordinator reads the pipeline watermark and emits a
+// single FetchJob covering the block range for all watched addresses.
+func (c *Coordinator) WithBlockScanMode(configRepo store.IndexerConfigRepository) *Coordinator {
+	c.blockScanMode = true
+	c.configRepo = configRepo
 	return c
 }
 
@@ -305,6 +319,10 @@ func (c *Coordinator) tick(ctx context.Context) error {
 	)
 	defer span.End()
 
+	if c.blockScanMode {
+		return c.tickBlockScan(ctx, span)
+	}
+
 	addresses, err := c.watchedAddrRepo.GetActive(ctx, c.chain, c.network)
 	if err != nil {
 		span.RecordError(err)
@@ -467,6 +485,105 @@ func (c *Coordinator) tick(ctx context.Context) error {
 	span.SetAttributes(
 		attribute.Int("address_count", len(addresses)),
 		attribute.Int("group_count", len(groups)),
+	)
+
+	return nil
+}
+
+// tickBlockScan emits a single FetchJob covering a block range for all watched
+// addresses. The start block is derived from the pipeline watermark; the end block
+// is the current chain head.
+func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) error {
+	addresses, err := c.watchedAddrRepo.GetActive(ctx, c.chain, c.network)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+	if len(addresses) == 0 {
+		return nil
+	}
+
+	head := int64(0)
+	if c.headProvider != nil {
+		head, err = c.headProvider.GetHeadSequence(ctx)
+		if err != nil {
+			err = fmt.Errorf("resolve tick cutoff head: %w", err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return err
+		}
+		if head < 0 {
+			head = 0
+		}
+	}
+
+	// Read watermark as the start block.
+	startBlock := int64(0)
+	if c.configRepo != nil {
+		wm, wmErr := c.configRepo.GetWatermark(ctx, c.chain, c.network)
+		if wmErr != nil {
+			c.logger.Warn("block-scan watermark read failed, starting from 0", "error", wmErr)
+		} else if wm != nil && wm.IngestedSequence > 0 {
+			startBlock = wm.IngestedSequence + 1
+		}
+	}
+
+	if head > 0 && startBlock > head {
+		c.logger.Debug("block-scan: watermark ahead of head, nothing to scan",
+			"start_block", startBlock, "head", head)
+		return nil
+	}
+
+	// Cap the scan range by batchSize (blocks per tick).
+	endBlock := head
+	batchSize := c.batchSize
+	if c.autoTune != nil {
+		batchSize, _ = c.autoTune.Resolve(autotune.Inputs{
+			Chain:              c.chain.String(),
+			Network:            c.network.String(),
+			HasHeadSignal:      c.headProvider != nil,
+			HeadSequence:       head,
+			HasMinCursorSignal: true,
+			MinCursorSequence:  startBlock,
+			QueueDepth:         len(c.jobCh),
+			QueueCapacity:      cap(c.jobCh),
+		})
+	}
+	if batchSize <= 0 {
+		batchSize = c.batchSize
+	}
+	if endBlock > 0 && endBlock-startBlock+1 > int64(batchSize) {
+		endBlock = startBlock + int64(batchSize) - 1
+	}
+
+	watchedAddrs := make([]string, len(addresses))
+	for i, addr := range addresses {
+		watchedAddrs[i] = addr.Address
+	}
+
+	job := event.FetchJob{
+		Chain:            c.chain,
+		Network:          c.network,
+		FetchCutoffSeq:   endBlock,
+		BatchSize:        batchSize,
+		BlockScanMode:    true,
+		StartBlock:       startBlock,
+		EndBlock:         endBlock,
+		WatchedAddresses: watchedAddrs,
+	}
+
+	select {
+	case c.jobCh <- job:
+		metrics.CoordinatorJobsCreated.WithLabelValues(c.chain.String(), c.network.String()).Inc()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	span.SetAttributes(
+		attribute.Int("address_count", len(addresses)),
+		attribute.Int64("start_block", startBlock),
+		attribute.Int64("end_block", endBlock),
 	)
 
 	return nil

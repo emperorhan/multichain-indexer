@@ -44,12 +44,13 @@ func NewService(
 
 // PurgeRequest describes a replay/purge operation.
 type PurgeRequest struct {
-	Chain     model.Chain
-	Network   model.Network
-	FromBlock int64
-	DryRun    bool
-	Force     bool
-	Reason    string
+	Chain         model.Chain
+	Network       model.Network
+	FromBlock     int64
+	DryRun        bool
+	Force         bool
+	Reason        string
+	BlockScanMode bool // skip per-address cursor rewind for block-based chains
 }
 
 // PurgeResult describes the outcome of a purge operation.
@@ -245,20 +246,22 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 		}
 	}
 
-	// Step 6: Rewind cursors for affected addresses
-	rewindSequence := req.FromBlock - 1
-	if rewindSequence < 0 {
-		rewindSequence = 0
+	// Step 6: Rewind cursors for affected addresses (skip for block-scan mode)
+	if !req.BlockScanMode {
+		rewindSequence := req.FromBlock - 1
+		if rewindSequence < 0 {
+			rewindSequence = 0
+		}
+		cursorRes, err := dbTx.ExecContext(ctx, `
+			UPDATE address_cursors
+			SET cursor_sequence = $4, items_processed = 0, updated_at = now()
+			WHERE chain = $1 AND network = $2 AND cursor_sequence >= $3
+		`, req.Chain, req.Network, req.FromBlock, rewindSequence)
+		if err != nil {
+			return nil, fmt.Errorf("rewind cursors: %w", err)
+		}
+		result.CursorsRewound, _ = cursorRes.RowsAffected()
 	}
-	cursorRes, err := dbTx.ExecContext(ctx, `
-		UPDATE address_cursors
-		SET cursor_sequence = $4, items_processed = 0, updated_at = now()
-		WHERE chain = $1 AND network = $2 AND cursor_sequence >= $3
-	`, req.Chain, req.Network, req.FromBlock, rewindSequence)
-	if err != nil {
-		return nil, fmt.Errorf("rewind cursors: %w", err)
-	}
-	result.CursorsRewound, _ = cursorRes.RowsAffected()
 
 	// Step 7: Rewind watermark
 	newWatermark := req.FromBlock - 1

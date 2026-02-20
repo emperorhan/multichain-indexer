@@ -62,6 +62,10 @@ type cutoffAwareAdapter interface {
 	FetchNewSignaturesWithCutoff(ctx context.Context, address string, cursor *string, batchSize int, cutoffSeq int64) ([]chain.SignatureInfo, error)
 }
 
+type blockScanAdapter interface {
+	ScanBlocks(ctx context.Context, startBlock, endBlock int64, watchedAddresses []string) ([]chain.SignatureInfo, error)
+}
+
 func New(
 	adapter chain.ChainAdapter,
 	jobCh <-chan event.FetchJob,
@@ -156,6 +160,10 @@ func (f *Fetcher) worker(ctx context.Context, workerID int) error {
 }
 
 func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.FetchJob) error {
+	if job.BlockScanMode {
+		return f.processBlockScanJob(ctx, log, job)
+	}
+
 	fetchAddress := canonicalizeWatchedAddressIdentity(job.Chain, job.Address)
 	if fetchAddress == "" {
 		fetchAddress = strings.TrimSpace(job.Address)
@@ -248,6 +256,82 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 	}
 
 	f.updateAdaptiveBatchSize(job.Chain, job.Network, fetchAddress, job.BatchSize, requestedBatch, sigBatchSize, txBatchSize, len(selectedSigs))
+	return nil
+}
+
+// processBlockScanJob handles a block-scan mode FetchJob by calling ScanBlocks
+// on the adapter and then FetchTransactions for all discovered signatures.
+func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job event.FetchJob) error {
+	scanner, ok := f.adapter.(blockScanAdapter)
+	if !ok {
+		return fmt.Errorf("adapter does not implement BlockScanAdapter for chain %s", job.Chain)
+	}
+
+	sigs, err := scanner.ScanBlocks(ctx, job.StartBlock, job.EndBlock, job.WatchedAddresses)
+	f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
+	if err != nil {
+		return fmt.Errorf("block-scan ScanBlocks: %w", err)
+	}
+
+	if len(sigs) == 0 {
+		log.Debug("block-scan: no signatures in range",
+			"start_block", job.StartBlock,
+			"end_block", job.EndBlock,
+		)
+		return nil
+	}
+
+	// Canonicalize and sort signatures.
+	sigs = canonicalizeSignatures(job.Chain, sigs)
+	if len(sigs) == 0 {
+		return nil
+	}
+
+	// Fetch raw transactions.
+	sigHashes := make([]string, len(sigs))
+	for i, sig := range sigs {
+		sigHashes[i] = sig.Hash
+	}
+
+	rawTxs, err := f.adapter.FetchTransactions(ctx, sigHashes)
+	f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
+	if err != nil {
+		return fmt.Errorf("block-scan FetchTransactions: %w", err)
+	}
+
+	sigInfos := make([]event.SignatureInfo, len(sigs))
+	for i, sig := range sigs {
+		sigInfos[i] = event.SignatureInfo{
+			Hash:     sig.Hash,
+			Sequence: sig.Sequence,
+		}
+	}
+
+	newest := sigs[len(sigs)-1]
+	cursorValue := newest.Hash
+
+	batch := event.RawBatch{
+		Chain:             job.Chain,
+		Network:           job.Network,
+		RawTransactions:   rawTxs,
+		Signatures:        sigInfos,
+		NewCursorValue:    &cursorValue,
+		NewCursorSequence: newest.Sequence,
+		BlockScanMode:     true,
+	}
+
+	select {
+	case f.rawBatchCh <- batch:
+		metrics.FetcherTxFetched.WithLabelValues(job.Chain.String(), job.Network.String()).Add(float64(len(rawTxs)))
+		log.Info("block-scan raw batch sent",
+			"start_block", job.StartBlock,
+			"end_block", job.EndBlock,
+			"tx_count", len(rawTxs),
+		)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	return nil
 }
 

@@ -19,6 +19,7 @@ type RawBatch struct {
 	Signatures             []SignatureInfo
 	NewCursorValue         *string // newest signature in this batch
 	NewCursorSequence      int64   // newest slot/block in this batch
+	BlockScanMode          bool    // true when produced by block-scan path
 }
 
 type SignatureInfo struct {

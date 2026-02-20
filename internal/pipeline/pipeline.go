@@ -327,6 +327,9 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 	}
 
 	// Create stages
+	// Detect block-scan capable adapter (EVM/BTC)
+	_, isBlockScanAdapter := p.adapter.(chain.BlockScanAdapter)
+
 	coord := coordinator.New(
 		p.cfg.Chain, p.cfg.Network,
 		p.repos.WatchedAddr, p.repos.Cursor,
@@ -352,6 +355,11 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		PolicyManifestRefreshEpoch: p.cfg.CoordinatorAutoTune.PolicyManifestRefreshEpoch,
 		PolicyActivationHoldTicks:  p.cfg.CoordinatorAutoTune.PolicyActivationHoldTicks,
 	}).WithAutoTuneSignalSource(autoTuneSignalCollector)
+
+	// Enable block-scan mode for EVM/BTC adapters
+	if isBlockScanAdapter {
+		coord = coord.WithBlockScanMode(p.repos.Config)
+	}
 
 	fetch := fetcher.New(
 		p.adapter, jobCh, rawBatchOutputCh,
@@ -381,6 +389,9 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 	}
 	if p.replayService != nil {
 		ingesterOpts = append(ingesterOpts, ingester.WithReplayService(p.replayService))
+	}
+	if isBlockScanAdapter {
+		ingesterOpts = append(ingesterOpts, ingester.WithWatchedAddressRepo(p.repos.WatchedAddr))
 	}
 
 	ingest := ingester.New(

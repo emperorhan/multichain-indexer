@@ -57,6 +57,7 @@ type Ingester struct {
 	sleepFn           func(context.Context, time.Duration) error
 	deniedCache       *cache.LRU[string, bool]
 	replayService     *replay.Service
+	watchedAddrRepo   store.WatchedAddressRepository
 }
 
 type Option func(*Ingester)
@@ -100,6 +101,12 @@ func WithIndexedBlockRepo(repo store.IndexedBlockRepository) Option {
 func WithReplayService(svc *replay.Service) Option {
 	return func(ing *Ingester) {
 		ing.replayService = svc
+	}
+}
+
+func WithWatchedAddressRepo(repo store.WatchedAddressRepository) Option {
+	return func(ing *Ingester) {
+		ing.watchedAddrRepo = repo
 	}
 }
 
@@ -448,6 +455,26 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		}
 	}
 
+	// Block-scan mode: resolve per-address wallet/org mapping from watched_addresses table
+	type addrMeta struct {
+		walletID *string
+		orgID    *string
+	}
+	var blockScanAddrMap map[string]addrMeta
+	if batch.BlockScanMode && ing.watchedAddrRepo != nil {
+		activeAddrs, err := ing.watchedAddrRepo.GetActive(ctx, batch.Chain, batch.Network)
+		if err != nil {
+			return fmt.Errorf("fetch watched addresses for block-scan: %w", err)
+		}
+		blockScanAddrMap = make(map[string]addrMeta, len(activeAddrs))
+		for _, wa := range activeAddrs {
+			blockScanAddrMap[wa.Address] = addrMeta{
+				walletID: wa.WalletID,
+				orgID:    wa.OrganizationID,
+			}
+		}
+	}
+
 	// ========== PHASE 1: Memory Collect ==========
 	_, phase1Span := tracing.Tracer("ingester").Start(ctx, "ingester.phase1_collect")
 	// Deduplicate transactions and tokens, collect balance event metadata.
@@ -733,6 +760,19 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		if chainData == nil {
 			chainData = json.RawMessage("{}")
 		}
+		// Resolve wallet/org: block-scan mode uses per-event address lookup
+		eventWalletID := batch.WalletID
+		eventOrgID := batch.OrgID
+		eventWatchedAddr := &batch.Address
+		if batch.BlockScanMode && blockScanAddrMap != nil {
+			if meta, ok := blockScanAddrMap[ec.be.Address]; ok {
+				eventWalletID = meta.walletID
+				eventOrgID = meta.orgID
+			}
+			addr := ec.be.Address
+			eventWatchedAddr = &addr
+		}
+
 		beModel := &model.BalanceEvent{
 			Chain:                 batch.Chain,
 			Network:               batch.Network,
@@ -747,9 +787,9 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 			Address:               ec.be.Address,
 			CounterpartyAddress:   ec.be.CounterpartyAddress,
 			Delta:                 ec.be.Delta,
-			WatchedAddress:        &batch.Address,
-			WalletID:              batch.WalletID,
-			OrganizationID:        batch.OrgID,
+			WatchedAddress:        eventWatchedAddr,
+			WalletID:              eventWalletID,
+			OrganizationID:        eventOrgID,
 			BlockCursor:           ec.ntx.BlockCursor,
 			BlockTime:             ec.ntx.BlockTime,
 			ChainData:             chainData,
@@ -780,8 +820,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 			// Aggregate delta for bulk adjust
 			ak := adjustmentKey{
 				BalanceKey: store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: ""},
-				walletID:   batch.WalletID,
-				orgID:      batch.OrgID,
+				walletID:   eventWalletID,
+				orgID:      eventOrgID,
 			}
 			delta := new(big.Int)
 			if _, ok := delta.SetString(strings.TrimSpace(ec.be.Delta), 10); !ok {
@@ -816,8 +856,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 				}
 				sak := adjustmentKey{
 					BalanceKey: store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: "staked"},
-					walletID:   batch.WalletID,
-					orgID:      batch.OrgID,
+					walletID:   eventWalletID,
+					orgID:      eventOrgID,
 				}
 				stakeDelta := new(big.Int)
 				if _, ok := stakeDelta.SetString(strings.TrimSpace(invertedDelta), 10); !ok {
@@ -925,8 +965,8 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		}
 	}
 
-	// 3. Update cursor
-	if batch.NewCursorValue != nil {
+	// 3. Update cursor (skip for block-scan mode — watermark is the only checkpoint)
+	if !batch.BlockScanMode && batch.NewCursorValue != nil {
 		if err := ing.cursorRepo.UpsertTx(
 			ctx, dbTx,
 			batch.Chain, batch.Network, batch.Address,
@@ -1469,25 +1509,35 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 		return fmt.Errorf("delete rollback balance events: %w", err)
 	}
 
-	rewindCursorValue, rewindCursorSequence, err := ing.findRewindCursor(
-		ctx, dbTx, batch.Chain, batch.Network, batch.Address, forkCursor,
-		batch.NewCursorValue, batch.NewCursorSequence,
-	)
-	if err != nil {
-		return fmt.Errorf("find rewind cursor: %w", err)
+	// Compute rewind sequence for watermark update
+	rewindWatermarkSequence := forkCursor - 1
+	if rewindWatermarkSequence < 0 {
+		rewindWatermarkSequence = 0
 	}
 
-	if err := ing.cursorRepo.UpsertTx(
-		ctx, dbTx,
-		batch.Chain, batch.Network, batch.Address,
-		rewindCursorValue, rewindCursorSequence, 0,
-	); err != nil {
-		return fmt.Errorf("rewind cursor: %w", err)
+	// Skip per-address cursor rewind for block-scan mode (watermark is the only checkpoint)
+	if !batch.BlockScanMode {
+		rewindCursorValue, rewindCursorSequence, err := ing.findRewindCursor(
+			ctx, dbTx, batch.Chain, batch.Network, batch.Address, forkCursor,
+			batch.NewCursorValue, batch.NewCursorSequence,
+		)
+		if err != nil {
+			return fmt.Errorf("find rewind cursor: %w", err)
+		}
+
+		if err := ing.cursorRepo.UpsertTx(
+			ctx, dbTx,
+			batch.Chain, batch.Network, batch.Address,
+			rewindCursorValue, rewindCursorSequence, 0,
+		); err != nil {
+			return fmt.Errorf("rewind cursor: %w", err)
+		}
+		rewindWatermarkSequence = rewindCursorSequence
 	}
 
 	if err := ing.configRepo.UpdateWatermarkTx(
 		ctx, dbTx,
-		batch.Chain, batch.Network, rewindCursorSequence,
+		batch.Chain, batch.Network, rewindWatermarkSequence,
 	); err != nil {
 		return fmt.Errorf("update watermark after rewind: %w", err)
 	}
@@ -1674,6 +1724,11 @@ func (ing *Ingester) reconcileAmbiguousCommitOutcome(
 		return false, nil
 	}
 
+	// Block-scan mode: check watermark instead of per-address cursor
+	if batch.BlockScanMode {
+		return ing.reconcileBlockScanCommit(ctx, batch, commitErr)
+	}
+
 	expectedCursor := canonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
 	if expectedCursor == nil {
 		return false, retry.Terminal(fmt.Errorf(
@@ -1736,6 +1791,32 @@ func (ing *Ingester) reconcileAmbiguousCommitOutcome(
 		observedSeq,
 		observedCursor,
 		commitErr,
+	))
+}
+
+// reconcileBlockScanCommit checks the watermark to determine if an ambiguous commit succeeded.
+func (ing *Ingester) reconcileBlockScanCommit(
+	ctx context.Context,
+	batch event.NormalizedBatch,
+	commitErr error,
+) (bool, error) {
+	watermark, err := ing.configRepo.GetWatermark(ctx, batch.Chain, batch.Network)
+	if err != nil {
+		return false, retry.Terminal(fmt.Errorf(
+			"commit_ambiguity_unresolved chain=%s network=%s reason=watermark_probe_failed expected_seq=%d commit_err=%v: %w",
+			batch.Chain, batch.Network, batch.NewCursorSequence, commitErr, err,
+		))
+	}
+	if watermark != nil && watermark.IngestedSequence >= batch.NewCursorSequence {
+		return true, nil
+	}
+	observedSeq := int64(-1)
+	if watermark != nil {
+		observedSeq = watermark.IngestedSequence
+	}
+	return false, retry.Terminal(fmt.Errorf(
+		"commit_ambiguity_unresolved chain=%s network=%s reason=watermark_mismatch expected_seq=%d observed_watermark=%d commit_err=%w",
+		batch.Chain, batch.Network, batch.NewCursorSequence, observedSeq, commitErr,
 	))
 }
 
