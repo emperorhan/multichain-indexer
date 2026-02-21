@@ -23,6 +23,13 @@ var (
 		Help:      "Total fetch jobs created",
 	}, []string{"chain", "network"})
 
+	CoordinatorJobsDropped = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "coordinator",
+		Name:      "jobs_dropped_total",
+		Help:      "Number of times coordinator had to wait for full job channel",
+	}, []string{"chain", "network"})
+
 	CoordinatorTickErrors = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "indexer",
 		Subsystem: "coordinator",
@@ -380,6 +387,23 @@ var (
 		Name:      "bulk_insert_size",
 		Help:      "Number of events per bulk insert batch",
 		Buckets:   []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 1500},
+	}, []string{"chain", "network"})
+
+	// Pipeline stage-to-stage latency attribution
+	PipelineE2ELatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "indexer",
+		Subsystem: "pipeline",
+		Name:      "stage_e2e_latency_seconds",
+		Help:      "End-to-end latency from fetch to ingest completion",
+		Buckets:   prometheus.ExponentialBuckets(0.1, 2, 12),
+	}, []string{"chain", "network"})
+
+	IngestLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "indexer",
+		Subsystem: "pipeline",
+		Name:      "ingest_latency_seconds",
+		Help:      "Latency from normalization to ingest completion",
+		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 10),
 	}, []string{"chain", "network"})
 
 	// Pipeline E2E latency

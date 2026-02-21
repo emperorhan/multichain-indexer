@@ -22,6 +22,7 @@ type RawBatch struct {
 	NewCursorSequence      int64   // newest slot/block in this batch
 	BlockScanMode          bool    // true when produced by block-scan path
 	WatchedAddresses       []string // populated in block-scan mode
+	CreatedAt              time.Time // when this batch was created by fetcher
 }
 
 type SignatureInfo struct {

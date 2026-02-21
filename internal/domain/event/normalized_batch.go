@@ -21,6 +21,8 @@ type NormalizedBatch struct {
 	NewCursorSequence      int64
 	BlockScanMode          bool     // true when produced by block-scan path
 	WatchedAddresses       []string // populated in block-scan mode
+	FetchedAt              time.Time // when raw batch was created by fetcher
+	NormalizedAt           time.Time // when normalization completed
 }
 
 type NormalizedTransaction struct {

@@ -34,6 +34,12 @@ func NewClient(rpcURL string, logger *slog.Logger) *Client {
 	return &Client{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 20,
+				MaxConnsPerHost:     50,
+				IdleConnTimeout:     90 * time.Second,
+			},
 		},
 		rpcURL: rpcURL,
 		logger: logger,

@@ -506,16 +506,27 @@ func decodedCoverageEventSelectionScore(chainID model.Chain, be *sidecarv1.Balan
 	}
 	score.pathHint = decodedCoverageEventHasPathHint(chainID, be)
 
+	eventCategory := strings.TrimSpace(be.EventCategory)
+	eventAction := strings.TrimSpace(be.EventAction)
+	programID := strings.TrimSpace(be.ProgramId)
+	address := strings.TrimSpace(be.Address)
+	contractAddress := strings.TrimSpace(be.ContractAddress)
+	counterparty := strings.TrimSpace(be.CounterpartyAddress)
+	tokenSymbol := strings.TrimSpace(be.TokenSymbol)
+	tokenName := strings.TrimSpace(be.TokenName)
+	delta := strings.TrimSpace(be.Delta)
+	tokenType := strings.TrimSpace(be.TokenType)
+
 	for _, value := range []string{
-		strings.TrimSpace(be.EventCategory),
-		strings.TrimSpace(be.EventAction),
-		strings.TrimSpace(be.ProgramId),
-		strings.TrimSpace(be.Address),
-		strings.TrimSpace(be.ContractAddress),
-		strings.TrimSpace(be.CounterpartyAddress),
-		strings.TrimSpace(be.TokenSymbol),
-		strings.TrimSpace(be.TokenName),
-		strings.TrimSpace(be.Delta),
+		eventCategory,
+		eventAction,
+		programID,
+		address,
+		contractAddress,
+		counterparty,
+		tokenSymbol,
+		tokenName,
+		delta,
 	} {
 		if value != "" {
 			score.populatedFieldCount++
@@ -524,7 +535,7 @@ func decodedCoverageEventSelectionScore(chainID model.Chain, be *sidecarv1.Balan
 	if be.TokenDecimals != 0 {
 		score.populatedFieldCount++
 	}
-	if strings.TrimSpace(be.TokenType) != "" {
+	if tokenType != "" {
 		score.populatedFieldCount++
 	}
 	return score
@@ -548,25 +559,32 @@ func decodedCoverageEventLineageKey(chainID model.Chain, be *sidecarv1.BalanceEv
 		return ""
 	}
 
-	address := canonicalizeAddressIdentity(chainID, be.Address)
+	trimmedAddress := strings.TrimSpace(be.Address)
+	trimmedContract := strings.TrimSpace(be.ContractAddress)
+	trimmedCounterparty := strings.TrimSpace(be.CounterpartyAddress)
+	trimmedCategory := strings.TrimSpace(be.EventCategory)
+	trimmedAction := strings.TrimSpace(be.EventAction)
+	trimmedDelta := strings.TrimSpace(be.Delta)
+
+	address := canonicalizeAddressIdentity(chainID, trimmedAddress)
 	if address == "" {
-		address = strings.TrimSpace(be.Address)
+		address = trimmedAddress
 	}
-	assetID := canonicalizeAddressIdentity(chainID, be.ContractAddress)
+	assetID := canonicalizeAddressIdentity(chainID, trimmedContract)
 	if assetID == "" {
-		assetID = strings.TrimSpace(be.ContractAddress)
+		assetID = trimmedContract
 	}
-	counterparty := canonicalizeAddressIdentity(chainID, be.CounterpartyAddress)
+	counterparty := canonicalizeAddressIdentity(chainID, trimmedCounterparty)
 	if counterparty == "" {
-		counterparty = strings.TrimSpace(be.CounterpartyAddress)
+		counterparty = trimmedCounterparty
 	}
 
-	category := strings.ToUpper(strings.TrimSpace(be.EventCategory))
+	category := strings.ToUpper(trimmedCategory)
 	if category == "" {
-		category = strings.ToUpper(strings.TrimSpace(be.EventAction))
+		category = strings.ToUpper(trimmedAction)
 	}
 
-	delta := strings.TrimSpace(be.Delta)
+	delta := trimmedDelta
 	if strings.EqualFold(category, string(model.EventCategoryFee)) ||
 		strings.EqualFold(category, string(model.EventCategoryFeeExecutionL2)) ||
 		strings.EqualFold(category, string(model.EventCategoryFeeDataL1)) {

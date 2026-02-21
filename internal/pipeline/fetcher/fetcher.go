@@ -257,6 +257,7 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 		Signatures:             sigInfos,
 		NewCursorValue:         &cursorValue,
 		NewCursorSequence:      newest.Sequence,
+		CreatedAt:              time.Now(),
 	}
 
 	select {
@@ -371,6 +372,7 @@ func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job
 		NewCursorSequence: newest.Sequence,
 		BlockScanMode:     true,
 		WatchedAddresses:  job.WatchedAddresses,
+		CreatedAt:         time.Now(),
 	}
 
 	select {

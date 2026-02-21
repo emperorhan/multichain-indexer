@@ -63,6 +63,40 @@ func (c *Client) GetBlockHashes(ctx context.Context, heights []int64) ([]string,
 	return results, nil
 }
 
+// GetBlocks fetches multiple blocks by hash in a single JSON-RPC batch call.
+// Results are returned in the same order as the input hashes.
+func (c *Client) GetBlocks(ctx context.Context, hashes []string, verbosity int) ([]*Block, error) {
+	if len(hashes) == 0 {
+		return []*Block{}, nil
+	}
+
+	requests := make([]Request, len(hashes))
+	for i, hash := range hashes {
+		requests[i] = c.newRequest("getblock", []interface{}{hash, verbosity})
+	}
+
+	responses, err := c.callBatch(ctx, requests)
+	if err != nil {
+		return nil, fmt.Errorf("getblock batch: %w", err)
+	}
+
+	results := make([]*Block, len(hashes))
+	for i, resp := range responses {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("getblock(%s): %w", hashes[i], resp.Error)
+		}
+		if string(resp.Result) == "null" {
+			continue
+		}
+		var b Block
+		if err := json.Unmarshal(resp.Result, &b); err != nil {
+			return nil, fmt.Errorf("unmarshal block %s: %w", hashes[i], err)
+		}
+		results[i] = &b
+	}
+	return results, nil
+}
+
 func (c *Client) GetBlock(ctx context.Context, hash string, verbosity int) (*Block, error) {
 	result, err := c.call(ctx, "getblock", []interface{}{hash, verbosity})
 	if err != nil {

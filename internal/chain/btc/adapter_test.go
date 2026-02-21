@@ -58,6 +58,17 @@ func (f *fakeRPCClient) GetBlock(_ context.Context, hash string, _ int) (*rpc.Bl
 	return f.blocksByHash[hash], nil
 }
 
+func (f *fakeRPCClient) GetBlocks(_ context.Context, hashes []string, _ int) ([]*rpc.Block, error) {
+	if f.blockErr != nil {
+		return nil, f.blockErr
+	}
+	results := make([]*rpc.Block, len(hashes))
+	for i, hash := range hashes {
+		results[i] = f.blocksByHash[hash]
+	}
+	return results, nil
+}
+
 func (f *fakeRPCClient) GetBlockHeader(_ context.Context, hash string) (*rpc.BlockHeader, error) {
 	block := f.blocksByHash[hash]
 	if block == nil {

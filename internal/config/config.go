@@ -204,6 +204,9 @@ type PipelineConfig struct {
 	BatchSize                                     int      `yaml:"batch_size"`
 	IndexingIntervalMs                            int      `yaml:"indexing_interval_ms"`
 	ChannelBufferSize                             int      `yaml:"channel_buffer_size"`
+	JobChBufferSize                               int      `yaml:"job_ch_buffer_size"`
+	RawBatchChBufferSize                          int      `yaml:"raw_batch_ch_buffer_size"`
+	NormalizedChBufferSize                        int      `yaml:"normalized_ch_buffer_size"`
 	CoordinatorAutoTuneEnabled                    bool     `yaml:"coordinator_autotune_enabled"`
 	CoordinatorAutoTuneMinBatchSize               int      `yaml:"coordinator_autotune_min_batch_size"`
 	CoordinatorAutoTuneMaxBatchSize               int      `yaml:"coordinator_autotune_max_batch_size"`
@@ -439,6 +442,9 @@ func applyPipelineEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Pipeline.BatchSize, "BATCH_SIZE")
 	overrideInt(&cfg.Pipeline.IndexingIntervalMs, "INDEXING_INTERVAL_MS")
 	overrideInt(&cfg.Pipeline.ChannelBufferSize, "CHANNEL_BUFFER_SIZE")
+	overrideInt(&cfg.Pipeline.JobChBufferSize, "JOB_CH_BUFFER_SIZE")
+	overrideInt(&cfg.Pipeline.RawBatchChBufferSize, "RAW_BATCH_CH_BUFFER_SIZE")
+	overrideInt(&cfg.Pipeline.NormalizedChBufferSize, "NORMALIZED_CH_BUFFER_SIZE")
 	overrideInt(&cfg.Pipeline.IndexedBlocksRetention, "INDEXED_BLOCKS_RETENTION")
 
 	// Coordinator auto-tune
@@ -605,6 +611,31 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.Pipeline.BatchSize, 100)
 	setDefault(&cfg.Pipeline.IndexingIntervalMs, 5000)
 	setDefault(&cfg.Pipeline.ChannelBufferSize, 10)
+
+	// Per-stage buffer sizes: use per-stage value if set, else fall back to
+	// ChannelBufferSize, else use stage-specific defaults.
+	if cfg.Pipeline.JobChBufferSize <= 0 {
+		if cfg.Pipeline.ChannelBufferSize > 0 {
+			cfg.Pipeline.JobChBufferSize = cfg.Pipeline.ChannelBufferSize
+		} else {
+			cfg.Pipeline.JobChBufferSize = 20
+		}
+	}
+	if cfg.Pipeline.RawBatchChBufferSize <= 0 {
+		if cfg.Pipeline.ChannelBufferSize > 0 {
+			cfg.Pipeline.RawBatchChBufferSize = cfg.Pipeline.ChannelBufferSize
+		} else {
+			cfg.Pipeline.RawBatchChBufferSize = 10
+		}
+	}
+	if cfg.Pipeline.NormalizedChBufferSize <= 0 {
+		if cfg.Pipeline.ChannelBufferSize > 0 {
+			cfg.Pipeline.NormalizedChBufferSize = cfg.Pipeline.ChannelBufferSize
+		} else {
+			cfg.Pipeline.NormalizedChBufferSize = 5
+		}
+	}
+
 	setDefault(&cfg.Pipeline.CoordinatorAutoTuneMinBatchSize, 10)
 	setDefault(&cfg.Pipeline.CoordinatorAutoTuneStepUp, 10)
 	setDefault(&cfg.Pipeline.CoordinatorAutoTuneStepDown, 10)

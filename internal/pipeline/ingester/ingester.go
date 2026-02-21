@@ -572,6 +572,16 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 		metrics.PipelineE2ELatencySeconds.WithLabelValues(batch.Chain.String(), batch.Network.String()).Observe(e2e)
 	}
 
+	// Stage-to-stage latency attribution
+	if !batch.FetchedAt.IsZero() {
+		e2eLatency := time.Since(batch.FetchedAt)
+		metrics.PipelineE2ELatency.WithLabelValues(batch.Chain.String(), batch.Network.String()).Observe(e2eLatency.Seconds())
+	}
+	if !batch.NormalizedAt.IsZero() {
+		ingestLatency := time.Since(batch.NormalizedAt)
+		metrics.IngestLatency.WithLabelValues(batch.Chain.String(), batch.Network.String()).Observe(ingestLatency.Seconds())
+	}
+
 	ing.logger.Info("batch ingested",
 		"address", batch.Address,
 		"txs", len(batch.Transactions),
@@ -681,7 +691,7 @@ func (ing *Ingester) prefetchBulkData(ctx context.Context, bc *batchContext) err
 	uncachedContracts := make([]string, 0)
 	bc.cachedDenied = make(map[string]bool)
 	for contract := range bc.contractsToCheck {
-		deniedKey := fmt.Sprintf("%s:%s:%s", batch.Chain, batch.Network, contract)
+		deniedKey := string(batch.Chain) + ":" + string(batch.Network) + ":" + contract
 		if denied, ok := ing.deniedCache.Get(deniedKey); ok {
 			bc.cachedDenied[contract] = denied
 			metrics.DeniedCacheHits.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
@@ -699,7 +709,7 @@ func (ing *Ingester) prefetchBulkData(ctx context.Context, bc *batchContext) err
 		}
 		for _, contract := range uncachedContracts {
 			denied := dbDenied[contract]
-			deniedKey := fmt.Sprintf("%s:%s:%s", batch.Chain, batch.Network, contract)
+			deniedKey := string(batch.Chain) + ":" + string(batch.Network) + ":" + contract
 			ing.deniedCache.Put(deniedKey, denied)
 			bc.cachedDenied[contract] = denied
 		}
@@ -790,7 +800,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 				span.SetStatus(codes.Error, err.Error())
 				return fmt.Errorf("deny scam token %s: %w", ec.be.ContractAddress, err)
 			}
-			deniedKey := fmt.Sprintf("%s:%s:%s", batch.Chain, batch.Network, ec.be.ContractAddress)
+			deniedKey := string(batch.Chain) + ":" + string(batch.Network) + ":" + ec.be.ContractAddress
 			ing.deniedCache.Put(deniedKey, true)
 			bc.cachedDenied[ec.be.ContractAddress] = true
 			metrics.IngesterScamTokensDetected.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()

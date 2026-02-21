@@ -34,23 +34,22 @@ func NewBalanceEventRepo(db *DB) *BalanceEventRepo {
 // UpsertTx performs a 2-query upsert for a balance event using event_id as
 // the dedup key (flat table, no canonical_ids indirection).
 //
-// Query 1: SELECT balance_applied FROM balance_events WHERE event_id = $1 FOR UPDATE
+// Query 1: SELECT balance_applied FROM balance_events WHERE event_id = $1
 // Query 2: INSERT ... ON CONFLICT (event_id) DO UPDATE SET ... (finality hierarchy)
 func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 	if be.EventID == "" {
 		return store.UpsertResult{}, fmt.Errorf("upsert balance event: event_id is required")
 	}
 
-	// Query 1: Lock existing row (if any) and read balance_applied state.
+	// Query 1: Read existing balance_applied state (if any).
 	var existingBalanceApplied bool
 	var existingRowFound bool
 	err := tx.QueryRowContext(ctx, `
 		SELECT balance_applied FROM balance_events
 		WHERE event_id = $1
-		FOR UPDATE
 	`, be.EventID).Scan(&existingBalanceApplied)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return store.UpsertResult{}, fmt.Errorf("upsert balance event: lock existing: %w", err)
+		return store.UpsertResult{}, fmt.Errorf("upsert balance event: read existing: %w", err)
 	}
 	existingRowFound = err == nil
 
@@ -190,7 +189,7 @@ func (r *BalanceEventRepo) bulkUpsertPerEvent(ctx context.Context, tx *sql.Tx, e
 		SELECT event_id, balance_applied FROM balance_events
 		WHERE event_id IN (`)
 	sb.WriteString(strings.Join(existingPlaceholders, ", "))
-	sb.WriteString(`) FOR UPDATE
+	sb.WriteString(`)
 	),
 	upserted AS (
 		INSERT INTO balance_events (

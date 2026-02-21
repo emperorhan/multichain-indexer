@@ -38,6 +38,9 @@ type Config struct {
 	FetchWorkers           int
 	NormalizerWorkers      int
 	ChannelBufferSize      int
+	JobChBufferSize        int // Coordinator -> Fetcher (default: 20)
+	RawBatchChBufferSize   int // Fetcher -> Normalizer (default: 10)
+	NormalizedChBufferSize int // Normalizer -> Ingester (default: 5)
 	SidecarAddr            string
 	SidecarTimeout         time.Duration
 	SidecarMaxMsgSizeMB    int
@@ -142,7 +145,33 @@ func New(
 	if cfg.Health.UnhealthyThreshold > 0 {
 		health.unhealthyThreshold = cfg.Health.UnhealthyThreshold
 	}
-	bufSize := cfg.ChannelBufferSize
+	// Resolve per-stage buffer sizes with fallback chain:
+	// per-stage value > ChannelBufferSize > stage-specific default.
+	fallback := cfg.ChannelBufferSize
+	jobBuf := cfg.JobChBufferSize
+	if jobBuf <= 0 {
+		if fallback > 0 {
+			jobBuf = fallback
+		} else {
+			jobBuf = 20
+		}
+	}
+	rawBuf := cfg.RawBatchChBufferSize
+	if rawBuf <= 0 {
+		if fallback > 0 {
+			rawBuf = fallback
+		} else {
+			rawBuf = 10
+		}
+	}
+	normBuf := cfg.NormalizedChBufferSize
+	if normBuf <= 0 {
+		if fallback > 0 {
+			normBuf = fallback
+		} else {
+			normBuf = 5
+		}
+	}
 	p := &Pipeline{
 		cfg:          cfg,
 		adapter:      adapter,
@@ -151,9 +180,9 @@ func New(
 		logger:       logger.With("component", "pipeline"),
 		replayCh:     make(chan replayOp, 1),
 		health:       health,
-		jobCh:        make(chan event.FetchJob, bufSize),
-		rawBatchCh:   make(chan event.RawBatch, bufSize),
-		normalizedCh: make(chan event.NormalizedBatch, bufSize),
+		jobCh:        make(chan event.FetchJob, jobBuf),
+		rawBatchCh:   make(chan event.RawBatch, rawBuf),
+		normalizedCh: make(chan event.NormalizedBatch, normBuf),
 		deactiveCh:   make(chan struct{}, 1),
 	}
 	p.stateCond = sync.NewCond(&p.activeMu)

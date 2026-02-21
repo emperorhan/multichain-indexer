@@ -36,6 +36,7 @@ type Coordinator struct {
 
 	configRepo               store.IndexerConfigRepository
 	maxInitialLookbackBlocks int64
+	intervalResetCh          chan struct{}
 }
 
 type headSequenceProvider interface {
@@ -69,6 +70,7 @@ func New(
 		watchedAddrRepo: watchedAddrRepo,
 		jobCh:           jobCh,
 		logger:          logger.With("component", "coordinator"),
+		intervalResetCh: make(chan struct{}, 1),
 	}
 	c.batchSize.Store(int32(batchSize))
 	c.intervalNs.Store(int64(interval))
@@ -258,7 +260,7 @@ func (c *Coordinator) UpdateBatchSize(newBatchSize int) {
 }
 
 // UpdateInterval updates the indexing interval at runtime.
-// Returns true if the caller should reset the ticker.
+// Returns true if the interval actually changed.
 func (c *Coordinator) UpdateInterval(newInterval time.Duration) bool {
 	if newInterval <= 0 {
 		return false
@@ -266,6 +268,10 @@ func (c *Coordinator) UpdateInterval(newInterval time.Duration) bool {
 	old := time.Duration(c.intervalNs.Swap(int64(newInterval)))
 	if old != newInterval {
 		c.logger.Info("coordinator interval updated", "old", old, "new", newInterval)
+		select {
+		case c.intervalResetCh <- struct{}{}:
+		default:
+		}
 		return true
 	}
 	return false
@@ -309,6 +315,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			if err := runTick(); err != nil {
 				return err
 			}
+		case <-c.intervalResetCh:
+			ticker.Reset(time.Duration(c.intervalNs.Load()))
+			continue
 		}
 	}
 }
@@ -430,8 +439,17 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 	select {
 	case c.jobCh <- job:
 		metrics.CoordinatorJobsCreated.WithLabelValues(c.chain.String(), c.network.String()).Inc()
-	case <-ctx.Done():
-		return ctx.Err()
+	default:
+		// Channel full -- log warning and try blocking send with timeout
+		c.logger.Warn("job channel full, waiting for capacity",
+			"chain", job.Chain, "network", job.Network)
+		metrics.CoordinatorJobsDropped.WithLabelValues(string(job.Chain), string(job.Network)).Inc()
+		select {
+		case c.jobCh <- job:
+			metrics.CoordinatorJobsCreated.WithLabelValues(c.chain.String(), c.network.String()).Inc()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	span.SetAttributes(

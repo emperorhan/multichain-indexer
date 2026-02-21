@@ -31,6 +31,11 @@ type Adapter struct {
 	// verbosity3Supported caches whether the node supports verbosity=3.
 	// 0 = unknown, 1 = supported, -1 = unsupported.
 	verbosity3Supported int32
+
+	// headBlockCache caches the latest block count to avoid redundant RPC calls.
+	headBlockCache    int64
+	headBlockCacheAt  time.Time
+	headBlockCacheTTL time.Duration
 }
 
 type AdapterOption func(*Adapter)
@@ -94,6 +99,7 @@ func NewAdapter(rpcURL string, logger *slog.Logger, opts ...AdapterOption) *Adap
 		client:                   rpc.NewClient(rpcURL, logger),
 		logger:                   logger.With("chain", "btc"),
 		maxInitialLookbackBlocks: maxInitialLookbackBlocks,
+		headBlockCacheTTL:        5 * time.Second,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -134,8 +140,23 @@ func (a *Adapter) getBlockWithVerbosity(ctx context.Context, blockHash string) (
 	return a.client.GetBlock(ctx, blockHash, blockVerbosityTxObjects)
 }
 
+// getCachedHeadBlock returns the latest block count, using a short TTL cache
+// to avoid redundant RPC calls when multiple methods need the head block.
+func (a *Adapter) getCachedHeadBlock(ctx context.Context) (int64, error) {
+	if time.Since(a.headBlockCacheAt) < a.headBlockCacheTTL {
+		return a.headBlockCache, nil
+	}
+	head, err := a.client.GetBlockCount(ctx)
+	if err != nil {
+		return 0, err
+	}
+	a.headBlockCache = head
+	a.headBlockCacheAt = time.Now()
+	return head, nil
+}
+
 func (a *Adapter) GetHeadSequence(ctx context.Context) (int64, error) {
-	return a.client.GetBlockCount(ctx)
+	return a.getCachedHeadBlock(ctx)
 }
 
 func (a *Adapter) GetBlockHash(ctx context.Context, blockNumber int64) (string, string, error) {
@@ -154,7 +175,7 @@ func (a *Adapter) GetBlockHash(ctx context.Context, blockNumber int64) (string, 
 }
 
 func (a *Adapter) GetFinalizedBlockNumber(ctx context.Context) (int64, error) {
-	head, err := a.client.GetBlockCount(ctx)
+	head, err := a.getCachedHeadBlock(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("get block count: %w", err)
 	}
@@ -177,7 +198,7 @@ func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address stri
 	head := cutoffSeq
 	if head <= 0 {
 		var err error
-		head, err = a.client.GetBlockCount(ctx)
+		head, err = a.getCachedHeadBlock(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("get head block: %w", err)
 		}
@@ -690,12 +711,14 @@ func (a *Adapter) prefetchBlocks(ctx context.Context, txs []*rpc.Transaction, ca
 		return nil
 	}
 
-	for _, hash := range hashes {
-		block, err := a.client.GetBlock(ctx, hash, blockVerbosityTxObjects)
-		if err != nil {
-			return fmt.Errorf("prefetch block %s: %w", hash, err)
+	blocks, err := a.client.GetBlocks(ctx, hashes, blockVerbosityTxObjects)
+	if err != nil {
+		return fmt.Errorf("batch getblock: %w", err)
+	}
+	for i, block := range blocks {
+		if block != nil {
+			cache[hashes[i]] = block
 		}
-		cache[hash] = block
 	}
 	return nil
 }

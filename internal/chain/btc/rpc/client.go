@@ -19,6 +19,7 @@ type RPCClient interface {
 	GetBlockHash(ctx context.Context, height int64) (string, error)
 	GetBlockHashes(ctx context.Context, heights []int64) ([]string, error)
 	GetBlock(ctx context.Context, hash string, verbosity int) (*Block, error)
+	GetBlocks(ctx context.Context, hashes []string, verbosity int) ([]*Block, error)
 	GetBlockHeader(ctx context.Context, hash string) (*BlockHeader, error)
 	GetRawTransactionVerbose(ctx context.Context, txid string) (*Transaction, error)
 	GetRawTransactionsVerbose(ctx context.Context, txids []string) ([]*Transaction, error)
@@ -36,6 +37,12 @@ func NewClient(rpcURL string, logger *slog.Logger) *Client {
 	return &Client{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 20,
+				MaxConnsPerHost:     50,
+				IdleConnTimeout:     90 * time.Second,
+			},
 		},
 		rpcURL: rpcURL,
 		logger: logger,
