@@ -25,7 +25,7 @@ func (r *ReconciliationSnapshotRepo) SaveSnapshots(ctx context.Context, tx *sql.
 		return nil
 	}
 
-	const batchSize = 100
+	const batchSize = 1000
 	for i := 0; i < len(snapshots); i += batchSize {
 		end := i + batchSize
 		if end > len(snapshots) {

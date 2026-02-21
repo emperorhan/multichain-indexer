@@ -13,6 +13,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/chain/base/rpc"
 	"github.com/emperorhan/multichain-indexer/internal/chain/ratelimit"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -665,20 +666,38 @@ func addressTopic(address string) string {
 }
 
 func (a *Adapter) fetchAddressTopicLogs(ctx context.Context, fromBlock, toBlock int64, topic string) ([]*rpc.Log, error) {
-	var allLogs []*rpc.Log
 	topicFilters := [][]interface{}{
 		{nil, topic},
 		{nil, nil, topic},
 		{nil, nil, nil, topic},
 	}
-	for _, topics := range topicFilters {
-		logs, err := a.fetchLogsWithFallback(ctx, fromBlock, toBlock, topics)
-		if err != nil {
-			return nil, err
-		}
-		allLogs = append(allLogs, logs...)
+
+	type logResult struct {
+		logs []*rpc.Log
+	}
+	results := make([]logResult, len(topicFilters))
+
+	g, gctx := errgroup.WithContext(ctx)
+	for i, topics := range topicFilters {
+		i, topics := i, topics
+		g.Go(func() error {
+			logs, err := a.fetchLogsWithFallback(gctx, fromBlock, toBlock, topics)
+			if err != nil {
+				return err
+			}
+			results[i] = logResult{logs: logs}
+			return nil
+		})
 	}
 
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	var allLogs []*rpc.Log
+	for _, r := range results {
+		allLogs = append(allLogs, r.logs...)
+	}
 	return allLogs, nil
 }
 
@@ -744,15 +763,29 @@ func (a *Adapter) scanBlockReceiptsForTopics(ctx context.Context, blockNum int64
 		return []*rpc.Log{}, nil
 	}
 
-	receipts, err := a.client.GetTransactionReceiptsByHash(ctx, txHashes)
-	if err != nil || len(receipts) != len(txHashes) {
+	receipts, batchErr := a.client.GetTransactionReceiptsByHash(ctx, txHashes)
+	if batchErr != nil {
+		// Full batch failed — fall back to individual fetches for all receipts.
 		receipts = make([]*rpc.TransactionReceipt, len(txHashes))
 		for i, txHash := range txHashes {
 			receipt, singleErr := a.client.GetTransactionReceipt(ctx, txHash)
 			if singleErr != nil {
-				return nil, fmt.Errorf("receipt fallback %s: %w", txHash, singleErr)
+				continue // skip failed receipts
 			}
 			receipts[i] = receipt
+		}
+	} else if len(receipts) < len(txHashes) {
+		// Partial batch result — only fetch missing indices.
+		for len(receipts) < len(txHashes) {
+			receipts = append(receipts, nil)
+		}
+		for i, r := range receipts {
+			if r == nil && i < len(txHashes) {
+				fetched, singleErr := a.client.GetTransactionReceipt(ctx, txHashes[i])
+				if singleErr == nil {
+					receipts[i] = fetched
+				}
+			}
 		}
 	}
 

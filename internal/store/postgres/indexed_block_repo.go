@@ -84,8 +84,13 @@ func (r *IndexedBlockRepo) GetUnfinalized(ctx context.Context, chain model.Chain
 
 	const query = `
 		SELECT chain, network, block_number, block_hash, parent_hash, finality_state, block_time
-		FROM indexed_blocks
-		WHERE chain = $1 AND network = $2 AND finality_state NOT IN ('finalized')
+		FROM (
+			SELECT chain, network, block_number, block_hash, parent_hash, finality_state, block_time
+			FROM indexed_blocks
+			WHERE chain = $1 AND network = $2 AND finality_state NOT IN ('finalized')
+			ORDER BY block_number DESC
+			LIMIT 1000
+		) sub
 		ORDER BY block_number
 	`
 	rows, err := r.db.QueryContext(ctx, query, chain, network)

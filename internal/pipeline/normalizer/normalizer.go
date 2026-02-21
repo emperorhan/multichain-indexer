@@ -318,7 +318,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 
 	resultBySignature := make(map[string]*sidecarv1.TransactionResult, len(resp.Results))
 	unexpectedResults := make(map[string]struct{})
-	unexpectedResultBySignature := make(map[string]*sidecarv1.TransactionResult)
+	unexpectedResultBySignature := make(map[string]*sidecarv1.TransactionResult, len(resp.Results))
 	for _, result := range resp.Results {
 		if result == nil {
 			continue
@@ -476,7 +476,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sidecarv1.TransactionResult, sigTime *time.Time) event.NormalizedTransaction {
 	txHash := identity.CanonicalSignatureIdentity(batch.Chain, result.TxHash)
 	if txHash == "" {
-		txHash = strings.TrimSpace(result.TxHash)
+		txHash = result.TxHash
 	}
 	finalityState := resolveResultFinalityState(batch.Chain, result)
 	tx := event.NormalizedTransaction{
@@ -554,7 +554,7 @@ func resolveWatchedAddressSet(batch event.RawBatch) map[string]struct{} {
 		for _, addr := range batch.WatchedAddresses {
 			canonical := canonicalizeAddressIdentity(batch.Chain, addr)
 			if canonical == "" {
-				canonical = strings.TrimSpace(addr)
+				canonical = addr
 			}
 			if canonical != "" {
 				set[canonical] = struct{}{}
@@ -592,6 +592,12 @@ func resolveResultFinalityState(chainID model.Chain, result *sidecarv1.Transacti
 				bestRank = candidateRank
 				bestKeyOrder = keyOrder
 			}
+			if bestRank >= 4 {
+				break // Already at maximum finality, no need to check more keys
+			}
+		}
+		if bestRank >= 4 {
+			break // Already at maximum finality, no need to check more events
 		}
 	}
 	if best != "" {

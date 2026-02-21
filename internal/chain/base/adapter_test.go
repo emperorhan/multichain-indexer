@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/emperorhan/multichain-indexer/internal/chain/base/rpc"
@@ -13,6 +15,7 @@ import (
 )
 
 type fakeRPCClient struct {
+	mu           sync.Mutex // protects concurrent access from errgroup goroutines
 	head         int64
 	blocks       map[int64]*rpc.Block
 	txs          map[string]*rpc.Transaction
@@ -26,8 +29,8 @@ type fakeRPCClient struct {
 	logErr       error
 	batchTxErr   error
 	batchRxErr   error
-	batchTxCalls int
-	batchRxCalls int
+	batchTxCalls atomic.Int32
+	batchRxCalls atomic.Int32
 }
 
 func (f *fakeRPCClient) GetBlockNumber(_ context.Context) (int64, error) {
@@ -63,6 +66,8 @@ func (f *fakeRPCClient) GetTransactionByHash(_ context.Context, hash string) (*r
 }
 
 func (f *fakeRPCClient) GetTransactionReceipt(_ context.Context, hash string) (*rpc.TransactionReceipt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.receiptErr != nil {
 		return nil, f.receiptErr
 	}
@@ -70,6 +75,8 @@ func (f *fakeRPCClient) GetTransactionReceipt(_ context.Context, hash string) (*
 }
 
 func (f *fakeRPCClient) GetLogs(_ context.Context, filter rpc.LogFilter) ([]*rpc.Log, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.getLogsFn != nil {
 		return f.getLogsFn(filter)
 	}
@@ -88,7 +95,7 @@ func (f *fakeRPCClient) GetFinalizedBlockNumber(_ context.Context) (int64, error
 }
 
 func (f *fakeRPCClient) GetTransactionsByHash(_ context.Context, hashes []string) ([]*rpc.Transaction, error) {
-	f.batchTxCalls++
+	f.batchTxCalls.Add(1)
 	if f.batchTxErr != nil {
 		return nil, f.batchTxErr
 	}
@@ -103,7 +110,9 @@ func (f *fakeRPCClient) GetTransactionsByHash(_ context.Context, hashes []string
 }
 
 func (f *fakeRPCClient) GetTransactionReceiptsByHash(_ context.Context, hashes []string) ([]*rpc.TransactionReceipt, error) {
-	f.batchRxCalls++
+	f.batchRxCalls.Add(1)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.batchRxErr != nil {
 		return nil, f.batchRxErr
 	}
@@ -287,8 +296,8 @@ func TestAdapter_FetchTransactions(t *testing.T) {
 	payloads, err := a.FetchTransactions(context.Background(), []string{"0x1", "0x2"})
 	require.NoError(t, err)
 	require.Len(t, payloads, 2)
-	assert.Equal(t, 1, client.batchTxCalls)
-	assert.Equal(t, 1, client.batchRxCalls)
+	assert.Equal(t, int32(1), client.batchTxCalls.Load())
+	assert.Equal(t, int32(1), client.batchRxCalls.Load())
 
 	var decoded map[string]interface{}
 	require.NoError(t, json.Unmarshal(payloads[0], &decoded))
@@ -353,7 +362,7 @@ func TestAdapter_FetchNewSignatures_UsesLogsForTopicMatches(t *testing.T) {
 
 func TestAdapter_FetchNewSignatures_SplitsLogRangeOnLimit(t *testing.T) {
 	watched := "0xabc0000000000000000000000000000000000001"
-	var sawRangeSplit bool
+	var sawRangeSplit atomic.Bool
 	client := &fakeRPCClient{
 		head: 1,
 		blocks: map[int64]*rpc.Block{
@@ -374,7 +383,7 @@ func TestAdapter_FetchNewSignatures_SplitsLogRangeOnLimit(t *testing.T) {
 			from, to, err := parseFilterRange(filter)
 			require.NoError(t, err)
 			if from != to {
-				sawRangeSplit = true
+				sawRangeSplit.Store(true)
 				return nil, errors.New("query returned more than 10000 results")
 			}
 			if from == 1 {
@@ -395,7 +404,7 @@ func TestAdapter_FetchNewSignatures_SplitsLogRangeOnLimit(t *testing.T) {
 	sigs, err := a.FetchNewSignatures(context.Background(), watched, nil, 10)
 	require.NoError(t, err)
 	require.Len(t, sigs, 1)
-	assert.True(t, sawRangeSplit)
+	assert.True(t, sawRangeSplit.Load())
 	assert.Equal(t, "0xviaSplit", sigs[0].Hash)
 	assert.Equal(t, int64(1), sigs[0].Sequence)
 }
@@ -442,7 +451,7 @@ func TestAdapter_FetchNewSignatures_LogSingleBlockErrorFallsBackToReceipts(t *te
 	require.Len(t, sigs, 1)
 	assert.Equal(t, "0xviaReceipt", sigs[0].Hash)
 	assert.Equal(t, int64(1), sigs[0].Sequence)
-	assert.Greater(t, client.batchRxCalls, 0)
+	assert.Greater(t, client.batchRxCalls.Load(), int32(0))
 }
 
 func TestAdapter_FetchNewSignatures_GetLogsFailure_FailsFast(t *testing.T) {

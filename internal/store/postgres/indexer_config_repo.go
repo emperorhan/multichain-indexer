@@ -69,11 +69,15 @@ func (r *IndexerConfigRepo) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, c
 
 // RewindWatermarkTx unconditionally sets the watermark to the given sequence,
 // bypassing the GREATEST guard. Use this only for intentional rewinds (reorg rollback).
+// Uses INSERT ON CONFLICT to handle the case where the watermark row doesn't exist yet.
 func (r *IndexerConfigRepo) RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
 	_, err := tx.ExecContext(ctx, `
-		UPDATE pipeline_watermarks
-		SET ingested_sequence = $3, last_heartbeat_at = now(), updated_at = now()
-		WHERE chain = $1 AND network = $2
+		INSERT INTO pipeline_watermarks (chain, network, ingested_sequence, last_heartbeat_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (chain, network) DO UPDATE SET
+			ingested_sequence = $3,
+			last_heartbeat_at = now(),
+			updated_at = now()
 	`, chain, network, ingestedSequence)
 	if err != nil {
 		return fmt.Errorf("rewind watermark: %w", err)

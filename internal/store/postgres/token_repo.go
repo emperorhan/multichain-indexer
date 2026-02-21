@@ -74,29 +74,24 @@ func (r *TokenRepo) DenyTokenTx(ctx context.Context, tx *sql.Tx, chain model.Cha
 	}
 	now := time.Now()
 
-	var tokenID uuid.UUID
-	err = tx.QueryRowContext(ctx, `
-		UPDATE tokens SET
-			is_denied = true,
-			denied_reason = $4,
-			denied_at = $5,
-			scam_score = $6,
-			scam_signals = $7,
-			denied_source = $8,
-			updated_at = now()
-		WHERE chain = $1 AND network = $2 AND contract_address = $3
-		RETURNING id
-	`, chain, network, contractAddress, reason, now, score, signalsJSON, source).Scan(&tokenID)
+	_, err = tx.ExecContext(ctx, `
+		WITH updated_token AS (
+			UPDATE tokens SET
+				is_denied = true,
+				denied_reason = $4,
+				denied_at = $5,
+				scam_score = $6,
+				scam_signals = $7,
+				denied_source = $8,
+				updated_at = now()
+			WHERE chain = $1 AND network = $2 AND contract_address = $3
+			RETURNING id
+		)
+		INSERT INTO token_deny_log (token_id, chain, network, contract_address, action, reason, source, metadata)
+		SELECT id, $1, $2, $3, 'deny', $4, $8, $7 FROM updated_token
+	`, chain, network, contractAddress, reason, now, score, signalsJSON, source)
 	if err != nil {
 		return fmt.Errorf("deny token: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO token_deny_log (token_id, chain, network, contract_address, action, reason, source, metadata)
-		VALUES ($1, $2, $3, $4, 'deny', $5, $6, $7)
-	`, tokenID, chain, network, contractAddress, reason, source, signalsJSON)
-	if err != nil {
-		return fmt.Errorf("insert deny log: %w", err)
 	}
 
 	return nil

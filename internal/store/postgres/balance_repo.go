@@ -87,13 +87,16 @@ func (r *BalanceRepo) BulkGetAmountWithExistsTx(ctx context.Context, tx *sql.Tx,
 
 	// Build a dynamic WHERE clause: (address, token_id, balance_type) IN ((...), (...), ...)
 	const cols = 3 // address, token_id, balance_type per tuple
-	tuples := make([]string, 0, len(keys))
 	args := make([]interface{}, 0, 2+len(keys)*cols) // chain + network + tuples
 	args = append(args, chain, network)
 
+	var sb strings.Builder
 	for i, k := range keys {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
 		base := 2 + i*cols
-		tuples = append(tuples, fmt.Sprintf("($%d, $%d, $%d)", base+1, base+2, base+3))
+		fmt.Fprintf(&sb, "($%d, $%d, $%d)", base+1, base+2, base+3)
 		args = append(args, k.Address, k.TokenID, k.BalanceType)
 	}
 
@@ -102,7 +105,7 @@ func (r *BalanceRepo) BulkGetAmountWithExistsTx(ctx context.Context, tx *sql.Tx,
 		FROM balances
 		WHERE chain = $1 AND network = $2
 		  AND (address, token_id, balance_type) IN (%s)
-	`, strings.Join(tuples, ", "))
+	`, sb.String())
 
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {

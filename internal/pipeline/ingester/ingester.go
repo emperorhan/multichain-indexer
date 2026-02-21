@@ -60,7 +60,7 @@ type Ingester struct {
 	retryDelayStart   time.Duration
 	retryDelayMax     time.Duration
 	sleepFn           func(context.Context, time.Duration) error
-	deniedCache       *cache.LRU[string, bool]
+	deniedCache       cache.Cache[string, bool]
 	replayService     *replay.Service
 	watchedAddrRepo   store.WatchedAddressRepository
 	addressIndex      addressindex.Index
@@ -136,7 +136,7 @@ func WithRetryConfig(maxAttempts int, delayInitial, delayMax time.Duration) Opti
 
 func WithDeniedCacheConfig(capacity int, ttl time.Duration) Option {
 	return func(ing *Ingester) {
-		ing.deniedCache = cache.NewLRU[string, bool](capacity, ttl)
+		ing.deniedCache = cache.NewShardedLRU[string, bool](capacity, ttl, func(k string) string { return k })
 	}
 }
 
@@ -165,7 +165,7 @@ func New(
 		retryDelayStart:      defaultRetryDelayInitial,
 		retryDelayMax:        defaultRetryDelayMax,
 		sleepFn:              sleepContext,
-		deniedCache:          cache.NewLRU[string, bool](defaultDeniedCacheCapacity, defaultDeniedCacheTTL),
+		deniedCache:          cache.NewShardedLRU[string, bool](defaultDeniedCacheCapacity, defaultDeniedCacheTTL, func(k string) string { return k }),
 		blockScanAddrCache:   make(map[string]map[string]addrMeta),
 		blockScanAddrCacheAt: make(map[string]time.Time),
 	}
@@ -595,7 +595,7 @@ func (ing *Ingester) collectEvents(ctx context.Context, bc *batchContext) error 
 	for _, ntx := range batch.Transactions {
 		canonicalTxHash := identity.CanonicalSignatureIdentity(batch.Chain, ntx.TxHash)
 		if canonicalTxHash == "" {
-			canonicalTxHash = strings.TrimSpace(ntx.TxHash)
+			canonicalTxHash = ntx.TxHash
 		}
 
 		if _, exists := txModelsByHash[canonicalTxHash]; !exists {

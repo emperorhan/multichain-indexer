@@ -119,25 +119,10 @@ func (r *DashboardRepo) GetRecentEvents(ctx context.Context, chain model.Chain, 
 		offset = 0
 	}
 
-	baseWhere := `be.chain = $1 AND be.network = $2`
-	args := []any{string(chain), string(network)}
-	paramIdx := 3
+	const countAll = `SELECT COUNT(*) FROM balance_events be WHERE be.chain = $1 AND be.network = $2`
+	const countByAddr = `SELECT COUNT(*) FROM balance_events be WHERE be.chain = $1 AND be.network = $2 AND be.address = $3`
 
-	if address != "" {
-		baseWhere += fmt.Sprintf(` AND be.address = $%d`, paramIdx)
-		args = append(args, address)
-		paramIdx++
-	}
-
-	// Count query
-	var total int
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM balance_events be WHERE %s`, baseWhere)
-	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count events: %w", err)
-	}
-
-	// Data query
-	dataQuery := fmt.Sprintf(`
+	const dataAll = `
 		SELECT
 			be.tx_hash,
 			be.address,
@@ -152,13 +137,45 @@ func (r *DashboardRepo) GetRecentEvents(ctx context.Context, chain model.Chain, 
 			be.created_at
 		FROM balance_events be
 		LEFT JOIN tokens t ON t.id = be.token_id
-		WHERE %s
+		WHERE be.chain = $1 AND be.network = $2
 		ORDER BY be.block_cursor DESC, be.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, baseWhere, paramIdx, paramIdx+1)
+		LIMIT $3 OFFSET $4
+	`
+	const dataByAddr = `
+		SELECT
+			be.tx_hash,
+			be.address,
+			COALESCE(be.counterparty_address, '') AS counterparty_address,
+			be.activity_type,
+			be.delta,
+			COALESCE(t.symbol, '') AS token_symbol,
+			COALESCE(t.decimals, 0) AS decimals,
+			be.block_cursor,
+			be.block_time,
+			COALESCE(be.finality_state, '') AS finality_state,
+			be.created_at
+		FROM balance_events be
+		LEFT JOIN tokens t ON t.id = be.token_id
+		WHERE be.chain = $1 AND be.network = $2 AND be.address = $3
+		ORDER BY be.block_cursor DESC, be.created_at DESC
+		LIMIT $4 OFFSET $5
+	`
 
-	dataArgs := append(args, limit, offset)
-	rows, err := r.db.QueryContext(ctx, dataQuery, dataArgs...)
+	var total int
+	var rows *sql.Rows
+	var err error
+
+	if address != "" {
+		if err = r.db.QueryRowContext(ctx, countByAddr, string(chain), string(network), address).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count events: %w", err)
+		}
+		rows, err = r.db.QueryContext(ctx, dataByAddr, string(chain), string(network), address, limit, offset)
+	} else {
+		if err = r.db.QueryRowContext(ctx, countAll, string(chain), string(network)).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count events: %w", err)
+		}
+		rows, err = r.db.QueryContext(ctx, dataAll, string(chain), string(network), limit, offset)
+	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("query events: %w", err)
 	}

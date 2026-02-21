@@ -188,9 +188,6 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 
 	fetchAddress := canonicalizeWatchedAddressIdentity(job.Chain, job.Address)
 	if fetchAddress == "" {
-		fetchAddress = strings.TrimSpace(job.Address)
-	}
-	if fetchAddress == "" {
 		fetchAddress = job.Address
 	}
 
@@ -895,17 +892,16 @@ func suppressPreCursorSequenceCarryover(
 		return sigs
 	}
 
-	stable := make([]chain.SignatureInfo, len(sigs))
-	copy(stable, sigs)
-	sortSignatureInfosBySequenceThenHash(stable)
+	// Sort in-place: callers reassign sigs to return value, so original order is not needed.
+	sortSignatureInfosBySequenceThenHash(sigs)
 
 	if requestedBatch <= 0 {
 		requestedBatch = 1
 	}
 
-	cursorHits := make([]chain.SignatureInfo, 0, len(stable))
-	cursorMisses := make([]chain.SignatureInfo, 0, len(stable))
-	for _, sig := range stable {
+	cursorHits := make([]chain.SignatureInfo, 0, len(sigs))
+	cursorMisses := make([]chain.SignatureInfo, 0, len(sigs))
+	for _, sig := range sigs {
 		if sig.Sequence < previousCursorSequence {
 			continue
 		}
@@ -917,7 +913,7 @@ func suppressPreCursorSequenceCarryover(
 	}
 
 	if len(cursorHits) == 0 && len(cursorMisses) == 0 {
-		return stable
+		return sigs
 	}
 
 	// If we are overflowing the requested batch, prefer newest signatures and

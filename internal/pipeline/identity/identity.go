@@ -65,11 +65,19 @@ func CanonicalAddressIdentity(chainID model.Chain, address string) string {
 	if !IsEVMChain(chainID) {
 		return trimmed
 	}
-	canonical := CanonicalSignatureIdentity(chainID, trimmed)
-	if canonical == "" {
+	// Inline EVM canonicalization to avoid redundant IsEVMChain check
+	// in CanonicalSignatureIdentity.
+	withoutPrefix := strings.TrimPrefix(strings.TrimPrefix(trimmed, "0x"), "0X")
+	if withoutPrefix == "" {
 		return trimmed
 	}
-	return canonical
+	if IsHexString(withoutPrefix) {
+		return "0x" + strings.ToLower(withoutPrefix)
+	}
+	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
+		return "0x" + strings.ToLower(withoutPrefix)
+	}
+	return trimmed
 }
 
 // IsEVMChain returns true for EVM-compatible chains.

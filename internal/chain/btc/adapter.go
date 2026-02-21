@@ -479,6 +479,18 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 	prevoutCache := map[string]resolvedPrevout{}
 	blockCache := map[string]*rpc.Block{}
 
+	// Pre-fetch all unique blocks referenced by the transactions.
+	if err := a.prefetchBlocks(ctx, txs, blockCache); err != nil {
+		a.logger.Warn("prefetch blocks failed, falling back to on-demand fetch", "err", err)
+	}
+
+	// Pre-populate prevoutCache with a single batch RPC call so that the
+	// per-vin resolveInputPrevout calls below hit the cache instead of
+	// issuing individual RPCs.
+	if err := a.prefetchPrevouts(ctx, txs, prevoutCache); err != nil {
+		a.logger.Warn("prefetch prevouts failed, falling back to individual lookups", "err", err)
+	}
+
 	for i, tx := range txs {
 		txid := txids[i]
 		if tx == nil {
@@ -589,6 +601,103 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 
 	a.logger.Info("fetched transactions (batch)", "count", len(results))
 	return results, nil
+}
+
+// prefetchPrevouts collects all uncached source txids from the transactions'
+// vins and batch-fetches them in a single RPC call. The results are stored
+// in the prevoutCache so that subsequent resolveInputPrevout calls hit the
+// cache instead of issuing individual RPCs.
+func (a *Adapter) prefetchPrevouts(ctx context.Context, txs []*rpc.Transaction, cache map[string]resolvedPrevout) error {
+	var missingTxIDs []string
+	seen := make(map[string]bool)
+	for _, tx := range txs {
+		if tx == nil {
+			continue
+		}
+		for _, vin := range tx.Vin {
+			if vin == nil || vin.Prevout != nil {
+				continue // has inline prevout (verbosity=3)
+			}
+			if strings.TrimSpace(vin.Coinbase) != "" {
+				continue // coinbase input
+			}
+			sourceTxID := canonicalTxID(vin.Txid)
+			if sourceTxID == "" {
+				continue
+			}
+			cacheKey := fmt.Sprintf("%s:%d", sourceTxID, vin.Vout)
+			if _, ok := cache[cacheKey]; ok {
+				continue // already cached
+			}
+			if seen[sourceTxID] {
+				continue
+			}
+			seen[sourceTxID] = true
+			missingTxIDs = append(missingTxIDs, sourceTxID)
+		}
+	}
+	if len(missingTxIDs) == 0 {
+		return nil
+	}
+
+	prevTxs, err := a.client.GetRawTransactionsVerbose(ctx, missingTxIDs)
+	if err != nil {
+		return err
+	}
+
+	for i, prevTx := range prevTxs {
+		if prevTx == nil {
+			continue
+		}
+		txid := canonicalTxID(missingTxIDs[i])
+		for _, vout := range prevTx.Vout {
+			if vout == nil {
+				continue
+			}
+			valueSat, parseErr := parseBTCValueToSatoshi(vout.Value)
+			if parseErr != nil {
+				valueSat = 0
+			}
+			key := fmt.Sprintf("%s:%d", txid, vout.N)
+			cache[key] = resolvedPrevout{
+				found:    true,
+				address:  firstOutputAddress(vout.ScriptPubKey),
+				valueSat: valueSat,
+			}
+		}
+	}
+	return nil
+}
+
+// prefetchBlocks collects all unique block hashes from the transactions and
+// fetches them into the blockCache before the main processing loop. This
+// avoids interleaving block and transaction RPC calls.
+func (a *Adapter) prefetchBlocks(ctx context.Context, txs []*rpc.Transaction, cache map[string]*rpc.Block) error {
+	seen := make(map[string]bool)
+	var hashes []string
+	for _, tx := range txs {
+		if tx == nil {
+			continue
+		}
+		blockHash := canonicalTxID(tx.Blockhash)
+		if blockHash == "" || seen[blockHash] {
+			continue
+		}
+		seen[blockHash] = true
+		hashes = append(hashes, blockHash)
+	}
+	if len(hashes) == 0 {
+		return nil
+	}
+
+	for _, hash := range hashes {
+		block, err := a.client.GetBlock(ctx, hash, blockVerbosityTxObjects)
+		if err != nil {
+			return fmt.Errorf("prefetch block %s: %w", hash, err)
+		}
+		cache[hash] = block
+	}
+	return nil
 }
 
 func (a *Adapter) resolveCursorPosition(ctx context.Context, cursorHash string) (int64, int, error) {
