@@ -57,13 +57,3 @@ func TestBloomFilter_FalsePositiveRate(t *testing.T) {
 	t.Logf("empirical FPR: %.4f%% (%d/%d)", empiricalFPR*100, falsePositives, testCount)
 }
 
-func TestBloomFilter_Reset(t *testing.T) {
-	bf := NewBloomFilter(1000, 0.01)
-
-	bf.Add("alice")
-	require.True(t, bf.MayContain("alice"))
-
-	bf.Reset()
-
-	assert.False(t, bf.MayContain("alice"), "after reset, filter should be empty")
-}

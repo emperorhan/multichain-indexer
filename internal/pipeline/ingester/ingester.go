@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -1107,12 +1106,7 @@ func (ing *Ingester) handleReorg(ctx context.Context, reorg event.ReorgEvent) er
 		}
 	}
 
-	// 6. Rewind cursors for affected addresses
-	if err := ing.rewindCursorsForReorg(ctx, dbTx, reorg.Chain, reorg.Network, reorg.ForkBlockNumber); err != nil {
-		return fmt.Errorf("rewind cursors: %w", err)
-	}
-
-	// 7. Rewind watermark (unconditional — intentional reorg rollback)
+	// 6. Rewind watermark (unconditional — intentional reorg rollback)
 	rewindSequence := reorg.ForkBlockNumber - 1
 	if rewindSequence < 0 {
 		rewindSequence = 0
@@ -1173,30 +1167,6 @@ func (ing *Ingester) fetchReorgRollbackEvents(
 		events = append(events, be)
 	}
 	return events, rows.Err()
-}
-
-// rewindCursorsForReorg rewinds all address cursors that point at or beyond forkBlock.
-func (ing *Ingester) rewindCursorsForReorg(
-	ctx context.Context,
-	tx *sql.Tx,
-	chain model.Chain,
-	network model.Network,
-	forkBlock int64,
-) error {
-	rewindSequence := forkBlock - 1
-	if rewindSequence < 0 {
-		rewindSequence = 0
-	}
-
-	_, err := tx.ExecContext(ctx, `
-		UPDATE address_cursors
-		SET cursor_sequence = $4, items_processed = 0, updated_at = now()
-		WHERE chain = $1 AND network = $2 AND cursor_sequence >= $3
-	`, chain, network, forkBlock, rewindSequence)
-	if err != nil {
-		return fmt.Errorf("rewind cursors for reorg: %w", err)
-	}
-	return nil
 }
 
 // handleFinalityPromotion promotes balance events and indexed blocks to finalized state.
@@ -1556,102 +1526,6 @@ func (ing *Ingester) fetchRollbackEvents(
 
 	return events, nil
 }
-
-func (ing *Ingester) findRewindCursor(
-	ctx context.Context,
-	tx *sql.Tx,
-	chain model.Chain,
-	network model.Network,
-	address string,
-	forkCursor int64,
-	fallbackCursorValue *string,
-	fallbackCursorSequence int64,
-) (*string, int64, error) {
-	const rewindCursorSQL = `
-		SELECT t.tx_hash, be.block_cursor
-		FROM balance_events be
-		JOIN transactions t ON t.id = be.transaction_id
-		WHERE be.chain = $1 AND be.network = $2
-		  AND be.watched_address = $3
-		  AND be.block_cursor < $4
-	ORDER BY be.block_cursor DESC, be.id DESC
-		LIMIT 1
-	`
-	var cursorValue string
-	var cursorSequence int64
-	if err := tx.QueryRowContext(ctx, rewindCursorSQL, chain, network, address, forkCursor).Scan(&cursorValue, &cursorSequence); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Fall back to deterministic boundary synthesis below.
-		} else {
-			return nil, 0, fmt.Errorf("query rewind cursor: %w", err)
-		}
-	} else {
-		return &cursorValue, cursorSequence, nil
-	}
-
-	const rollbackCommittedCursorSQL = `
-	SELECT cursor_value, cursor_sequence
-	FROM address_cursors
-	WHERE chain = $1 AND network = $2 AND address = $3
-`
-
-	var committedCursorRaw sql.NullString
-	var committedCursorSequence int64
-	var committedCursorValue *string
-	if err := tx.QueryRowContext(ctx, rollbackCommittedCursorSQL, chain, network, address).Scan(&committedCursorRaw, &committedCursorSequence); err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return nil, 0, fmt.Errorf("query committed cursor: %w", err)
-		}
-	} else if committedCursorRaw.Valid {
-		value := committedCursorRaw.String
-		committedCursorValue = &value
-	}
-
-	resolvedValue, resolvedSequence := resolveRewindCursorBoundary(
-		chain,
-		forkCursor,
-		nil,
-		0,
-		committedCursorValue,
-		committedCursorSequence,
-		fallbackCursorValue,
-		fallbackCursorSequence,
-	)
-
-	return resolvedValue, resolvedSequence, nil
-}
-
-func resolveRewindCursorBoundary(
-	chain model.Chain,
-	forkCursor int64,
-	foundCursorValue *string,
-	foundCursorSequence int64,
-	committedCursorValue *string,
-	committedCursorSequence int64,
-	fallbackCursorValue *string,
-	fallbackCursorSequence int64,
-) (*string, int64) {
-	if foundCursorValue != nil {
-		return foundCursorValue, foundCursorSequence
-	}
-
-	if committedCursorValue != nil && committedCursorSequence > 0 && committedCursorSequence <= forkCursor {
-		if canonicalCommitted := identity.CanonicalizeCursorValue(chain, committedCursorValue); canonicalCommitted != nil {
-			return canonicalCommitted, committedCursorSequence
-		}
-	}
-
-	resolvedCursor := identity.CanonicalizeCursorValue(chain, fallbackCursorValue)
-	resolvedSequence := fallbackCursorSequence
-	if resolvedSequence <= 0 {
-		return resolvedCursor, forkCursor
-	}
-	if resolvedSequence > forkCursor {
-		return resolvedCursor, forkCursor
-	}
-	return resolvedCursor, resolvedSequence
-}
-
 
 func (ing *Ingester) reconcileAmbiguousCommitOutcome(
 	ctx context.Context,

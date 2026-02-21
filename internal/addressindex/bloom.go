@@ -68,15 +68,6 @@ func (bf *BloomFilter) MayContain(key string) bool {
 	return true
 }
 
-// Reset clears all bits in the filter.
-func (bf *BloomFilter) Reset() {
-	bf.mu.Lock()
-	for i := range bf.bits {
-		bf.bits[i] = 0
-	}
-	bf.mu.Unlock()
-}
-
 // hash produces two independent 64-bit hashes from FNV-128a.
 func (bf *BloomFilter) hash(key string) (uint64, uint64) {
 	h := fnv.New128a()

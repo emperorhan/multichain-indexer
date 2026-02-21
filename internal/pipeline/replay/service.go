@@ -108,7 +108,7 @@ func (s *Service) PurgeFromBlock(ctx context.Context, req PurgeRequest) (*PurgeR
 func (s *Service) dryRun(ctx context.Context, req PurgeRequest, start time.Time) (*PurgeResult, error) {
 	result := &PurgeResult{DryRun: true}
 
-	var eventCount, txCount, blockCount, cursorCount int64
+	var eventCount, txCount, blockCount int64
 
 	err := queryCount(ctx, s.db, `
 		SELECT COUNT(*) FROM balance_events
@@ -134,18 +134,9 @@ func (s *Service) dryRun(ctx context.Context, req PurgeRequest, start time.Time)
 		return nil, fmt.Errorf("dry run count blocks: %w", err)
 	}
 
-	err = queryCount(ctx, s.db, `
-		SELECT COUNT(*) FROM address_cursors
-		WHERE chain = $1 AND network = $2 AND cursor_sequence >= $3
-	`, req.Chain, req.Network, req.FromBlock, &cursorCount)
-	if err != nil {
-		return nil, fmt.Errorf("dry run count cursors: %w", err)
-	}
-
 	result.PurgedEvents = eventCount
 	result.PurgedTransactions = txCount
 	result.PurgedBlocks = blockCount
-	result.CursorsRewound = cursorCount
 	result.ReversedBalances = eventCount // approximate
 	result.NewWatermark = req.FromBlock - 1
 	if result.NewWatermark < 0 {
@@ -162,7 +153,6 @@ func (s *Service) dryRun(ctx context.Context, req PurgeRequest, start time.Time)
 		"events", eventCount,
 		"transactions", txCount,
 		"blocks", blockCount,
-		"cursors", cursorCount,
 	)
 
 	return result, nil
@@ -264,24 +254,7 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 		result.PurgedBlocks = blocksDeleted
 	}
 
-	// Step 6: Rewind cursors for affected addresses (skip for block-scan mode)
-	if !req.BlockScanMode {
-		rewindSequence := req.FromBlock - 1
-		if rewindSequence < 0 {
-			rewindSequence = 0
-		}
-		cursorRes, err := dbTx.ExecContext(ctx, `
-			UPDATE address_cursors
-			SET cursor_sequence = $4, items_processed = 0, updated_at = now()
-			WHERE chain = $1 AND network = $2 AND cursor_sequence >= $3
-		`, req.Chain, req.Network, req.FromBlock, rewindSequence)
-		if err != nil {
-			return nil, fmt.Errorf("rewind cursors: %w", err)
-		}
-		result.CursorsRewound, _ = cursorRes.RowsAffected()
-	}
-
-	// Step 7: Rewind watermark
+	// Step 6: Rewind watermark
 	newWatermark := req.FromBlock - 1
 	if newWatermark < 0 {
 		newWatermark = 0
