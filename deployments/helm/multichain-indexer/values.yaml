@@ -188,14 +188,12 @@ secret:
   create: true
   # -- Database connection string (REQUIRED: must be set for production)
   dbUrl: ""
-  # -- Redis connection string (REQUIRED: must be set for production)
-  redisUrl: ""
   # -- Metrics endpoint Basic Auth credentials (leave empty to disable)
   metricsAuthUser: ""
   metricsAuthPass: ""
 
 # -- Name of an existing Secret to use instead of the auto-created one.
-#    The Secret must contain keys: DB_URL, REDIS_URL (and optionally
+#    The Secret must contain keys: DB_URL (and optionally
 #    METRICS_AUTH_USER, METRICS_AUTH_PASS).
 existingSecret: ""
 

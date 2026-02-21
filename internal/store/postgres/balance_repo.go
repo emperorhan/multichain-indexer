@@ -38,53 +38,6 @@ func (r *BalanceRepo) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, req store
 	return nil
 }
 
-func (r *BalanceRepo) GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, error) {
-	var amount string
-	err := tx.QueryRowContext(ctx, `
-		SELECT amount::text
-		FROM balances
-		WHERE chain = $1 AND network = $2 AND address = $3 AND token_id = $4 AND balance_type = $5
-		FOR UPDATE
-	`, chain, network, address, tokenID, balanceType).Scan(&amount)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return "0", nil
-		}
-		return "", fmt.Errorf("get balance amount: %w", err)
-	}
-
-	trimmed := strings.TrimSpace(amount)
-	if trimmed == "" {
-		return "0", nil
-	}
-	return trimmed, nil
-}
-
-// GetAmountWithExistsTx returns the balance amount and whether the record exists.
-// If no row exists (never held), returns ("0", false, nil).
-// If row exists with amount, returns (amount, true, nil).
-func (r *BalanceRepo) GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, bool, error) {
-	var amount string
-	err := tx.QueryRowContext(ctx, `
-		SELECT amount::text
-		FROM balances
-		WHERE chain = $1 AND network = $2 AND address = $3 AND token_id = $4 AND balance_type = $5
-		FOR UPDATE
-	`, chain, network, address, tokenID, balanceType).Scan(&amount)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return "0", false, nil
-		}
-		return "", false, fmt.Errorf("get balance amount with exists: %w", err)
-	}
-
-	trimmed := strings.TrimSpace(amount)
-	if trimmed == "" {
-		return "0", true, nil
-	}
-	return trimmed, true, nil
-}
-
 func (r *BalanceRepo) GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error) {
 	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
 	defer cancel()

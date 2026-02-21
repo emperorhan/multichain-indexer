@@ -85,8 +85,8 @@ cmd_stop() {
 # ============================================================
 
 cmd_up() {
-    log "Starting infrastructure (PostgreSQL, Redis, Prometheus, Grafana)..."
-    docker compose -f "$COMPOSE_FILE" up -d postgres redis prometheus grafana
+    log "Starting infrastructure (PostgreSQL, Prometheus, Grafana)..."
+    docker compose -f "$COMPOSE_FILE" up -d postgres prometheus grafana
 
     log "Waiting for PostgreSQL to be healthy..."
     local retries=0
@@ -126,7 +126,6 @@ cmd_up() {
     log "Infrastructure ready!"
     echo ""
     echo -e "  ${BLUE}PostgreSQL${NC}  localhost:5433  (indexer/indexer)"
-    echo -e "  ${BLUE}Redis${NC}       localhost:6380"
     echo -e "  ${BLUE}Prometheus${NC}  http://localhost:9090"
     echo -e "  ${BLUE}Grafana${NC}     http://localhost:3000  (admin/admin)"
     echo -e "  ${BLUE}Sidecar${NC}     localhost:50051 (gRPC)"
@@ -421,13 +420,6 @@ cmd_status() {
         echo -e "  ${RED}●${NC} PostgreSQL    NOT RUNNING"
     fi
 
-    # Redis
-    if docker compose -f "$COMPOSE_FILE" exec -T redis redis-cli ping >/dev/null 2>&1; then
-        echo -e "  ${GREEN}●${NC} Redis         localhost:6380"
-    else
-        echo -e "  ${RED}●${NC} Redis         NOT RUNNING"
-    fi
-
     # Prometheus
     if curl -s http://localhost:9090/-/healthy >/dev/null 2>&1; then
         echo -e "  ${GREEN}●${NC} Prometheus    http://localhost:9090"
@@ -550,7 +542,7 @@ usage() {
     echo "Usage: $0 <command> [options]"
     echo ""
     echo "Commands:"
-    echo "  up                  Start infrastructure (PostgreSQL, Redis, Prometheus, Grafana, Sidecar)"
+    echo "  up                  Start infrastructure (PostgreSQL, Prometheus, Grafana, Sidecar)"
     echo "  run [-d] [chain]    Build and run indexer (-d = background/detach)"
     echo "                        all       — 3-chain simultaneous (default)"
     echo "                        solana    — Solana mainnet only (free RPC)"

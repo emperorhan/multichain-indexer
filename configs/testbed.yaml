@@ -8,7 +8,7 @@
 #   또는: ./scripts/testbed.sh run
 #
 # 사전 준비:
-#   1. docker compose -f deployments/docker-compose.yaml up -d postgres redis prometheus grafana
+#   1. docker compose -f deployments/docker-compose.yaml up -d postgres prometheus grafana
 #   2. docker compose -f deployments/docker-compose.yaml up migrate
 #   3. docker compose -f deployments/docker-compose.yaml up -d sidecar
 #
@@ -24,10 +24,6 @@ db:
   max_idle_conns: 5
   conn_max_lifetime_min: 30
   pool_stats_interval_ms: 5000
-
-# Redis
-redis:
-  url: "redis://localhost:6380"
 
 # Sidecar
 sidecar:

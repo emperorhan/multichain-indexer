@@ -363,29 +363,3 @@ func (r *BalanceEventRepo) execBulkChunk(ctx context.Context, tx *sql.Tx, chunk 
 	return insertedCount, nil
 }
 
-// RecalculateBalanceFieldsTx recalculates balance_before/balance_after for all
-// applied balance events from fromBlock onward, using a window function to chain
-// each event's balance_after to the next event's balance_before.
-func (r *BalanceEventRepo) RecalculateBalanceFieldsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) error {
-	_, err := tx.ExecContext(ctx, `
-		WITH ordered AS (
-			SELECT id, address, token_id,
-				LAG(balance_after) OVER (
-					PARTITION BY address, token_id
-					ORDER BY block_cursor, tx_index, event_path
-				) AS prev_balance_after
-			FROM balance_events
-			WHERE chain = $1 AND network = $2 AND block_cursor >= $3
-				AND balance_applied = true
-		)
-		UPDATE balance_events be
-		SET balance_before = COALESCE(o.prev_balance_after, '0'),
-			balance_after = COALESCE(o.prev_balance_after, '0')::numeric + be.delta::numeric
-		FROM ordered o
-		WHERE be.id = o.id AND o.prev_balance_after IS NOT NULL
-	`, chain, network, fromBlock)
-	if err != nil {
-		return fmt.Errorf("recalculate balance fields: %w", err)
-	}
-	return nil
-}

@@ -43,7 +43,6 @@ type BulkUpsertEventResult struct {
 type BalanceEventRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (UpsertResult, error)
 	BulkUpsertTx(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (BulkUpsertEventResult, error)
-	RecalculateBalanceFieldsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, fromBlock int64) error
 }
 
 // BalanceKey uniquely identifies a balance record.
@@ -88,8 +87,6 @@ type AdjustRequest struct {
 // BalanceRepository provides access to balance data.
 type BalanceRepository interface {
 	AdjustBalanceTx(ctx context.Context, tx *sql.Tx, req AdjustRequest) error
-	GetAmountTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (string, error)
-	GetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, address string, tokenID uuid.UUID, balanceType string) (amount string, exists bool, err error)
 	GetByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) ([]model.Balance, error)
 	BulkGetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, keys []BalanceKey) (map[BalanceKey]BalanceInfo, error)
 	BulkAdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, items []BulkAdjustItem) error
@@ -100,16 +97,12 @@ type TokenRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, t *model.Token) (uuid.UUID, error)
 	BulkUpsertTx(ctx context.Context, tx *sql.Tx, tokens []*model.Token) (map[string]uuid.UUID, error)
 	FindByID(ctx context.Context, id uuid.UUID) (*model.Token, error)
-	FindByContractAddress(ctx context.Context, chain model.Chain, network model.Network, contractAddress string) (*model.Token, error)
-	IsDeniedTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string) (bool, error)
 	BulkIsDeniedTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddresses []string) (map[string]bool, error)
 	DenyTokenTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string, reason string, source string, score int16, signals []string) error
-	AllowTokenTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string, reason string) error
 }
 
 // IndexerConfigRepository provides access to indexer configuration and watermark data.
 type IndexerConfigRepository interface {
-	Get(ctx context.Context, chain model.Chain, network model.Network) (*model.IndexerConfig, error)
 	Upsert(ctx context.Context, c *model.IndexerConfig) error
 	UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
 	RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error

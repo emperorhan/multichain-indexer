@@ -60,7 +60,7 @@ btc:
   rate_limit:
     rps: 5       # BTC_RPC_RATE_LIMIT
     burst: 10    # BTC_RPC_BURST
-  max_initial_lookback_blocks: 200  # BTC_MAX_INITIAL_LOOKBACK_BLOCKS
+  max_initial_lookback_blocks: 10   # BTC_MAX_INITIAL_LOOKBACK_BLOCKS
 
 # Chain: Polygon
 polygon:

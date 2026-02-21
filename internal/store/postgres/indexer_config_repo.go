@@ -16,26 +16,6 @@ func NewIndexerConfigRepo(db *DB) *IndexerConfigRepo {
 	return &IndexerConfigRepo{db: db}
 }
 
-func (r *IndexerConfigRepo) Get(ctx context.Context, chain model.Chain, network model.Network) (*model.IndexerConfig, error) {
-	var c model.IndexerConfig
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, chain, network, is_active, target_batch_size, indexing_interval_ms, chain_config, created_at, updated_at
-		FROM indexer_configs
-		WHERE chain = $1 AND network = $2
-	`, chain, network).Scan(
-		&c.ID, &c.Chain, &c.Network, &c.IsActive,
-		&c.TargetBatchSize, &c.IndexingIntervalMs, &c.ChainConfig,
-		&c.CreatedAt, &c.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get indexer config: %w", err)
-	}
-	return &c, nil
-}
-
 func (r *IndexerConfigRepo) Upsert(ctx context.Context, c *model.IndexerConfig) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO indexer_configs (chain, network, is_active, target_batch_size, indexing_interval_ms, chain_config)
