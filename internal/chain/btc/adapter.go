@@ -19,6 +19,7 @@ import (
 const (
 	maxInitialLookbackBlocks = 200
 	blockVerbosityTxObjects  = 2
+	blockVerbosityPrevout   = 3 // includes vin.prevout (Bitcoin Core 25.0+)
 	btcChainName            = "btc"
 	satoshiPerBTC            = 100_000_000
 )
@@ -309,9 +310,15 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 		if err != nil {
 			return nil, fmt.Errorf("scan get block hash %d: %w", blockNum, err)
 		}
-		block, err := a.client.GetBlock(ctx, blockHash, blockVerbosityTxObjects)
+		// Use verbosity=3 to get vin.prevout inline (Bitcoin Core 25.0+),
+		// falling back to verbosity=2 if the node doesn't support it.
+		block, err := a.client.GetBlock(ctx, blockHash, blockVerbosityPrevout)
 		if err != nil {
-			return nil, fmt.Errorf("scan get block %d: %w", blockNum, err)
+			// Fallback: older Bitcoin Core versions return an error for verbosity=3.
+			block, err = a.client.GetBlock(ctx, blockHash, blockVerbosityTxObjects)
+			if err != nil {
+				return nil, fmt.Errorf("scan get block %d: %w", blockNum, err)
+			}
 		}
 		if block == nil {
 			continue
@@ -422,20 +429,27 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 		return []json.RawMessage{}, nil
 	}
 
+	// Canonicalize tx IDs.
+	txids := make([]string, len(signatures))
+	for i, raw := range signatures {
+		txids[i] = canonicalTxID(raw)
+		if txids[i] == "" {
+			return nil, fmt.Errorf("empty tx id in signatures[%d]", i)
+		}
+	}
+
+	// Batch-fetch all transactions in a single RPC call.
+	txs, err := a.client.GetRawTransactionsVerbose(ctx, txids)
+	if err != nil {
+		return nil, fmt.Errorf("batch fetch transactions: %w", err)
+	}
+
 	results := make([]json.RawMessage, len(signatures))
 	prevoutCache := map[string]resolvedPrevout{}
 	blockCache := map[string]*rpc.Block{}
 
-	for i, rawHash := range signatures {
-		txid := canonicalTxID(rawHash)
-		if txid == "" {
-			return nil, fmt.Errorf("empty tx id in signatures[%d]", i)
-		}
-
-		tx, err := a.client.GetRawTransactionVerbose(ctx, txid)
-		if err != nil {
-			return nil, fmt.Errorf("fetch transaction %s: %w", txid, err)
-		}
+	for i, tx := range txs {
+		txid := txids[i]
 		if tx == nil {
 			return nil, fmt.Errorf("transaction %s not found", txid)
 		}
@@ -542,7 +556,7 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 		results[i] = payload
 	}
 
-	a.logger.Info("fetched transactions", "count", len(results))
+	a.logger.Info("fetched transactions (batch)", "count", len(results))
 	return results, nil
 }
 
@@ -644,6 +658,22 @@ func (a *Adapter) resolveInputPrevout(
 		return cached, cached.found, nil
 	}
 
+	// Fast path: use inline prevout from verbosity=3 (no RPC needed).
+	if vin.Prevout != nil {
+		valueSat, err := parseBTCValueToSatoshi(vin.Prevout.Value)
+		if err != nil {
+			valueSat = 0
+		}
+		resolved := resolvedPrevout{
+			found:    true,
+			address:  firstOutputAddress(vin.Prevout.ScriptPubKey),
+			valueSat: valueSat,
+		}
+		cache[cacheKey] = resolved
+		return resolved, true, nil
+	}
+
+	// Slow path: fetch the previous transaction via RPC (verbosity=2 fallback).
 	prevTx, err := a.client.GetRawTransactionVerbose(ctx, sourceTxID)
 	if err != nil {
 		return resolvedPrevout{}, false, err

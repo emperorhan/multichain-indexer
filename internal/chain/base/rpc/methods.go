@@ -192,6 +192,41 @@ func (c *Client) GetTransactionReceiptsByHash(ctx context.Context, hashes []stri
 	return results, nil
 }
 
+// GetBlocksByNumber fetches multiple blocks in a single JSON-RPC batch call.
+// Results are returned in the same order as the input block numbers.
+// Nil entries indicate blocks that were not found (null response).
+func (c *Client) GetBlocksByNumber(ctx context.Context, blockNumbers []int64, includeFullTx bool) ([]*Block, error) {
+	if len(blockNumbers) == 0 {
+		return []*Block{}, nil
+	}
+
+	requests := make([]Request, len(blockNumbers))
+	for i, num := range blockNumbers {
+		requests[i] = c.newRequest("eth_getBlockByNumber", []interface{}{formatHexInt64(num), includeFullTx})
+	}
+
+	responses, err := c.callBatch(ctx, requests)
+	if err != nil {
+		return nil, fmt.Errorf("eth_getBlockByNumber batch: %w", err)
+	}
+
+	results := make([]*Block, len(blockNumbers))
+	for i, resp := range responses {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("eth_getBlockByNumber(%d): %w", blockNumbers[i], resp.Error)
+		}
+		if string(resp.Result) == "null" {
+			continue
+		}
+		var block Block
+		if err := json.Unmarshal(resp.Result, &block); err != nil {
+			return nil, fmt.Errorf("unmarshal block %d: %w", blockNumbers[i], err)
+		}
+		results[i] = &block
+	}
+	return results, nil
+}
+
 func ParseHexInt64(value string) (int64, error) {
 	raw := strings.TrimSpace(value)
 	if raw == "" {

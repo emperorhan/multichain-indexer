@@ -67,6 +67,17 @@ func (f *fakeRPCClient) GetRawTransactionVerbose(_ context.Context, txid string)
 	return f.txsByID[canonicalTxID(txid)], nil
 }
 
+func (f *fakeRPCClient) GetRawTransactionsVerbose(_ context.Context, txids []string) ([]*rpc.Transaction, error) {
+	if f.txErr != nil {
+		return nil, f.txErr
+	}
+	results := make([]*rpc.Transaction, len(txids))
+	for i, txid := range txids {
+		results[i] = f.txsByID[canonicalTxID(txid)]
+	}
+	return results, nil
+}
+
 func newTestAdapter(client rpc.RPCClient) *Adapter {
 	return &Adapter{
 		client:                   client,

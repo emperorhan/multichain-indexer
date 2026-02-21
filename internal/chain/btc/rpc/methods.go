@@ -79,3 +79,37 @@ func (c *Client) GetRawTransactionVerbose(ctx context.Context, txid string) (*Tr
 	}
 	return &tx, nil
 }
+
+// GetRawTransactionsVerbose fetches multiple transactions in a single JSON-RPC
+// batch call. Results are returned in the same order as the input txids.
+func (c *Client) GetRawTransactionsVerbose(ctx context.Context, txids []string) ([]*Transaction, error) {
+	if len(txids) == 0 {
+		return []*Transaction{}, nil
+	}
+
+	requests := make([]Request, len(txids))
+	for i, txid := range txids {
+		requests[i] = c.newRequest("getrawtransaction", []interface{}{txid, true})
+	}
+
+	responses, err := c.callBatch(ctx, requests)
+	if err != nil {
+		return nil, fmt.Errorf("getrawtransaction batch: %w", err)
+	}
+
+	results := make([]*Transaction, len(txids))
+	for i, resp := range responses {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("getrawtransaction(%s): %w", txids[i], resp.Error)
+		}
+		if string(resp.Result) == "null" {
+			continue
+		}
+		var tx Transaction
+		if err := json.Unmarshal(resp.Result, &tx); err != nil {
+			return nil, fmt.Errorf("unmarshal transaction %s: %w", txids[i], err)
+		}
+		results[i] = &tx
+	}
+	return results, nil
+}

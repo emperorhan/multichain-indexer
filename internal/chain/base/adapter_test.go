@@ -44,6 +44,17 @@ func (f *fakeRPCClient) GetBlockByNumber(_ context.Context, blockNumber int64, _
 	return f.blocks[blockNumber], nil
 }
 
+func (f *fakeRPCClient) GetBlocksByNumber(_ context.Context, blockNumbers []int64, _ bool) ([]*rpc.Block, error) {
+	if f.blockErr != nil {
+		return nil, f.blockErr
+	}
+	results := make([]*rpc.Block, len(blockNumbers))
+	for i, num := range blockNumbers {
+		results[i] = f.blocks[num]
+	}
+	return results, nil
+}
+
 func (f *fakeRPCClient) GetTransactionByHash(_ context.Context, hash string) (*rpc.Transaction, error) {
 	if f.txErr != nil {
 		return nil, f.txErr

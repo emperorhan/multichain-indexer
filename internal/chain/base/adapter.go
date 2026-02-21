@@ -319,11 +319,18 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 
 	blockTimeByNum := make(map[int64]*time.Time)
 
-	for blockNum := startBlock; blockNum <= endBlock; blockNum++ {
-		block, err := a.client.GetBlockByNumber(ctx, blockNum, true)
-		if err != nil {
-			return nil, fmt.Errorf("scan block %d: %w", blockNum, err)
-		}
+	// Batch-fetch all blocks in a single RPC call.
+	blockNums := make([]int64, 0, endBlock-startBlock+1)
+	for n := startBlock; n <= endBlock; n++ {
+		blockNums = append(blockNums, n)
+	}
+	blocks, err := a.client.GetBlocksByNumber(ctx, blockNums, true)
+	if err != nil {
+		return nil, fmt.Errorf("batch scan blocks %d-%d: %w", startBlock, endBlock, err)
+	}
+
+	for idx, block := range blocks {
+		blockNum := blockNums[idx]
 		if block == nil {
 			continue
 		}

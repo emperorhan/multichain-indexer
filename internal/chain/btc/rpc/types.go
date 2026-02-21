@@ -52,9 +52,16 @@ type Transaction struct {
 }
 
 type Vin struct {
-	Txid     string `json:"txid"`
-	Vout     int    `json:"vout"`
-	Coinbase string `json:"coinbase"`
+	Txid     string  `json:"txid"`
+	Vout     int     `json:"vout"`
+	Coinbase string  `json:"coinbase"`
+	Prevout  *Prevout `json:"prevout,omitempty"` // populated when verbosity=3 (Bitcoin Core 25.0+)
+}
+
+// Prevout contains the previous output details, available with getblock verbosity=3.
+type Prevout struct {
+	Value        json.Number  `json:"value"`
+	ScriptPubKey ScriptPubKey `json:"scriptPubKey"`
 }
 
 type Vout struct {
