@@ -48,8 +48,10 @@ type DBConfig struct {
 	MaxOpenConns       int    `yaml:"max_open_conns"`
 	MaxIdleConns       int    `yaml:"max_idle_conns"`
 	ConnMaxLifetimeMin int    `yaml:"conn_max_lifetime_min"`
+	ConnMaxIdleTimeMin int    `yaml:"conn_max_idle_time_min"`
 	// TimeoutSec is used internally for YAML; SidecarConfig has similar pattern.
 	ConnMaxLifetime     time.Duration `yaml:"-"`
+	ConnMaxIdleTime     time.Duration `yaml:"-"`
 	PoolStatsIntervalMS int           `yaml:"pool_stats_interval_ms"`
 }
 
@@ -349,6 +351,7 @@ func applyInfraEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.DB.MaxOpenConns, "DB_MAX_OPEN_CONNS")
 	overrideInt(&cfg.DB.MaxIdleConns, "DB_MAX_IDLE_CONNS")
 	overrideInt(&cfg.DB.ConnMaxLifetimeMin, "DB_CONN_MAX_LIFETIME_MIN")
+	overrideInt(&cfg.DB.ConnMaxIdleTimeMin, "DB_CONN_MAX_IDLE_TIME_MIN")
 	overrideIntBounded(&cfg.DB.PoolStatsIntervalMS, "DB_POOL_STATS_INTERVAL_MS")
 
 	// Sidecar
@@ -544,6 +547,7 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.DB.MaxOpenConns, 50)
 	setDefault(&cfg.DB.MaxIdleConns, 10)
 	setDefault(&cfg.DB.ConnMaxLifetimeMin, 30)
+	setDefault(&cfg.DB.ConnMaxIdleTimeMin, 2)
 	setDefault(&cfg.DB.PoolStatsIntervalMS, dbPoolStatsIntervalDefaultMS)
 
 	// Solana
@@ -608,6 +612,8 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.Pipeline.BTCFinalityConfirmations, 6)
 	setDefault(&cfg.Pipeline.FetchWorkers, 2)
 	setDefault(&cfg.Pipeline.NormalizerWorkers, 2)
+	clampWorkers(&cfg.Pipeline.FetchWorkers, "FetchWorkers", 1, 100)
+	clampWorkers(&cfg.Pipeline.NormalizerWorkers, "NormalizerWorkers", 1, 100)
 	setDefault(&cfg.Pipeline.BatchSize, 100)
 	setDefault(&cfg.Pipeline.IndexingIntervalMs, 5000)
 	setDefault(&cfg.Pipeline.ChannelBufferSize, 10)
@@ -714,6 +720,7 @@ func applyDefaults(cfg *Config) {
 // computeDerived calculates derived Duration fields from integer config values.
 func computeDerived(cfg *Config) {
 	cfg.DB.ConnMaxLifetime = time.Duration(cfg.DB.ConnMaxLifetimeMin) * time.Minute
+	cfg.DB.ConnMaxIdleTime = time.Duration(cfg.DB.ConnMaxIdleTimeMin) * time.Minute
 	cfg.Sidecar.Timeout = time.Duration(cfg.Sidecar.TimeoutSec) * time.Second
 }
 
@@ -1146,6 +1153,18 @@ func normalizeCSVValues(values []string) []string {
 		normalized = append(normalized, candidate)
 	}
 	return normalized
+}
+
+// clampWorkers ensures *target is within [min, max]. If out of bounds, it logs
+// a warning and clamps the value to the nearest bound.
+func clampWorkers(target *int, name string, min, max int) {
+	if *target < min {
+		slog.Warn("worker count below minimum, clamping", "field", name, "value", *target, "min", min)
+		*target = min
+	} else if *target > max {
+		slog.Warn("worker count above maximum, clamping", "field", name, "value", *target, "max", max)
+		*target = max
+	}
 }
 
 // Legacy helpers kept for backward compatibility with tests that call them directly.

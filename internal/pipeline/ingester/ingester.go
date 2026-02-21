@@ -400,8 +400,8 @@ func shouldAdvanceCommitCheckpoint(batch event.NormalizedBatch) bool {
 		return true
 	}
 
-	previousCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
-	newCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+	previousCursor := batch.PreviousCursorValue
+	newCursor := batch.NewCursorValue
 	if previousCursor == nil && newCursor == nil {
 		return false
 	}
@@ -424,10 +424,11 @@ type batchContext struct {
 	allEvents        []eventContext
 
 	// Phase 2 outputs
-	txIDMap      map[string]uuid.UUID
-	tokenIDMap   map[string]uuid.UUID
-	cachedDenied map[string]bool
-	balanceMap   map[store.BalanceKey]store.BalanceInfo
+	txIDMap        map[string]uuid.UUID
+	tokenIDMap     map[string]uuid.UUID
+	cachedDenied   map[string]bool
+	balanceMap     map[store.BalanceKey]store.BalanceInfo
+	deniedKeyPrefix string // "chain:network:" — computed once, reused across phases
 
 	// Phase 3 outputs
 	eventModels      []*model.BalanceEvent
@@ -688,10 +689,12 @@ func (ing *Ingester) prefetchBulkData(ctx context.Context, bc *batchContext) err
 	}
 
 	// Denied check (LRU cache first, then DB for misses)
+	deniedKeyPrefix := string(batch.Chain) + ":" + string(batch.Network) + ":"
+	bc.deniedKeyPrefix = deniedKeyPrefix
 	uncachedContracts := make([]string, 0)
 	bc.cachedDenied = make(map[string]bool)
 	for contract := range bc.contractsToCheck {
-		deniedKey := string(batch.Chain) + ":" + string(batch.Network) + ":" + contract
+		deniedKey := deniedKeyPrefix + contract
 		if denied, ok := ing.deniedCache.Get(deniedKey); ok {
 			bc.cachedDenied[contract] = denied
 			metrics.DeniedCacheHits.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()
@@ -709,7 +712,7 @@ func (ing *Ingester) prefetchBulkData(ctx context.Context, bc *batchContext) err
 		}
 		for _, contract := range uncachedContracts {
 			denied := dbDenied[contract]
-			deniedKey := string(batch.Chain) + ":" + string(batch.Network) + ":" + contract
+			deniedKey := deniedKeyPrefix + contract
 			ing.deniedCache.Put(deniedKey, denied)
 			bc.cachedDenied[contract] = denied
 		}
@@ -800,7 +803,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 				span.SetStatus(codes.Error, err.Error())
 				return fmt.Errorf("deny scam token %s: %w", ec.be.ContractAddress, err)
 			}
-			deniedKey := string(batch.Chain) + ":" + string(batch.Network) + ":" + ec.be.ContractAddress
+			deniedKey := bc.deniedKeyPrefix + ec.be.ContractAddress
 			ing.deniedCache.Put(deniedKey, true)
 			bc.cachedDenied[ec.be.ContractAddress] = true
 			metrics.IngesterScamTokensDetected.WithLabelValues(batch.Chain.String(), batch.Network.String()).Inc()

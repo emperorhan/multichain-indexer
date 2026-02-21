@@ -319,6 +319,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	resultBySignature := make(map[string]*sidecarv1.TransactionResult, len(resp.Results))
 	unexpectedResults := make(map[string]struct{})
 	unexpectedResultBySignature := make(map[string]*sidecarv1.TransactionResult, len(resp.Results))
+	resultSignatureKeys := make(map[*sidecarv1.TransactionResult]string, len(resp.Results))
 	for _, result := range resp.Results {
 		if result == nil {
 			continue
@@ -329,6 +330,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 			unexpectedResults["<empty>"] = struct{}{}
 			continue
 		}
+		resultSignatureKeys[result] = signatureKey
 		if _, ok := expectedSignatures[signatureKey]; !ok {
 			unexpectedResults[signatureKey] = struct{}{}
 			unexpectedResultBySignature[signatureKey] = reconcileDecodedResultCoverage(batch.Chain, unexpectedResultBySignature[signatureKey], result)
@@ -407,7 +409,11 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		if result == nil && len(canonicalSignatures) == 1 {
 			result = singleSignatureFallbackResult(unexpectedResultBySignature)
 			if result != nil {
-				delete(unexpectedResultBySignature, identity.CanonicalSignatureIdentity(batch.Chain, result.TxHash))
+				fallbackKey := resultSignatureKeys[result]
+				if fallbackKey == "" {
+					fallbackKey = identity.CanonicalSignatureIdentity(batch.Chain, result.TxHash)
+				}
+				delete(unexpectedResultBySignature, fallbackKey)
 				log.Warn("decode single-signature fallback applied",
 					"stage", decodeStage,
 					"address", batch.Address,
@@ -608,17 +614,19 @@ func resolveResultFinalityState(chainID model.Chain, result *sidecarv1.Transacti
 	return defaultFinalityState(chainID)
 }
 
+var finalityMetadataKeysMap = map[model.Chain][]string{
+	model.ChainSolana: {"commitment", "confirmation_status", "finality_state", "finality"},
+	model.ChainBTC:    {"finality_state", "finality", "confirmation_status", "commitment"},
+}
+
+var defaultFinalityKeys = []string{"finality_state", "finality", "confirmation_status", "commitment"}
+
 func finalityMetadataKeys(chainID model.Chain) []string {
-	if chainID == model.ChainSolana {
-		return []string{"commitment", "confirmation_status", "finality_state", "finality"}
+	if keys, ok := finalityMetadataKeysMap[chainID]; ok {
+		return keys
 	}
-	if chainID == model.ChainBTC {
-		return []string{"finality_state", "finality", "confirmation_status", "commitment"}
-	}
-	if identity.IsEVMChain(chainID) {
-		return []string{"finality_state", "finality", "confirmation_status", "commitment"}
-	}
-	return []string{"finality_state", "finality", "confirmation_status", "commitment"}
+	// EVM chains and any other chain share the default key ordering.
+	return defaultFinalityKeys
 }
 
 func normalizeFinalityStateOrDefault(chainID model.Chain, state string) string {
@@ -640,6 +648,14 @@ func defaultFinalityState(chainID model.Chain) string {
 }
 
 func canonicalizeFinalityState(state string) string {
+	// Fast path: check common canonical values first (no allocation)
+	switch state {
+	case "":
+		return ""
+	case "processed", "confirmed", "safe", "finalized":
+		return state
+	}
+	// Slow path: normalize then match
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case "":
 		return ""

@@ -120,7 +120,15 @@ type SlackAlerter struct {
 func NewSlackAlerter(webhookURL string) *SlackAlerter {
 	return &SlackAlerter{
 		webhookURL: webhookURL,
-		client:     &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 5,
+				MaxConnsPerHost:     10,
+				IdleConnTimeout:     30 * time.Second,
+			},
+		},
 	}
 }
 
@@ -181,8 +189,16 @@ type WebhookAlerter struct {
 // NewWebhookAlerter creates a generic webhook alerter.
 func NewWebhookAlerter(url string) *WebhookAlerter {
 	return &WebhookAlerter{
-		url:    url,
-		client: &http.Client{Timeout: 10 * time.Second},
+		url: url,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 5,
+				MaxConnsPerHost:     10,
+				IdleConnTimeout:     30 * time.Second,
+			},
+		},
 	}
 }
 

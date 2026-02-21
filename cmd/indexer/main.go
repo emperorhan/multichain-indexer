@@ -437,6 +437,7 @@ func initDatabase(cfg *config.Config, logger *slog.Logger) (*postgres.DB, error)
 		MaxOpenConns:    cfg.DB.MaxOpenConns,
 		MaxIdleConns:    cfg.DB.MaxIdleConns,
 		ConnMaxLifetime: cfg.DB.ConnMaxLifetime,
+		ConnMaxIdleTime: cfg.DB.ConnMaxIdleTime,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connect to database: %w", err)

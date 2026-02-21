@@ -219,11 +219,17 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startSlot, endSlot int64, watc
 					continue
 				}
 
+				// Check account keys first (cheap). Only extract token
+				// balance owners (expensive JSON parse) when account keys
+				// did not already produce a match.
 				accounts := extractAccountKeys(btx)
-				owners := extractTokenBalanceOwners(btx.Meta)
-				allAddrs := append(accounts, owners...)
+				matched := anyAddressMatches(accounts, watchedSet)
+				if !matched {
+					owners := extractTokenBalanceOwners(btx.Meta)
+					matched = anyAddressMatches(owners, watchedSet)
+				}
 
-				if anyAddressMatches(allAddrs, watchedSet) {
+				if matched {
 					sigs = append(sigs, chain.SignatureInfo{
 						Hash:     sig,
 						Sequence: s,
@@ -274,6 +280,8 @@ func extractSignature(btx rpc.BlockTransaction) string {
 }
 
 // extractAccountKeys parses account keys from a block transaction.
+// Uses single-pass parsing: checks the first byte of each raw JSON element
+// to determine whether it's a string or object, avoiding a failed unmarshal attempt.
 func extractAccountKeys(btx rpc.BlockTransaction) []string {
 	var parsed struct {
 		Message struct {
@@ -286,17 +294,26 @@ func extractAccountKeys(btx rpc.BlockTransaction) []string {
 
 	keys := make([]string, 0, len(parsed.Message.AccountKeys))
 	for _, raw := range parsed.Message.AccountKeys {
-		// jsonParsed format: either a string or {"pubkey":"...", "signer":..., "writable":...}
-		var str string
-		if err := json.Unmarshal(raw, &str); err == nil {
-			keys = append(keys, str)
+		if len(raw) == 0 {
 			continue
 		}
-		var obj struct {
-			Pubkey string `json:"pubkey"`
-		}
-		if err := json.Unmarshal(raw, &obj); err == nil && obj.Pubkey != "" {
-			keys = append(keys, obj.Pubkey)
+		// Fast path: check first byte to determine format
+		// jsonParsed format: either a string or {"pubkey":"...", "signer":..., "writable":...}
+		switch raw[0] {
+		case '"':
+			// String format — direct unmarshal
+			var str string
+			if err := json.Unmarshal(raw, &str); err == nil {
+				keys = append(keys, str)
+			}
+		case '{':
+			// Object format
+			var obj struct {
+				Pubkey string `json:"pubkey"`
+			}
+			if err := json.Unmarshal(raw, &obj); err == nil && obj.Pubkey != "" {
+				keys = append(keys, obj.Pubkey)
+			}
 		}
 	}
 	return keys

@@ -14,7 +14,6 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
-	"google.golang.org/protobuf/proto"
 )
 
 func canonicalizeBatchSignatures(chainID model.Chain, sigs []event.SignatureInfo) []event.SignatureInfo {
@@ -618,22 +617,40 @@ func cloneDecodedResult(result *sidecarv1.TransactionResult) *sidecarv1.Transact
 	if result == nil {
 		return nil
 	}
-	cloned, ok := proto.Clone(result).(*sidecarv1.TransactionResult)
-	if !ok {
-		return nil
+	cloned := *result // shallow copy
+
+	// Deep copy mutable pointer field
+	if result.Error != nil {
+		errCopy := *result.Error
+		cloned.Error = &errCopy
 	}
-	return cloned
+
+	// Deep copy mutable repeated fields
+	if len(result.BalanceEvents) > 0 {
+		cloned.BalanceEvents = make([]*sidecarv1.BalanceEventInfo, len(result.BalanceEvents))
+		for i, be := range result.BalanceEvents {
+			cloned.BalanceEvents[i] = cloneDecodedBalanceEvent(be)
+		}
+	}
+
+	return &cloned
 }
 
 func cloneDecodedBalanceEvent(be *sidecarv1.BalanceEventInfo) *sidecarv1.BalanceEventInfo {
 	if be == nil {
 		return nil
 	}
-	cloned, ok := proto.Clone(be).(*sidecarv1.BalanceEventInfo)
-	if !ok {
-		return nil
+	cloned := *be // shallow copy
+
+	// Deep copy the Metadata map (mutable)
+	if len(be.Metadata) > 0 {
+		cloned.Metadata = make(map[string]string, len(be.Metadata))
+		for k, v := range be.Metadata {
+			cloned.Metadata[k] = v
+		}
 	}
-	return cloned
+
+	return &cloned
 }
 
 type decodedResultScore struct {

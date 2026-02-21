@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -43,6 +44,7 @@ type Config struct {
 	MaxOpenConns       int
 	MaxIdleConns       int
 	ConnMaxLifetime    time.Duration
+	ConnMaxIdleTime    time.Duration
 	StatementTimeoutMS int
 }
 
@@ -65,6 +67,11 @@ func New(cfg Config) (*DB, error) {
 	db.SetMaxOpenConns(cfg.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.MaxIdleConns)
 	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+	if cfg.ConnMaxIdleTime > 0 {
+		db.SetConnMaxIdleTime(cfg.ConnMaxIdleTime)
+	} else {
+		db.SetConnMaxIdleTime(2 * time.Minute)
+	}
 
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ping db: %w", err)
@@ -124,7 +131,17 @@ func (db *DB) RunMigrations(dir string) error {
 			return fmt.Errorf("read migration %s: %w", version, err)
 		}
 
+		slog.Info("migration starting", "version", version)
+		migrationStart := time.Now()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+
+		// Set lock_timeout to prevent migrations from waiting indefinitely on locks.
+		if _, err := db.ExecContext(ctx, "SET lock_timeout = '10s'"); err != nil {
+			cancel()
+			return fmt.Errorf("set lock_timeout for migration %s: %w", version, err)
+		}
+
 		if _, err := db.ExecContext(ctx, string(content)); err != nil {
 			cancel()
 			return fmt.Errorf("exec migration %s: %w", version, err)
@@ -136,6 +153,8 @@ func (db *DB) RunMigrations(dir string) error {
 		); err != nil {
 			return fmt.Errorf("record migration %s: %w", version, err)
 		}
+
+		slog.Info("migration completed", "version", version, "elapsed", time.Since(migrationStart).String())
 	}
 	return nil
 }
