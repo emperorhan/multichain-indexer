@@ -6,7 +6,7 @@ Multi-chain custody indexer: Go pipeline + Node.js sidecar (gRPC decoder).
 
 - **Go pipeline**: Coordinator → Fetcher → Normalizer → Ingester
 - **Node.js sidecar**: gRPC decoder with plugin-based balance event detection
-- **Storage**: PostgreSQL (balance_events + JSONB), Redis (future process separation)
+- **Storage**: PostgreSQL (balance_events + JSONB)
 - **MVP target**: Solana devnet (SOL + SPL Token)
 
 ## Quick Start
@@ -37,7 +37,7 @@ make run
 - `internal/pipeline/health.go` — per-chain health monitoring (HEALTHY/UNHEALTHY/INACTIVE)
 - `internal/alert/` — alert system (Slack, Webhook) with per-key cooldown
 - `internal/reconciliation/` — balance reconciliation (on-chain vs DB)
-- `internal/store/` — repository implementations (PostgreSQL, Redis)
+- `internal/store/` — repository implementations (PostgreSQL)
 - `proto/` — protobuf definitions
 - `sidecar/` — Node.js gRPC decoder service
 - `sidecar/src/decoder/solana/plugin/` — plugin system (EventPlugin interface, PluginDispatcher, builtin plugins)
@@ -81,7 +81,6 @@ See `configs/config.example.yaml` for the full reference with all fields, defaul
 | `CONFIG_FILE` | Path to YAML config file | `config.yaml` |
 | `SOLANA_RPC_URL` | Solana RPC endpoint | `https://api.devnet.solana.com` |
 | `DB_URL` | PostgreSQL connection string | `postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable` |
-| `REDIS_URL` | Redis connection string | `redis://localhost:6380` |
 | `SIDECAR_ADDR` | Sidecar gRPC address | `localhost:50051` |
 | `WATCHED_ADDRESSES` | Comma-separated Solana addresses | — |
 | `LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |

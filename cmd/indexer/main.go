@@ -34,7 +34,6 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/reconciliation"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
-	redispkg "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	"github.com/emperorhan/multichain-indexer/internal/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -42,12 +41,6 @@ import (
 )
 
 const deterministicInterleaveMaxSkew = 250 * time.Millisecond
-const defaultStreamSessionID = "default"
-
-var (
-	newStreamFactory         = func(redisURL string) (redispkg.MessageTransport, error) { return redispkg.NewStream(redisURL) }
-	newInMemoryStreamFactory = func() redispkg.MessageTransport { return redispkg.NewInMemoryStream() }
-)
 
 type runtimeTarget struct {
 	chain   model.Chain
@@ -93,44 +86,6 @@ func collectDBPoolStats(db dbStatsProvider, targets []runtimeTarget, gauges dbPo
 	}
 
 	return nil
-}
-
-func resolveStreamBackend(cfg *config.Config, streamSessionID string, logger *slog.Logger) (redispkg.MessageTransport, bool, error) {
-	if !cfg.Pipeline.StreamTransportEnabled {
-		return newInMemoryStreamFactory(), false, nil
-	}
-
-	redisURL := strings.TrimSpace(cfg.Redis.URL)
-	if redisURL == "" {
-		return nil, true, fmt.Errorf("initialize redis stream transport: redis URL is empty")
-	}
-
-	redisStream, err := newStreamFactory(redisURL)
-	if err != nil {
-		return nil, true, fmt.Errorf("initialize redis stream transport: %w", err)
-	}
-	if redisStream == nil {
-		return nil, true, fmt.Errorf("initialize redis stream transport: backend is nil")
-	}
-
-	logger.Info("redis stream transport enabled",
-		"redis_url",
-		maskCredentials(cfg.Redis.URL),
-		"stream_namespace",
-		cfg.Pipeline.StreamNamespace,
-		"stream_session_id",
-		streamSessionID,
-	)
-
-	return redisStream, true, nil
-}
-
-func resolveStreamSessionID(rawSessionID string) string {
-	sessionID := strings.TrimSpace(rawSessionID)
-	if sessionID == "" {
-		return defaultStreamSessionID
-	}
-	return sessionID
 }
 
 func logSecurityWarnings(cfg *config.Config, logger *slog.Logger) error {
@@ -507,9 +462,6 @@ func buildPipelineConfig(
 	cfg *config.Config,
 	target runtimeTarget,
 	alerter alert.Alerter,
-	streamTransportEnabled bool,
-	streamBackend redispkg.MessageTransport,
-	streamSessionID string,
 	commitInterleaver ingester.CommitInterleaver,
 ) pipeline.Config {
 	return pipeline.Config{
@@ -549,10 +501,6 @@ func buildPipelineConfig(
 		SidecarTLSCert:         cfg.Sidecar.TLSCert,
 		SidecarTLSKey:          cfg.Sidecar.TLSKey,
 		SidecarTLSCA:           cfg.Sidecar.TLSCA,
-		StreamTransportEnabled: streamTransportEnabled,
-		StreamBackend:          streamBackend,
-		StreamNamespace:        cfg.Pipeline.StreamNamespace,
-		StreamSessionID:        streamSessionID,
 		CommitInterleaver:      commitInterleaver,
 		ReorgDetectorInterval:  time.Duration(cfg.Pipeline.ReorgDetectorIntervalMs) * time.Millisecond,
 		FinalizerInterval:      time.Duration(cfg.Pipeline.FinalizerIntervalMs) * time.Millisecond,
@@ -633,15 +581,6 @@ func run() error {
 	}
 	defer db.Close()
 
-	streamSessionID := resolveStreamSessionID(cfg.Pipeline.StreamSessionID)
-	streamBackend, streamTransportEnabled, err := resolveStreamBackend(cfg, streamSessionID, logger)
-	if err != nil {
-		return fmt.Errorf("initialize stream transport: %w", err)
-	}
-	if streamBackend != nil {
-		defer streamBackend.Close()
-	}
-
 	repos := initRepositories(db)
 
 	allTargets := buildRuntimeTargets(cfg, logger)
@@ -672,7 +611,7 @@ func run() error {
 	pipelines := make([]*pipeline.Pipeline, 0, len(targets))
 	commitInterleaver := ingester.NewDeterministicMandatoryChainInterleaver(deterministicInterleaveMaxSkew)
 	for _, target := range targets {
-		pipelineCfg := buildPipelineConfig(cfg, target, alerter, streamTransportEnabled, streamBackend, streamSessionID, commitInterleaver)
+		pipelineCfg := buildPipelineConfig(cfg, target, alerter, commitInterleaver)
 		p := pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL))
 		p.SetReplayService(replayService)
 		registry.Register(p)

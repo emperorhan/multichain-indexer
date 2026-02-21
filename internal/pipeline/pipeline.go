@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,7 +26,6 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/reorgdetector"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
 	"github.com/emperorhan/multichain-indexer/internal/store"
-	redisstream "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -48,10 +45,6 @@ type Config struct {
 	SidecarTLSCert         string
 	SidecarTLSKey          string
 	SidecarTLSCA           string
-	StreamTransportEnabled bool
-	StreamBackend          redisstream.MessageTransport
-	StreamNamespace        string
-	StreamSessionID        string
 	CommitInterleaver      ingester.CommitInterleaver
 	ReorgDetectorInterval  time.Duration
 	FinalizerInterval      time.Duration
@@ -66,8 +59,6 @@ type Config struct {
 	MaxInitialLookbackBlocks   int
 	Alerter                   alert.Alerter
 }
-
-const streamBoundaryFetchToNormal = "fetcher-normalizer"
 
 type CoordinatorAutoTuneConfig struct {
 	Enabled bool
@@ -122,11 +113,6 @@ type Pipeline struct {
 	// stateFlag: 0=inactive, 1=active, -1=deactivation requested
 	stateFlag  atomic.Int32
 	deactiveCh chan struct{} // signaled when deactivated
-}
-
-type streamCheckpointManager interface {
-	LoadStreamCheckpoint(ctx context.Context, checkpointKey string) (string, error)
-	PersistStreamCheckpoint(ctx context.Context, checkpointKey, streamID string) error
 }
 
 type Repos struct {
@@ -347,22 +333,12 @@ func (p *Pipeline) Run(ctx context.Context) error {
 // created fresh on each invocation so a restart starts clean.
 func (p *Pipeline) runPipeline(ctx context.Context) error {
 	bufSize := p.cfg.ChannelBufferSize
-	if p.cfg.StreamTransportEnabled && p.cfg.StreamBackend == nil {
-		return fmt.Errorf("stream transport enabled but stream backend is not configured")
-	}
 
 	// Channels between stages
 	jobCh := make(chan event.FetchJob, bufSize)
-	rawBatchInputCh := make(chan event.RawBatch, bufSize)
-	rawBatchOutputCh := rawBatchInputCh
+	rawBatchCh := make(chan event.RawBatch, bufSize)
 	normalizedCh := make(chan event.NormalizedBatch, bufSize)
 	autoTuneSignalCollector := autotune.NewRuntimeSignalRegistry()
-
-	if p.cfg.StreamTransportEnabled {
-		streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
-		rawBatchOutputCh = make(chan event.RawBatch, bufSize)
-		p.logger.Info("pipeline stream transport active", "boundary", streamBoundaryFetchToNormal, "stream", streamName, "chain", p.cfg.Chain, "network", p.cfg.Network)
-	}
 
 	// Create stages
 	// Detect block-scan capable adapter (EVM/BTC)
@@ -419,7 +395,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		fetchOpts = append(fetchOpts, fetcher.WithBoundaryOverlapLookahead(p.cfg.Fetcher.BoundaryOverlapLookahead))
 	}
 	fetch := fetcher.New(
-		p.adapter, jobCh, rawBatchOutputCh,
+		p.adapter, jobCh, rawBatchCh,
 		p.cfg.FetchWorkers, p.logger,
 		fetchOpts...,
 	)
@@ -437,7 +413,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 	}
 	norm := normalizer.New(
 		p.cfg.SidecarAddr, p.cfg.SidecarTimeout,
-		rawBatchInputCh, normalizedCh,
+		rawBatchCh, normalizedCh,
 		p.cfg.NormalizerWorkers, p.logger,
 		normOpts...,
 	)
@@ -520,21 +496,11 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 				return nil
 			case <-ticker.C:
 				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "fetch_job").Set(float64(len(jobCh)))
-				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "raw_batch").Set(float64(len(rawBatchInputCh)))
+				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "raw_batch").Set(float64(len(rawBatchCh)))
 				metrics.PipelineChannelDepth.WithLabelValues(chainStr, networkStr, "normalized").Set(float64(len(normalizedCh)))
 			}
 		}
 	})
-
-	if p.cfg.StreamTransportEnabled {
-		streamName := p.streamBoundaryName(streamBoundaryFetchToNormal)
-		g.Go(func() error {
-			return p.runRawBatchStreamProducer(gCtx, rawBatchOutputCh, p.cfg.StreamBackend, streamName)
-		})
-		g.Go(func() error {
-			return p.runRawBatchStreamConsumer(gCtx, rawBatchInputCh, p.cfg.StreamBackend, streamName)
-		})
-	}
 
 	// Start config watcher if runtime config repository is available.
 	if p.repos.RuntimeConfig != nil {
@@ -602,159 +568,4 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 	}
 
 	return g.Wait()
-}
-
-func (p *Pipeline) streamBoundaryName(boundary string) string {
-	return fmt.Sprintf("%s:chain=%s:network=%s:boundary=%s", p.streamBoundaryNamespace(), p.cfg.Chain, p.cfg.Network, boundary)
-}
-
-func (p *Pipeline) streamBoundaryNamespace() string {
-	namespace := strings.TrimSpace(p.cfg.StreamNamespace)
-	if namespace == "" {
-		namespace = "pipeline"
-	}
-	return namespace
-}
-
-func (p *Pipeline) streamBoundarySessionID() string {
-	sessionID := strings.TrimSpace(p.cfg.StreamSessionID)
-	if sessionID == "" {
-		sessionID = "default"
-	}
-	return sessionID
-}
-
-func (p *Pipeline) streamBoundaryCheckpointKey(boundary string) string {
-	return fmt.Sprintf("stream-checkpoint:namespace=%s:chain=%s:network=%s:session=%s:boundary=%s", p.streamBoundaryNamespace(), p.cfg.Chain, p.cfg.Network, p.streamBoundarySessionID(), boundary)
-}
-
-func (p *Pipeline) streamBoundaryLegacyCheckpointKey(boundary string) string {
-	return fmt.Sprintf("stream-checkpoint:chain=%s:network=%s:boundary=%s", p.cfg.Chain, p.cfg.Network, boundary)
-}
-
-func (p *Pipeline) runRawBatchStreamProducer(ctx context.Context, in <-chan event.RawBatch, stream redisstream.MessageTransport, streamName string) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case batch, ok := <-in:
-			if !ok {
-				return nil
-			}
-			if _, err := stream.PublishJSON(ctx, streamName, batch); err != nil {
-				return fmt.Errorf("stream producer failed: %w", err)
-			}
-		}
-	}
-}
-
-func (p *Pipeline) runRawBatchStreamConsumer(ctx context.Context, out chan<- event.RawBatch, stream redisstream.MessageTransport, streamName string) error {
-	lastID, err := p.loadStreamCheckpoint(ctx, stream, streamBoundaryFetchToNormal)
-	if err != nil {
-		return err
-	}
-
-	for {
-		var batch event.RawBatch
-		nextID, err := stream.ReadJSON(ctx, streamName, lastID, &batch)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return err
-			}
-			return fmt.Errorf("stream consumer failed: %w", err)
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case out <- batch:
-			lastID = nextID
-			if err := p.storeStreamCheckpoint(ctx, stream, streamBoundaryFetchToNormal, nextID); err != nil {
-				return err
-			}
-		}
-	}
-}
-
-func (p *Pipeline) loadStreamCheckpoint(ctx context.Context, stream redisstream.MessageTransport, boundary string) (string, error) {
-	checkpointManager, ok := stream.(streamCheckpointManager)
-	if !ok {
-		return "0", nil
-	}
-
-	checkpointKey := p.streamBoundaryCheckpointKey(boundary)
-	legacyCheckpointKey := p.streamBoundaryLegacyCheckpointKey(boundary)
-
-	raw, err := checkpointManager.LoadStreamCheckpoint(ctx, checkpointKey)
-	if err != nil {
-		p.logger.Warn("stream checkpoint load failed; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", checkpointKey, "error", err)
-	} else if trimmed := strings.TrimSpace(raw); trimmed != "" && trimmed != "0" {
-		if streamErr := validateStreamOffset(trimmed); streamErr == nil {
-			return trimmed, nil
-		} else {
-			p.logger.Warn("stream checkpoint invalid; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", checkpointKey, "checkpoint", trimmed, "error", streamErr)
-		}
-	}
-
-	legacyRaw, err := checkpointManager.LoadStreamCheckpoint(ctx, legacyCheckpointKey)
-	if err != nil {
-		p.logger.Warn("legacy stream checkpoint load failed; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", legacyCheckpointKey, "error", err)
-		return "0", nil
-	}
-	trimmedLegacy := strings.TrimSpace(legacyRaw)
-	if trimmedLegacy != "" && trimmedLegacy != "0" {
-		if streamErr := validateStreamOffset(trimmedLegacy); streamErr == nil {
-			if err := checkpointManager.PersistStreamCheckpoint(ctx, checkpointKey, trimmedLegacy); err != nil {
-				p.logger.Warn("legacy stream checkpoint migration failed", "boundary", boundary, "from_key", legacyCheckpointKey, "to_key", checkpointKey, "error", err)
-			}
-			return trimmedLegacy, nil
-		} else {
-			p.logger.Warn("legacy stream checkpoint invalid; bootstrapping from stream start", "boundary", boundary, "checkpoint_key", legacyCheckpointKey, "checkpoint", trimmedLegacy, "error", streamErr)
-		}
-	}
-
-	return "0", nil
-}
-
-func (p *Pipeline) storeStreamCheckpoint(ctx context.Context, stream redisstream.MessageTransport, boundary string, streamID string) error {
-	checkpointManager, ok := stream.(streamCheckpointManager)
-	if !ok {
-		return nil
-	}
-
-	checkpointKey := p.streamBoundaryCheckpointKey(boundary)
-	if err := checkpointManager.PersistStreamCheckpoint(ctx, checkpointKey, streamID); err != nil {
-		return fmt.Errorf("stream checkpoint persist failed: %w", err)
-	}
-
-	return nil
-}
-
-func validateStreamOffset(raw string) error {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" || trimmed == "0" {
-		return nil
-	}
-
-	parts := strings.SplitN(trimmed, "-", 2)
-	if len(parts) == 2 {
-		if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-			return fmt.Errorf("invalid stream offset %q: missing components", raw)
-		}
-		msg, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
-		if err != nil || msg < 0 {
-			return fmt.Errorf("invalid stream offset %q: malformed id", raw)
-		}
-		seq, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-		if err != nil || seq < 0 {
-			return fmt.Errorf("invalid stream offset %q: malformed id", raw)
-		}
-		return nil
-	}
-
-	msg, err := strconv.ParseInt(trimmed, 10, 64)
-	if err != nil || msg < 0 {
-		return fmt.Errorf("invalid stream offset %q: malformed id", raw)
-	}
-	return nil
 }

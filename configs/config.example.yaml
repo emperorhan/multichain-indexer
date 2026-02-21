@@ -12,10 +12,6 @@ db:
   conn_max_lifetime_min: 30      # DB_CONN_MAX_LIFETIME_MIN
   pool_stats_interval_ms: 5000   # DB_POOL_STATS_INTERVAL_MS (range: 100-3600000)
 
-# Redis
-redis:
-  url: "redis://localhost:6380"  # REDIS_URL
-
 # Sidecar (gRPC decoder)
 sidecar:
   addr: "localhost:50051"  # SIDECAR_ADDR (required)
@@ -142,11 +138,6 @@ pipeline:
   coordinator_autotune_policy_manifest_digest: "manifest-v1"   # COORDINATOR_AUTOTUNE_POLICY_MANIFEST_DIGEST
   coordinator_autotune_policy_manifest_refresh_epoch: 0        # COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH
   coordinator_autotune_policy_activation_hold_ticks: 1         # COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS
-
-  # Stream transport
-  stream_transport_enabled: false    # PIPELINE_STREAM_TRANSPORT_ENABLED
-  stream_namespace: "pipeline"       # PIPELINE_STREAM_NAMESPACE
-  stream_session_id: ""              # PIPELINE_STREAM_SESSION_ID
 
   # Address index (3-tier: bloom filter + LRU cache + DB)
   address_index:

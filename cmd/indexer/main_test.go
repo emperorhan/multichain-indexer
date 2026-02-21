@@ -15,7 +15,6 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
-	redispkg "github.com/emperorhan/multichain-indexer/internal/store/redis"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -35,201 +34,6 @@ func (a *staticChainAdapter) FetchNewSignatures(context.Context, string, *string
 
 func (a *staticChainAdapter) FetchTransactions(context.Context, []string) ([]json.RawMessage, error) {
 	return nil, nil
-}
-
-func TestResolveStreamBackend_FailsWhenStreamEnabledAndRedisUnavailable(t *testing.T) {
-	cfg := &config.Config{
-		Pipeline: config.PipelineConfig{
-			StreamTransportEnabled: true,
-		},
-		Redis: config.RedisConfig{
-			URL: "redis://invalid:6379",
-		},
-	}
-
-	inMemoryCalled := false
-	streamFactoryCalled := false
-	originalNewStream := newStreamFactory
-	originalNewInMemoryStream := newInMemoryStreamFactory
-	newStreamFactory = func(_ string) (redispkg.MessageTransport, error) {
-		streamFactoryCalled = true
-		return nil, errors.New("redis unavailable")
-	}
-	newInMemoryStreamFactory = func() redispkg.MessageTransport {
-		inMemoryCalled = true
-		return redispkg.NewInMemoryStream()
-	}
-	defer func() { newStreamFactory = originalNewStream }()
-	defer func() { newInMemoryStreamFactory = originalNewInMemoryStream }()
-
-	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "memory-fallback", slog.Default())
-	require.Error(t, err)
-	assert.True(t, streamEnabled)
-	assert.True(t, streamFactoryCalled)
-	assert.False(t, inMemoryCalled)
-	assert.Nil(t, streamBackend)
-	assert.Contains(t, err.Error(), "initialize redis stream transport")
-}
-
-func TestResolveStreamBackend_FailsWhenStreamEnabledAndRedisURLEmpty(t *testing.T) {
-	cfg := &config.Config{
-		Pipeline: config.PipelineConfig{
-			StreamTransportEnabled: true,
-		},
-		Redis: config.RedisConfig{
-			URL: "   ",
-		},
-	}
-
-	streamFactoryCalled := false
-	inMemoryCalled := false
-	originalNewStream := newStreamFactory
-	originalNewInMemoryStream := newInMemoryStreamFactory
-	newStreamFactory = func(_ string) (redispkg.MessageTransport, error) {
-		streamFactoryCalled = true
-		return nil, errors.New("should not be called when redis URL is empty")
-	}
-	newInMemoryStreamFactory = func() redispkg.MessageTransport {
-		inMemoryCalled = true
-		return redispkg.NewInMemoryStream()
-	}
-	defer func() { newStreamFactory = originalNewStream }()
-	defer func() { newInMemoryStreamFactory = originalNewInMemoryStream }()
-
-	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "memory-fallback", slog.Default())
-	require.Error(t, err)
-	assert.True(t, streamEnabled)
-	assert.False(t, streamFactoryCalled)
-	assert.False(t, inMemoryCalled)
-	assert.Nil(t, streamBackend)
-	assert.Contains(t, err.Error(), "initialize redis stream transport: redis URL is empty")
-}
-
-func TestResolveStreamBackend_UsesInMemoryTransportWhenStreamDisabled(t *testing.T) {
-	cfg := &config.Config{
-		Pipeline: config.PipelineConfig{
-			StreamTransportEnabled: false,
-		},
-	}
-
-	streamFactoryCalled := false
-	originalNewInMemoryStream := newInMemoryStreamFactory
-	originalNewStream := newStreamFactory
-	newInMemoryStreamFactory = func() redispkg.MessageTransport {
-		return redispkg.NewInMemoryStream()
-	}
-	newStreamFactory = func(_ string) (redispkg.MessageTransport, error) {
-		streamFactoryCalled = true
-		return redispkg.NewInMemoryStream(), nil
-	}
-	defer func() { newInMemoryStreamFactory = originalNewInMemoryStream }()
-	defer func() { newStreamFactory = originalNewStream }()
-
-	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "memory-fallback", slog.Default())
-	require.NoError(t, err)
-	require.NotNil(t, streamBackend)
-	assert.False(t, streamEnabled)
-	assert.False(t, streamFactoryCalled)
-	assert.NoError(t, streamBackend.Close())
-}
-
-func TestResolveStreamBackend_UsesRedisStreamWhenEnabled(t *testing.T) {
-	cfg := &config.Config{
-		Pipeline: config.PipelineConfig{
-			StreamTransportEnabled: true,
-		},
-		Redis: config.RedisConfig{
-			URL: "redis://127.0.0.1:6379/0",
-		},
-	}
-
-	inMemoryCalled := false
-	originalNewStream := newStreamFactory
-	originalNewInMemoryStream := newInMemoryStreamFactory
-	expectedBackend := redispkg.NewInMemoryStream()
-	streamFactoryCalled := false
-
-	newStreamFactory = func(_ string) (redispkg.MessageTransport, error) {
-		streamFactoryCalled = true
-		return expectedBackend, nil
-	}
-	newInMemoryStreamFactory = func() redispkg.MessageTransport {
-		inMemoryCalled = true
-		return redispkg.NewInMemoryStream()
-	}
-	defer func() {
-		newStreamFactory = originalNewStream
-		newInMemoryStreamFactory = originalNewInMemoryStream
-	}()
-
-	streamBackend, streamEnabled, err := resolveStreamBackend(cfg, "stream-session", slog.Default())
-	require.NoError(t, err)
-	assert.True(t, streamEnabled)
-	assert.True(t, streamFactoryCalled)
-	assert.False(t, inMemoryCalled)
-	assert.Same(t, expectedBackend, streamBackend)
-	assert.NoError(t, streamBackend.Close())
-}
-
-func TestResolveStreamSessionID_DefaultsToDefault(t *testing.T) {
-	assert.Equal(t, "default", resolveStreamSessionID(""))
-	assert.Equal(t, "default", resolveStreamSessionID("   "))
-	assert.Equal(t, "explicit-session", resolveStreamSessionID(" explicit-session "))
-}
-
-func TestResolveStreamSessionID_StartupRestart_StableDefaultCheckpointKeysForMandatoryChains(t *testing.T) {
-	sessionA := resolveStreamSessionID("")
-	sessionB := resolveStreamSessionID("   ")
-	assert.Equal(t, "default", sessionA)
-	assert.Equal(t, sessionA, sessionB)
-
-	testCases := []struct {
-		name     string
-		chain    model.Chain
-		network  model.Network
-		expected string
-	}{
-		{
-			name:     "solana-devnet",
-			chain:    model.ChainSolana,
-			network:  model.NetworkDevnet,
-			expected: "stream-checkpoint:chain=solana:network=devnet:session=default:boundary=fetcher-normalizer",
-		},
-		{
-			name:     "base-sepolia",
-			chain:    model.ChainBase,
-			network:  model.NetworkSepolia,
-			expected: "stream-checkpoint:chain=base:network=sepolia:session=default:boundary=fetcher-normalizer",
-		},
-		{
-			name:     "btc-testnet",
-			chain:    model.ChainBTC,
-			network:  model.NetworkTestnet,
-			expected: "stream-checkpoint:chain=btc:network=testnet:session=default:boundary=fetcher-normalizer",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			firstKey := startupBoundaryCheckpointKey(tc.chain, tc.network, sessionA)
-			secondKey := startupBoundaryCheckpointKey(tc.chain, tc.network, sessionB)
-
-			assert.Equal(t, tc.expected, firstKey)
-			assert.Equal(t, tc.expected, secondKey)
-			assert.Equal(t, firstKey, secondKey)
-		})
-	}
-}
-
-func startupBoundaryCheckpointKey(chain model.Chain, network model.Network, sessionID string) string {
-	normalizedSessionID := resolveStreamSessionID(sessionID)
-	return fmt.Sprintf(
-		"stream-checkpoint:chain=%s:network=%s:session=%s:boundary=%s",
-		chain,
-		network,
-		normalizedSessionID,
-		"fetcher-normalizer",
-	)
 }
 
 func TestBuildRuntimeTargets_IncludesMandatoryChainsDeterministically(t *testing.T) {
@@ -680,10 +484,10 @@ func TestMaskCredentials(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"with credentials", "redis://user:pass@host:6379", "redis://***@host:6379"},
-		{"without credentials", "redis://host:6379", "redis://host:6379"},
+		{"with credentials", "postgres://user:pass@host:5432/db", "postgres://***@host:5432/db"},
+		{"without credentials", "postgres://host:5432/db", "postgres://host:5432/db"},
 		{"empty string", "", ""},
-		{"complex password", "redis://admin:p%40ssw0rd@redis.example.com:6380/0", "redis://***@redis.example.com:6380/0"},
+		{"complex password", "postgres://admin:p%40ssw0rd@db.example.com:5432/mydb", "postgres://***@db.example.com:5432/mydb"},
 	}
 
 	for _, tt := range tests {

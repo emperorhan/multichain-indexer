@@ -19,7 +19,6 @@ const (
 
 type Config struct {
 	DB       DBConfig       `yaml:"db"`
-	Redis    RedisConfig    `yaml:"redis"`
 	Sidecar  SidecarConfig  `yaml:"sidecar"`
 	Solana   SolanaConfig   `yaml:"solana"`
 	Base     BaseConfig     `yaml:"base"`
@@ -52,10 +51,6 @@ type DBConfig struct {
 	// TimeoutSec is used internally for YAML; SidecarConfig has similar pattern.
 	ConnMaxLifetime     time.Duration `yaml:"-"`
 	PoolStatsIntervalMS int           `yaml:"pool_stats_interval_ms"`
-}
-
-type RedisConfig struct {
-	URL string `yaml:"url"`
 }
 
 type SidecarConfig struct {
@@ -228,9 +223,6 @@ type PipelineConfig struct {
 	CoordinatorAutoTunePolicyManifestRefreshEpoch int64    `yaml:"coordinator_autotune_policy_manifest_refresh_epoch"`
 	CoordinatorAutoTunePolicyActivationHoldTicks  int      `yaml:"coordinator_autotune_policy_activation_hold_ticks"`
 	IndexedBlocksRetention                        int      `yaml:"indexed_blocks_retention"`
-	StreamTransportEnabled                        bool     `yaml:"stream_transport_enabled"`
-	StreamNamespace                               string   `yaml:"stream_namespace"`
-	StreamSessionID                               string   `yaml:"stream_session_id"`
 	AddressIndex                                  AddressIndexConfig       `yaml:"address_index"`
 	Fetcher                                       FetcherStageConfig       `yaml:"fetcher"`
 	Normalizer                                    NormalizerStageConfig    `yaml:"normalizer"`
@@ -356,9 +348,6 @@ func applyInfraEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.DB.ConnMaxLifetimeMin, "DB_CONN_MAX_LIFETIME_MIN")
 	overrideIntBounded(&cfg.DB.PoolStatsIntervalMS, "DB_POOL_STATS_INTERVAL_MS")
 
-	// Redis
-	overrideStr(&cfg.Redis.URL, "REDIS_URL")
-
 	// Sidecar
 	overrideStr(&cfg.Sidecar.Addr, "SIDECAR_ADDR")
 	overrideInt(&cfg.Sidecar.TimeoutSec, "SIDECAR_TIMEOUT_SEC")
@@ -472,11 +461,6 @@ func applyPipelineEnvOverrides(cfg *Config) {
 	overrideInt64(&cfg.Pipeline.CoordinatorAutoTunePolicyManifestRefreshEpoch, "COORDINATOR_AUTOTUNE_POLICY_MANIFEST_REFRESH_EPOCH")
 	overrideInt(&cfg.Pipeline.CoordinatorAutoTunePolicyActivationHoldTicks, "COORDINATOR_AUTOTUNE_POLICY_ACTIVATION_HOLD_TICKS")
 
-	// Stream transport
-	overrideBool(&cfg.Pipeline.StreamTransportEnabled, "PIPELINE_STREAM_TRANSPORT_ENABLED")
-	overrideStr(&cfg.Pipeline.StreamNamespace, "PIPELINE_STREAM_NAMESPACE")
-	overrideStr(&cfg.Pipeline.StreamSessionID, "PIPELINE_STREAM_SESSION_ID")
-
 	// Per-stage configs
 	overrideInt(&cfg.Pipeline.Fetcher.RetryMaxAttempts, "FETCHER_RETRY_MAX_ATTEMPTS")
 	overrideInt(&cfg.Pipeline.Fetcher.BackoffInitialMs, "FETCHER_BACKOFF_INITIAL_MS")
@@ -545,9 +529,6 @@ func applyObservabilityEnvOverrides(cfg *Config) {
 
 // applyDefaults sets default values for zero-value fields.
 func applyDefaults(cfg *Config) {
-	// Redis
-	setDefaultStr(&cfg.Redis.URL, "redis://localhost:6380")
-
 	// Sidecar
 	setDefaultStr(&cfg.Sidecar.Addr, "localhost:50051")
 	setDefault(&cfg.Sidecar.TimeoutSec, 30)
@@ -639,7 +620,6 @@ func applyDefaults(cfg *Config) {
 	setDefaultStr(&cfg.Pipeline.CoordinatorAutoTunePolicyManifestDigest, "manifest-v1")
 	setDefault(&cfg.Pipeline.CoordinatorAutoTunePolicyActivationHoldTicks, 1)
 	setDefault(&cfg.Pipeline.IndexedBlocksRetention, 10000)
-	setDefaultStr(&cfg.Pipeline.StreamNamespace, "pipeline")
 
 	// AutoTune max batch defaults to batch_size if not set
 	if cfg.Pipeline.CoordinatorAutoTuneMaxBatchSize == 0 {
