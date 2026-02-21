@@ -32,6 +32,37 @@ func (c *Client) GetBlockHash(ctx context.Context, height int64) (string, error)
 	return hash, nil
 }
 
+// GetBlockHashes fetches multiple block hashes in a single JSON-RPC batch call.
+// Results are returned in the same order as the input heights.
+func (c *Client) GetBlockHashes(ctx context.Context, heights []int64) ([]string, error) {
+	if len(heights) == 0 {
+		return []string{}, nil
+	}
+
+	requests := make([]Request, len(heights))
+	for i, h := range heights {
+		requests[i] = c.newRequest("getblockhash", []interface{}{h})
+	}
+
+	responses, err := c.callBatch(ctx, requests)
+	if err != nil {
+		return nil, fmt.Errorf("getblockhash batch: %w", err)
+	}
+
+	results := make([]string, len(heights))
+	for i, resp := range responses {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("getblockhash(%d): %w", heights[i], resp.Error)
+		}
+		var hash string
+		if err := json.Unmarshal(resp.Result, &hash); err != nil {
+			return nil, fmt.Errorf("unmarshal block hash %d: %w", heights[i], err)
+		}
+		results[i] = hash
+	}
+	return results, nil
+}
+
 func (c *Client) GetBlock(ctx context.Context, hash string, verbosity int) (*Block, error) {
 	result, err := c.call(ctx, "getblock", []interface{}{hash, verbosity})
 	if err != nil {

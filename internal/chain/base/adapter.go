@@ -364,11 +364,24 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 	}
 
 	// Also check logs for ERC-20 Transfer events touching watched addresses.
+	// Batch all address topics into a single array per topic position (3 calls total
+	// instead of 3*N), leveraging eth_getLogs OR-matching on topic arrays.
+	addrTopics := make([]interface{}, 0, len(addrSet))
 	for addr := range addrSet {
 		if topic := addressTopic(addr); topic != "" {
-			logs, err := a.fetchAddressTopicLogs(ctx, startBlock, endBlock, topic)
+			addrTopics = append(addrTopics, topic)
+		}
+	}
+	if len(addrTopics) > 0 {
+		topicFilters := [][]interface{}{
+			{nil, addrTopics},
+			{nil, nil, addrTopics},
+			{nil, nil, nil, addrTopics},
+		}
+		for _, topics := range topicFilters {
+			logs, err := a.fetchLogsWithFallback(ctx, startBlock, endBlock, topics)
 			if err != nil {
-				return nil, fmt.Errorf("scan logs for %s: %w", addr, err)
+				return nil, fmt.Errorf("scan logs: %w", err)
 			}
 			for _, entry := range logs {
 				if entry == nil || strings.TrimSpace(entry.TransactionHash) == "" {
@@ -431,10 +444,16 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 		a.logger.Warn("batch transaction fetch failed, falling back", "error", err)
 		return a.fetchTransactionsOneByOne(ctx, signatures)
 	}
+
 	receipts, err := a.client.GetTransactionReceiptsByHash(ctx, signatures)
 	if err != nil {
-		a.logger.Warn("batch receipt fetch failed, falling back", "error", err)
-		return a.fetchTransactionsOneByOne(ctx, signatures)
+		// Batch receipt failed but we already have all transactions.
+		// Only retry receipts individually instead of re-fetching everything.
+		a.logger.Warn("batch receipt fetch failed, retrying receipts individually", "error", err)
+		receipts, err = a.fetchReceiptsOneByOne(ctx, signatures)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	results := make([]json.RawMessage, len(signatures))
@@ -462,6 +481,46 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 
 	a.logger.Info("fetched transactions", "count", len(results))
 	return results, nil
+}
+
+func (a *Adapter) fetchReceiptsOneByOne(ctx context.Context, signatures []string) ([]*rpc.TransactionReceipt, error) {
+	receipts := make([]*rpc.TransactionReceipt, len(signatures))
+	var mu sync.Mutex
+	var firstErr error
+
+	sem := make(chan struct{}, a.maxConcurrentTxs)
+	var wg sync.WaitGroup
+
+	for i, hash := range signatures {
+		wg.Add(1)
+		go func(idx int, txHash string) {
+			defer wg.Done()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			receipt, err := a.client.GetTransactionReceipt(ctx, txHash)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("fetch receipt %s: %w", txHash, err)
+				}
+				mu.Unlock()
+				return
+			}
+
+			mu.Lock()
+			receipts[idx] = receipt
+			mu.Unlock()
+		}(i, hash)
+	}
+
+	wg.Wait()
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return receipts, nil
 }
 
 func (a *Adapter) fetchTransactionsOneByOne(ctx context.Context, signatures []string) ([]json.RawMessage, error) {

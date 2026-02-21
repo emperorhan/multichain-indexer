@@ -17,6 +17,7 @@ import (
 type RPCClient interface {
 	GetBlockCount(ctx context.Context) (int64, error)
 	GetBlockHash(ctx context.Context, height int64) (string, error)
+	GetBlockHashes(ctx context.Context, heights []int64) ([]string, error)
 	GetBlock(ctx context.Context, hash string, verbosity int) (*Block, error)
 	GetBlockHeader(ctx context.Context, hash string) (*BlockHeader, error)
 	GetRawTransactionVerbose(ctx context.Context, txid string) (*Transaction, error)

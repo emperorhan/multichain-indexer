@@ -305,11 +305,18 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 	candidates := make(map[string]candidateSignature)
 	prevoutCache := map[string]resolvedPrevout{}
 
-	for blockNum := startBlock; blockNum <= endBlock; blockNum++ {
-		blockHash, err := a.client.GetBlockHash(ctx, blockNum)
-		if err != nil {
-			return nil, fmt.Errorf("scan get block hash %d: %w", blockNum, err)
-		}
+	// Batch-fetch all block hashes in a single RPC call.
+	heights := make([]int64, 0, endBlock-startBlock+1)
+	for n := startBlock; n <= endBlock; n++ {
+		heights = append(heights, n)
+	}
+	blockHashes, err := a.client.GetBlockHashes(ctx, heights)
+	if err != nil {
+		return nil, fmt.Errorf("scan batch get block hashes %d-%d: %w", startBlock, endBlock, err)
+	}
+
+	for idx, blockHash := range blockHashes {
+		blockNum := heights[idx]
 		// Use verbosity=3 to get vin.prevout inline (Bitcoin Core 25.0+),
 		// falling back to verbosity=2 if the node doesn't support it.
 		block, err := a.client.GetBlock(ctx, blockHash, blockVerbosityPrevout)

@@ -40,6 +40,17 @@ func (f *fakeRPCClient) GetBlockHash(_ context.Context, height int64) (string, e
 	return f.blockHashByHeight[height], nil
 }
 
+func (f *fakeRPCClient) GetBlockHashes(_ context.Context, heights []int64) ([]string, error) {
+	if f.blockHashErr != nil {
+		return nil, f.blockHashErr
+	}
+	results := make([]string, len(heights))
+	for i, h := range heights {
+		results[i] = f.blockHashByHeight[h]
+	}
+	return results, nil
+}
+
 func (f *fakeRPCClient) GetBlock(_ context.Context, hash string, _ int) (*rpc.Block, error) {
 	if f.blockErr != nil {
 		return nil, f.blockErr
