@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -514,7 +515,7 @@ func buildPipelineConfig(
 	return pipeline.Config{
 		Chain:                      target.chain,
 		Network:                    target.network,
-		BatchSize:                  cfg.Pipeline.BatchSize,
+		BatchSize:                  resolveBlockScanBatchSize(cfg, target.chain),
 		IndexingInterval:           time.Duration(cfg.Pipeline.IndexingIntervalMs) * time.Millisecond,
 		ReorgDetectorMaxCheckDepth: cfg.ReorgDetector.MaxCheckDepth,
 		Alerter:                    alerter,
@@ -543,6 +544,7 @@ func buildPipelineConfig(
 		ChannelBufferSize:      cfg.Pipeline.ChannelBufferSize,
 		SidecarAddr:            cfg.Sidecar.Addr,
 		SidecarTimeout:         cfg.Sidecar.Timeout,
+		SidecarMaxMsgSizeMB:   cfg.Sidecar.MaxMsgSizeMB,
 		SidecarTLSEnabled:      cfg.Sidecar.TLSEnabled,
 		SidecarTLSCert:         cfg.Sidecar.TLSCert,
 		SidecarTLSKey:          cfg.Sidecar.TLSKey,
@@ -584,6 +586,23 @@ func resolveMaxInitialLookbackBlocks(cfg *config.Config, ch model.Chain) int {
 	default:
 		return 0
 	}
+}
+
+// resolveBlockScanBatchSize returns a chain-specific block-scan batch size
+// when configured, falling back to the global Pipeline.BatchSize.
+// BTC defaults to 3 blocks/tick because prevout resolution is extremely slow.
+func resolveBlockScanBatchSize(cfg *config.Config, ch model.Chain) int {
+	switch ch {
+	case model.ChainBTC:
+		if cfg.BTC.BlockScanBatchSize > 0 {
+			return cfg.BTC.BlockScanBatchSize
+		}
+	case model.ChainSolana:
+		if cfg.Solana.BlockScanBatchSize > 0 {
+			return cfg.Solana.BlockScanBatchSize
+		}
+	}
+	return cfg.Pipeline.BatchSize
 }
 
 func run() error {
@@ -718,12 +737,18 @@ func run() error {
 		})
 	}
 
-	// Pipelines
+	// Pipelines — each runs independently so one crash does not kill others.
+	var pipelineWg sync.WaitGroup
 	for _, p := range pipelines {
 		p := p
-		g.Go(func() error {
-			return p.Run(gCtx)
-		})
+		pipelineWg.Add(1)
+		go func() {
+			defer pipelineWg.Done()
+			if err := p.Run(gCtx); err != nil && err != context.Canceled {
+				logger.Error("pipeline exited with error",
+					"chain", p.Chain(), "network", p.Network(), "error", err)
+			}
+		}()
 	}
 
 	startDBPoolStatsPump(gCtx, db.DB, targets, cfg.DB.PoolStatsIntervalMS, logger)
@@ -743,6 +768,9 @@ func run() error {
 	if err := g.Wait(); err != nil && err != context.Canceled {
 		return fmt.Errorf("indexer exited: %w", err)
 	}
+
+	// Wait for all pipelines to finish after context cancellation.
+	pipelineWg.Wait()
 
 	logger.Info("indexer shut down gracefully")
 	return nil

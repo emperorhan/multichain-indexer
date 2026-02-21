@@ -954,7 +954,8 @@ func TestLoad_ChainAdapterConfigDefaults(t *testing.T) {
 	assert.Equal(t, 10, cfg.BSC.MaxConcurrentTxs)
 
 	// BTC adapter defaults
-	assert.Equal(t, 200, cfg.BTC.MaxInitialLookbackBlocks)
+	assert.Equal(t, 10, cfg.BTC.MaxInitialLookbackBlocks)
+	assert.Equal(t, 3, cfg.BTC.BlockScanBatchSize)
 }
 
 func TestLoad_ChainAdapterConfigEnvOverride(t *testing.T) {

@@ -40,8 +40,8 @@ config.yml
 # Build
 tmp/
 .cache/
-indexer
-loadtest
+/indexer
+/loadtest
 cover.out
 *.zip
 
@@ -50,8 +50,8 @@ logs/
 .testbed.pid
 
 # Evaluate
-evaluate
-test/evaluate/
+/evaluate
+/test/evaluate/
 
 # AI tools
 .claude/

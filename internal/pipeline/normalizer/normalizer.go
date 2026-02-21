@@ -44,6 +44,7 @@ type Normalizer struct {
 	rawBatchCh       <-chan event.RawBatch
 	normalizedCh     chan<- event.NormalizedBatch
 	workerCount      int
+	maxMsgSizeMB     int
 	logger           *slog.Logger
 	retryMaxAttempts int
 	retryDelayStart  time.Duration
@@ -76,6 +77,14 @@ func WithRetryConfig(maxAttempts int, delayInitial, delayMax time.Duration) Opti
 		n.retryMaxAttempts = maxAttempts
 		n.retryDelayStart = delayInitial
 		n.retryDelayMax = delayMax
+	}
+}
+
+func WithMaxMsgSizeMB(mb int) Option {
+	return func(n *Normalizer) {
+		if mb > 0 {
+			n.maxMsgSizeMB = mb
+		}
 	}
 }
 
@@ -116,7 +125,11 @@ func (n *Normalizer) Run(ctx context.Context) error {
 		return fmt.Errorf("build transport credentials: %w", err)
 	}
 
-	const maxMsgSize = 16 * 1024 * 1024 // 16 MB — Solana mainnet blocks can exceed 4 MB default
+	maxMsgSizeMB := n.maxMsgSizeMB
+	if maxMsgSizeMB <= 0 {
+		maxMsgSizeMB = 64
+	}
+	maxMsgSize := maxMsgSizeMB * 1024 * 1024
 	conn, err := grpc.NewClient(
 		n.sidecarAddr,
 		grpc.WithTransportCredentials(transportCreds),

@@ -59,13 +59,14 @@ type RedisConfig struct {
 }
 
 type SidecarConfig struct {
-	Addr       string        `yaml:"addr"`
-	TimeoutSec int           `yaml:"timeout_sec"`
-	Timeout    time.Duration `yaml:"-"`
-	TLSEnabled bool          `yaml:"tls_enabled"`
-	TLSCert    string        `yaml:"tls_cert"`
-	TLSKey     string        `yaml:"tls_key"`
-	TLSCA      string        `yaml:"tls_ca"`
+	Addr          string        `yaml:"addr"`
+	TimeoutSec    int           `yaml:"timeout_sec"`
+	Timeout       time.Duration `yaml:"-"`
+	TLSEnabled    bool          `yaml:"tls_enabled"`
+	TLSCert       string        `yaml:"tls_cert"`
+	TLSKey        string        `yaml:"tls_key"`
+	TLSCA         string        `yaml:"tls_ca"`
+	MaxMsgSizeMB  int           `yaml:"max_msg_size_mb"`
 }
 
 type RPCRateLimitConfig struct {
@@ -105,6 +106,7 @@ type BTCConfig struct {
 	Network                  string             `yaml:"network"`
 	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
 	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
+	BlockScanBatchSize       int                `yaml:"block_scan_batch_size"`
 }
 
 type PolygonConfig struct {
@@ -364,6 +366,7 @@ func applyInfraEnvOverrides(cfg *Config) {
 	overrideStr(&cfg.Sidecar.TLSCert, "SIDECAR_TLS_CERT")
 	overrideStr(&cfg.Sidecar.TLSKey, "SIDECAR_TLS_KEY")
 	overrideStr(&cfg.Sidecar.TLSCA, "SIDECAR_TLS_CA")
+	overrideInt(&cfg.Sidecar.MaxMsgSizeMB, "SIDECAR_MAX_MSG_SIZE_MB")
 }
 
 func applyChainEnvOverrides(cfg *Config) {
@@ -400,6 +403,7 @@ func applyChainEnvOverrides(cfg *Config) {
 	overrideFloat64(&cfg.BTC.RateLimit.RPS, "BTC_RPC_RATE_LIMIT")
 	overrideInt(&cfg.BTC.RateLimit.Burst, "BTC_RPC_BURST")
 	overrideInt(&cfg.BTC.MaxInitialLookbackBlocks, "BTC_MAX_INITIAL_LOOKBACK_BLOCKS")
+	overrideInt(&cfg.BTC.BlockScanBatchSize, "BTC_BLOCK_SCAN_BATCH_SIZE")
 
 	// Polygon
 	overrideStrAny(&cfg.Polygon.RPCURL, "POLYGON_RPC_URL", "POLYGON_MAINNET_RPC_URL")
@@ -547,6 +551,7 @@ func applyDefaults(cfg *Config) {
 	// Sidecar
 	setDefaultStr(&cfg.Sidecar.Addr, "localhost:50051")
 	setDefault(&cfg.Sidecar.TimeoutSec, 30)
+	setDefault(&cfg.Sidecar.MaxMsgSizeMB, 64)
 
 	// DB
 	setDefault(&cfg.DB.MaxOpenConns, 50)
@@ -583,7 +588,8 @@ func applyDefaults(cfg *Config) {
 	setDefaultStr(&cfg.BTC.Network, "testnet")
 	setDefaultFloat(&cfg.BTC.RateLimit.RPS, 5)
 	setDefault(&cfg.BTC.RateLimit.Burst, 10)
-	setDefault(&cfg.BTC.MaxInitialLookbackBlocks, 200)
+	setDefault(&cfg.BTC.MaxInitialLookbackBlocks, 10)
+	setDefault(&cfg.BTC.BlockScanBatchSize, 3)
 
 	// Polygon
 	setDefaultStr(&cfg.Polygon.Network, "mainnet")

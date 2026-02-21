@@ -43,6 +43,7 @@ type Config struct {
 	ChannelBufferSize      int
 	SidecarAddr            string
 	SidecarTimeout         time.Duration
+	SidecarMaxMsgSizeMB    int
 	SidecarTLSEnabled      bool
 	SidecarTLSCert         string
 	SidecarTLSKey          string
@@ -425,6 +426,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 
 	normOpts := []normalizer.Option{
 		normalizer.WithTLS(p.cfg.SidecarTLSEnabled, p.cfg.SidecarTLSCA, p.cfg.SidecarTLSCert, p.cfg.SidecarTLSKey),
+		normalizer.WithMaxMsgSizeMB(p.cfg.SidecarMaxMsgSizeMB),
 	}
 	if p.cfg.Normalizer.RetryMaxAttempts > 0 {
 		normOpts = append(normOpts, normalizer.WithRetryConfig(
