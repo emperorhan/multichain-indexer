@@ -144,8 +144,16 @@ func (t *TieredIndex) Reload(ctx context.Context, chain model.Chain, network mod
 		return fmt.Errorf("reload address index: %w", err)
 	}
 
-	// Build a fresh bloom filter for this chain:network only.
-	bf := NewBloomFilter(t.cfg.BloomExpectedItems, t.cfg.BloomFPR)
+	// Size the bloom filter based on actual address count (with headroom)
+	// instead of the static config default, to avoid wasting memory.
+	bloomSize := len(addrs) * 10
+	if bloomSize < 1000 {
+		bloomSize = 1000
+	}
+	if bloomSize > t.cfg.BloomExpectedItems {
+		bloomSize = t.cfg.BloomExpectedItems
+	}
+	bf := NewBloomFilter(bloomSize, t.cfg.BloomFPR)
 	for i := range addrs {
 		key := lruKey(chain, network, addrs[i].Address)
 		bf.Add(key)

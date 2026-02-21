@@ -28,6 +28,9 @@ type Adapter struct {
 	client                   rpc.RPCClient
 	logger                   *slog.Logger
 	maxInitialLookbackBlocks int64
+	// verbosity3Supported caches whether the node supports verbosity=3.
+	// 0 = unknown, 1 = supported, -1 = unsupported.
+	verbosity3Supported int32
 }
 
 type AdapterOption func(*Adapter)
@@ -109,6 +112,26 @@ func (a *Adapter) SetRateLimiter(l *ratelimit.Limiter) {
 
 func (a *Adapter) Chain() string {
 	return btcChainName
+}
+
+// getBlockWithVerbosity fetches a block, trying verbosity=3 first for inline
+// prevout data. Caches the result so older nodes only try verbosity=2.
+func (a *Adapter) getBlockWithVerbosity(ctx context.Context, blockHash string) (*rpc.Block, error) {
+	if a.verbosity3Supported != -1 {
+		block, err := a.client.GetBlock(ctx, blockHash, blockVerbosityPrevout)
+		if err == nil {
+			a.verbosity3Supported = 1
+			return block, nil
+		}
+		// If we already know it's supported, propagate the error.
+		if a.verbosity3Supported == 1 {
+			return nil, err
+		}
+		// First failure: mark as unsupported and fallback.
+		a.verbosity3Supported = -1
+		a.logger.Info("verbosity=3 not supported, falling back to verbosity=2")
+	}
+	return a.client.GetBlock(ctx, blockHash, blockVerbosityTxObjects)
 }
 
 func (a *Adapter) GetHeadSequence(ctx context.Context) (int64, error) {
@@ -317,15 +340,9 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 
 	for idx, blockHash := range blockHashes {
 		blockNum := heights[idx]
-		// Use verbosity=3 to get vin.prevout inline (Bitcoin Core 25.0+),
-		// falling back to verbosity=2 if the node doesn't support it.
-		block, err := a.client.GetBlock(ctx, blockHash, blockVerbosityPrevout)
+		block, err := a.getBlockWithVerbosity(ctx, blockHash)
 		if err != nil {
-			// Fallback: older Bitcoin Core versions return an error for verbosity=3.
-			block, err = a.client.GetBlock(ctx, blockHash, blockVerbosityTxObjects)
-			if err != nil {
-				return nil, fmt.Errorf("scan get block %d: %w", blockNum, err)
-			}
+			return nil, fmt.Errorf("scan get block %d: %w", blockNum, err)
 		}
 		if block == nil {
 			continue

@@ -230,19 +230,16 @@ func (n *Normalizer) reconcileCoverageRegressionFlap(
 	if incoming == nil || signatureKey == "" {
 		return incoming
 	}
+	if n.coverageFloor == nil {
+		return incoming
+	}
 
 	floorKey := coverageFloorKey(batch.Chain, batch.Network, batch.Address, signatureKey)
 
-	n.coverageFloorMu.Lock()
-	if n.coverageFloor == nil {
-		n.coverageFloor = make(map[string]*sidecarv1.TransactionResult)
-	}
-
-	existing := n.coverageFloor[floorKey]
+	existing, _ := n.coverageFloor.Get(floorKey)
 	missingFromIncoming, newlyObserved := decodedCoverageDelta(batch.Chain, existing, incoming)
 	reconciled := reconcileDecodedResultCoverage(batch.Chain, existing, incoming)
-	n.coverageFloor[floorKey] = cloneDecodedResult(reconciled)
-	n.coverageFloorMu.Unlock()
+	n.coverageFloor.Put(floorKey, cloneDecodedResult(reconciled))
 
 	if missingFromIncoming > 0 {
 		log.Warn("decode coverage regression floor applied",

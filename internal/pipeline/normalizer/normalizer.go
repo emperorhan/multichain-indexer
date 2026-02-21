@@ -10,11 +10,11 @@ import (
 	"math/rand/v2"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 
+	"github.com/emperorhan/multichain-indexer/internal/cache"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
@@ -50,8 +50,7 @@ type Normalizer struct {
 	retryDelayStart  time.Duration
 	retryDelayMax    time.Duration
 	sleepFn          func(context.Context, time.Duration) error
-	coverageFloorMu  sync.Mutex
-	coverageFloor    map[string]*sidecarv1.TransactionResult
+	coverageFloor    *cache.LRU[string, *sidecarv1.TransactionResult]
 	tlsEnabled       bool
 	tlsCA            string
 	tlsCert          string
@@ -108,6 +107,7 @@ func New(
 		retryDelayStart:  defaultRetryDelayInitial,
 		retryDelayMax:    defaultRetryDelayMax,
 		sleepFn:          sleepContext,
+		coverageFloor:    cache.NewLRU[string, *sidecarv1.TransactionResult](50_000, 10*time.Minute),
 	}
 	for _, opt := range opts {
 		if opt != nil {

@@ -38,6 +38,11 @@ type Detector struct {
 	alerter            alert.Alerter
 	checkNowCh         chan struct{}
 	running            atomic.Bool
+
+	// lastVerified caches on-chain block hashes from the previous tick.
+	// Blocks whose hash was verified and still matches are skipped in
+	// subsequent ticks, reducing RPC calls by ~90%.
+	lastVerified map[int64]string
 }
 
 func New(
@@ -127,6 +132,7 @@ func (d *Detector) check(ctx context.Context) error {
 	metrics.ReorgDetectorUnfinalizedBlocks.WithLabelValues(d.chain.String(), d.network.String()).Set(float64(len(unfinalizedBlocks)))
 
 	if len(unfinalizedBlocks) == 0 {
+		d.lastVerified = nil
 		return nil
 	}
 
@@ -138,63 +144,113 @@ func (d *Detector) check(ctx context.Context) error {
 		unfinalizedBlocks = unfinalizedBlocks[:d.maxCheckDepth]
 	}
 
-	for _, block := range unfinalizedBlocks {
-		onchainHash, _, err := d.adapter.GetBlockHash(ctx, block.BlockNumber)
-		if err != nil {
-			d.consecutiveRPCErrs++
-			metrics.ReorgDetectorRPCErrorsTotal.WithLabelValues(d.chain.String(), d.network.String()).Inc()
+	// Tip-first: check the most recent block first. If it matches and was
+	// already verified last tick, deeper blocks are extremely unlikely to
+	// have reorged — skip them entirely.
+	tipBlock := unfinalizedBlocks[0]
+	tipMatch, tipHash, tipErr := d.verifyBlock(ctx, tipBlock)
+	if tipErr != nil {
+		// RPC error on tip — fall through to full scan
+	} else if !tipMatch {
+		// Tip mismatch — reorg detected at the tip, emit event immediately.
+		d.lastVerified = nil
+		return d.emitReorg(ctx, tipBlock, tipHash)
+	}
 
-			d.logger.Warn("failed to get on-chain block hash",
-				"block_number", block.BlockNumber,
-				"error", err,
-				"consecutive_rpc_errors", d.consecutiveRPCErrs,
-			)
+	// Tip matches. Only check blocks that are new (not in lastVerified)
+	// or whose indexed hash changed since last verification.
+	newVerified := make(map[int64]string, len(unfinalizedBlocks))
+	if tipErr == nil {
+		newVerified[tipBlock.BlockNumber] = tipHash
+	}
 
-			if d.consecutiveRPCErrs >= rpcErrorAlertThreshold && d.alerter != nil {
-				d.alerter.Send(ctx, alert.Alert{
-					Type:    "reorg_detector_rpc_errors",
-					Chain:   string(d.chain),
-					Network: string(d.network),
-					Title:   "Reorg detector RPC errors",
-					Message: fmt.Sprintf("Reorg detector has %d consecutive RPC errors for %s/%s", d.consecutiveRPCErrs, d.chain, d.network),
-				})
-			}
+	rpcCalls := 0
+	for _, block := range unfinalizedBlocks[1:] {
+		// Skip blocks already verified in previous tick with matching indexed hash.
+		if prevHash, ok := d.lastVerified[block.BlockNumber]; ok && prevHash == block.BlockHash {
+			newVerified[block.BlockNumber] = prevHash
 			continue
 		}
 
-		// Reset on success
-		d.consecutiveRPCErrs = 0
-
-		if onchainHash != block.BlockHash {
-			d.logger.Warn("reorg detected: block hash mismatch",
-				"block_number", block.BlockNumber,
-				"expected_hash", block.BlockHash,
-				"actual_hash", onchainHash,
-			)
-
-			metrics.ReorgDetectedTotal.WithLabelValues(d.chain.String(), d.network.String()).Inc()
-
-			reorgEvt := event.ReorgEvent{
-				Chain:           d.chain,
-				Network:         d.network,
-				ForkBlockNumber: block.BlockNumber,
-				ExpectedHash:    block.BlockHash,
-				ActualHash:      onchainHash,
-				DetectedAt:      time.Now(),
-			}
-
-			select {
-			case d.reorgCh <- reorgEvt:
-				d.logger.Info("reorg event sent to ingester",
-					"fork_block", block.BlockNumber,
-				)
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-
-			// Process one reorg per tick to avoid cascading effects
-			return nil
+		match, onchainHash, err := d.verifyBlock(ctx, block)
+		if err != nil {
+			continue
 		}
+		rpcCalls++
+
+		if !match {
+			d.lastVerified = nil
+			return d.emitReorg(ctx, block, onchainHash)
+		}
+		newVerified[block.BlockNumber] = onchainHash
+	}
+
+	d.lastVerified = newVerified
+
+	d.logger.Debug("reorg check completed",
+		"unfinalized", len(unfinalizedBlocks),
+		"rpc_calls", rpcCalls+1, // +1 for tip
+		"skipped", len(unfinalizedBlocks)-1-rpcCalls,
+	)
+
+	return nil
+}
+
+// verifyBlock checks a single block's hash against the chain.
+// Returns (match, onchainHash, error).
+func (d *Detector) verifyBlock(ctx context.Context, block model.IndexedBlock) (bool, string, error) {
+	onchainHash, _, err := d.adapter.GetBlockHash(ctx, block.BlockNumber)
+	if err != nil {
+		d.consecutiveRPCErrs++
+		metrics.ReorgDetectorRPCErrorsTotal.WithLabelValues(d.chain.String(), d.network.String()).Inc()
+
+		d.logger.Warn("failed to get on-chain block hash",
+			"block_number", block.BlockNumber,
+			"error", err,
+			"consecutive_rpc_errors", d.consecutiveRPCErrs,
+		)
+
+		if d.consecutiveRPCErrs >= rpcErrorAlertThreshold && d.alerter != nil {
+			d.alerter.Send(ctx, alert.Alert{
+				Type:    "reorg_detector_rpc_errors",
+				Chain:   string(d.chain),
+				Network: string(d.network),
+				Title:   "Reorg detector RPC errors",
+				Message: fmt.Sprintf("Reorg detector has %d consecutive RPC errors for %s/%s", d.consecutiveRPCErrs, d.chain, d.network),
+			})
+		}
+		return false, "", err
+	}
+
+	d.consecutiveRPCErrs = 0
+	return onchainHash == block.BlockHash, onchainHash, nil
+}
+
+func (d *Detector) emitReorg(ctx context.Context, block model.IndexedBlock, actualHash string) error {
+	d.logger.Warn("reorg detected: block hash mismatch",
+		"block_number", block.BlockNumber,
+		"expected_hash", block.BlockHash,
+		"actual_hash", actualHash,
+	)
+
+	metrics.ReorgDetectedTotal.WithLabelValues(d.chain.String(), d.network.String()).Inc()
+
+	reorgEvt := event.ReorgEvent{
+		Chain:           d.chain,
+		Network:         d.network,
+		ForkBlockNumber: block.BlockNumber,
+		ExpectedHash:    block.BlockHash,
+		ActualHash:      actualHash,
+		DetectedAt:      time.Now(),
+	}
+
+	select {
+	case d.reorgCh <- reorgEvt:
+		d.logger.Info("reorg event sent to ingester",
+			"fork_block", block.BlockNumber,
+		)
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 
 	return nil

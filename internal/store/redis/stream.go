@@ -53,6 +53,8 @@ func (s *Stream) PublishJSON(ctx context.Context, streamName string, payload int
 
 	messageID, err := s.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamName,
+		MaxLen: 10000,
+		Approx: true,
 		Values: map[string]any{
 			"payload": data,
 		},

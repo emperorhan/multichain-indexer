@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/cache"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -1849,6 +1850,7 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_AvailabilityFlapReplayPermutat
 			sidecarTimeout: 30 * time.Second,
 			normalizedCh:   normalizedCh,
 			logger:         slog.Default(),
+			coverageFloor:  cache.NewLRU[string, *sidecarv1.TransactionResult](1000, 10*time.Minute),
 		}
 
 		mockClient.EXPECT().
@@ -1931,6 +1933,7 @@ func TestProcessBatch_BaseSepoliaFeeDecomposition_AvailabilityFlapReplayPermutat
 			sidecarTimeout: 30 * time.Second,
 			normalizedCh:   normalizedCh,
 			logger:         slog.Default(),
+			coverageFloor:  cache.NewLRU[string, *sidecarv1.TransactionResult](1000, 10*time.Minute),
 		}
 
 		call := 0
@@ -5738,6 +5741,7 @@ func TestProcessBatch_DecoderVersionTransitionReplayResumeIdempotentAcrossMandat
 				sidecarTimeout: 30 * time.Second,
 				normalizedCh:   normalizedCh,
 				logger:         slog.Default(),
+				coverageFloor:  cache.NewLRU[string, *sidecarv1.TransactionResult](1000, 10*time.Minute),
 			}
 
 			batch := event.RawBatch{
@@ -6812,6 +6816,7 @@ func TestProcessBatch_TriChainDelayedEnrichmentIsolationConvergesWithEnrichedFir
 			sidecarTimeout: 30 * time.Second,
 			normalizedCh:   normalizedCh,
 			logger:         slog.Default(),
+			coverageFloor:  cache.NewLRU[string, *sidecarv1.TransactionResult](1000, 10*time.Minute),
 		}
 
 		firstBaseResult := baseEnriched()
@@ -7139,6 +7144,7 @@ func TestProcessBatch_DecodeCoverageRegressionFlapPreservesEnrichedFloorAcrossMa
 				sidecarTimeout: 30 * time.Second,
 				normalizedCh:   normalizedCh,
 				logger:         slog.Default(),
+				coverageFloor:  cache.NewLRU[string, *sidecarv1.TransactionResult](1000, 10*time.Minute),
 			}
 
 			responses := []*sidecarv1.DecodeSolanaTransactionBatchResponse{
