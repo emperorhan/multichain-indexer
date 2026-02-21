@@ -59,7 +59,7 @@ make lint           # Run linter
 
 - PostgreSQL 16 on port 5433
 - Migrations in `internal/store/postgres/migrations/`
-- Core tables: `transactions`, `balance_events`, `balances`, `tokens`, `address_cursors`, `watched_addresses`, `indexer_configs`, `indexed_blocks`
+- Core tables: `transactions`, `balance_events`, `balances`, `tokens`, `watched_addresses`, `indexer_configs`, `indexed_blocks`, `pipeline_watermarks`
 - Operational tables: `address_books`, `balance_reconciliation_snapshots`, `runtime_configs`
 - `balance_events` uses signed delta model (+deposit, -withdrawal) with UNIQUE INDEX on event_id for dedup
 

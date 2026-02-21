@@ -47,7 +47,7 @@
 
 ### Database
 1. 최근 `balance_events`, `transactions` 적재 추이 확인
-2. 커서 전진 여부 확인 (`address_cursors`, `pipeline_watermarks`)
+2. 워터마크 전진 여부 확인 (`pipeline_watermarks`)
 3. 최근 migration 적용 상태 확인
 
 ## Monitoring & Alerts
@@ -146,8 +146,7 @@ curl http://localhost:9090/admin/v1/status?chain=solana&network=devnet
 ```bash
 # 설치
 helm install indexer deployments/helm/multichain-indexer/ \
-  --set secret.dbUrl="postgres://..." \
-  --set secret.redisUrl="redis://..."
+  --set secret.dbUrl="postgres://..."
 
 # 업그레이드
 helm upgrade indexer deployments/helm/multichain-indexer/ \
@@ -191,7 +190,7 @@ kubectl top pods -l app.kubernetes.io/name=multichain-indexer
 
 ## Rollback Policy
 1. 배포 단위를 PR 단위로 롤백 (Helm: `helm rollback indexer`)
-2. 스키마 변경 포함 시 down migration 영향 검토 후 실행 (현재 018번까지 적용)
+2. 스키마 변경 포함 시 down migration 영향 검토 후 실행 (현재 019번까지 적용)
 3. `balance_events`는 flat 테이블 (파티셔닝 제거됨, migration 018)
 4. sidecar/indexer 계약 변경이 포함된 경우 sidecar 우선 롤백 후 indexer 정합성 확인
 5. 롤백 후 무결성 검증:

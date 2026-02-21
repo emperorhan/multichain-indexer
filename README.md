@@ -51,15 +51,14 @@ graph LR
 
     subgraph external_right [" "]
         PG[("PostgreSQL 16\nbalance_events\n(signed delta) + JSONB")]
-        REDIS[("Redis 7\n(future)")]
     end
 
     RPC1 -. "HTTPS" .-> FETCH
     RPC2 -. "HTTPS" .-> FETCH
     RPC3 -. "HTTPS" .-> FETCH
     NORM -. "gRPC" .-> TX_DEC
-    INGEST -- "Atomic sql.Tx\nupsert + cursor" --> PG
-    COORD -. "read config\n& cursors" .-> PG
+    INGEST -- "Atomic sql.Tx\nupsert + watermark" --> PG
+    COORD -. "read config\n& watermarks" .-> PG
 ```
 
 ### Pipeline Data Flow
@@ -76,12 +75,11 @@ sequenceDiagram
 
     C->>DB: GetActive watched_addresses
     DB-->>C: []WatchedAddress
-    C->>DB: Get address_cursors
-    DB-->>C: []AddressCursor
+    C->>DB: Get pipeline_watermarks
+    DB-->>C: last ingested block/slot
 
-    loop Per Address
-        C->>F: FetchJob via jobCh
-    end
+    Note over C,F: Block-scan: single FetchJob per tick<br/>Cursor-based (Solana): per-address FetchJob
+    C->>F: FetchJob via jobCh
 
     F->>RPC: fetch signatures/hashes(cursor)
     RPC-->>F: []SignatureInfo
@@ -96,7 +94,7 @@ sequenceDiagram
     I->>DB: BEGIN tx
     I->>DB: upsert transactions, tokens, balance_events
     I->>DB: adjust balances (signed delta accumulation)
-    I->>DB: update cursor + watermark
+    I->>DB: update watermark
     I->>DB: COMMIT
 ```
 
@@ -202,7 +200,7 @@ graph TB
 
 - `time.NewTicker(interval)`로 주기 실행 (default 5s)
 - `watched_addresses` 테이블에서 `is_active=true` 주소 조회
-- 각 주소의 현재 커서를 읽어 `FetchJob` 구성 → `jobCh`로 전송
+- 워터마크 기반으로 `FetchJob` 구성 → `jobCh`로 전송
 - 에러 발생 시 해당 주소 스킵 후 계속 진행
 
 ### 2. Fetcher
@@ -228,7 +226,7 @@ RPC에서 서명과 원본 트랜잭션 데이터를 병렬로 가져옵니다.
 정규화된 데이터를 PostgreSQL에 **원자적으로** 기록합니다.
 
 - **Single-writer**: 동시 쓰기 race condition 원천 차단
-- 배치 단위 `sql.Tx`: upsert → balance adjust → cursor update → commit
+- 배치 단위 `sql.Tx`: upsert → balance adjust → watermark update → commit
 - 에러 시 전체 배치 롤백 (부분 커밋 없음)
 - `ON CONFLICT` 기반 멱등 upsert
 
@@ -240,7 +238,6 @@ BEGIN sql.Tx
   │   │   ├── Upsert token → returns tokenID
   │   │   ├── Upsert balance_event (ON CONFLICT DO NOTHING)
   │   │   └── Adjust balance (amount += signed delta)
-  ├── Update cursor
   ├── Update watermark (GREATEST — non-regressing)
   └── COMMIT
 ```
@@ -253,7 +250,6 @@ PostgreSQL 16 — 통합 테이블 + JSONB 전략. 체인 추가 시 DDL 변경 
 
 ```mermaid
 erDiagram
-    watched_addresses ||--o{ address_cursors : "FK (chain,network,address)"
     transactions ||--o{ balance_events : "transaction_id"
     tokens ||--o{ balance_events : "token_id"
     tokens ||--o{ balances : "token_id"
@@ -264,13 +260,6 @@ erDiagram
         VARCHAR network
         VARCHAR address
         BOOLEAN is_active
-    }
-
-    address_cursors {
-        UUID id PK
-        VARCHAR cursor_value
-        BIGINT cursor_sequence
-        BIGINT items_processed
     }
 
     transactions {
@@ -312,7 +301,7 @@ erDiagram
 ```
 
 **11+ tables total** (pipeline state + serving data + operational) — 체인 수에 무관하게 고정.
-Core: `transactions`, `balance_events`, `balances`, `tokens`, `address_cursors`, `watched_addresses`, `indexer_configs`, `indexed_blocks`.
+Core: `transactions`, `balance_events`, `balances`, `tokens`, `watched_addresses`, `indexer_configs`, `indexed_blocks`, `pipeline_watermarks`.
 Operational: `address_books`, `balance_reconciliation_snapshots`, `runtime_configs`.
 `balance_events`는 flat 테이블 (파티셔닝 제거됨), UNIQUE INDEX on `event_id`로 dedup.
 
@@ -320,7 +309,7 @@ Operational: `address_books`, `balance_reconciliation_snapshots`, `runtime_confi
 
 ## Node.js Sidecar (gRPC Decoder)
 
-체인별 npm SDK 생태계(`@solana/web3.js` 등)를 활용한 플러그인 기반 balance event 디코더.
+체인별 디코딩 라이브러리를 활용한 플러그인 기반 balance event 디코더.
 
 ```protobuf
 service ChainDecoder {
@@ -467,7 +456,7 @@ multichain-indexer/
 │   │   └── identity/         # Shared canonicalization functions
 │   ├── reconciliation/       # Balance reconciliation (on-chain vs DB)
 │   ├── store/
-│   │   └── postgres/         # 11 repository implementations + 18 migrations
+│   │   └── postgres/         # 11 repository implementations + 19 migrations
 │   └── tracing/              # OpenTelemetry tracing integration
 ├── proto/sidecar/v1/         # Protobuf definitions
 ├── pkg/generated/            # Generated Go protobuf code

@@ -81,8 +81,8 @@
 
 모든 파이프라인 스테이지가 **인터페이스**에 의존하도록 리팩토링 완료:
 
-- Ingester: `TransactionRepository`, `BalanceEventRepository`, `BalanceRepository`, `TokenRepository`, `CursorRepository`, `WatermarkRepository`, `WatchedAddressRepository` 등
-- Coordinator: `WatchedAddressRepository`, `CursorReader`
+- Ingester: `TransactionRepository`, `BalanceEventRepository`, `BalanceRepository`, `TokenRepository`, `WatermarkRepository`, `WatchedAddressRepository` 등
+- Coordinator: `WatchedAddressRepository`, `WatermarkReader`
 - Pipeline: `Repos` 구조체가 인터페이스 필드로 구성
 
 Go implicit interface 패턴으로 `postgres.*Repo` 구현체가 자동으로 인터페이스를 만족한다.
@@ -370,8 +370,7 @@ func setupTestDB(t *testing.T) *postgres.DB {
 | 5 | BalanceRepo | AdjustBalanceTx +100, +200 | amount == 300 |
 | 6 | BalanceRepo | AdjustBalanceTx +100, -30 | amount == 70 |
 | 7 | BalanceRepo | GREATEST cursor | 높은 cursor만 저장 |
-| 8 | CursorRepo | UpsertTx items_processed 누적 | 10 + 5 = 15 |
-| 9 | WatermarkRepo | UpdateWatermarkTx GREATEST | 비퇴행 확인 |
+| 8 | WatermarkRepo | UpdateWatermarkTx GREATEST | 비퇴행 확인 |
 | 10 | WatchedAddressRepo | GetActive is_active=true만 | 비활성 제외 |
 | 11 | TokenRepo | Upsert RETURNING id | 기존 행 ID 반환 |
 
@@ -489,10 +488,10 @@ func TestIngester_ProcessBatch_Integration(t *testing.T) {
     db.QueryRow("SELECT amount FROM balances WHERE address='watched_addr_1'").Scan(&amount)
     assert.Equal(t, "999995000", amount) // 1 SOL - 5000 lamports fee
 
-    // Assert: cursor updated
-    var cursorValue string
-    db.QueryRow("SELECT cursor_value FROM address_cursors WHERE address='watched_addr_1'").Scan(&cursorValue)
-    assert.Equal(t, "sig1", cursorValue)
+    // Assert: watermark updated
+    var ingestedSeq int64
+    db.QueryRow("SELECT ingested_sequence FROM pipeline_watermarks WHERE chain='solana' AND network='devnet'").Scan(&ingestedSeq)
+    assert.Greater(t, ingestedSeq, int64(0))
 }
 ```
 
@@ -587,11 +586,6 @@ func TestPipeline_E2E(t *testing.T) {
     db.QueryRow("SELECT COUNT(*) FROM transfers").Scan(&transferCount)
     assert.Equal(t, 5, txCount)
     assert.GreaterOrEqual(t, transferCount, 1)
-
-    // Assert cursor updated
-    var cursorValue string
-    db.QueryRow("SELECT cursor_value FROM address_cursors WHERE address='devnet_addr_1'").Scan(&cursorValue)
-    assert.NotEmpty(t, cursorValue)
 
     // Assert watermark
     var ingestedSeq int64

@@ -58,9 +58,9 @@
 
 ### 1.3 핵심 결정 및 트레이드오프
 
-**Go 채널 vs Redis Streams (MVP):**
-- 선택: Go 채널 (in-process)
-- 이유: MVP에서 단일 프로세스로 충분, Redis Streams는 프로세스 분리 시 도입
+**Go 채널 (in-process) 전용:**
+- 선택: Go 채널 (in-process), Redis 의존 없음
+- 이유: 단일 프로세스로 충분, 프로세스 분리 시 메시지 브로커 도입 검토
 - 영향: 수평 스케일링 불가 (단일 인스턴스)
 
 **Node.js sidecar vs 순수 Go 디코딩:**
@@ -93,14 +93,12 @@ C4Context
     System_Ext(solana_rpc, "Solana RPC", "JSON-RPC 2.0")
     System_Ext(base_rpc, "Base RPC", "JSON-RPC 2.0")
     System_Ext(btc_rpc, "BTC RPC", "JSON-RPC / REST")
-    SystemDb(postgres, "PostgreSQL 16", "트랜잭션, 잔액, 커서")
-    SystemDb(redis, "Redis 7", "향후 프로세스 분리용")
+    SystemDb(postgres, "PostgreSQL 16", "트랜잭션, 잔액, 워터마크")
 
     Rel(indexer, solana_rpc, "fetch signatures + tx payload", "HTTPS")
     Rel(indexer, base_rpc, "fetch block/log/tx payload", "HTTPS")
     Rel(indexer, btc_rpc, "fetch block/tx payload", "HTTPS")
     Rel(indexer, postgres, "upsert, query", "TCP :5433")
-    Rel(indexer, redis, "(향후)", "TCP :6380")
     Rel(consumer, postgres, "SELECT", "TCP :5433")
 ```
 
@@ -115,7 +113,6 @@ C4Container
     Container(go_binary, "Go Indexer", "Go 1.24", "4단계 파이프라인: Coordinator→Fetcher→Normalizer→Ingester")
     Container(sidecar, "Node.js Sidecar", "Node 22", "gRPC 트랜잭션 디코더")
     ContainerDb(postgres, "PostgreSQL 16", "통합 테이블 + JSONB")
-    ContainerDb(redis, "Redis 7", "향후 스트림")
 
     System_Ext(chain_rpc, "Chain RPC (Solana/Base/BTC)")
 
@@ -247,12 +244,11 @@ sequenceDiagram
 
     C->>DB: GetActive watched_addresses
     DB-->>C: []WatchedAddress
-    C->>DB: Get address_cursors
-    DB-->>C: []AddressCursor
+    C->>DB: Get pipeline_watermarks
+    DB-->>C: last ingested block/slot
 
-    loop 각 주소
-        C->>F: FetchJob via jobCh
-    end
+    Note over C,F: Block-scan: single FetchJob per tick<br/>Cursor-based (Solana): per-address FetchJob
+    C->>F: FetchJob via jobCh
 
     F->>RPC: getSignaturesForAddress(cursor)
     RPC-->>F: []SignatureInfo
@@ -271,7 +267,6 @@ sequenceDiagram
     I->>DB: upsert tokens
     I->>DB: upsert balance_events (signed delta)
     I->>DB: adjust balances (delta accumulation)
-    I->>DB: update cursor
     I->>DB: update watermark
     I->>DB: COMMIT
 ```
@@ -317,7 +312,7 @@ Ingester 처리 느림
 2. 시작 즉시 첫 tick 실행 (`coordinator.go:54`)
 3. 매 tick 마다:
    - `GetActive()`: `watched_addresses` 테이블에서 `is_active=true` 주소 조회 (`coordinator.go:72`)
-   - 각 주소의 `address_cursors`에서 현재 커서 조회 (`coordinator.go:80`)
+   - `pipeline_watermarks`에서 현재 워터마크 조회 (`coordinator.go:80`)
    - `FetchJob` 생성 → `jobCh`로 전송 (`coordinator.go:91-105`)
 
 **특성:**
@@ -408,8 +403,7 @@ BEGIN sql.Tx
   │   │   │           signed delta: positive = inflow, negative = outflow
   │   │   └── Step 2c: Adjust balance (amount += delta)
   │   │
-  ├── Step 3: Update cursor (cursor_value, cursor_sequence, items_processed += N)
-  ├── Step 4: Update watermark (GREATEST ingested_sequence)
+  ├── Step 3: Update watermark (GREATEST ingested_sequence)
   └── COMMIT
 ```
 
@@ -426,7 +420,7 @@ BEGIN sql.Tx
 
 통합 테이블 + JSONB. AS-IS 모델과의 상세 비교는 [DB 모델 변경 비교](db-migration-rationale.md) 참조.
 
-### 4.2 파이프라인 상태 테이블 (4개)
+### 4.2 파이프라인 상태 테이블 (3개)
 
 **`indexer_configs`** — 체인/네트워크별 인덱서 설정:
 
@@ -447,15 +441,6 @@ BEGIN sql.Tx
 | organization_id | VARCHAR(100) | 사업 단위 |
 | is_active | BOOLEAN | 부분 인덱스 사용 (`WHERE is_active = true`) |
 | source | VARCHAR(20) | `"db"` 또는 `"env"` |
-
-**`address_cursors`** — 주소별 페이지네이션 상태:
-
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| cursor_value | VARCHAR(128) | 마지막 처리 서명 (Solana signature) |
-| cursor_sequence | BIGINT | 마지막 처리 슬롯/블록 |
-| items_processed | BIGINT | 누적 처리 건수 |
-| FK | (chain, network, address) → watched_addresses | 참조 무결성 |
 
 **`pipeline_watermarks`** — 글로벌 인덱싱 진행:
 
@@ -521,7 +506,6 @@ CREATE INDEX idx_balances_address ON balances (chain, network, address);
 | balance_events | DO NOTHING | 완전 멱등 (3-layer dedup 최종 보루) |
 | tokens | DO UPDATE SET ... RETURNING id | ID 반환 + 메타데이터 갱신 |
 | balances | DO UPDATE SET amount = amount + delta | 누적 산술 연산 |
-| cursors | DO UPDATE SET cursor_value = EXCLUDED | 진행 상태 갱신 |
 | watermarks | DO UPDATE SET ingested_sequence = GREATEST(...) | 비퇴행 보장 |
 
 **GREATEST() 워터마크** (`indexer_config_repo.go:61`):
@@ -555,16 +539,6 @@ erDiagram
         VARCHAR wallet_id
         BOOLEAN is_active
         VARCHAR source
-    }
-
-    address_cursors {
-        UUID id PK
-        VARCHAR chain
-        VARCHAR network
-        VARCHAR address
-        VARCHAR cursor_value
-        BIGINT cursor_sequence
-        BIGINT items_processed
     }
 
     pipeline_watermarks {
@@ -620,7 +594,6 @@ erDiagram
         BIGINT last_updated_cursor
     }
 
-    watched_addresses ||--o{ address_cursors : "FK (chain,network,address)"
     transactions ||--o{ balance_events : "transaction_id"
     tokens ||--o{ balance_events : "token_id"
     tokens ||--o{ balances : "token_id"
@@ -1044,7 +1017,6 @@ mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 | 서비스 | 이미지 | 포트 | 역할 |
 |--------|-------|------|------|
 | postgres | postgres:16-alpine | 5433:5432 | 관계형 DB |
-| redis | redis:7-alpine | 6380:6379 | 향후 사용 |
 | migrate | migrate/migrate:v4.17.0 | — | 스키마 마이그레이션 |
 | sidecar | (빌드) | 50051:50051 | gRPC 디코더 |
 
@@ -1114,10 +1086,9 @@ sequenceDiagram
 1. **DLQ (Dead Letter Queue)**: 실패 배치 추적 및 재처리 자동화
 2. **WaitGroup → errgroup**: Fetcher/Normalizer context 전파 갭 해결
 3. **gRPC TLS**: 프로덕션 환경 mTLS 적용
-4. **Redis Streams**: 프로세스 분리 (Fetcher → Redis → Normalizer)
-5. **수평 스케일링**: 주소 범위별 파티셔닝
-6. **CDC (Change Data Capture)**: DB 변경 스트림 → 외부 소비자
-7. **Circuit Breaker**: RPC/sidecar 장애 격리
+4. **수평 스케일링**: 주소 범위별 파티셔닝
+5. **CDC (Change Data Capture)**: DB 변경 스트림 → 외부 소비자
+6. **Circuit Breaker**: RPC/sidecar 장애 격리
 
 ---
 
@@ -1131,7 +1102,6 @@ sequenceDiagram
 | `DB_MAX_OPEN_CONNS` | 25 | 최대 연결 수 |
 | `DB_MAX_IDLE_CONNS` | 5 | 유휴 연결 수 |
 | `DB_CONN_MAX_LIFETIME_MIN` | 30 | 연결 최대 수명 (분) |
-| `REDIS_URL` | `redis://localhost:6380` | Redis 연결 (향후) |
 | `SIDECAR_ADDR` | `localhost:50051` | gRPC sidecar 주소 |
 | `SIDECAR_TIMEOUT_SEC` | 30 | gRPC 호출 timeout (초) |
 | `SOLANA_RPC_URL` | `https://api.devnet.solana.com` | Solana RPC 엔드포인트 |
@@ -1213,10 +1183,9 @@ multichain-indexer/
 │   ├── reconciliation/                # 온체인 vs DB 잔액 검증
 │   ├── tracing/                        # OpenTelemetry 통합
 │   └── store/
-│       ├── redis/                      # Redis 메시지 전송
 │       └── postgres/
 │           ├── db.go                   # 연결 풀
-│           ├── migrations/             # 001~018 마이그레이션
+│           ├── migrations/             # 001~019 마이그레이션
 │           └── *_repo.go              # 11개 리포지토리
 ├── proto/sidecar/v1/                   # Protobuf 정의
 ├── pkg/generated/sidecar/v1/           # Go protobuf 생성 코드
