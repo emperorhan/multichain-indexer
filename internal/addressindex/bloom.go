@@ -2,6 +2,7 @@ package addressindex
 
 import (
 	"encoding/binary"
+	"hash"
 	"hash/fnv"
 	"math"
 	"sync"
@@ -68,11 +69,16 @@ func (bf *BloomFilter) MayContain(key string) bool {
 	return true
 }
 
+var fnvPool = sync.Pool{New: func() any { return fnv.New128a() }}
+
 // hash produces two independent 64-bit hashes from FNV-128a.
+// Uses sync.Pool to avoid per-call allocation.
 func (bf *BloomFilter) hash(key string) (uint64, uint64) {
-	h := fnv.New128a()
+	h := fnvPool.Get().(hash.Hash)
+	h.Reset()
 	h.Write([]byte(key))
 	sum := h.Sum(nil) // 16 bytes
+	fnvPool.Put(h)
 	h1 := binary.BigEndian.Uint64(sum[:8])
 	h2 := binary.BigEndian.Uint64(sum[8:])
 	if h2 == 0 {

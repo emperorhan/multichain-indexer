@@ -161,11 +161,18 @@ func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address stri
 		candidates[hash] = existing
 	}
 
-	for blockNum := startBlock; blockNum <= head; blockNum++ {
-		block, err := a.client.GetBlockByNumber(ctx, blockNum, true)
-		if err != nil {
-			return nil, fmt.Errorf("get block %d: %w", blockNum, err)
-		}
+	// Batch-fetch all blocks in a single RPC call.
+	blockNums := make([]int64, 0, head-startBlock+1)
+	for n := startBlock; n <= head; n++ {
+		blockNums = append(blockNums, n)
+	}
+	blocks, err := a.client.GetBlocksByNumber(ctx, blockNums, true)
+	if err != nil {
+		return nil, fmt.Errorf("batch get blocks %d-%d: %w", startBlock, head, err)
+	}
+
+	for idx, block := range blocks {
+		blockNum := blockNums[idx]
 		if block == nil {
 			continue
 		}

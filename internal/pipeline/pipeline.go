@@ -106,6 +106,11 @@ type Pipeline struct {
 	replayCh      chan replayOp
 	health        *PipelineHealth
 
+	// Reusable channels between stages (created once in New).
+	jobCh        chan event.FetchJob
+	rawBatchCh   chan event.RawBatch
+	normalizedCh chan event.NormalizedBatch
+
 	// Activation control: uses sync.Cond to avoid signal loss.
 	active    atomic.Bool
 	activeMu  sync.Mutex
@@ -137,15 +142,19 @@ func New(
 	if cfg.Health.UnhealthyThreshold > 0 {
 		health.unhealthyThreshold = cfg.Health.UnhealthyThreshold
 	}
+	bufSize := cfg.ChannelBufferSize
 	p := &Pipeline{
-		cfg:        cfg,
-		adapter:    adapter,
-		db:         db,
-		repos:      repos,
-		logger:     logger.With("component", "pipeline"),
-		replayCh:   make(chan replayOp, 1),
-		health:     health,
-		deactiveCh: make(chan struct{}, 1),
+		cfg:          cfg,
+		adapter:      adapter,
+		db:           db,
+		repos:        repos,
+		logger:       logger.With("component", "pipeline"),
+		replayCh:     make(chan replayOp, 1),
+		health:       health,
+		jobCh:        make(chan event.FetchJob, bufSize),
+		rawBatchCh:   make(chan event.RawBatch, bufSize),
+		normalizedCh: make(chan event.NormalizedBatch, bufSize),
+		deactiveCh:   make(chan struct{}, 1),
 	}
 	p.stateCond = sync.NewCond(&p.activeMu)
 	p.active.Store(true)
@@ -329,15 +338,29 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 }
 
-// runPipeline contains the original Run() body. All channels and stages are
-// created fresh on each invocation so a restart starts clean.
-func (p *Pipeline) runPipeline(ctx context.Context) error {
-	bufSize := p.cfg.ChannelBufferSize
+// drainChannels flushes any residual data from the reusable channels.
+// Must be called after all stage goroutines have exited.
+func (p *Pipeline) drainChannels() {
+	for {
+		select {
+		case <-p.jobCh:
+		case <-p.rawBatchCh:
+		case <-p.normalizedCh:
+		default:
+			return
+		}
+	}
+}
 
-	// Channels between stages
-	jobCh := make(chan event.FetchJob, bufSize)
-	rawBatchCh := make(chan event.RawBatch, bufSize)
-	normalizedCh := make(chan event.NormalizedBatch, bufSize)
+// runPipeline contains the original Run() body. Channels are reused across
+// restarts; only the context is recreated for cancellation.
+func (p *Pipeline) runPipeline(ctx context.Context) error {
+	// Drain any residual data from previous run before starting fresh stages.
+	p.drainChannels()
+
+	jobCh := p.jobCh
+	rawBatchCh := p.rawBatchCh
+	normalizedCh := p.normalizedCh
 	autoTuneSignalCollector := autotune.NewRuntimeSignalRegistry()
 
 	// Create stages

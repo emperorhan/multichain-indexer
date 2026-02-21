@@ -1,6 +1,7 @@
 package ingester
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -36,6 +37,9 @@ const (
 	defaultDeniedCacheTTL          = 5 * time.Minute
 )
 
+// blockScanAddrCacheTTL is how long the block-scan watched address cache is valid.
+const blockScanAddrCacheTTL = 30 * time.Second
+
 // Ingester is a single-writer that processes NormalizedBatches into the database.
 type Ingester struct {
 	db                store.TxBeginner
@@ -60,6 +64,10 @@ type Ingester struct {
 	replayService     *replay.Service
 	watchedAddrRepo   store.WatchedAddressRepository
 	addressIndex      addressindex.Index
+
+	// Block-scan watched address cache (single-writer, no mutex needed).
+	blockScanAddrCache   map[string]map[string]addrMeta // key: "chain:network"
+	blockScanAddrCacheAt map[string]time.Time
 }
 
 type Option func(*Ingester)
@@ -144,20 +152,22 @@ func New(
 	opts ...Option,
 ) *Ingester {
 	ing := &Ingester{
-		db:               db,
-		txRepo:           txRepo,
-		balanceEventRepo: balanceEventRepo,
-		balanceRepo:      balanceRepo,
-		tokenRepo:        tokenRepo,
-		configRepo:       configRepo,
-		normalizedCh:     normalizedCh,
-		logger:           logger.With("component", "ingester"),
-		reorgHandler:     nil,
-		retryMaxAttempts: defaultProcessRetryMaxAttempts,
-		retryDelayStart:  defaultRetryDelayInitial,
-		retryDelayMax:    defaultRetryDelayMax,
-		sleepFn:          sleepContext,
-		deniedCache:      cache.NewLRU[string, bool](defaultDeniedCacheCapacity, defaultDeniedCacheTTL),
+		db:                   db,
+		txRepo:               txRepo,
+		balanceEventRepo:     balanceEventRepo,
+		balanceRepo:          balanceRepo,
+		tokenRepo:            tokenRepo,
+		configRepo:           configRepo,
+		normalizedCh:         normalizedCh,
+		logger:               logger.With("component", "ingester"),
+		reorgHandler:         nil,
+		retryMaxAttempts:     defaultProcessRetryMaxAttempts,
+		retryDelayStart:      defaultRetryDelayInitial,
+		retryDelayMax:        defaultRetryDelayMax,
+		sleepFn:              sleepContext,
+		deniedCache:          cache.NewLRU[string, bool](defaultDeniedCacheCapacity, defaultDeniedCacheTTL),
+		blockScanAddrCache:   make(map[string]map[string]addrMeta),
+		blockScanAddrCacheAt: make(map[string]time.Time),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -529,17 +539,13 @@ func (ing *Ingester) processBatch(ctx context.Context, batch event.NormalizedBat
 
 	bc := &batchContext{batch: batch, dbTx: dbTx}
 
-	// Block-scan mode: resolve per-address wallet/org mapping
+	// Block-scan mode: resolve per-address wallet/org mapping (cached)
 	if batch.BlockScanMode && ing.addressIndex == nil && ing.watchedAddrRepo != nil {
-		activeAddrs, err := ing.watchedAddrRepo.GetActive(ctx, batch.Chain, batch.Network)
+		addrMap, err := ing.getBlockScanAddrMap(ctx, batch.Chain, batch.Network)
 		if err != nil {
 			return fmt.Errorf("fetch watched addresses for block-scan: %w", err)
 		}
-		bc.blockScanAddrMap = make(map[string]addrMeta, len(activeAddrs))
-		for _, wa := range activeAddrs {
-			key := identity.CanonicalAddressIdentity(batch.Chain, wa.Address)
-			bc.blockScanAddrMap[key] = addrMeta{walletID: wa.WalletID, orgID: wa.OrganizationID}
-		}
+		bc.blockScanAddrMap = addrMap
 	}
 
 	if err := ing.collectEvents(ctx, bc); err != nil {
@@ -584,6 +590,7 @@ func (ing *Ingester) collectEvents(ctx context.Context, bc *batchContext) error 
 	txModelsByHash := make(map[string]*model.Transaction, len(batch.Transactions))
 	tokenModelsByContract := make(map[string]*model.Token)
 	bc.contractsToCheck = make(map[string]struct{})
+	bc.allEvents = make([]eventContext, 0, len(batch.Transactions)*3)
 
 	for _, ntx := range batch.Transactions {
 		canonicalTxHash := identity.CanonicalSignatureIdentity(batch.Chain, ntx.TxHash)
@@ -1320,8 +1327,9 @@ func detectScamSignal(chain model.Chain, be event.NormalizedBalanceEvent, balanc
 		return ""
 	}
 
-	// Check sidecar-propagated signal from metadata
-	if be.ChainData != nil {
+	// Check sidecar-propagated signal from metadata.
+	// Pre-check with bytes.Contains to avoid unmarshal allocation for 99%+ events.
+	if be.ChainData != nil && bytes.Contains(be.ChainData, []byte(`"scam_signal"`)) {
 		var metadata map[string]string
 		if err := json.Unmarshal(be.ChainData, &metadata); err == nil {
 			if signal, ok := metadata["scam_signal"]; ok && signal != "" {
@@ -1826,6 +1834,30 @@ func strPtrOrNil(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// getBlockScanAddrMap returns the watched address map for block-scan mode,
+// using a TTL cache to avoid querying the DB on every batch.
+func (ing *Ingester) getBlockScanAddrMap(ctx context.Context, chain model.Chain, network model.Network) (map[string]addrMeta, error) {
+	cacheKey := string(chain) + ":" + string(network)
+	if cached, ok := ing.blockScanAddrCache[cacheKey]; ok {
+		if time.Since(ing.blockScanAddrCacheAt[cacheKey]) < blockScanAddrCacheTTL {
+			return cached, nil
+		}
+	}
+
+	activeAddrs, err := ing.watchedAddrRepo.GetActive(ctx, chain, network)
+	if err != nil {
+		return nil, err
+	}
+	addrMap := make(map[string]addrMeta, len(activeAddrs))
+	for _, wa := range activeAddrs {
+		key := identity.CanonicalAddressIdentity(chain, wa.Address)
+		addrMap[key] = addrMeta{walletID: wa.WalletID, orgID: wa.OrganizationID}
+	}
+	ing.blockScanAddrCache[cacheKey] = addrMap
+	ing.blockScanAddrCacheAt[cacheKey] = time.Now()
+	return addrMap, nil
 }
 
 // oldestBlockTime returns the earliest block_time from the batch transactions.

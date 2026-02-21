@@ -183,21 +183,147 @@ func (r *BalanceEventRepo) BulkUpsertTx(ctx context.Context, tx *sql.Tx, events 
 	return r.bulkUpsertMultiValues(ctx, tx, events)
 }
 
-// bulkUpsertPerEvent is the original per-event loop used for small batches.
+// bulkUpsertPerEvent upserts a small batch of events using a single CTE query
+// that provides finality crossing detection. Reduces 2×N queries to 1.
 func (r *BalanceEventRepo) bulkUpsertPerEvent(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 	var result store.BulkUpsertEventResult
-	for _, ev := range events {
-		ur, err := r.UpsertTx(ctx, tx, ev)
-		if err != nil {
-			return result, fmt.Errorf("bulk upsert balance event (event_id=%s): %w", ev.EventID, err)
+	if len(events) == 0 {
+		return result, nil
+	}
+
+	// Collect event_ids for the existing-state lookup.
+	eventIDs := make([]interface{}, len(events))
+	for i, ev := range events {
+		eventIDs[i] = ev.EventID
+	}
+
+	// Build the existing-state lookup placeholders: $1, $2, ..., $N
+	existingPlaceholders := make([]string, len(events))
+	for i := range events {
+		existingPlaceholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+
+	// Build the CTE query.
+	var sb strings.Builder
+	sb.WriteString(`WITH existing AS (
+		SELECT event_id, balance_applied FROM balance_events
+		WHERE event_id IN (`)
+	sb.WriteString(strings.Join(existingPlaceholders, ", "))
+	sb.WriteString(`) FOR UPDATE
+	),
+	upserted AS (
+		INSERT INTO balance_events (
+			chain, network, transaction_id, tx_hash,
+			outer_instruction_index, inner_instruction_index,
+			token_id, activity_type, event_action, program_id,
+			address, counterparty_address, delta, balance_before, balance_after,
+			watched_address, wallet_id, organization_id,
+			block_cursor, block_time, chain_data, balance_applied,
+			event_id, block_hash, tx_index, event_path, event_path_type,
+			actor_address, asset_type, asset_id,
+			finality_state, decoder_version, schema_version
+		) VALUES `)
+
+	// Build VALUES rows. Parameters start after the N event_id params.
+	args := make([]interface{}, 0, len(events)+len(events)*colsPerEvent)
+	args = append(args, eventIDs...)
+
+	for idx, be := range events {
+		if idx > 0 {
+			sb.WriteString(", ")
 		}
-		if ur.Inserted {
+		base := len(events) + idx*colsPerEvent
+		sb.WriteString("(")
+		for j := 0; j < colsPerEvent; j++ {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(&sb, "$%d", base+j+1)
+		}
+		sb.WriteString(")")
+
+		args = append(args,
+			be.Chain, be.Network, be.TransactionID, be.TxHash,
+			be.OuterInstructionIndex, be.InnerInstructionIndex,
+			be.TokenID, be.ActivityType, be.EventAction, be.ProgramID,
+			be.Address, be.CounterpartyAddress, be.Delta, be.BalanceBefore, be.BalanceAfter,
+			be.WatchedAddress, be.WalletID, be.OrganizationID,
+			be.BlockCursor, be.BlockTime, be.ChainData, be.BalanceApplied,
+			be.EventID, be.BlockHash, be.TxIndex, be.EventPath, be.EventPathType,
+			be.ActorAddress, be.AssetType, be.AssetID,
+			be.FinalityState, be.DecoderVersion, be.SchemaVersion,
+		)
+	}
+
+	sb.WriteString(`
+		ON CONFLICT (event_id) WHERE event_id <> '' DO UPDATE SET
+			finality_state = EXCLUDED.finality_state,
+			balance_applied = CASE
+				WHEN EXCLUDED.balance_applied AND NOT balance_events.balance_applied THEN true
+				ELSE balance_events.balance_applied
+			END,
+			block_hash = COALESCE(NULLIF(EXCLUDED.block_hash, ''), balance_events.block_hash),
+			tx_index = CASE
+				WHEN EXCLUDED.tx_index <> 0 THEN EXCLUDED.tx_index
+				ELSE balance_events.tx_index
+			END,
+			block_cursor = GREATEST(balance_events.block_cursor, EXCLUDED.block_cursor),
+			block_time = GREATEST(balance_events.block_time, COALESCE(EXCLUDED.block_time, balance_events.block_time)),
+			chain_data = COALESCE(EXCLUDED.chain_data, balance_events.chain_data),
+			decoder_version = COALESCE(NULLIF(EXCLUDED.decoder_version, ''), balance_events.decoder_version),
+			schema_version = COALESCE(NULLIF(EXCLUDED.schema_version, ''), balance_events.schema_version)
+		WHERE
+			CASE LOWER(COALESCE(TRIM(EXCLUDED.finality_state), ''))
+				WHEN 'finalized' THEN 4
+				WHEN 'safe' THEN 3
+				WHEN 'confirmed' THEN 2
+				WHEN 'processed' THEN 1
+				WHEN 'latest' THEN 1
+				WHEN 'pending' THEN 1
+				WHEN 'unsafe' THEN 1
+				ELSE 0
+			END >=
+			CASE LOWER(COALESCE(TRIM(balance_events.finality_state), ''))
+				WHEN 'finalized' THEN 4
+				WHEN 'safe' THEN 3
+				WHEN 'confirmed' THEN 2
+				WHEN 'processed' THEN 1
+				WHEN 'latest' THEN 1
+				WHEN 'pending' THEN 1
+				WHEN 'unsafe' THEN 1
+				ELSE 0
+			END
+		RETURNING event_id, (xmax = 0) AS inserted, balance_applied
+	)
+	SELECT u.event_id, u.inserted,
+	       COALESCE(e.balance_applied, false) AS was_applied,
+	       u.balance_applied AS now_applied
+	FROM upserted u LEFT JOIN existing e ON u.event_id = e.event_id`)
+
+	rows, err := tx.QueryContext(ctx, sb.String(), args...)
+	if err != nil {
+		return result, fmt.Errorf("bulk upsert per-event CTE: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var eventID string
+		var inserted, wasApplied, nowApplied bool
+		if err := rows.Scan(&eventID, &inserted, &wasApplied, &nowApplied); err != nil {
+			return result, fmt.Errorf("bulk upsert per-event CTE scan: %w", err)
+		}
+		if inserted {
 			result.InsertedCount++
 		}
-		if ur.FinalityCrossed {
+		// Finality crossing: existing row was not applied, now it is, and it was an update (not insert).
+		if !inserted && !wasApplied && nowApplied {
 			result.FinalityCrossedCount++
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return result, fmt.Errorf("bulk upsert per-event CTE rows: %w", err)
+	}
+
 	return result, nil
 }
 

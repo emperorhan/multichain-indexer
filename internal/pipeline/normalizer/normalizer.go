@@ -50,7 +50,7 @@ type Normalizer struct {
 	retryDelayStart  time.Duration
 	retryDelayMax    time.Duration
 	sleepFn          func(context.Context, time.Duration) error
-	coverageFloor    *cache.LRU[string, *sidecarv1.TransactionResult]
+	coverageFloor    cache.Cache[string, *sidecarv1.TransactionResult]
 	tlsEnabled       bool
 	tlsCA            string
 	tlsCert          string
@@ -107,7 +107,7 @@ func New(
 		retryDelayStart:  defaultRetryDelayInitial,
 		retryDelayMax:    defaultRetryDelayMax,
 		sleepFn:          sleepContext,
-		coverageFloor:    cache.NewLRU[string, *sidecarv1.TransactionResult](50_000, 10*time.Minute),
+		coverageFloor:    cache.NewShardedLRU[string, *sidecarv1.TransactionResult](50_000, 10*time.Minute, func(k string) string { return k }),
 	}
 	for _, opt := range opts {
 		if opt != nil {

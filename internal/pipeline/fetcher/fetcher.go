@@ -215,10 +215,9 @@ func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.Fe
 		return nil
 	}
 
-	// Canonicalize provider-returned ordering and suppress overlap duplicates.
-	sigs = canonicalizeSignatures(job.Chain, sigs)
-	sigs = suppressPostCutoffSignatures(sigs, job.FetchCutoffSeq)
-	sigs = suppressBoundaryCursorSignatures(job.Chain, sigs, canonicalCursor, job.CursorSequence)
+	// Canonicalize, dedup, and filter in a single pass (cutoff + boundary cursor),
+	// then handle pre-cursor carryover separately (complex rollback logic).
+	sigs = filterAndCanonicalizeSignatures(job.Chain, sigs, job.FetchCutoffSeq, canonicalCursor)
 	sigs = suppressPreCursorSequenceCarryover(sigs, job.CursorSequence, requestedBatch)
 	if len(sigs) == 0 {
 		log.Debug("no canonical signatures after overlap suppression", "address", job.Address)
@@ -667,7 +666,7 @@ func (f *Fetcher) updateAdaptiveBatchSize(
 }
 
 func (f *Fetcher) batchStateKey(chain model.Chain, network model.Network, address string) string {
-	return fmt.Sprintf("%s|%s|%s", chain, network, canonicalizeWatchedAddressIdentity(chain, address))
+	return string(chain) + "|" + string(network) + "|" + canonicalizeWatchedAddressIdentity(chain, address)
 }
 
 func (f *Fetcher) reduceBatchSize(current int) int {
@@ -765,6 +764,57 @@ func (f *Fetcher) effectiveBoundaryOverlapLookahead() int {
 		return boundaryOverlapLookahead
 	}
 	return f.boundaryOverlapLookahead
+}
+
+// filterAndCanonicalizeSignatures combines canonicalization, dedup, cutoff filtering,
+// and boundary cursor suppression into a single pass with one sort at the end.
+func filterAndCanonicalizeSignatures(
+	chainID model.Chain,
+	sigs []chain.SignatureInfo,
+	cutoffSeq int64,
+	cursor *string,
+) []chain.SignatureInfo {
+	if len(sigs) == 0 {
+		return []chain.SignatureInfo{}
+	}
+
+	cursorIdentity := ""
+	if cursor != nil {
+		cursorIdentity = identity.CanonicalSignatureIdentity(chainID, *cursor)
+	}
+
+	byIdentity := make(map[string]chain.SignatureInfo, len(sigs))
+	for _, sig := range sigs {
+		id := identity.CanonicalSignatureIdentity(chainID, sig.Hash)
+		if id == "" {
+			continue
+		}
+		// Cutoff filter
+		if cutoffSeq > 0 && sig.Sequence > cutoffSeq {
+			continue
+		}
+		// Boundary cursor filter
+		if cursorIdentity != "" && id == cursorIdentity {
+			continue
+		}
+
+		candidate := chain.SignatureInfo{
+			Hash:     id,
+			Sequence: sig.Sequence,
+			Time:     sig.Time,
+		}
+		existing, ok := byIdentity[id]
+		if !ok || shouldReplaceCanonicalSignature(existing, candidate) {
+			byIdentity[id] = candidate
+		}
+	}
+
+	ordered := make([]chain.SignatureInfo, 0, len(byIdentity))
+	for _, sig := range byIdentity {
+		ordered = append(ordered, sig)
+	}
+	sortSignatureInfosBySequenceThenHash(ordered)
+	return ordered
 }
 
 func canonicalizeSignatures(chainID model.Chain, sigs []chain.SignatureInfo) []chain.SignatureInfo {

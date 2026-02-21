@@ -28,7 +28,7 @@ type TieredIndexConfig struct {
 type TieredIndex struct {
 	bloomMu sync.RWMutex
 	blooms  map[string]*BloomFilter // keyed by "chain:network"
-	lru     *cache.LRU[string, *model.WatchedAddress] // nil value = negative cache
+	lru     cache.Cache[string, *model.WatchedAddress] // nil value = negative cache
 	repo    store.WatchedAddressRepository
 	cfg     TieredIndexConfig
 }
@@ -54,7 +54,7 @@ func NewTieredIndex(repo store.WatchedAddressRepository, cfg TieredIndexConfig) 
 
 	return &TieredIndex{
 		blooms: make(map[string]*BloomFilter),
-		lru:    cache.NewLRU[string, *model.WatchedAddress](cfg.LRUCapacity, cfg.LRUTTL),
+		lru:    cache.NewShardedLRU[string, *model.WatchedAddress](cfg.LRUCapacity, cfg.LRUTTL, func(k string) string { return k }),
 		repo:   repo,
 		cfg:    cfg,
 	}
@@ -68,7 +68,7 @@ func (t *TieredIndex) getBloom(chain model.Chain, network model.Network) *BloomF
 }
 
 func lruKey(chain model.Chain, network model.Network, address string) string {
-	return fmt.Sprintf("%s:%s:%s", chain, network, address)
+	return string(chain) + ":" + string(network) + ":" + address
 }
 
 // Contains returns true if the address might be watched (bloom + LRU).

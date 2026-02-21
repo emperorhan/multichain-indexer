@@ -229,12 +229,19 @@ func (a *Adapter) FetchNewSignaturesWithCutoff(ctx context.Context, address stri
 		candidates[hash] = existing
 	}
 
-	for blockNum := startBlock; blockNum <= head; blockNum++ {
-		blockHash, err := a.client.GetBlockHash(ctx, blockNum)
-		if err != nil {
-			return nil, fmt.Errorf("get block hash %d: %w", blockNum, err)
-		}
-		block, err := a.client.GetBlock(ctx, blockHash, blockVerbosityTxObjects)
+	// Batch-fetch all block hashes in a single RPC call.
+	heights := make([]int64, 0, head-startBlock+1)
+	for n := startBlock; n <= head; n++ {
+		heights = append(heights, n)
+	}
+	blockHashes, err := a.client.GetBlockHashes(ctx, heights)
+	if err != nil {
+		return nil, fmt.Errorf("batch get block hashes %d-%d: %w", startBlock, head, err)
+	}
+
+	for idx, blockHash := range blockHashes {
+		blockNum := heights[idx]
+		block, err := a.getBlockWithVerbosity(ctx, blockHash)
 		if err != nil {
 			return nil, fmt.Errorf("get block %d: %w", blockNum, err)
 		}

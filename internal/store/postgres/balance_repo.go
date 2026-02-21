@@ -71,7 +71,8 @@ func (r *BalanceRepo) GetByAddress(ctx context.Context, chain model.Chain, netwo
 }
 
 // BulkGetAmountWithExistsTx returns the balance amounts and existence flags for multiple keys
-// in a single query. Uses FOR UPDATE for row-level locking.
+// in a single query. No row-level locking needed: single-writer ingester pattern
+// and BulkAdjustBalanceTx's ON CONFLICT guarantee atomicity.
 // Keys not found in the DB are returned with Amount="0" and Exists=false.
 func (r *BalanceRepo) BulkGetAmountWithExistsTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, keys []store.BalanceKey) (map[store.BalanceKey]store.BalanceInfo, error) {
 	result := make(map[store.BalanceKey]store.BalanceInfo, len(keys))
@@ -101,7 +102,6 @@ func (r *BalanceRepo) BulkGetAmountWithExistsTx(ctx context.Context, tx *sql.Tx,
 		FROM balances
 		WHERE chain = $1 AND network = $2
 		  AND (address, token_id, balance_type) IN (%s)
-		FOR UPDATE
 	`, strings.Join(tuples, ", "))
 
 	rows, err := tx.QueryContext(ctx, query, args...)

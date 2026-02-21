@@ -259,7 +259,7 @@ func coverageFloorKey(chainID model.Chain, network model.Network, address, signa
 	if canonicalAddress == "" {
 		canonicalAddress = strings.TrimSpace(address)
 	}
-	return fmt.Sprintf("%s|%s|%s|%s", chainID, network, canonicalAddress, signature)
+	return string(chainID) + "|" + string(network) + "|" + canonicalAddress + "|" + signature
 }
 
 func decodedCoverageDelta(chainID model.Chain, floor, incoming *sidecarv1.TransactionResult) (missingFromIncoming, newlyObserved int) {
