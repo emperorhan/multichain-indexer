@@ -471,8 +471,8 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 	)
 
 	// Reorg/finality channels (nil-safe if not used)
-	reorgCh := make(chan event.ReorgEvent, 1)
-	finalityCh := make(chan event.FinalityPromotion, 1)
+	reorgCh := make(chan event.ReorgEvent, 4)
+	finalityCh := make(chan event.FinalityPromotion, 4)
 
 	ingesterOpts := []ingester.Option{
 		ingester.WithCommitInterleaver(p.cfg.CommitInterleaver),

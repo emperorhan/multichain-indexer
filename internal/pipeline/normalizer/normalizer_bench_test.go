@@ -157,10 +157,11 @@ func BenchmarkNormalizedTxFromResult(b *testing.B) {
 			Address: watchedAddr,
 		}
 
+		watchedAddrs := resolveWatchedAddressSet(batch)
 		b.Run(fmt.Sprintf("events_%d", count), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				_ = n.normalizedTxFromResult(batch, result, nil)
+				_ = n.normalizedTxFromResult(batch, result, nil, watchedAddrs)
 			}
 		})
 	}
@@ -264,9 +265,10 @@ func BenchmarkNormalizedTxFromResult_EVM(b *testing.B) {
 		Address: watchedAddr,
 	}
 
+	evmWatchedAddrs := resolveWatchedAddressSet(batch)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = n.normalizedTxFromResult(batch, result, nil)
+		_ = n.normalizedTxFromResult(batch, result, nil, evmWatchedAddrs)
 	}
 }
 

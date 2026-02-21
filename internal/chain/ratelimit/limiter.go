@@ -35,9 +35,11 @@ func (l *Limiter) Wait(ctx context.Context) error {
 	delay := r.Delay()
 	if delay > 0 {
 		metrics.RPCRateLimitWaits.WithLabelValues(l.chain).Inc()
+		timer := time.NewTimer(delay)
 		select {
-		case <-time.After(delay):
+		case <-timer.C:
 		case <-ctx.Done():
+			timer.Stop()
 			r.Cancel()
 			return ctx.Err()
 		}

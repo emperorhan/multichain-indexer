@@ -8369,8 +8369,9 @@ func TestNormalizedTxFromResult_BTCUsesUTXOCanonicalizationWithDeterministicMine
 		},
 	}
 
-	tx := n.normalizedTxFromResult(batch, result, nil)
-	txReplay := n.normalizedTxFromResult(batch, result, nil)
+	watchedAddrs := resolveWatchedAddressSet(batch)
+	tx := n.normalizedTxFromResult(batch, result, nil, watchedAddrs)
+	txReplay := n.normalizedTxFromResult(batch, result, nil, watchedAddrs)
 	require.Len(t, tx.BalanceEvents, 3)
 	require.Len(t, txReplay.BalanceEvents, 3)
 	assert.Equal(t, "abcdef001122", tx.TxHash)

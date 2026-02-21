@@ -77,7 +77,8 @@ func (bf *BloomFilter) hash(key string) (uint64, uint64) {
 	h := fnvPool.Get().(hash.Hash)
 	h.Reset()
 	h.Write([]byte(key))
-	sum := h.Sum(nil) // 16 bytes
+	var buf [16]byte
+	sum := h.Sum(buf[:0])
 	fnvPool.Put(h)
 	h1 := binary.BigEndian.Uint64(sum[:8])
 	h2 := binary.BigEndian.Uint64(sum[8:])

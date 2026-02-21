@@ -202,10 +202,10 @@ func shouldReplaceDecodedResult(chainID model.Chain, existing, incoming *sidecar
 
 func reconcileDecodedResultCoverage(chainID model.Chain, existing, incoming *sidecarv1.TransactionResult) *sidecarv1.TransactionResult {
 	if existing == nil {
-		return cloneDecodedResult(incoming)
+		return incoming
 	}
 	if incoming == nil {
-		return cloneDecodedResult(existing)
+		return existing
 	}
 
 	preferred := existing
@@ -590,7 +590,7 @@ func decodedCoverageEventLineageKey(chainID model.Chain, be *sidecarv1.BalanceEv
 		delta = canonicalFeeDelta(delta)
 	}
 
-	return fmt.Sprintf("%s|%s|%s|%s|%s", category, address, assetID, counterparty, delta)
+	return category + "|" + address + "|" + assetID + "|" + counterparty + "|" + delta
 }
 
 func decodedCoverageEventKey(chainID model.Chain, be *sidecarv1.BalanceEventInfo) string {
@@ -610,7 +610,7 @@ func decodedCoverageEventKey(chainID model.Chain, be *sidecarv1.BalanceEventInfo
 	if category == "" {
 		category = strings.ToUpper(strings.TrimSpace(be.EventAction))
 	}
-	return fmt.Sprintf("%s|%s|%s|%s", path, address, assetID, category)
+	return path + "|" + address + "|" + assetID + "|" + category
 }
 
 func cloneDecodedResult(result *sidecarv1.TransactionResult) *sidecarv1.TransactionResult {
@@ -711,7 +711,7 @@ func decodedEventFingerprint(chainID model.Chain, be *sidecarv1.BalanceEventInfo
 		strings.EqualFold(category, string(model.EventCategoryFeeDataL1)) {
 		delta = canonicalFeeDelta(delta)
 	}
-	return fmt.Sprintf("%s|%s|%s|%s", path, address, assetID, delta)
+	return path + "|" + address + "|" + assetID + "|" + delta
 }
 
 func decodedEventPath(chainID model.Chain, be *sidecarv1.BalanceEventInfo) string {

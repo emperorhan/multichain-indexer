@@ -214,7 +214,7 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startSlot, endSlot int64, watc
 
 			var sigs []chain.SignatureInfo
 			for _, btx := range block.Transactions {
-				sig := extractSignature(btx)
+				sig, accounts := extractSignatureAndKeys(btx)
 				if sig == "" {
 					continue
 				}
@@ -222,7 +222,6 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startSlot, endSlot int64, watc
 				// Check account keys first (cheap). Only extract token
 				// balance owners (expensive JSON parse) when account keys
 				// did not already produce a match.
-				accounts := extractAccountKeys(btx)
 				matched := anyAddressMatches(accounts, watchedSet)
 				if !matched {
 					owners := extractTokenBalanceOwners(btx.Meta)
@@ -265,33 +264,32 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startSlot, endSlot int64, watc
 	return results, nil
 }
 
-// extractSignature parses the first signature from a block transaction.
-func extractSignature(btx rpc.BlockTransaction) string {
-	var parsed struct {
-		Signatures []string `json:"signatures"`
-	}
-	if err := json.Unmarshal(btx.Transaction, &parsed); err != nil {
-		return ""
-	}
-	if len(parsed.Signatures) == 0 {
-		return ""
-	}
-	return parsed.Signatures[0]
+// blockTxParsed is a combined struct for extracting both signature and account
+// keys from a block transaction in a single JSON parse.
+type blockTxParsed struct {
+	Signatures []string `json:"signatures"`
+	Message    struct {
+		AccountKeys []json.RawMessage `json:"accountKeys"`
+	} `json:"message"`
 }
 
-// extractAccountKeys parses account keys from a block transaction.
-// Uses single-pass parsing: checks the first byte of each raw JSON element
-// to determine whether it's a string or object, avoiding a failed unmarshal attempt.
-func extractAccountKeys(btx rpc.BlockTransaction) []string {
-	var parsed struct {
-		Message struct {
-			AccountKeys []json.RawMessage `json:"accountKeys"`
-		} `json:"message"`
-	}
+// extractSignatureAndKeys parses a block transaction once to extract both the
+// first signature and all account keys, avoiding duplicate JSON unmarshalling.
+// Uses single-pass parsing for account keys: checks the first byte of each raw
+// JSON element to determine whether it's a string or object.
+func extractSignatureAndKeys(btx rpc.BlockTransaction) (string, []string) {
+	var parsed blockTxParsed
 	if err := json.Unmarshal(btx.Transaction, &parsed); err != nil {
-		return nil
+		return "", nil
 	}
 
+	// Extract signature.
+	sig := ""
+	if len(parsed.Signatures) > 0 {
+		sig = parsed.Signatures[0]
+	}
+
+	// Extract account keys.
 	keys := make([]string, 0, len(parsed.Message.AccountKeys))
 	for _, raw := range parsed.Message.AccountKeys {
 		if len(raw) == 0 {
@@ -316,7 +314,8 @@ func extractAccountKeys(btx rpc.BlockTransaction) []string {
 			}
 		}
 	}
-	return keys
+
+	return sig, keys
 }
 
 // extractTokenBalanceOwners extracts unique owner addresses from pre/postTokenBalances in tx meta.

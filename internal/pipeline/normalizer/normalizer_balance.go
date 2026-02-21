@@ -4,10 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"hash"
+	"io"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 
@@ -345,15 +348,33 @@ func shouldReplaceCanonicalSolanaEvent(
 
 // --- Shared helpers ---
 
+var sha256Pool = sync.Pool{New: func() any { return sha256.New() }}
+
 func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, activityType model.ActivityType) string {
-	canonicalTxHash := strings.TrimSpace(txHash)
-	canonicalTxHash = identity.CanonicalSignatureIdentity(chain, canonicalTxHash)
+	canonicalTxHash := identity.CanonicalSignatureIdentity(chain, txHash)
 	if canonicalTxHash == "" {
 		canonicalTxHash = strings.TrimSpace(txHash)
 	}
-	canonical := fmt.Sprintf("chain=%s|network=%s|tx=%s|path=%s|actor=%s|asset=%s|activity=%s", chain, network, canonicalTxHash, eventPath, actorAddress, assetID, activityType)
-	sum := sha256.Sum256([]byte(canonical))
-	return hex.EncodeToString(sum[:])
+	h := sha256Pool.Get().(hash.Hash)
+	h.Reset()
+	io.WriteString(h, "chain=")
+	io.WriteString(h, string(chain))
+	io.WriteString(h, "|network=")
+	io.WriteString(h, string(network))
+	io.WriteString(h, "|tx=")
+	io.WriteString(h, canonicalTxHash)
+	io.WriteString(h, "|path=")
+	io.WriteString(h, eventPath)
+	io.WriteString(h, "|actor=")
+	io.WriteString(h, actorAddress)
+	io.WriteString(h, "|asset=")
+	io.WriteString(h, assetID)
+	io.WriteString(h, "|activity=")
+	io.WriteString(h, string(activityType))
+	var buf [32]byte
+	h.Sum(buf[:0])
+	sha256Pool.Put(h)
+	return hex.EncodeToString(buf[:])
 }
 
 func mapTokenTypeToAssetType(tokenType model.TokenType) string {
@@ -370,7 +391,13 @@ func mapTokenTypeToAssetType(tokenType model.TokenType) string {
 }
 
 func balanceEventPath(outerInstructionIndex, innerInstructionIndex int32) string {
-	return fmt.Sprintf("outer:%d|inner:%d", outerInstructionIndex, innerInstructionIndex)
+	var buf [32]byte
+	b := buf[:0]
+	b = append(b, "outer:"...)
+	b = strconv.AppendInt(b, int64(outerInstructionIndex), 10)
+	b = append(b, "|inner:"...)
+	b = strconv.AppendInt(b, int64(innerInstructionIndex), 10)
+	return string(b)
 }
 
 func canonicalFeeDelta(amount string) string {

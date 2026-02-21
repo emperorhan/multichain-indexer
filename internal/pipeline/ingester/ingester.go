@@ -1351,11 +1351,11 @@ func detectScamSignal(chain model.Chain, be event.NormalizedBalanceEvent, balanc
 		}
 	}
 
-	// Go-level detection: zero_balance_withdrawal
-	// Token never held (no balance record) but negative delta
-	delta := new(big.Int)
-	if _, ok := delta.SetString(strings.TrimSpace(be.Delta), 10); ok {
-		if delta.Sign() < 0 && !balanceExists {
+	// Fast path: check negative sign without big.Int parsing
+	trimmed := strings.TrimSpace(be.Delta)
+	if len(trimmed) > 1 && trimmed[0] == '-' && trimmed[1:] != "0" {
+		// delta is negative
+		if !balanceExists {
 			return "zero_balance_withdrawal"
 		}
 	}
@@ -1374,8 +1374,8 @@ func addDecimalStrings(a, b string) (string, error) {
 		return "", fmt.Errorf("invalid decimal value: %s", b)
 	}
 
-	result := new(big.Int).Add(&left, &right)
-	return result.String(), nil
+	left.Add(&left, &right)
+	return left.String(), nil
 }
 
 func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx, batch event.NormalizedBatch) error {

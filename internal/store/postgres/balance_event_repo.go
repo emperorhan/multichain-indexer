@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -180,7 +181,7 @@ func (r *BalanceEventRepo) bulkUpsertPerEvent(ctx context.Context, tx *sql.Tx, e
 	// Build the existing-state lookup placeholders: $1, $2, ..., $N
 	existingPlaceholders := make([]string, len(events))
 	for i := range events {
-		existingPlaceholders[i] = fmt.Sprintf("$%d", i+1)
+		existingPlaceholders[i] = "$" + strconv.Itoa(i+1)
 	}
 
 	// Build the CTE query.
@@ -218,7 +219,8 @@ func (r *BalanceEventRepo) bulkUpsertPerEvent(ctx context.Context, tx *sql.Tx, e
 			if j > 0 {
 				sb.WriteString(", ")
 			}
-			fmt.Fprintf(&sb, "$%d", base+j+1)
+			sb.WriteString("$")
+			sb.WriteString(strconv.Itoa(base + j + 1))
 		}
 		sb.WriteString(")")
 
@@ -321,6 +323,7 @@ func (r *BalanceEventRepo) bulkUpsertMultiValues(ctx context.Context, tx *sql.Tx
 func (r *BalanceEventRepo) execBulkChunk(ctx context.Context, tx *sql.Tx, chunk []*model.BalanceEvent) (int, error) {
 	// Build parameterized VALUES clause
 	var sb strings.Builder
+	sb.Grow(500 + len(chunk)*140 + 800)
 	sb.WriteString(`
 		INSERT INTO balance_events (
 			chain, network, transaction_id, tx_hash,
@@ -345,7 +348,8 @@ func (r *BalanceEventRepo) execBulkChunk(ctx context.Context, tx *sql.Tx, chunk 
 			if j > 0 {
 				sb.WriteString(", ")
 			}
-			fmt.Fprintf(&sb, "$%d", base+j+1)
+			sb.WriteString("$")
+			sb.WriteString(strconv.Itoa(base + j + 1))
 		}
 		sb.WriteString(")")
 

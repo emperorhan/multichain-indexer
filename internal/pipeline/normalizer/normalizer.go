@@ -370,6 +370,8 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		normalized.NewCursorSequence = batch.NewCursorSequence
 	}
 
+	watchedAddrSet := resolveWatchedAddressSet(batch)
+
 	processed := 0
 	type decodeFailure struct {
 		signature string
@@ -436,7 +438,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		}
 		result = n.reconcileCoverageRegressionFlap(log, batch, signatureKey, result)
 
-		normalized.Transactions = append(normalized.Transactions, n.normalizedTxFromResult(batch, result, sig.Time))
+		normalized.Transactions = append(normalized.Transactions, n.normalizedTxFromResult(batch, result, sig.Time, watchedAddrSet))
 		if shouldAdvanceCanonicalCursor(normalized.NewCursorSequence, normalized.NewCursorValue, sig.Sequence, signatureKey) {
 			cursorValue := signatureKey
 			normalized.NewCursorValue = &cursorValue
@@ -481,7 +483,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 	return nil
 }
 
-func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sidecarv1.TransactionResult, sigTime *time.Time) event.NormalizedTransaction {
+func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sidecarv1.TransactionResult, sigTime *time.Time, watchedAddrs map[string]struct{}) event.NormalizedTransaction {
 	txHash := identity.CanonicalSignatureIdentity(batch.Chain, result.TxHash)
 	if txHash == "" {
 		txHash = result.TxHash
@@ -505,10 +507,6 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 	if result.Error != nil {
 		tx.Err = result.Error
 	}
-
-	// In block-scan mode, resolve watched addresses from the batch;
-	// in per-address mode, use the single batch.Address.
-	watchedAddrs := resolveWatchedAddressSet(batch)
 
 	isBaseChain := identity.IsEVMChain(batch.Chain)
 	isBTCChain := batch.Chain == model.ChainBTC

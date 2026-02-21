@@ -630,7 +630,7 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 // cache instead of issuing individual RPCs.
 func (a *Adapter) prefetchPrevouts(ctx context.Context, txs []*rpc.Transaction, cache map[string]resolvedPrevout) error {
 	var missingTxIDs []string
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	for _, tx := range txs {
 		if tx == nil {
 			continue
@@ -646,14 +646,14 @@ func (a *Adapter) prefetchPrevouts(ctx context.Context, txs []*rpc.Transaction, 
 			if sourceTxID == "" {
 				continue
 			}
-			cacheKey := fmt.Sprintf("%s:%d", sourceTxID, vin.Vout)
+			cacheKey := sourceTxID + ":" + strconv.Itoa(vin.Vout)
 			if _, ok := cache[cacheKey]; ok {
 				continue // already cached
 			}
-			if seen[sourceTxID] {
+			if _, exists := seen[sourceTxID]; exists {
 				continue
 			}
-			seen[sourceTxID] = true
+			seen[sourceTxID] = struct{}{}
 			missingTxIDs = append(missingTxIDs, sourceTxID)
 		}
 	}
@@ -679,7 +679,7 @@ func (a *Adapter) prefetchPrevouts(ctx context.Context, txs []*rpc.Transaction, 
 			if parseErr != nil {
 				valueSat = 0
 			}
-			key := fmt.Sprintf("%s:%d", txid, vout.N)
+			key := txid + ":" + strconv.Itoa(vout.N)
 			cache[key] = resolvedPrevout{
 				found:    true,
 				address:  firstOutputAddress(vout.ScriptPubKey),
@@ -694,17 +694,20 @@ func (a *Adapter) prefetchPrevouts(ctx context.Context, txs []*rpc.Transaction, 
 // fetches them into the blockCache before the main processing loop. This
 // avoids interleaving block and transaction RPC calls.
 func (a *Adapter) prefetchBlocks(ctx context.Context, txs []*rpc.Transaction, cache map[string]*rpc.Block) error {
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	var hashes []string
 	for _, tx := range txs {
 		if tx == nil {
 			continue
 		}
 		blockHash := canonicalTxID(tx.Blockhash)
-		if blockHash == "" || seen[blockHash] {
+		if blockHash == "" {
 			continue
 		}
-		seen[blockHash] = true
+		if _, exists := seen[blockHash]; exists {
+			continue
+		}
+		seen[blockHash] = struct{}{}
 		hashes = append(hashes, blockHash)
 	}
 	if len(hashes) == 0 {
@@ -816,7 +819,7 @@ func (a *Adapter) resolveInputPrevout(
 		return resolvedPrevout{}, false, nil
 	}
 
-	cacheKey := fmt.Sprintf("%s:%d", sourceTxID, vin.Vout)
+	cacheKey := sourceTxID + ":" + strconv.Itoa(vin.Vout)
 	if cached, ok := cache[cacheKey]; ok {
 		return cached, cached.found, nil
 	}

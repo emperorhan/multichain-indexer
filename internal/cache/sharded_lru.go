@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"hash/fnv"
 	"time"
 )
 
@@ -56,9 +55,13 @@ func NewShardedLRUWithCount[K comparable, V any](totalCapacity int, ttl time.Dur
 }
 
 func (s *ShardedLRU[K, V]) shard(key K) *LRU[K, V] {
-	h := fnv.New32a()
-	h.Write([]byte(s.keyToStr(key)))
-	return s.shards[int(h.Sum32())%s.count]
+	str := s.keyToStr(key)
+	h := uint32(2166136261) // FNV offset basis
+	for i := 0; i < len(str); i++ {
+		h ^= uint32(str[i])
+		h *= 16777619 // FNV prime
+	}
+	return s.shards[int(h)%s.count]
 }
 
 // Get retrieves a value from the appropriate shard.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -91,12 +92,20 @@ func (r *BalanceRepo) BulkGetAmountWithExistsTx(ctx context.Context, tx *sql.Tx,
 	args = append(args, chain, network)
 
 	var sb strings.Builder
+	sb.Grow(len(keys) * 20)
 	for i, k := range keys {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
 		base := 2 + i*cols
-		fmt.Fprintf(&sb, "($%d, $%d, $%d)", base+1, base+2, base+3)
+		sb.WriteByte('(')
+		sb.WriteByte('$')
+		sb.WriteString(strconv.Itoa(base + 1))
+		sb.WriteString(", $")
+		sb.WriteString(strconv.Itoa(base + 2))
+		sb.WriteString(", $")
+		sb.WriteString(strconv.Itoa(base + 3))
+		sb.WriteByte(')')
 		args = append(args, k.Address, k.TokenID, k.BalanceType)
 	}
 

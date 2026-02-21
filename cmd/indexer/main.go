@@ -421,7 +421,9 @@ func initTracing(cfg *config.Config, logger *slog.Logger) (func(context.Context)
 	if cfg.Tracing.Enabled {
 		tracingEndpoint = cfg.Tracing.Endpoint
 	}
-	shutdown, err := tracing.Init(context.Background(), "multichain-indexer", tracingEndpoint, cfg.Tracing.Insecure, cfg.Tracing.SampleRatio)
+	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer initCancel()
+	shutdown, err := tracing.Init(initCtx, "multichain-indexer", tracingEndpoint, cfg.Tracing.Insecure, cfg.Tracing.SampleRatio)
 	if err != nil {
 		return nil, fmt.Errorf("initialize tracing: %w", err)
 	}
@@ -574,7 +576,9 @@ func run() error {
 		return err
 	}
 	defer func() {
-		if err := shutdownTracing(context.Background()); err != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
 			logger.Warn("tracing shutdown error", "error", err)
 		}
 	}()
