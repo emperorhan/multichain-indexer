@@ -635,10 +635,16 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.Pipeline.ReorgDetectorIntervalMs, 30000)
 	setDefault(&cfg.Pipeline.FinalizerIntervalMs, 60000)
 	setDefault(&cfg.Pipeline.BTCFinalityConfirmations, 6)
-	setDefault(&cfg.Pipeline.FetchWorkers, 2)
-	setDefault(&cfg.Pipeline.NormalizerWorkers, 2)
+	setDefault(&cfg.Pipeline.FetchWorkers, 1)
+	setDefault(&cfg.Pipeline.NormalizerWorkers, 1)
 	clampWorkers(&cfg.Pipeline.FetchWorkers, "FetchWorkers", 1, 100)
 	clampWorkers(&cfg.Pipeline.NormalizerWorkers, "NormalizerWorkers", 1, 100)
+	if cfg.Pipeline.FetchWorkers > 1 {
+		slog.Warn("FetchWorkers > 1 breaks strict block ordering — events may be ingested out of order", "value", cfg.Pipeline.FetchWorkers)
+	}
+	if cfg.Pipeline.NormalizerWorkers > 1 {
+		slog.Warn("NormalizerWorkers > 1 breaks strict block ordering — events may be ingested out of order", "value", cfg.Pipeline.NormalizerWorkers)
+	}
 	setDefault(&cfg.Pipeline.BatchSize, 100)
 	setDefault(&cfg.Pipeline.IndexingIntervalMs, 5000)
 	setDefault(&cfg.Pipeline.ChannelBufferSize, 10)

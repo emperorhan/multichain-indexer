@@ -103,8 +103,8 @@ pipeline:
   reorg_detector_interval_ms: 30000   # REORG_DETECTOR_INTERVAL_MS
   finalizer_interval_ms: 60000        # FINALIZER_INTERVAL_MS
   btc_finality_confirmations: 6       # BTC_FINALITY_CONFIRMATIONS
-  fetch_workers: 2                     # FETCH_WORKERS
-  normalizer_workers: 2                # NORMALIZER_WORKERS
+  fetch_workers: 1                     # FETCH_WORKERS — must be 1 for strict block ordering
+  normalizer_workers: 1                # NORMALIZER_WORKERS — must be 1 for strict block ordering
   batch_size: 100                      # BATCH_SIZE
   indexing_interval_ms: 5000           # INDEXING_INTERVAL_MS
   channel_buffer_size: 10              # CHANNEL_BUFFER_SIZE
