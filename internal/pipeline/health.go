@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -39,7 +40,9 @@ type PipelineHealth struct {
 	lastSuccessAt            *time.Time
 	lastFailureAt            *time.Time
 	unhealthyThreshold       int
-	recentLatencies          []time.Duration
+	latencyBuf               [latencyWindowSize]time.Duration
+	latencyHead              int
+	latencyCount             int
 	degradedLatencyThreshold time.Duration
 }
 
@@ -50,7 +53,6 @@ func NewPipelineHealth(chain model.Chain, network model.Network) *PipelineHealth
 		network:                  network,
 		status:                   HealthStatusUnknown,
 		unhealthyThreshold:       DefaultUnhealthyThreshold,
-		recentLatencies:          make([]time.Duration, 0, latencyWindowSize),
 		degradedLatencyThreshold: DefaultDegradedLatencyThreshold,
 	}
 }
@@ -97,10 +99,11 @@ func (h *PipelineHealth) RecordSuccessWithRecovery() bool {
 func (h *PipelineHealth) RecordLatency(d time.Duration) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.recentLatencies) >= latencyWindowSize {
-		h.recentLatencies = h.recentLatencies[1:]
+	h.latencyBuf[h.latencyHead] = d
+	h.latencyHead = (h.latencyHead + 1) % latencyWindowSize
+	if h.latencyCount < latencyWindowSize {
+		h.latencyCount++
 	}
-	h.recentLatencies = append(h.recentLatencies, d)
 
 	if h.status == HealthStatusHealthy || h.status == HealthStatusDegraded {
 		if h.isLatencyDegraded() {
@@ -114,7 +117,7 @@ func (h *PipelineHealth) RecordLatency(d time.Duration) {
 // isLatencyDegraded returns true if the P95 latency exceeds the threshold.
 // Must be called with mu held.
 func (h *PipelineHealth) isLatencyDegraded() bool {
-	if len(h.recentLatencies) < 2 {
+	if h.latencyCount < 2 {
 		return false
 	}
 	p95 := h.percentileLatency(95)
@@ -124,14 +127,13 @@ func (h *PipelineHealth) isLatencyDegraded() bool {
 // percentileLatency computes the given percentile from recent latencies.
 // Must be called with mu held.
 func (h *PipelineHealth) percentileLatency(pct int) time.Duration {
-	n := len(h.recentLatencies)
+	n := h.latencyCount
 	if n == 0 {
 		return 0
 	}
-	// Make a sorted copy
-	sorted := make([]time.Duration, n)
-	copy(sorted, h.recentLatencies)
-	sortDurations(sorted)
+	var sorted [latencyWindowSize]time.Duration
+	copy(sorted[:n], h.latencyBuf[:n])
+	sort.Slice(sorted[:n], func(i, j int) bool { return sorted[i] < sorted[j] })
 	idx := (pct*n - 1) / 100
 	if idx < 0 {
 		idx = 0
@@ -140,19 +142,6 @@ func (h *PipelineHealth) percentileLatency(pct int) time.Duration {
 		idx = n - 1
 	}
 	return sorted[idx]
-}
-
-// sortDurations sorts a slice of durations in ascending order.
-func sortDurations(d []time.Duration) {
-	for i := 1; i < len(d); i++ {
-		key := d[i]
-		j := i - 1
-		for j >= 0 && d[j] > key {
-			d[j+1] = d[j]
-			j--
-		}
-		d[j+1] = key
-	}
 }
 
 // RecordFailure records a pipeline failure. Returns true if the pipeline

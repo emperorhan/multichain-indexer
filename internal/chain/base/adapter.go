@@ -375,7 +375,7 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 	// instead of 3*N), leveraging eth_getLogs OR-matching on topic arrays.
 	addrTopics := make([]interface{}, 0, len(addrSet))
 	for addr := range addrSet {
-		if topic := addressTopic(addr); topic != "" {
+		if topic := addressTopicFromNormalized(addr); topic != "" {
 			addrTopics = append(addrTopics, topic)
 		}
 	}
@@ -606,7 +606,14 @@ func compareTxIndex(a, b int64) int {
 }
 
 func addressTopic(address string) string {
-	raw := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(address)), "0x")
+	return addressTopicFromNormalized(strings.ToLower(strings.TrimSpace(address)))
+}
+
+// addressTopicFromNormalized builds an EVM log topic from a pre-normalized
+// (lowercase, trimmed) address. Avoids redundant string operations when the
+// caller has already normalized the address.
+func addressTopicFromNormalized(addr string) string {
+	raw := strings.TrimPrefix(addr, "0x")
 	if len(raw) != 40 {
 		return ""
 	}

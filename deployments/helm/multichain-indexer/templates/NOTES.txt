@@ -24,6 +24,6 @@ HPA is enabled (min={{ .Values.autoscaling.minReplicas }}, max={{ .Values.autosc
 {{- if not .Values.existingSecret }}
 
 WARNING: No Secret is being created and no existingSecret is specified.
-         Make sure DB_URL and REDIS_URL are provided via an external secret mechanism.
+         Make sure DB_URL is provided via an external secret mechanism.
 {{- end }}
 {{- end }}

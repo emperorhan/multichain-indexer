@@ -21,5 +21,24 @@ spec:
           protocol: TCP
         {{- end }}
   egress:
-    - {}
+    # DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # PostgreSQL
+    - ports:
+        - port: 5432
+          protocol: TCP
+        - port: 5433
+          protocol: TCP
+    # gRPC sidecar
+    - ports:
+        - port: 50051
+          protocol: TCP
+    # HTTPS (RPC endpoints)
+    - ports:
+        - port: 443
+          protocol: TCP
 {{- end }}

@@ -164,7 +164,7 @@ func (h *healthChecker) check(ctx context.Context) error {
 	if h.db == nil {
 		return fmt.Errorf("database not initialized")
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := h.db.PingContext(checkCtx); err != nil {
 		return fmt.Errorf("database: %w", err)
@@ -649,6 +649,9 @@ func run() error {
 	if err := validateRuntimeWiring(targets); err != nil {
 		return fmt.Errorf("runtime wiring preflight: %w", err)
 	}
+	if err := preflightConnectivity(db.DB, targets, logger); err != nil {
+		return err
+	}
 	logger.Info("runtime targets selected",
 		"deployment_mode", cfg.Runtime.DeploymentMode,
 		"like_group", cfg.Runtime.LikeGroup,
@@ -835,6 +838,31 @@ func validateRuntimeWiring(targets []runtimeTarget) error {
 
 	if len(failures) > 0 {
 		return fmt.Errorf("runtime wiring preflight failed: %s", strings.Join(failures, "; "))
+	}
+
+	return nil
+}
+
+// preflightConnectivity verifies that critical external dependencies (DB, chain RPCs)
+// are reachable before starting pipelines. Fails fast on startup rather than later.
+func preflightConnectivity(db *sql.DB, targets []runtimeTarget, logger *slog.Logger) error {
+	const timeout = 5 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// 1. Database
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("preflight: database ping failed: %w", err)
+	}
+	logger.Info("preflight: database OK")
+
+	// 2. Chain RPC endpoints — GetHeadSequence for each adapter
+	for _, t := range targets {
+		seq, err := t.adapter.GetHeadSequence(ctx)
+		if err != nil {
+			return fmt.Errorf("preflight: %s/%s RPC health check failed: %w", t.chain, t.network, err)
+		}
+		logger.Info("preflight: RPC OK", "chain", t.chain, "network", t.network, "head_sequence", seq)
 	}
 
 	return nil

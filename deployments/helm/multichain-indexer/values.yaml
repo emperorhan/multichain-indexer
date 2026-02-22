@@ -201,8 +201,8 @@ existingSecret: ""
 # Network Policy
 # ---------------------------------------------------------------------------
 networkPolicy:
-  # -- Whether to create a NetworkPolicy
-  enabled: false
+  # -- Whether to create a NetworkPolicy (recommended for production)
+  enabled: true
 
 # ---------------------------------------------------------------------------
 # Monitoring

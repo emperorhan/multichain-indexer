@@ -87,8 +87,7 @@ func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.B
 			decoder_version = COALESCE(NULLIF(EXCLUDED.decoder_version, ''), balance_events.decoder_version),
 			schema_version = COALESCE(NULLIF(EXCLUDED.schema_version, ''), balance_events.schema_version)
 		WHERE
-			(CASE LOWER(COALESCE(TRIM(EXCLUDED.finality_state),'')) WHEN 'finalized' THEN 4 WHEN 'safe' THEN 3 WHEN 'confirmed' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END)
-			>= (CASE LOWER(COALESCE(TRIM(balance_events.finality_state),'')) WHEN 'finalized' THEN 4 WHEN 'safe' THEN 3 WHEN 'confirmed' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END)
+			finality_rank(EXCLUDED.finality_state) >= finality_rank(balance_events.finality_state)
 		RETURNING (xmax = 0) AS inserted
 	`
 
@@ -256,8 +255,7 @@ func (r *BalanceEventRepo) bulkUpsertPerEvent(ctx context.Context, tx *sql.Tx, e
 			decoder_version = COALESCE(NULLIF(EXCLUDED.decoder_version, ''), balance_events.decoder_version),
 			schema_version = COALESCE(NULLIF(EXCLUDED.schema_version, ''), balance_events.schema_version)
 		WHERE
-			(CASE LOWER(COALESCE(TRIM(EXCLUDED.finality_state),'')) WHEN 'finalized' THEN 4 WHEN 'safe' THEN 3 WHEN 'confirmed' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END)
-			>= (CASE LOWER(COALESCE(TRIM(balance_events.finality_state),'')) WHEN 'finalized' THEN 4 WHEN 'safe' THEN 3 WHEN 'confirmed' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END)
+			finality_rank(EXCLUDED.finality_state) >= finality_rank(balance_events.finality_state)
 		RETURNING event_id, (xmax = 0) AS inserted, balance_applied
 	)
 	SELECT u.event_id, u.inserted,
@@ -410,8 +408,7 @@ func (r *BalanceEventRepo) execBulkChunk(ctx context.Context, tx *sql.Tx, chunk 
 			decoder_version = COALESCE(NULLIF(EXCLUDED.decoder_version, ''), balance_events.decoder_version),
 			schema_version = COALESCE(NULLIF(EXCLUDED.schema_version, ''), balance_events.schema_version)
 		WHERE
-			(CASE LOWER(COALESCE(TRIM(EXCLUDED.finality_state),'')) WHEN 'finalized' THEN 4 WHEN 'safe' THEN 3 WHEN 'confirmed' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END)
-			>= (CASE LOWER(COALESCE(TRIM(balance_events.finality_state),'')) WHEN 'finalized' THEN 4 WHEN 'safe' THEN 3 WHEN 'confirmed' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END)
+			finality_rank(EXCLUDED.finality_state) >= finality_rank(balance_events.finality_state)
 		RETURNING (xmax = 0) AS inserted
 	`)
 

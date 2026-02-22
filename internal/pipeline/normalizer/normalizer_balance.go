@@ -252,6 +252,7 @@ func canonicalizeSolanaBalanceEvents(
 
 	eventsByID := make(map[string]event.NormalizedBalanceEvent, len(normalizedEvents))
 	selectionByEventID := make(map[string]solanaCanonicalSelection, len(normalizedEvents))
+	eventOrder := make([]string, 0, len(normalizedEvents))
 	for _, be := range normalizedEvents {
 		if be.ActivityType == model.ActivityFee {
 			be.OuterInstructionIndex = -1
@@ -298,6 +299,7 @@ func canonicalizeSolanaBalanceEvents(
 		if !ok {
 			eventsByID[be.EventID] = be
 			selectionByEventID[be.EventID] = selection
+			eventOrder = append(eventOrder, be.EventID)
 			continue
 		}
 		if shouldReplaceCanonicalSolanaEvent(existing, be, selectionByEventID[be.EventID], selection) {
@@ -306,14 +308,11 @@ func canonicalizeSolanaBalanceEvents(
 		}
 	}
 
-	events := make([]event.NormalizedBalanceEvent, 0, len(eventsByID))
-	for _, be := range eventsByID {
-		events = append(events, be)
+	sort.Strings(eventOrder)
+	events := make([]event.NormalizedBalanceEvent, 0, len(eventOrder))
+	for _, id := range eventOrder {
+		events = append(events, eventsByID[id])
 	}
-
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].EventID < events[j].EventID
-	})
 
 	return events
 }

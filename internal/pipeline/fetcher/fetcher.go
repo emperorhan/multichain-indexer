@@ -949,59 +949,91 @@ func suppressPreCursorSequenceCarryover(
 	previousCursorSequence int64,
 	requestedBatch int,
 ) []chain.SignatureInfo {
-	// Keep rollback candidates intact when no signatures reach the prior cursor sequence.
 	if len(sigs) == 0 || previousCursorSequence <= 0 {
 		return sigs
 	}
 
-	// Sort in-place: callers reassign sigs to return value, so original order is not needed.
+	// Single sort up front.
 	sortSignatureInfosBySequenceThenHash(sigs)
 
 	if requestedBatch <= 0 {
 		requestedBatch = 1
 	}
 
-	cursorHits := make([]chain.SignatureInfo, 0, len(sigs))
-	cursorMisses := make([]chain.SignatureInfo, 0, len(sigs))
-	for _, sig := range sigs {
+	// Partition in-place: find boundaries within the already-sorted slice.
+	// Because sigs is sorted by (Sequence, Hash), all entries with
+	// Sequence < cursor come first, then == cursor, then > cursor.
+	missStart := -1 // index of first sig with Sequence > previousCursorSequence
+	hitStart := -1  // index of first sig with Sequence == previousCursorSequence
+	hitEnd := -1    // index past last sig with Sequence == previousCursorSequence
+	for i, sig := range sigs {
 		if sig.Sequence < previousCursorSequence {
 			continue
 		}
 		if sig.Sequence == previousCursorSequence {
-			cursorHits = append(cursorHits, sig)
+			if hitStart == -1 {
+				hitStart = i
+			}
+			hitEnd = i + 1
 			continue
 		}
-		cursorMisses = append(cursorMisses, sig)
+		// sig.Sequence > previousCursorSequence
+		if missStart == -1 {
+			missStart = i
+			if hitEnd == -1 && hitStart != -1 {
+				hitEnd = i
+			}
+		}
 	}
 
-	if len(cursorHits) == 0 && len(cursorMisses) == 0 {
+	hits := 0
+	if hitStart >= 0 {
+		if hitEnd < 0 {
+			hitEnd = len(sigs)
+		}
+		hits = hitEnd - hitStart
+	}
+	misses := 0
+	if missStart >= 0 {
+		misses = len(sigs) - missStart
+	}
+
+	if hits == 0 && misses == 0 {
 		return sigs
 	}
 
-	// If we are overflowing the requested batch, prefer newest signatures and
-	// deterministically retain only enough cursor-sequence entries to fill the window.
-	if len(cursorMisses) >= requestedBatch {
-		return cursorMisses[:requestedBatch]
+	// Prefer newest (misses) first.
+	if misses >= requestedBatch {
+		return sigs[missStart : missStart+requestedBatch]
 	}
-	if len(cursorMisses)+len(cursorHits) <= requestedBatch {
-		cursorMisses = append(cursorMisses, cursorHits...)
-		sortSignatureInfosBySequenceThenHash(cursorMisses)
-		return cursorMisses
-	}
-
-	keepAtCursorCount := requestedBatch - len(cursorMisses)
-	if keepAtCursorCount > 0 && len(cursorHits) > keepAtCursorCount {
-		selectedCursorHits := append([]chain.SignatureInfo(nil), cursorHits...)
-		sort.Slice(selectedCursorHits, func(i, j int) bool {
-			return selectedCursorHits[i].Hash > selectedCursorHits[j].Hash
-		})
-		selectedCursorHits = selectedCursorHits[:keepAtCursorCount]
-		cursorHits = selectedCursorHits
+	if misses+hits <= requestedBatch {
+		// Take all hits + misses. They are already sorted within the original slice,
+		// but hits come before misses — rebuild in sorted order.
+		result := make([]chain.SignatureInfo, 0, misses+hits)
+		if hitStart >= 0 {
+			result = append(result, sigs[hitStart:hitEnd]...)
+		}
+		if missStart >= 0 {
+			result = append(result, sigs[missStart:]...)
+		}
+		return result
 	}
 
-	composite := append(append(make([]chain.SignatureInfo, 0, len(cursorMisses)+len(cursorHits)), cursorMisses...), cursorHits...)
-	sortSignatureInfosBySequenceThenHash(composite)
-	return composite
+	// Need to select a subset of cursor hits. Pick deterministically by
+	// descending hash to keep the most recent entries.
+	keepAtCursor := requestedBatch - misses
+	cursorSlice := make([]chain.SignatureInfo, hits)
+	copy(cursorSlice, sigs[hitStart:hitEnd])
+	sort.Slice(cursorSlice, func(i, j int) bool {
+		return cursorSlice[i].Hash > cursorSlice[j].Hash
+	})
+	cursorSlice = cursorSlice[:keepAtCursor]
+
+	result := make([]chain.SignatureInfo, 0, requestedBatch)
+	result = append(result, cursorSlice...)
+	result = append(result, sigs[missStart:]...)
+	sortSignatureInfosBySequenceThenHash(result)
+	return result
 }
 
 func sortSignatureInfosBySequenceThenHash(sigs []chain.SignatureInfo) {

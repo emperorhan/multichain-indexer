@@ -139,29 +139,60 @@ func (rl *RateLimitMiddleware) Wrap(next http.Handler) http.Handler {
 }
 
 // extractClientIP determines the client's IP address from the request.
-// It checks, in order: X-Forwarded-For (first IP), X-Real-IP, then r.RemoteAddr.
+// Proxy headers (X-Forwarded-For, X-Real-IP) are only trusted when
+// RemoteAddr is a private/loopback IP, preventing spoofing from public clients.
 func extractClientIP(r *http.Request) string {
-	// Try X-Forwarded-For header (may contain comma-separated list of IPs)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first IP (the original client)
-		if idx := strings.IndexByte(xff, ','); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-
-	// Try X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
-
-	// Fall back to RemoteAddr, stripping the port
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		// RemoteAddr might not have a port (unlikely but handle gracefully)
-		return r.RemoteAddr
+		remoteHost = r.RemoteAddr
 	}
-	return host
+
+	// Only trust proxy headers when the direct peer is a trusted (private) network.
+	if isTrustedProxy(remoteHost) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if idx := strings.IndexByte(xff, ','); idx != -1 {
+				return strings.TrimSpace(xff[:idx])
+			}
+			return strings.TrimSpace(xff)
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
+		}
+	}
+
+	return remoteHost
+}
+
+// privateNetworks defines CIDR ranges considered trusted proxies.
+var privateNetworks = func() []*net.IPNet {
+	cidrs := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"::1/128",
+		"fc00::/7",
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, n, _ := net.ParseCIDR(cidr)
+		nets = append(nets, n)
+	}
+	return nets
+}()
+
+// isTrustedProxy returns true if the IP belongs to a private/loopback range.
+func isTrustedProxy(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, n := range privateNetworks {
+		if n.Contains(parsed) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveEndpointKey matches the request to an endpoint rule and returns its key.

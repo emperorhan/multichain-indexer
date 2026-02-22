@@ -121,8 +121,9 @@ func TestRateLimitMiddleware_DifferentIPsIndependent(t *testing.T) {
 	}
 }
 
-func TestExtractClientIP_XForwardedFor(t *testing.T) {
+func TestExtractClientIP_XForwardedFor_TrustedProxy(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:12345" // private IP → trusted proxy
 	r.Header.Set("X-Forwarded-For", "203.0.113.50, 70.41.3.18, 150.172.238.178")
 
 	ip := extractClientIP(r)
@@ -131,8 +132,20 @@ func TestExtractClientIP_XForwardedFor(t *testing.T) {
 	}
 }
 
+func TestExtractClientIP_XForwardedFor_UntrustedProxy(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "192.0.2.1:12345" // public IP → untrusted
+	r.Header.Set("X-Forwarded-For", "203.0.113.50")
+
+	ip := extractClientIP(r)
+	if ip != "192.0.2.1" {
+		t.Errorf("expected RemoteAddr 192.0.2.1 (untrusted proxy), got %s", ip)
+	}
+}
+
 func TestExtractClientIP_XForwardedForSingle(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "127.0.0.1:9999" // loopback → trusted
 	r.Header.Set("X-Forwarded-For", "203.0.113.50")
 
 	ip := extractClientIP(r)
@@ -143,6 +156,7 @@ func TestExtractClientIP_XForwardedForSingle(t *testing.T) {
 
 func TestExtractClientIP_XRealIP(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "172.16.0.1:8080" // private IP → trusted
 	r.Header.Set("X-Real-IP", "198.51.100.10")
 
 	ip := extractClientIP(r)
@@ -168,7 +182,7 @@ func TestExtractClientIP_XForwardedForPriority(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("X-Forwarded-For", "1.1.1.1")
 	r.Header.Set("X-Real-IP", "2.2.2.2")
-	r.RemoteAddr = "3.3.3.3:1234"
+	r.RemoteAddr = "10.0.0.1:1234" // private → trusted proxy
 
 	ip := extractClientIP(r)
 	if ip != "1.1.1.1" {
@@ -183,12 +197,14 @@ func TestRateLimitMiddleware_PerIPKeys(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// Make requests from two different IPs via X-Forwarded-For
+	// Make requests from two different IPs via X-Forwarded-For (trusted proxy)
 	req1 := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", nil)
+	req1.RemoteAddr = "10.0.0.1:12345"
 	req1.Header.Set("X-Forwarded-For", "10.1.1.1")
 	handler.ServeHTTP(httptest.NewRecorder(), req1)
 
 	req2 := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", nil)
+	req2.RemoteAddr = "10.0.0.1:12346"
 	req2.Header.Set("X-Forwarded-For", "10.2.2.2")
 	handler.ServeHTTP(httptest.NewRecorder(), req2)
 

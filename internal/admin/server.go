@@ -172,9 +172,11 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/admin/v1/", s.authMiddleware(adminMux))
 
-	// Dashboard static files and /readyz — no auth required.
-	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", http.FileServer(http.FS(staticFS))))
-	mux.HandleFunc("/dashboard", s.handleDashboardIndex)
+	// Dashboard static files — protected by the same auth as admin API.
+	mux.Handle("/dashboard/", s.authMiddleware(
+		http.StripPrefix("/dashboard/", http.FileServer(http.FS(staticFS)))))
+	mux.Handle("/dashboard", s.authMiddleware(
+		http.HandlerFunc(s.handleDashboardIndex)))
 
 	return mux
 }

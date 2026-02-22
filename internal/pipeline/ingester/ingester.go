@@ -883,9 +883,11 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 			return fmt.Errorf("apply delta %s to balance %s: %w", ec.be.Delta, balanceBefore, calcErr)
 		}
 
-		// Detect negative balance (indicates a bug or unexpected chain behavior)
-		if len(balanceAfter) > 0 && balanceAfter[0] == '-' {
-			ing.logger.Warn("negative balance detected, clamping to zero",
+		// Detect negative balance: log, record the event, but skip balance application.
+		// The event is still persisted for forensic analysis; only balance state update is skipped.
+		negativeBalance := len(balanceAfter) > 0 && balanceAfter[0] == '-'
+		if negativeBalance {
+			ing.logger.Error("negative balance detected, skipping balance application",
 				"address", ec.be.Address,
 				"token_id", tokenID,
 				"balance_before", balanceBefore,
@@ -896,7 +898,6 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 				"network", batch.Network,
 			)
 			metrics.IngesterNegativeBalancesDetected.WithLabelValues(string(batch.Chain), string(batch.Network)).Inc()
-			balanceAfter = "0"
 		}
 
 		chainData := ec.be.ChainData
@@ -958,7 +959,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 			AssetID: ec.be.AssetID, FinalityState: ec.be.FinalityState,
 			DecoderVersion: ec.be.DecoderVersion, SchemaVersion: ec.be.SchemaVersion,
 		}
-		beModel.BalanceApplied = meetsBalanceThreshold(batch.Chain, beModel.FinalityState, ec.be.TokenType, ec.be.Delta)
+		beModel.BalanceApplied = !negativeBalance && meetsBalanceThreshold(batch.Chain, beModel.FinalityState, ec.be.TokenType, ec.be.Delta)
 		if beModel.BalanceApplied {
 			beModel.BalanceBefore = &balanceBefore
 			beModel.BalanceAfter = &balanceAfter
@@ -1964,7 +1965,17 @@ func (ing *Ingester) getBlockScanAddrMap(ctx context.Context, chain model.Chain,
 	}
 	ing.blockScanAddrMu.RUnlock()
 
-	// Slow path: fetch from DB and update cache under write-lock.
+	// Slow path: write-lock with double-check to close RLock→Lock gap.
+	ing.blockScanAddrMu.Lock()
+	if cached, ok := ing.blockScanAddrCache[cacheKey]; ok {
+		if time.Since(ing.blockScanAddrCacheAt[cacheKey]) < ing.blockScanAddrCacheTTL {
+			ing.blockScanAddrMu.Unlock()
+			return cached, nil
+		}
+	}
+	ing.blockScanAddrMu.Unlock()
+
+	// DB fetch outside lock.
 	activeAddrs, err := ing.watchedAddrRepo.GetActive(ctx, chain, network)
 	if err != nil {
 		return nil, err

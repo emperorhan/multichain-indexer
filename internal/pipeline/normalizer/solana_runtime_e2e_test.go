@@ -191,7 +191,7 @@ func TestSolanaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, keys []store.BalanceKey) (map[store.BalanceKey]store.BalanceInfo, error) {
 			result := make(map[store.BalanceKey]store.BalanceInfo, len(keys))
 			for _, k := range keys {
-				result[k] = store.BalanceInfo{Amount: "0", Exists: false}
+				result[k] = store.BalanceInfo{Amount: "2000000000", Exists: true}
 			}
 			return result, nil
 		})

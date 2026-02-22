@@ -708,10 +708,9 @@ func defaultFinalityState(chainID model.Chain) string {
 	if chainID == model.ChainSolana {
 		return "finalized"
 	}
-	if identity.IsEVMChain(chainID) {
-		return "finalized"
-	}
-	return "finalized"
+	// EVM/BTC/other: conservative default — "confirmed" until chain-specific
+	// finality signals (e.g. safe head, N confirmations) explicitly upgrade it.
+	return "confirmed"
 }
 
 func canonicalizeFinalityState(state string) string {

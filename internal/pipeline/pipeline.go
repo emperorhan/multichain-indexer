@@ -122,6 +122,9 @@ type Pipeline struct {
 	// stateFlag: 0=inactive, 1=active, -1=deactivation requested
 	stateFlag  atomic.Int32
 	deactiveCh chan struct{} // signaled when deactivated
+
+	// Auto-restart: exponential backoff on consecutive failures.
+	consecutiveFailures int
 }
 
 type Repos struct {
@@ -264,6 +267,17 @@ func (p *Pipeline) RequestReplay(ctx context.Context, req replay.PurgeRequest) (
 	}
 }
 
+const maxRestartBackoff = 5 * time.Minute
+
+// calcRestartBackoff returns an exponential backoff duration: 1s, 2s, 4s, ... capped at maxRestartBackoff.
+func (p *Pipeline) calcRestartBackoff() time.Duration {
+	d := time.Second << uint(p.consecutiveFailures)
+	if d > maxRestartBackoff {
+		d = maxRestartBackoff
+	}
+	return d
+}
+
 func (p *Pipeline) Run(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -338,6 +352,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			// Pipeline terminated normally or with error.
 			runCancel()
 			if err != nil && !errors.Is(err, context.Canceled) {
+				p.consecutiveFailures++
 				if becameUnhealthy := p.health.RecordFailure(); becameUnhealthy && p.cfg.Alerter != nil {
 					p.cfg.Alerter.Send(ctx, alert.Alert{
 						Type:    alert.AlertTypeUnhealthy,
@@ -347,9 +362,25 @@ func (p *Pipeline) Run(ctx context.Context) error {
 						Message: fmt.Sprintf("Pipeline %s/%s has become unhealthy after %d consecutive failures", p.cfg.Chain, p.cfg.Network, p.health.Snapshot().ConsecutiveFailures),
 					})
 				}
-				return err
+
+				backoff := p.calcRestartBackoff()
+				p.logger.Warn("pipeline will restart after backoff",
+					"error", err,
+					"backoff", backoff,
+					"consecutive_failures", p.consecutiveFailures,
+					"chain", p.cfg.Chain,
+					"network", p.cfg.Network,
+				)
+
+				select {
+				case <-time.After(backoff):
+					continue // restart the pipeline loop
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
-			// Success path: check for recovery from unhealthy state.
+			// Success path: reset failure counter and check for recovery from unhealthy state.
+			p.consecutiveFailures = 0
 			if recovered := p.health.RecordSuccessWithRecovery(); recovered && p.cfg.Alerter != nil {
 				p.cfg.Alerter.Send(ctx, alert.Alert{
 					Type:    alert.AlertTypeRecovery,

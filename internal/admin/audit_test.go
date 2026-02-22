@@ -55,7 +55,7 @@ func TestAuditMiddleware_SkipsGETRequests(t *testing.T) {
 	}
 }
 
-func TestAuditMiddleware_TruncatesLargeBody(t *testing.T) {
+func TestAuditMiddleware_LogsBodySize(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
@@ -63,15 +63,21 @@ func TestAuditMiddleware_TruncatesLargeBody(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// Create a body larger than 1KB
 	largeBody := strings.Repeat("x", 2000)
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", strings.NewReader(largeBody))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
 	logOutput := logBuf.String()
-	if !strings.Contains(logOutput, "truncated") {
-		t.Error("expected truncation indicator in audit log for large body")
+	// Body content must NOT be logged; only body_size should appear.
+	if strings.Contains(logOutput, "body_summary") {
+		t.Error("body_summary should not appear in audit log")
+	}
+	if !strings.Contains(logOutput, "body_size") {
+		t.Error("expected body_size in audit log")
+	}
+	if !strings.Contains(logOutput, "2000") {
+		t.Error("expected body_size value of 2000")
 	}
 }
 

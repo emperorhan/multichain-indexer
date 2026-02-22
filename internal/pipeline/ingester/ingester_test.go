@@ -90,7 +90,9 @@ func newIngesterMocks(t *testing.T) (
 		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, keys []store.BalanceKey) (map[store.BalanceKey]store.BalanceInfo, error) {
 			result := make(map[store.BalanceKey]store.BalanceInfo, len(keys))
 			for _, k := range keys {
-				result[k] = store.BalanceInfo{Amount: "0", Exists: false}
+				// Large initial balance so negative deltas don't trigger the
+			// negative-balance guard (which now skips balance application).
+			result[k] = store.BalanceInfo{Amount: "999999999999999999999", Exists: true}
 			}
 			return result, nil
 		}).AnyTimes()
@@ -1153,10 +1155,10 @@ func TestProcessBatch_Deposit(t *testing.T) {
 			assert.Equal(t, "1000000", be.Delta)
 			assert.Equal(t, model.ActivityDeposit, be.ActivityType)
 			if assert.NotNil(t, be.BalanceBefore) {
-				assert.Equal(t, "0", *be.BalanceBefore)
+				assert.Equal(t, "999999999999999999999", *be.BalanceBefore)
 			}
 			if assert.NotNil(t, be.BalanceAfter) {
-				assert.Equal(t, "1000000", *be.BalanceAfter)
+				assert.Equal(t, "1000000000000000999999", *be.BalanceAfter)
 			}
 			return store.BulkUpsertEventResult{InsertedCount: 1}, nil
 		})
@@ -1267,31 +1269,18 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 			return result, nil
 		})
 
-	// Two balance events in one bulk call
+	// Two balance events in one bulk call — with large initial balance, no negative result.
 	mockBERepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 			require.Len(t, events, 2)
-			// First event: transfer (negative balance clamped to 0)
 			assert.Equal(t, "-2000000", events[0].Delta)
-			if assert.NotNil(t, events[0].BalanceBefore) {
-				assert.Equal(t, "0", *events[0].BalanceBefore)
-			}
-			if assert.NotNil(t, events[0].BalanceAfter) {
-				assert.Equal(t, "0", *events[0].BalanceAfter) // clamped from -2000000
-			}
-			// Second event: fee (in-memory balance tracks clamped value)
+			assert.True(t, events[0].BalanceApplied)
 			assert.Equal(t, "-5000", events[1].Delta)
 			assert.Equal(t, model.ActivityFee, events[1].ActivityType)
-			if assert.NotNil(t, events[1].BalanceBefore) {
-				assert.Equal(t, "0", *events[1].BalanceBefore) // clamped in-memory balance
-			}
-			if assert.NotNil(t, events[1].BalanceAfter) {
-				assert.Equal(t, "0", *events[1].BalanceAfter) // clamped from -5000
-			}
+			assert.True(t, events[1].BalanceApplied)
 			return store.BulkUpsertEventResult{InsertedCount: 2}, nil
 		})
 
-	// Both events share the same (address, tokenID, balanceType) → aggregated into one adjustment
 	mockBalanceRepo.EXPECT().BulkAdjustBalanceTx(
 		gomock.Any(), gomock.Any(),
 		model.ChainSolana, model.NetworkDevnet, gomock.Any(),

@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-const maxAuditBodyBytes = 1024 // 1KB summary limit
-
 // generateRequestID creates a short random request ID for audit correlation.
 func generateRequestID() string {
 	b := make([]byte, 8)
@@ -37,17 +35,13 @@ func AuditMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		// Extract authenticated user if Basic Auth is used.
 		user, _, _ := r.BasicAuth()
 
-		// Capture body summary (up to 1KB)
-		var bodySummary string
+		// Measure body size without reading content (avoids logging sensitive data).
+		var bodySize int
 		if r.Body != nil {
-			bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxAuditBodyBytes+1))
+			bodyBytes, err := io.ReadAll(r.Body)
 			if err == nil {
-				if len(bodyBytes) > maxAuditBodyBytes {
-					bodySummary = string(bodyBytes[:maxAuditBodyBytes]) + "...(truncated)"
-				} else {
-					bodySummary = string(bodyBytes)
-				}
-				// Restore body for downstream handlers
+				bodySize = len(bodyBytes)
+				// Restore body for downstream handlers.
 				r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			}
 		}
@@ -64,7 +58,7 @@ func AuditMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 			"remote_addr", r.RemoteAddr,
 			"method", r.Method,
 			"path", r.URL.Path,
-			"body_summary", bodySummary,
+			"body_size", bodySize,
 			"response_status", sw.statusCode,
 			"duration_ms", time.Since(start).Milliseconds(),
 		)

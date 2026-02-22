@@ -967,24 +967,21 @@ func pickBlockTime(tx *rpc.Transaction) int64 {
 
 func allOutputAddresses(script rpc.ScriptPubKey) []string {
 	addresses := make([]string, 0, 2)
+	seen := make(map[string]struct{}, len(script.Addresses)+1)
 	if candidate := normalizeAddressIdentity(script.Address); candidate != "" {
 		addresses = append(addresses, candidate)
+		seen[candidate] = struct{}{}
 	}
 	for _, raw := range script.Addresses {
 		candidate := normalizeAddressIdentity(raw)
 		if candidate == "" {
 			continue
 		}
-		duplicate := false
-		for _, existing := range addresses {
-			if existing == candidate {
-				duplicate = true
-				break
-			}
+		if _, dup := seen[candidate]; dup {
+			continue
 		}
-		if !duplicate {
-			addresses = append(addresses, candidate)
-		}
+		seen[candidate] = struct{}{}
+		addresses = append(addresses, candidate)
 	}
 	return addresses
 }

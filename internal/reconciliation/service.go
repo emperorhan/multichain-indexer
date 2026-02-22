@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -116,6 +117,9 @@ func (s *Service) Reconcile(ctx context.Context, ch model.Chain, net model.Netwo
 		return nil, fmt.Errorf("get watched addresses: %w", err)
 	}
 
+	// Cache token contract lookups to avoid N+1 queries per balance.
+	tokenContractCache := make(map[string]string) // tokenID -> contractAddress
+
 	for _, wa := range addresses {
 		// Get DB balances for this address
 		dbBalances, err := s.balanceRepo.GetByAddress(ctx, ch, net, wa.Address)
@@ -139,11 +143,13 @@ func (s *Service) Reconcile(ctx context.Context, ch model.Chain, net model.Netwo
 		}
 
 		for _, bal := range dbBalances {
-			// Native token uses empty contract address
 			tokenContract := ""
-			// For non-native tokens, look up the contract address from token_id
-			if token, err := s.findTokenContract(ctx, ch, net, bal.TokenID.String()); err == nil {
-				tokenContract = token
+			tokenIDStr := bal.TokenID.String()
+			if cached, ok := tokenContractCache[tokenIDStr]; ok {
+				tokenContract = cached
+			} else if contract, err := s.findTokenContract(ctx, ch, net, tokenIDStr); err == nil {
+				tokenContract = contract
+				tokenContractCache[tokenIDStr] = contract
 			}
 
 			snap := s.reconcileOne(ctx, adapter, ch, net, wa.Address, tokenContract, bal.Amount)
@@ -322,10 +328,9 @@ func (s *Service) RunPeriodic(ctx context.Context, interval time.Duration) error
 }
 
 func splitAdapterKey(key string) []string {
-	for i := 0; i < len(key); i++ {
-		if key[i] == ':' {
-			return []string{key[:i], key[i+1:]}
-		}
+	ch, net, ok := strings.Cut(key, ":")
+	if !ok {
+		return nil
 	}
-	return nil
+	return []string{ch, net}
 }

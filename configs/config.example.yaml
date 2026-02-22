@@ -6,7 +6,7 @@
 
 # Database (PostgreSQL)
 db:
-  url: "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable"  # DB_URL (required)
+  url: "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=require"  # DB_URL (required; use sslmode=disable for local dev only)
   max_open_conns: 50             # DB_MAX_OPEN_CONNS
   max_idle_conns: 10             # DB_MAX_IDLE_CONNS
   conn_max_lifetime_min: 30      # DB_CONN_MAX_LIFETIME_MIN
@@ -16,7 +16,7 @@ db:
 sidecar:
   addr: "localhost:50051"  # SIDECAR_ADDR (required)
   timeout_sec: 30          # SIDECAR_TIMEOUT_SEC
-  tls_enabled: false       # SIDECAR_TLS_ENABLED
+  tls_enabled: true        # SIDECAR_TLS_ENABLED (set false for local dev only)
   tls_cert: ""             # SIDECAR_TLS_CERT
   tls_key: ""              # SIDECAR_TLS_KEY
   tls_ca: ""               # SIDECAR_TLS_CA
