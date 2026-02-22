@@ -53,11 +53,9 @@ type interleaveState struct {
 	upsertAttempts int
 
 	balances map[string]string
-	cursors  map[string]*model.AddressCursor
 
 	watermarks map[string]int64
 
-	cursorWrites    map[string][]int64
 	watermarkWrites map[string][]int64
 }
 
@@ -73,9 +71,7 @@ func newInterleaveState(txFailures map[string]error) *interleaveState {
 		insertedEvents:  make(map[string]struct{}),
 		eventRecords:    make(map[string]interleaveStoredEvent),
 		balances:        make(map[string]string),
-		cursors:         make(map[string]*model.AddressCursor),
 		watermarks:      make(map[string]int64),
-		cursorWrites:    make(map[string][]int64),
 		watermarkWrites: make(map[string][]int64),
 	}
 }
@@ -86,25 +82,6 @@ func (s *interleaveState) snapshotTuples() []interleaveTuple {
 	clone := make([]interleaveTuple, len(s.tuples))
 	copy(clone, s.tuples)
 	return clone
-}
-
-func (s *interleaveState) snapshotCursors() map[string]*model.AddressCursor {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make(map[string]*model.AddressCursor, len(s.cursors))
-	for key, cursor := range s.cursors {
-		if cursor == nil {
-			out[key] = nil
-			continue
-		}
-		cloned := *cursor
-		if cursor.CursorValue != nil {
-			value := *cursor.CursorValue
-			cloned.CursorValue = &value
-		}
-		out[key] = &cloned
-	}
-	return out
 }
 
 func (s *interleaveState) snapshotWatermarks() map[string]int64 {
@@ -378,55 +355,6 @@ func (r *interleaveBalanceRepo) BulkAdjustBalanceTx(
 	return nil
 }
 
-type interleaveCursorRepo struct {
-	state *interleaveState
-}
-
-func (r *interleaveCursorRepo) Get(_ context.Context, chain model.Chain, network model.Network, address string) (*model.AddressCursor, error) {
-	key := fmt.Sprintf("%s|%s", interleaveKey(chain, network), address)
-	r.state.mu.Lock()
-	defer r.state.mu.Unlock()
-	cursor, exists := r.state.cursors[key]
-	if !exists || cursor == nil {
-		return nil, nil
-	}
-	cloned := *cursor
-	if cursor.CursorValue != nil {
-		value := *cursor.CursorValue
-		cloned.CursorValue = &value
-	}
-	return &cloned, nil
-}
-
-func (r *interleaveCursorRepo) UpsertTx(
-	_ context.Context,
-	_ *sql.Tx,
-	chain model.Chain,
-	network model.Network,
-	address string,
-	cursorValue *string,
-	cursorSequence int64,
-	_ int64,
-) error {
-	key := fmt.Sprintf("%s|%s", interleaveKey(chain, network), address)
-	r.state.mu.Lock()
-	defer r.state.mu.Unlock()
-
-	cloned := &model.AddressCursor{
-		Chain:          chain,
-		Network:        network,
-		Address:        address,
-		CursorSequence: cursorSequence,
-	}
-	if cursorValue != nil {
-		value := *cursorValue
-		cloned.CursorValue = &value
-	}
-	r.state.cursors[key] = cloned
-	r.state.cursorWrites[key] = append(r.state.cursorWrites[key], cursorSequence)
-	return nil
-}
-
 func (s *interleaveState) rollbackFromCursor(
 	chain model.Chain,
 	network model.Network,
@@ -499,10 +427,6 @@ func (s *interleaveState) rollbackFromCursor(
 	}
 
 	return &rewindCursor, rewindSeq, nil
-}
-
-func (*interleaveCursorRepo) EnsureExists(context.Context, model.Chain, model.Network, string) error {
-	return nil
 }
 
 type interleaveConfigRepo struct {

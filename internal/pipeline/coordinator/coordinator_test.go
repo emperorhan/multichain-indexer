@@ -13,7 +13,6 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
-	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -352,143 +351,6 @@ func TestTick_FanInOverlapDedupesAcrossMandatoryChains(t *testing.T) {
 	}
 }
 
-func TestTick_FanInOrderVarianceDeterministicAcrossMandatoryChains(t *testing.T) {
-	type testCase struct {
-		name        string
-		chain       model.Chain
-		network     model.Network
-		addressesA  []model.WatchedAddress
-		addressesB  []model.WatchedAddress
-		cursorByKey map[string]*model.AddressCursor
-	}
-
-	walletA := "wallet-a"
-	walletB := "wallet-b"
-
-	baseAliasUpper := "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	baseAliasLower := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	baseOther := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	baseAliasCursor := "abcdef"
-	baseOtherCursor := "0x1234"
-
-	solAlias := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
-	solOther := "9xQeWvG816bUx9EPf7R3mNq8K6V3A8wH2fJ9Q9q5Y8V"
-	solAliasCursor := "sig-sol-200"
-	solOtherCursor := "sig-sol-201"
-	btcAliasA := "tb1kz4qaexampleaddress0000000000000000000"
-	btcAliasB := "  tb1kz4qaexampleaddress0000000000000000000"
-	btcAliasCursor := "7btxexamplecursor0000000000000000000000"
-
-	tests := []testCase{
-		{
-			name:    "base-sepolia",
-			chain:   model.ChainBase,
-			network: model.NetworkSepolia,
-			addressesA: []model.WatchedAddress{
-				{Address: baseAliasUpper, WalletID: &walletA},
-				{Address: baseOther, WalletID: &walletB},
-				{Address: baseAliasLower, WalletID: &walletB},
-			},
-			addressesB: []model.WatchedAddress{
-				{Address: baseAliasLower, WalletID: &walletB},
-				{Address: baseAliasUpper, WalletID: &walletA},
-				{Address: baseOther, WalletID: &walletB},
-			},
-			cursorByKey: map[string]*model.AddressCursor{
-				baseAliasUpper: {Address: baseAliasUpper, CursorValue: strPtr(baseAliasCursor), CursorSequence: 300},
-				baseAliasLower: {Address: baseAliasLower, CursorValue: strPtr("0xABCDEF"), CursorSequence: 299},
-				baseOther:      {Address: baseOther, CursorValue: strPtr(baseOtherCursor), CursorSequence: 301},
-			},
-		},
-		{
-			name:    "solana-devnet",
-			chain:   model.ChainSolana,
-			network: model.NetworkDevnet,
-			addressesA: []model.WatchedAddress{
-				{Address: solOther, WalletID: &walletA},
-				{Address: solAlias, WalletID: &walletB},
-				{Address: solAlias, WalletID: &walletA},
-			},
-			addressesB: []model.WatchedAddress{
-				{Address: solAlias, WalletID: &walletA},
-				{Address: solOther, WalletID: &walletA},
-				{Address: solAlias, WalletID: &walletB},
-			},
-			cursorByKey: map[string]*model.AddressCursor{
-				solAlias: {Address: solAlias, CursorValue: strPtr(solAliasCursor), CursorSequence: 200},
-				solOther: {Address: solOther, CursorValue: strPtr(solOtherCursor), CursorSequence: 201},
-			},
-		},
-		{
-			name:    "btc-testnet",
-			chain:   model.ChainBTC,
-			network: model.NetworkTestnet,
-			addressesA: []model.WatchedAddress{
-				{Address: btcAliasB, WalletID: &walletB},
-				{Address: btcAliasA, WalletID: &walletA},
-			},
-			addressesB: []model.WatchedAddress{
-				{Address: btcAliasA, WalletID: &walletA},
-				{Address: btcAliasB, WalletID: &walletB},
-			},
-			cursorByKey: map[string]*model.AddressCursor{
-				btcAliasA: {Address: btcAliasA, CursorValue: strPtr(btcAliasCursor), CursorSequence: 50},
-				btcAliasB: {Address: btcAliasB, CursorValue: strPtr("7btxexamplecursor0000000000000000000000"), CursorSequence: 52},
-			},
-		},
-	}
-
-	type jobSnapshot struct {
-		Address        string
-		CursorValue    string
-		CursorSequence int64
-	}
-
-	run := func(t *testing.T, tc testCase, addresses []model.WatchedAddress) []jobSnapshot {
-		t.Helper()
-		ctrl := gomock.NewController(t)
-		mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-		jobCh := make(chan event.FetchJob, 10)
-
-		c := New(
-			tc.chain, tc.network,
-			mockWatchedAddr,
-			100, time.Second,
-			jobCh, slog.Default(),
-		)
-
-		mockWatchedAddr.EXPECT().
-			GetActive(gomock.Any(), tc.chain, tc.network).
-			Return(addresses, nil)
-
-		require.NoError(t, c.tick(context.Background()))
-
-		snapshots := make([]jobSnapshot, 0, len(jobCh))
-		for len(jobCh) > 0 {
-			job := <-jobCh
-			cursorValue := ""
-			if job.CursorValue != nil {
-				cursorValue = *job.CursorValue
-			}
-			snapshots = append(snapshots, jobSnapshot{
-				Address:        job.Address,
-				CursorValue:    cursorValue,
-				CursorSequence: job.CursorSequence,
-			})
-		}
-		return snapshots
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			jobsA := run(t, tc, tc.addressesA)
-			jobsB := run(t, tc, tc.addressesB)
-			assert.Equal(t, jobsA, jobsB)
-		})
-	}
-}
-
 func TestTick_FanInRepresentativeAliasCarryoverDeterministicAcrossMandatoryChains(t *testing.T) {
 	// In block-scan mode, per-address alias dedup and representative selection
 	// do not apply at the coordinator level. The single block-scan job always
@@ -697,208 +559,6 @@ func TestTick_FanInDoesNotCollapseDistinctSolanaAddresses(t *testing.T) {
 	assert.True(t, job.BlockScanMode)
 	// Both distinct addresses must appear in the single block-scan job.
 	assert.ElementsMatch(t, []string{addrA, addrB}, job.WatchedAddresses)
-}
-
-func TestTick_CheckpointIntegrityCorruptionRecoveryConvergesAcrossMandatoryChains(t *testing.T) {
-	type testCase struct {
-		name            string
-		chain           model.Chain
-		network         model.Network
-		address         string
-		validCursorHint string
-	}
-
-	tests := []testCase{
-		{
-			name:            "solana-devnet",
-			chain:           model.ChainSolana,
-			network:         model.NetworkDevnet,
-			address:         "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
-			validCursorHint: "sig-sol-55",
-		},
-		{
-			name:            "base-sepolia",
-			chain:           model.ChainBase,
-			network:         model.NetworkSepolia,
-			address:         "0x1111111111111111111111111111111111111111",
-			validCursorHint: "ABCDEF55",
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			ticks := [][]model.WatchedAddress{
-				{{Address: tc.address}},
-				{{Address: tc.address}},
-				{{Address: tc.address}},
-				{{Address: tc.address}},
-			}
-
-			baseline := runCheckpointIntegrityTickScenario(t, tc.chain, tc.network, ticks, map[string]*model.AddressCursor{})
-
-			truncated := runCheckpointIntegrityTickScenario(t, tc.chain, tc.network, ticks, map[string]*model.AddressCursor{
-				tc.address: {
-					Address:        tc.address,
-					CursorValue:    strPtr("   "),
-					CursorSequence: 55,
-					ItemsProcessed: 3,
-				},
-			})
-
-			stale := runCheckpointIntegrityTickScenario(t, tc.chain, tc.network, ticks, map[string]*model.AddressCursor{
-				tc.address: {
-					Address:        tc.address,
-					CursorValue:    strPtr(tc.validCursorHint),
-					CursorSequence: 55,
-					ItemsProcessed: 8,
-					LastFetchedAt:  nil,
-				},
-			})
-
-			assert.Equal(t, baseline, truncated)
-			assert.Equal(t, baseline, stale)
-
-			for i := 1; i < len(stale); i++ {
-				assert.GreaterOrEqual(t, stale[i].CursorSequence, stale[i-1].CursorSequence)
-			}
-		})
-	}
-}
-
-func TestTick_CheckpointIntegrityCrossChainMixupFailsFastAcrossMandatoryChains(t *testing.T) {
-	type testCase struct {
-		name    string
-		chain   model.Chain
-		network model.Network
-		address string
-		cursor  model.AddressCursor
-	}
-
-	tests := []testCase{
-		{
-			name:    "solana-devnet-value-shape-mixup",
-			chain:   model.ChainSolana,
-			network: model.NetworkDevnet,
-			address: "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump",
-			cursor: model.AddressCursor{
-				CursorValue:    strPtr("0xabc123"),
-				CursorSequence: 11,
-			},
-		},
-		{
-			name:    "base-sepolia-value-shape-mixup",
-			chain:   model.ChainBase,
-			network: model.NetworkSepolia,
-			address: "0x1111111111111111111111111111111111111111",
-			cursor: model.AddressCursor{
-				CursorValue:    strPtr("3N5Y7jA1vB2qK8mL9pQ4tU6wX1zC5dE2fG7hJ3kL9mN"),
-				CursorSequence: 22,
-			},
-		},
-		{
-			name:    "chain-scope-mismatch",
-			chain:   model.ChainSolana,
-			network: model.NetworkDevnet,
-			address: "scope-mismatch-addr",
-			cursor: model.AddressCursor{
-				Chain:          model.ChainBase,
-				Network:        model.NetworkSepolia,
-				Address:        "0x2222222222222222222222222222222222222222",
-				CursorValue:    strPtr("0xdef456"),
-				CursorSequence: 33,
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
-			jobCh := make(chan event.FetchJob, 2)
-			c := New(tc.chain, tc.network, mockWatchedAddr, 100, time.Second, jobCh, slog.Default())
-
-			mockWatchedAddr.EXPECT().
-				GetActive(gomock.Any(), tc.chain, tc.network).
-				Return([]model.WatchedAddress{{Address: tc.address}}, nil)
-
-			err := c.tick(context.Background())
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestTick_AutoTuneOnOffPreservesCanonicalLagAwareTuplesAcrossMandatoryChains(t *testing.T) {
-	type testCase struct {
-		name         string
-		chain        model.Chain
-		network      model.Network
-		ticks        [][]model.WatchedAddress
-		initialByKey map[string]*model.AddressCursor
-	}
-
-	baseUpper := "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	baseLower := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	solBase := "7nYBpkEPkDD6m1JKBGwvftG7bHjJErJPjTH3VbKpump"
-	solLag := " " + solBase
-
-	tests := []testCase{
-		{
-			name:    "base-sepolia",
-			chain:   model.ChainBase,
-			network: model.NetworkSepolia,
-			ticks: [][]model.WatchedAddress{
-				{{Address: baseUpper}, {Address: baseLower}},
-				{{Address: baseLower}, {Address: baseUpper}},
-				{{Address: baseUpper}, {Address: baseLower}},
-				{{Address: baseLower}, {Address: baseUpper}},
-			},
-			initialByKey: map[string]*model.AddressCursor{
-				baseUpper: {Address: baseUpper, CursorValue: strPtr("0x0000000000000000000000000000000000000000000000000000000000000010"), CursorSequence: 16},
-				baseLower: {Address: baseLower, CursorValue: strPtr("0x000000000000000000000000000000000000000000000000000000000000000a"), CursorSequence: 10},
-			},
-		},
-		{
-			name:    "solana-devnet",
-			chain:   model.ChainSolana,
-			network: model.NetworkDevnet,
-			ticks: [][]model.WatchedAddress{
-				{{Address: solBase}, {Address: solLag}},
-				{{Address: solLag}, {Address: solBase}},
-				{{Address: solBase}, {Address: solLag}},
-				{{Address: solLag}, {Address: solBase}},
-			},
-			initialByKey: map[string]*model.AddressCursor{
-				solBase: {Address: solBase, CursorValue: strPtr("sig-sol-16"), CursorSequence: 16},
-				solLag:  {Address: solLag, CursorValue: strPtr("sig-sol-10"), CursorSequence: 10},
-			},
-		},
-	}
-
-	autoTuneCfg := AutoTuneConfig{
-		Enabled:               true,
-		MinBatchSize:          50,
-		MaxBatchSize:          180,
-		StepUp:                20,
-		StepDown:              10,
-		LagHighWatermark:      100,
-		LagLowWatermark:       20,
-		QueueHighWatermarkPct: 90,
-		QueueLowWatermarkPct:  10,
-		HysteresisTicks:       1,
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			baselineSnapshots, baselineBatches := runAutoTuneTickScenario(t, tc.chain, tc.network, tc.ticks, tc.initialByKey, 2000, nil)
-			autoTuneSnapshots, autoTuneBatches := runAutoTuneTickScenario(t, tc.chain, tc.network, tc.ticks, tc.initialByKey, 2000, &autoTuneCfg)
-
-			assert.Equal(t, baselineSnapshots, autoTuneSnapshots, "auto-tune must not change canonical lag-aware tuple selection")
-			assert.NotEqual(t, baselineBatches, autoTuneBatches, "auto-tune should change envelope knobs under sustained lag")
-		})
-	}
 }
 
 func TestTick_AutoTuneChainScopedOneChainLagDoesNotThrottleHealthyChain(t *testing.T) {
@@ -1168,14 +828,12 @@ func TestTick_AutoTuneRestartPermutationsConvergeCanonicalTuplesAcrossMandatoryC
 			warmSnapshots, _ := collectAutoTuneTrace(t, warmFirst, splitTick)
 			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
 			require.NotNil(t, restartState)
-			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
-			require.NotNil(t, resumeCursor)
 
 			warmSecond := newAutoTuneHarnessWithWarmStart(
 				tc.chain,
 				tc.network,
 				tc.address,
-				resumeCursor.CursorSequence,
+				warmFirst.configRepo.watermark,
 				tc.headSequence,
 				tickCount-splitTick,
 				baseCfg,
@@ -1269,14 +927,12 @@ func TestTick_AutoTuneOneChainRestartUnderLagPressureNoCrossChainBleed(t *testin
 		if i == restartTick {
 			restartState := laggingRestarted.coordinator.ExportAutoTuneRestartState()
 			require.NotNil(t, restartState)
-			resumeCursor := laggingRestarted.cursorRepo.GetByAddress(laggingAddress)
-			require.NotNil(t, resumeCursor)
 
 			laggingRestarted = newAutoTuneHarnessWithWarmStart(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingAddress,
-				resumeCursor.CursorSequence,
+				laggingRestarted.configRepo.watermark,
 				2_000,
 				tickCount-i,
 				autoTuneCfg,
@@ -1407,13 +1063,11 @@ func TestTick_TopologyABCOneChainRestartReplayIsolationAcrossMandatoryChains_NoC
 				if _, restart := crashByTick[i]; restart {
 					restartState := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 					require.NotNil(t, restartState)
-					resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-					require.NotNil(t, resumeCursor)
 					laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 						model.ChainSolana,
 						model.NetworkDevnet,
 						laggingSolanaAddress,
-						resumeCursor.CursorSequence,
+						laggingInterleaved.configRepo.watermark,
 						laggingHeads[i:],
 						autoTuneCfg,
 						restartState,
@@ -1932,14 +1586,12 @@ func TestTick_AutoTuneSaturationReplayResumeConvergesAcrossMandatoryChains(t *te
 			warmSnapshots, _ := collectAutoTuneTrace(t, warmFirst, splitTick)
 			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
 			require.NotNil(t, restartState)
-			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
-			require.NotNil(t, resumeCursor)
 
 			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				tc.chain,
 				tc.network,
 				tc.address,
-				resumeCursor.CursorSequence,
+				warmFirst.configRepo.watermark,
 				heads[splitTick:],
 				autoTuneCfg,
 				restartState,
@@ -2198,14 +1850,12 @@ func TestTick_AutoTuneTelemetryFallbackReplayResumeConvergesAcrossMandatoryChain
 			warmSnapshots, _ := collectAutoTuneTrace(t, warmFirst, splitTick)
 			restartState := warmFirst.coordinator.ExportAutoTuneRestartState()
 			require.NotNil(t, restartState)
-			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
-			require.NotNil(t, resumeCursor)
 
 			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				tc.chain,
 				tc.network,
 				tc.address,
-				resumeCursor.CursorSequence,
+				warmFirst.configRepo.watermark,
 				heads[splitTick:],
 				autoTuneCfg,
 				restartState,
@@ -2511,14 +2161,12 @@ func TestTick_AutoTuneOperatorOverrideReplayResumeConvergesAcrossMandatoryChains
 			require.NotNil(t, restartState)
 			assert.False(t, restartState.OverrideManualActive)
 			assert.Greater(t, restartState.OverrideReleaseRemaining, 0, "restart state must preserve release-hold countdown at override boundary")
-			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
-			require.NotNil(t, resumeCursor)
 
 			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				tc.chain,
 				tc.network,
 				tc.address,
-				resumeCursor.CursorSequence,
+				warmFirst.configRepo.watermark,
 				heads[splitTick:],
 				releaseCfg,
 				restartState,
@@ -2847,14 +2495,12 @@ func TestTick_AutoTunePolicyVersionReplayResumeConvergesAcrossMandatoryChains(t 
 			assert.Equal(t, "policy-v2", restartState.PolicyVersion)
 			assert.Equal(t, int64(1), restartState.PolicyEpoch)
 			assert.Greater(t, restartState.PolicyActivationRemaining, 0, "restart state must preserve policy activation hold countdown at rollout boundary")
-			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
-			require.NotNil(t, resumeCursor)
 
 			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				tc.chain,
 				tc.network,
 				tc.address,
-				resumeCursor.CursorSequence,
+				warmFirst.configRepo.watermark,
 				heads[splitTick:],
 				policyV2Cfg,
 				restartState,
@@ -3370,14 +3016,12 @@ func TestTick_AutoTunePolicyManifestSequenceGapReplayResumeConvergesAcrossMandat
 			assert.Equal(t, segment1Cfg.PolicyManifestDigest, restartState.PolicyManifestDigest)
 			assert.Equal(t, segment1Cfg.PolicyManifestRefreshEpoch, restartState.PolicyEpoch)
 			assert.Equal(t, 0, restartState.PolicyActivationRemaining, "restart state must not open activation hold after rejected sequence-gap transition")
-			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
-			require.NotNil(t, resumeCursor)
 
 			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				tc.chain,
 				tc.network,
 				tc.address,
-				resumeCursor.CursorSequence,
+				warmFirst.configRepo.watermark,
 				heads[splitTick:],
 				segment3Cfg,
 				restartState,
@@ -3799,14 +3443,12 @@ func TestTick_AutoTunePolicyManifestSnapshotCutoverReplayResumeConvergesAcrossMa
 			assert.Equal(t, snapshotCutoverCfg.PolicyManifestDigest, restartState.PolicyManifestDigest)
 			assert.Equal(t, snapshotCutoverCfg.PolicyManifestRefreshEpoch, restartState.PolicyEpoch)
 			assert.Greater(t, restartState.PolicyActivationRemaining, 0, "restart state must preserve snapshot-cutover activation hold countdown at boundary")
-			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
-			require.NotNil(t, resumeCursor)
 
 			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				tc.chain,
 				tc.network,
 				tc.address,
-				resumeCursor.CursorSequence,
+				warmFirst.configRepo.watermark,
 				heads[splitTick:],
 				snapshotCutoverCfg,
 				restartState,
@@ -4275,14 +3917,12 @@ func TestTick_AutoTunePolicyManifestRollbackLineageReplayResumeConvergesAcrossMa
 			assert.Equal(t, rollbackCfg.PolicyManifestDigest, restartState.PolicyManifestDigest)
 			assert.Equal(t, rollbackCfg.PolicyManifestRefreshEpoch, restartState.PolicyEpoch)
 			assert.Greater(t, restartState.PolicyActivationRemaining, 0, "restart state must preserve rollback-lineage activation hold countdown at boundary")
-			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
-			require.NotNil(t, resumeCursor)
 
 			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				tc.chain,
 				tc.network,
 				tc.address,
-				resumeCursor.CursorSequence,
+				warmFirst.configRepo.watermark,
 				heads[splitTick:],
 				rollbackCfg,
 				restartState,
@@ -4568,13 +4208,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCrashpointDoesNotBleedAcross
 		if crashIndex < len(crashTicks) && i == crashTicks[crashIndex] {
 			restartState := laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -4888,13 +4526,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFenceDoesNotBleedA
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -5230,13 +4866,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFenceEpochCompacti
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -5580,13 +5214,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFenceTombstoneExpi
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -6146,13 +5778,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostQuarantin
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -6352,13 +5982,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReleaseWi
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -6757,13 +6385,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostEpochRoll
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -7228,13 +6854,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLateBridg
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -7724,13 +7348,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostBacklogDr
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -8151,13 +7773,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLiveCatch
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -8587,13 +8207,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostRebaselin
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -9048,13 +8666,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostBaselineR
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -9409,13 +9025,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostGeneratio
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -9781,13 +9395,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostSettleWin
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -10135,13 +9747,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLateSpill
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -10486,13 +10096,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostRejoinWin
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -10834,13 +10442,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostSteadySea
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -11187,13 +10793,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostDriftRean
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -11534,13 +11138,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReanchorL
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -11881,13 +11483,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLineageCo
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -12226,13 +11826,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostMarkerExp
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -12571,13 +12169,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostLateResur
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -12918,13 +12514,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -13265,13 +12859,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -13612,13 +13204,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -13960,13 +13550,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -14308,13 +13896,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -14656,13 +14242,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -15004,13 +14588,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -15354,13 +14936,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -15702,13 +15282,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -16051,13 +15629,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -16398,13 +15974,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -16753,13 +16327,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -17112,13 +16684,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -17499,13 +17069,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -17890,13 +17458,11 @@ func TestTick_AutoTuneOneChainPolicyManifestRollbackCheckpointFencePostReintegra
 				restartState = laggingInterleaved.coordinator.ExportAutoTuneRestartState()
 			}
 			require.NotNil(t, restartState)
-			resumeCursor := laggingInterleaved.cursorRepo.GetByAddress(laggingSolanaAddress)
-			require.NotNil(t, resumeCursor)
 			laggingInterleaved = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				model.ChainSolana,
 				model.NetworkDevnet,
 				laggingSolanaAddress,
-				resumeCursor.CursorSequence,
+				laggingInterleaved.configRepo.watermark,
 				laggingHeads[i:],
 				activeLaggingCfg,
 				restartState,
@@ -18166,14 +17732,12 @@ func TestTick_AutoTunePolicyManifestReplayResumeConvergesAcrossMandatoryChains(t
 			assert.Equal(t, manifestV2bCfg.PolicyManifestDigest, restartState.PolicyManifestDigest)
 			assert.Equal(t, manifestV2bCfg.PolicyManifestRefreshEpoch, restartState.PolicyEpoch)
 			assert.Greater(t, restartState.PolicyActivationRemaining, 0, "restart state must preserve policy-manifest activation hold countdown at refresh boundary")
-			resumeCursor := warmFirst.cursorRepo.GetByAddress(tc.address)
-			require.NotNil(t, resumeCursor)
 
 			warmSecond := newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				tc.chain,
 				tc.network,
 				tc.address,
-				resumeCursor.CursorSequence,
+				warmFirst.configRepo.watermark,
 				heads[splitTick:],
 				manifestV2bCfg,
 				restartState,
@@ -18215,7 +17779,6 @@ type lagAwareJobSnapshot struct {
 
 type autoTuneHarness struct {
 	coordinator *Coordinator
-	cursorRepo  *inMemoryCursorRepo
 	configRepo  *inMemoryConfigRepo
 	jobCh       chan event.FetchJob
 }
@@ -18274,177 +17837,6 @@ func (*scriptedWatchedAddressRepo) FindByAddress(context.Context, model.Chain, m
 	return nil, nil
 }
 
-type inMemoryCursorRepo struct {
-	state map[string]*model.AddressCursor
-}
-
-func (r *inMemoryCursorRepo) Get(_ context.Context, _ model.Chain, _ model.Network, address string) (*model.AddressCursor, error) {
-	return r.GetByAddress(address), nil
-}
-
-func (r *inMemoryCursorRepo) GetByAddress(address string) *model.AddressCursor {
-	cursor, ok := r.state[address]
-	if !ok || cursor == nil {
-		return nil
-	}
-	return cloneAddressCursor(cursor)
-}
-
-func (r *inMemoryCursorRepo) UpsertTx(context.Context, *sql.Tx, model.Chain, model.Network, string, *string, int64, int64) error {
-	return nil
-}
-
-func (r *inMemoryCursorRepo) EnsureExists(context.Context, model.Chain, model.Network, string) error {
-	return nil
-}
-
-func runLagAwareTickScenario(
-	t *testing.T,
-	chain model.Chain,
-	network model.Network,
-	ticks [][]model.WatchedAddress,
-	initialByKey map[string]*model.AddressCursor,
-) ([]lagAwareJobSnapshot, map[string]*model.AddressCursor) {
-	t.Helper()
-
-	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
-	cursorRepo := &inMemoryCursorRepo{state: cloneCursorState(initialByKey)}
-	jobCh := make(chan event.FetchJob, len(ticks)+1)
-	c := New(chain, network, watchedRepo, 100, time.Second, jobCh, slog.Default())
-
-	snapshots := make([]lagAwareJobSnapshot, 0, len(ticks))
-	lastByAddress := make(map[string]int64, len(ticks))
-
-	for _, active := range ticks {
-		expectedMinSeq := lagAwareMinSequence(active, cursorRepo)
-
-		require.NoError(t, c.tick(context.Background()))
-		require.Len(t, jobCh, 1)
-
-		job := <-jobCh
-		assert.Equal(t, expectedMinSeq, job.CursorSequence)
-
-		if last, ok := lastByAddress[job.Address]; ok {
-			assert.GreaterOrEqual(t, job.CursorSequence, last)
-		}
-		lastByAddress[job.Address] = job.CursorSequence
-
-		cursorValue := ""
-		if job.CursorValue != nil {
-			cursorValue = *job.CursorValue
-		}
-		snapshots = append(snapshots, lagAwareJobSnapshot{
-			Address:        job.Address,
-			CursorValue:    cursorValue,
-			CursorSequence: job.CursorSequence,
-		})
-
-		nextSeq := job.CursorSequence + 5
-		nextCursor := syntheticCursorValue(chain, nextSeq)
-		cursorRepo.state[job.Address] = &model.AddressCursor{
-			Address:        job.Address,
-			CursorValue:    &nextCursor,
-			CursorSequence: nextSeq,
-		}
-	}
-
-	return snapshots, cloneCursorState(cursorRepo.state)
-}
-
-func runCheckpointIntegrityTickScenario(
-	t *testing.T,
-	chain model.Chain,
-	network model.Network,
-	ticks [][]model.WatchedAddress,
-	initialByKey map[string]*model.AddressCursor,
-) []lagAwareJobSnapshot {
-	t.Helper()
-
-	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
-	cursorRepo := &inMemoryCursorRepo{state: cloneCursorState(initialByKey)}
-	jobCh := make(chan event.FetchJob, len(ticks)+1)
-	c := New(chain, network, watchedRepo, 100, time.Second, jobCh, slog.Default())
-
-	snapshots := make([]lagAwareJobSnapshot, 0, len(ticks))
-	for i := range ticks {
-		require.NoError(t, c.tick(context.Background()))
-		require.Len(t, jobCh, 1)
-
-		job := <-jobCh
-		cursorValue := ""
-		if job.CursorValue != nil {
-			cursorValue = *job.CursorValue
-		}
-		snapshots = append(snapshots, lagAwareJobSnapshot{
-			Address:        job.Address,
-			CursorValue:    cursorValue,
-			CursorSequence: job.CursorSequence,
-		})
-
-		nextSeq := job.CursorSequence + 5
-		nextCursor := syntheticCursorValue(chain, nextSeq)
-		lastFetched := time.Unix(1700000000+int64(i), 0)
-		cursorRepo.state[job.Address] = &model.AddressCursor{
-			Address:        job.Address,
-			CursorValue:    &nextCursor,
-			CursorSequence: nextSeq,
-			ItemsProcessed: int64(i + 1),
-			LastFetchedAt:  &lastFetched,
-		}
-	}
-
-	return snapshots
-}
-
-func lagAwareMinSequence(active []model.WatchedAddress, cursorRepo *inMemoryCursorRepo) int64 {
-	var (
-		minSeq int64
-		set    bool
-	)
-	for _, watched := range active {
-		cursor := cursorRepo.GetByAddress(watched.Address)
-		seq := int64(0)
-		if cursor != nil && cursor.CursorSequence > 0 {
-			seq = cursor.CursorSequence
-		}
-		if !set || seq < minSeq {
-			minSeq = seq
-			set = true
-		}
-	}
-	if !set {
-		return 0
-	}
-	return minSeq
-}
-
-func syntheticCursorValue(chain model.Chain, seq int64) string {
-	if identity.IsEVMChain(chain) {
-		return fmt.Sprintf("0x%064x", seq)
-	}
-	return fmt.Sprintf("sig-%d", seq)
-}
-
-func cloneCursorState(state map[string]*model.AddressCursor) map[string]*model.AddressCursor {
-	cloned := make(map[string]*model.AddressCursor, len(state))
-	for address, cursor := range state {
-		cloned[address] = cloneAddressCursor(cursor)
-	}
-	return cloned
-}
-
-func cloneAddressCursor(cursor *model.AddressCursor) *model.AddressCursor {
-	if cursor == nil {
-		return nil
-	}
-	cloned := *cursor
-	if cursor.CursorValue != nil {
-		value := *cursor.CursorValue
-		cloned.CursorValue = &value
-	}
-	return &cloned
-}
-
 func cloneAutoTuneRestartState(state *AutoTuneRestartState) *AutoTuneRestartState {
 	if state == nil {
 		return nil
@@ -18458,24 +17850,13 @@ func runAutoTuneTickScenario(
 	chain model.Chain,
 	network model.Network,
 	ticks [][]model.WatchedAddress,
-	initialByKey map[string]*model.AddressCursor,
 	headSequence int64,
 	autoTuneCfg *AutoTuneConfig,
 ) ([]lagAwareJobSnapshot, []int) {
 	t.Helper()
 
 	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
-	cursorRepo := &inMemoryCursorRepo{state: cloneCursorState(initialByKey)}
-	// Derive initial watermark from the minimum cursor sequence in initialByKey.
-	initialWatermark := int64(0)
-	for _, cursor := range initialByKey {
-		if cursor != nil && cursor.CursorSequence > 0 {
-			if initialWatermark == 0 || cursor.CursorSequence < initialWatermark {
-				initialWatermark = cursor.CursorSequence
-			}
-		}
-	}
-	configRepo := &inMemoryConfigRepo{watermark: initialWatermark}
+	configRepo := &inMemoryConfigRepo{watermark: 0}
 	jobCh := make(chan event.FetchJob, len(ticks)+1)
 	c := New(chain, network, watchedRepo, 100, time.Second, jobCh, slog.Default()).
 		WithHeadProvider(&stubHeadProvider{head: headSequence}).
@@ -18486,7 +17867,7 @@ func runAutoTuneTickScenario(
 
 	snapshots := make([]lagAwareJobSnapshot, 0, len(ticks))
 	batches := make([]int, 0, len(ticks))
-	for i := range ticks {
+	for range ticks {
 		require.NoError(t, c.tick(context.Background()))
 		require.Len(t, jobCh, 1)
 		job := <-jobCh
@@ -18497,27 +17878,6 @@ func runAutoTuneTickScenario(
 		// Advance watermark by a fixed amount from StartBlock (independent of batch size).
 		if job.BlockScanMode {
 			configRepo.watermark = job.StartBlock + 5
-		}
-
-		// Also update cursor repo for legacy compatibility.
-		addr := job.Address
-		if addr == "" && len(job.WatchedAddresses) > 0 {
-			addr = job.WatchedAddresses[0]
-		}
-		seq := job.StartBlock + 5
-		if !job.BlockScanMode {
-			seq = job.CursorSequence + 5
-		}
-		nextCursor := syntheticCursorValue(chain, seq)
-		lastFetched := time.Unix(1700001000+int64(i), 0)
-		if addr != "" {
-			cursorRepo.state[addr] = &model.AddressCursor{
-				Address:        addr,
-				CursorValue:    &nextCursor,
-				CursorSequence: seq,
-				ItemsProcessed: int64(i + 1),
-				LastFetchedAt:  &lastFetched,
-			}
 		}
 	}
 	return snapshots, batches
@@ -18563,13 +17923,11 @@ func runAutoTuneTraceWithPolicyScheduleAndCrashpoints(
 		if crashIndex < len(crashTicks) && i == crashTicks[crashIndex] {
 			restartState := harness.coordinator.ExportAutoTuneRestartState()
 			require.NotNil(t, restartState)
-			resumeCursor := harness.cursorRepo.GetByAddress(address)
-			require.NotNil(t, resumeCursor)
 			harness = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				chain,
 				network,
 				address,
-				resumeCursor.CursorSequence,
+				harness.configRepo.watermark,
 				heads[i:],
 				activeCfg,
 				restartState,
@@ -18652,13 +18010,11 @@ func runAutoTuneTraceWithPolicyScheduleAndCheckpointFenceCrashpoints(
 				require.NotNil(t, restartState)
 			}
 
-			resumeCursor := harness.cursorRepo.GetByAddress(address)
-			require.NotNil(t, resumeCursor)
 			harness = newAutoTuneHarnessWithWarmStartAndHeadSeries(
 				chain,
 				network,
 				address,
-				resumeCursor.CursorSequence,
+				harness.configRepo.watermark,
 				heads[i:],
 				activeCfg,
 				restartState,
@@ -18710,16 +18066,6 @@ func newAutoTuneHarnessWithWarmStart(
 		ticks[i] = []model.WatchedAddress{{Address: address}}
 	}
 	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
-	cursorValue := syntheticCursorValue(chain, initialSequence)
-	cursorRepo := &inMemoryCursorRepo{
-		state: map[string]*model.AddressCursor{
-			address: {
-				Address:        address,
-				CursorValue:    &cursorValue,
-				CursorSequence: initialSequence,
-			},
-		},
-	}
 	// Block-scan mode requires a configRepo for watermark reads.
 	configRepo := &inMemoryConfigRepo{watermark: initialSequence}
 	jobCh := make(chan event.FetchJob, tickCount+1)
@@ -18734,7 +18080,6 @@ func newAutoTuneHarnessWithWarmStart(
 
 	return &autoTuneHarness{
 		coordinator: coord,
-		cursorRepo:  cursorRepo,
 		configRepo:  configRepo,
 		jobCh:       jobCh,
 	}
@@ -18799,23 +18144,6 @@ func (h *autoTuneHarness) tickAndAdvance(t *testing.T) event.FetchJob {
 		h.configRepo.watermark = job.StartBlock
 	}
 
-	// Also update the per-address cursor repo for compatibility with legacy helpers.
-	addr := job.Address
-	if addr == "" && len(job.WatchedAddresses) > 0 {
-		addr = job.WatchedAddresses[0]
-	}
-	nextSeq := job.StartBlock
-	if !job.BlockScanMode {
-		nextSeq = job.CursorSequence + 1
-	}
-	nextCursor := syntheticCursorValue(job.Chain, nextSeq)
-	if addr != "" {
-		h.cursorRepo.state[addr] = &model.AddressCursor{
-			Address:        addr,
-			CursorValue:    &nextCursor,
-			CursorSequence: nextSeq,
-		}
-	}
 	return job
 }
 

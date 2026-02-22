@@ -63,21 +63,13 @@ func buildReorgIngester(
 		slog.Default(),
 		WithReorgHandler(func(_ context.Context, _ *sql.Tx, batch event.NormalizedBatch) error {
 			forkCursor := batch.PreviousCursorSequence
-			rewindCursor, rewindSeq, err := state.rollbackFromCursor(
+			_, rewindSeq, err := state.rollbackFromCursor(
 				batch.Chain, batch.Network, batch.Address, forkCursor,
 			)
 			if err != nil {
 				return err
 			}
 			state.mu.Lock()
-			cursorKey := fmt.Sprintf("%s-%s|%s", batch.Chain, batch.Network, batch.Address)
-			state.cursors[cursorKey] = &model.AddressCursor{
-				Chain:          batch.Chain,
-				Network:        batch.Network,
-				Address:        batch.Address,
-				CursorValue:    rewindCursor,
-				CursorSequence: rewindSeq,
-			}
 			wmKey := fmt.Sprintf("%s-%s", batch.Chain, batch.Network)
 			if rewindSeq < state.watermarks[wmKey] {
 				state.watermarks[wmKey] = rewindSeq

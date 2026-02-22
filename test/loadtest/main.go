@@ -17,7 +17,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -309,10 +308,7 @@ func verifyDataIntegrity(
 	// Check 2: no negative balances exist.
 	results = append(results, verifyNoNegativeBalances(ctx, db, chain, network))
 
-	// Check 3: cursor monotonicity (no gaps in per-address cursor sequences).
-	results = append(results, verifyCursorMonotonicity(ctx, db, chain, network, concurrency))
-
-	// Check 4: transaction dedup (no duplicate tx_hash per chain/network).
+	// Check 3: transaction dedup (no duplicate tx_hash per chain/network).
 	results = append(results, verifyTransactionDedup(ctx, db, chain, network))
 
 	// Print verification report.
@@ -436,108 +432,6 @@ func verifyNoNegativeBalances(
 	}
 
 	return checkResult{Name: name, Passed: true, Detail: "0 negative balances found"}
-}
-
-// verifyCursorMonotonicity verifies that each load-test worker's address cursor
-// has a strictly increasing cursor_sequence, and that no cursors were lost.
-// For worker W that processed N batches, the final cursor_sequence should be
-// the max slot from its last batch.
-func verifyCursorMonotonicity(
-	ctx context.Context,
-	db *postgres.DB,
-	chain model.Chain,
-	network model.Network,
-	concurrency int,
-) checkResult {
-	name := "cursor monotonicity"
-
-	// Check that all loadtest address cursors have non-decreasing cursor_sequence
-	// relative to their ingestion order. Since we only have the final snapshot in
-	// address_cursors, we verify that each worker's cursor is present and that
-	// cursor_sequence > 0 (i.e., at least one batch was ingested).
-	rows, err := db.QueryContext(ctx, `
-		SELECT address, cursor_sequence, cursor_value
-		FROM address_cursors
-		WHERE chain = $1 AND network = $2
-		  AND address LIKE 'loadtest-addr-%'
-		ORDER BY address
-	`, chain, network)
-	if err != nil {
-		return checkResult{Name: name, Passed: false, Detail: fmt.Sprintf("query error: %v", err)}
-	}
-	defer rows.Close()
-
-	type cursorRow struct {
-		address  string
-		sequence int64
-		value    sql.NullString
-	}
-	var cursors []cursorRow
-	for rows.Next() {
-		var c cursorRow
-		if sErr := rows.Scan(&c.address, &c.sequence, &c.value); sErr != nil {
-			return checkResult{Name: name, Passed: false, Detail: fmt.Sprintf("scan error: %v", sErr)}
-		}
-		cursors = append(cursors, c)
-	}
-	if rErr := rows.Err(); rErr != nil {
-		return checkResult{Name: name, Passed: false, Detail: fmt.Sprintf("rows error: %v", rErr)}
-	}
-
-	if len(cursors) == 0 {
-		return checkResult{Name: name, Passed: false, Detail: "no loadtest cursors found in address_cursors"}
-	}
-
-	// Verify each cursor has a positive sequence (meaning batches were processed).
-	var issues []string
-	for _, c := range cursors {
-		if c.sequence <= 0 {
-			issues = append(issues, fmt.Sprintf("%s: cursor_sequence=%d (expected > 0)", c.address, c.sequence))
-		}
-	}
-
-	// Additionally verify cursor sequences within balance_events are monotonically
-	// ordered: for each loadtest address, block_cursor values should be non-decreasing
-	// when ordered by created_at.
-	gapRows, err := db.QueryContext(ctx, `
-		WITH ordered_events AS (
-			SELECT address, block_cursor,
-			       LAG(block_cursor) OVER (PARTITION BY address ORDER BY block_cursor, created_at) AS prev_cursor
-			FROM balance_events
-			WHERE chain = $1 AND network = $2
-			  AND address LIKE 'loadtest-addr-%'
-		)
-		SELECT address, COUNT(*) AS gap_count
-		FROM ordered_events
-		WHERE prev_cursor IS NOT NULL AND block_cursor < prev_cursor
-		GROUP BY address
-	`, chain, network)
-	if err != nil {
-		return checkResult{Name: name, Passed: false, Detail: fmt.Sprintf("monotonicity query error: %v", err)}
-	}
-	defer gapRows.Close()
-
-	for gapRows.Next() {
-		var addr string
-		var gapCount int64
-		if sErr := gapRows.Scan(&addr, &gapCount); sErr == nil && gapCount > 0 {
-			issues = append(issues, fmt.Sprintf("%s: %d non-monotonic cursor transitions", addr, gapCount))
-		}
-	}
-
-	if len(issues) > 0 {
-		detail := fmt.Sprintf("%d issue(s): %s", len(issues), issues[0])
-		if len(issues) > 1 {
-			detail += fmt.Sprintf(" (and %d more)", len(issues)-1)
-		}
-		return checkResult{Name: name, Passed: false, Detail: detail}
-	}
-
-	return checkResult{
-		Name:   name,
-		Passed: true,
-		Detail: fmt.Sprintf("%d worker cursor(s) verified, no monotonicity violations", len(cursors)),
-	}
 }
 
 // verifyTransactionDedup checks that no duplicate tx_hash exists per chain/network
