@@ -297,6 +297,40 @@ func (n *Normalizer) processBatchWithRetry(
 func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client sidecarv1.ChainDecoderClient, batch event.RawBatch) error {
 	const decodeStage = "normalizer.decode_batch"
 
+	// Empty sentinel batch (e.g. from block-scan with no signatures): pass
+	// through directly so the ingester can advance the watermark without
+	// making an unnecessary sidecar gRPC call.
+	if len(batch.RawTransactions) == 0 && len(batch.Signatures) == 0 {
+		canonicalPrevCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.PreviousCursorValue)
+		canonicalNewCursor := identity.CanonicalizeCursorValue(batch.Chain, batch.NewCursorValue)
+		normalized := event.NormalizedBatch{
+			Chain:                  batch.Chain,
+			Network:                batch.Network,
+			Address:                batch.Address,
+			WalletID:               batch.WalletID,
+			OrgID:                  batch.OrgID,
+			PreviousCursorValue:    canonicalPrevCursor,
+			PreviousCursorSequence: batch.PreviousCursorSequence,
+			NewCursorValue:         canonicalNewCursor,
+			NewCursorSequence:      batch.NewCursorSequence,
+			BlockScanMode:          batch.BlockScanMode,
+			WatchedAddresses:       batch.WatchedAddresses,
+			FetchedAt:              batch.CreatedAt,
+			NormalizedAt:           time.Now(),
+		}
+		select {
+		case n.normalizedCh <- normalized:
+			log.Info("empty sentinel batch passed through",
+				"chain", batch.Chain,
+				"network", batch.Network,
+				"new_cursor_seq", batch.NewCursorSequence,
+			)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return nil
+	}
+
 	if len(batch.RawTransactions) != len(batch.Signatures) {
 		return fmt.Errorf("raw/signature length mismatch: raw=%d signatures=%d", len(batch.RawTransactions), len(batch.Signatures))
 	}

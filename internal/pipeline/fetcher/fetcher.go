@@ -53,6 +53,8 @@ type Fetcher struct {
 
 	batchSizeByAddress *cache.LRU[string, int]
 
+	blockScanMaxBatchTxs int
+
 	cbFailureThreshold int
 	cbSuccessThreshold int
 	cbOpenTimeout      time.Duration
@@ -85,6 +87,12 @@ func WithAdaptiveMinBatch(minBatch int) Option {
 func WithBoundaryOverlapLookahead(n int) Option {
 	return func(f *Fetcher) {
 		f.boundaryOverlapLookahead = n
+	}
+}
+
+func WithBlockScanMaxBatchTxs(maxTxs int) Option {
+	return func(f *Fetcher) {
+		f.blockScanMaxBatchTxs = maxTxs
 	}
 }
 
@@ -366,16 +374,61 @@ func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job
 	}
 
 	if len(sigs) == 0 {
-		log.Debug("block-scan: no signatures in range",
+		log.Debug("block-scan: no signatures in range, emitting empty batch for watermark advance",
 			"start_block", job.StartBlock,
 			"end_block", job.EndBlock,
 		)
+		// Emit an empty sentinel batch so the ingester can advance the watermark
+		// past this empty range. Without this, the coordinator would re-scan the
+		// same block range indefinitely.
+		emptyBatch := event.RawBatch{
+			Chain:                  job.Chain,
+			Network:                job.Network,
+			PreviousCursorSequence: job.StartBlock,
+			NewCursorSequence:      job.EndBlock,
+			BlockScanMode:          true,
+			WatchedAddresses:       job.WatchedAddresses,
+			CreatedAt:              time.Now(),
+		}
+		select {
+		case f.rawBatchCh <- emptyBatch:
+			log.Info("block-scan empty sentinel batch sent",
+				"start_block", job.StartBlock,
+				"end_block", job.EndBlock,
+			)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		return nil
 	}
 
 	// Canonicalize and sort signatures.
 	sigs = canonicalizeSignatures(job.Chain, sigs)
 	if len(sigs) == 0 {
+		log.Debug("block-scan: all signatures filtered after canonicalization, emitting empty batch for watermark advance",
+			"start_block", job.StartBlock,
+			"end_block", job.EndBlock,
+		)
+		// All signatures were filtered out during canonicalization. Emit an
+		// empty sentinel batch so the ingester can still advance the watermark.
+		emptyBatch := event.RawBatch{
+			Chain:                  job.Chain,
+			Network:                job.Network,
+			PreviousCursorSequence: job.StartBlock,
+			NewCursorSequence:      job.EndBlock,
+			BlockScanMode:          true,
+			WatchedAddresses:       job.WatchedAddresses,
+			CreatedAt:              time.Now(),
+		}
+		select {
+		case f.rawBatchCh <- emptyBatch:
+			log.Info("block-scan empty sentinel batch sent (post-canonicalization)",
+				"start_block", job.StartBlock,
+				"end_block", job.EndBlock,
+			)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		return nil
 	}
 
@@ -416,29 +469,98 @@ func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job
 
 	newest := sigs[len(sigs)-1]
 	cursorValue := newest.Hash
+	now := time.Now()
 
-	batch := event.RawBatch{
-		Chain:             job.Chain,
-		Network:           job.Network,
-		RawTransactions:   rawTxs,
-		Signatures:        sigInfos,
-		NewCursorValue:    &cursorValue,
-		NewCursorSequence: newest.Sequence,
-		BlockScanMode:     true,
-		WatchedAddresses:  job.WatchedAddresses,
-		CreatedAt:         time.Now(),
+	maxBatch := f.effectiveBlockScanMaxBatchTxs()
+
+	// If the batch fits within the limit, send as a single batch (common path).
+	if len(rawTxs) <= maxBatch {
+		batch := event.RawBatch{
+			Chain:             job.Chain,
+			Network:           job.Network,
+			RawTransactions:   rawTxs,
+			Signatures:        sigInfos,
+			NewCursorValue:    &cursorValue,
+			NewCursorSequence: newest.Sequence,
+			BlockScanMode:     true,
+			WatchedAddresses:  job.WatchedAddresses,
+			CreatedAt:         now,
+		}
+
+		select {
+		case f.rawBatchCh <- batch:
+			metrics.FetcherTxFetched.WithLabelValues(job.Chain.String(), job.Network.String()).Add(float64(len(rawTxs)))
+			log.Info("block-scan raw batch sent",
+				"start_block", job.StartBlock,
+				"end_block", job.EndBlock,
+				"tx_count", len(rawTxs),
+			)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return nil
 	}
 
-	select {
-	case f.rawBatchCh <- batch:
-		metrics.FetcherTxFetched.WithLabelValues(job.Chain.String(), job.Network.String()).Add(float64(len(rawTxs)))
-		log.Info("block-scan raw batch sent",
-			"start_block", job.StartBlock,
-			"end_block", job.EndBlock,
-			"tx_count", len(rawTxs),
-		)
-	case <-ctx.Done():
-		return ctx.Err()
+	// Chunk large batches to avoid memory spikes and gRPC payload limits.
+	totalTxs := len(rawTxs)
+	chunkCount := (totalTxs + maxBatch - 1) / maxBatch
+	log.Info("block-scan chunking large batch",
+		"start_block", job.StartBlock,
+		"end_block", job.EndBlock,
+		"total_tx_count", totalTxs,
+		"chunk_count", chunkCount,
+		"max_batch_txs", maxBatch,
+	)
+
+	for chunkIdx := 0; chunkIdx < chunkCount; chunkIdx++ {
+		start := chunkIdx * maxBatch
+		end := start + maxBatch
+		if end > totalTxs {
+			end = totalTxs
+		}
+
+		chunkTxs := rawTxs[start:end]
+		chunkSigs := sigInfos[start:end]
+		isLastChunk := chunkIdx == chunkCount-1
+
+		var chunkCursorValue *string
+		var chunkCursorSequence int64
+		if isLastChunk {
+			// Only the last sub-batch advances the watermark.
+			chunkCursorValue = &cursorValue
+			chunkCursorSequence = newest.Sequence
+		} else {
+			// Intermediate sub-batches hold the watermark at the previous position
+			// so the watermark does not advance until all chunks are processed.
+			chunkCursorSequence = job.StartBlock
+		}
+
+		subBatch := event.RawBatch{
+			Chain:             job.Chain,
+			Network:           job.Network,
+			RawTransactions:   chunkTxs,
+			Signatures:        chunkSigs,
+			NewCursorValue:    chunkCursorValue,
+			NewCursorSequence: chunkCursorSequence,
+			BlockScanMode:     true,
+			WatchedAddresses:  job.WatchedAddresses,
+			CreatedAt:         now,
+		}
+
+		select {
+		case f.rawBatchCh <- subBatch:
+			metrics.FetcherTxFetched.WithLabelValues(job.Chain.String(), job.Network.String()).Add(float64(len(chunkTxs)))
+			log.Info("block-scan raw sub-batch sent",
+				"start_block", job.StartBlock,
+				"end_block", job.EndBlock,
+				"chunk", chunkIdx+1,
+				"of", chunkCount,
+				"tx_count", len(chunkTxs),
+				"is_last", isLastChunk,
+			)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	return nil
@@ -823,6 +945,15 @@ func (f *Fetcher) effectiveBoundaryOverlapLookahead() int {
 		return boundaryOverlapLookahead
 	}
 	return f.boundaryOverlapLookahead
+}
+
+const defaultBlockScanMaxBatchTxs = 500
+
+func (f *Fetcher) effectiveBlockScanMaxBatchTxs() int {
+	if f.blockScanMaxBatchTxs <= 0 {
+		return defaultBlockScanMaxBatchTxs
+	}
+	return f.blockScanMaxBatchTxs
 }
 
 // filterAndCanonicalizeSignatures combines canonicalization, dedup, cutoff filtering,

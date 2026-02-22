@@ -240,13 +240,9 @@ func TestError_EmptyBatchHandling(t *testing.T) {
 			Signatures:      []event.SignatureInfo{},
 		}
 
-		// The sidecar should still be called with empty transactions.
-		// It returns empty results, which is fine.
-		mockClient.EXPECT().
-			DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
-			Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
-				Results: []*sidecarv1.TransactionResult{},
-			}, nil)
+		// Empty sentinel batch: sidecar should NOT be called.
+		// The normalizer passes it through directly so the ingester
+		// can advance the watermark.
 
 		err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
 		require.NoError(t, err)
@@ -276,11 +272,7 @@ func TestError_EmptyBatchHandling(t *testing.T) {
 			Signatures:      nil,
 		}
 
-		mockClient.EXPECT().
-			DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any(), gomock.Any()).
-			Return(&sidecarv1.DecodeSolanaTransactionBatchResponse{
-				Results: []*sidecarv1.TransactionResult{},
-			}, nil)
+		// Empty sentinel batch: sidecar should NOT be called.
 
 		err := n.processBatch(context.Background(), slog.Default(), mockClient, batch)
 		require.NoError(t, err)

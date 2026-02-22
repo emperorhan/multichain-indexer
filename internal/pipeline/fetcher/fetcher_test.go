@@ -1980,6 +1980,284 @@ func signatureSequenceForCursor(chainID model.Chain, sigs []chain.SignatureInfo,
 	return 0
 }
 
+// blockScanMockAdapter wraps MockChainAdapter and adds ScanBlocks for block-scan tests.
+type blockScanMockAdapter struct {
+	*chainmocks.MockChainAdapter
+	scanBlocksFn func(ctx context.Context, startBlock, endBlock int64, watchedAddresses []string) ([]chain.SignatureInfo, error)
+}
+
+func (a *blockScanMockAdapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, watchedAddresses []string) ([]chain.SignatureInfo, error) {
+	return a.scanBlocksFn(ctx, startBlock, endBlock, watchedAddresses)
+}
+
+func TestProcessBlockScanJob_ChunkingLargeBatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockBase := chainmocks.NewMockChainAdapter(ctrl)
+
+	// Create 7 signatures and 7 raw txs; set maxBatch=3 so we expect 3 sub-batches (3+3+1).
+	sigs := make([]chain.SignatureInfo, 7)
+	rawTxs := make([]json.RawMessage, 7)
+	sigHashes := make([]string, 7)
+	for i := 0; i < 7; i++ {
+		hash := fmt.Sprintf("sig-%d", i+1)
+		sigs[i] = chain.SignatureInfo{Hash: hash, Sequence: int64(100 + i)}
+		rawTxs[i] = json.RawMessage(fmt.Sprintf(`{"tx":%d}`, i+1))
+		sigHashes[i] = hash
+	}
+
+	adapter := &blockScanMockAdapter{
+		MockChainAdapter: mockBase,
+		scanBlocksFn: func(_ context.Context, _, _ int64, _ []string) ([]chain.SignatureInfo, error) {
+			return sigs, nil
+		},
+	}
+
+	mockBase.EXPECT().
+		FetchTransactions(gomock.Any(), sigHashes).
+		Return(rawTxs, nil)
+
+	rawBatchCh := make(chan event.RawBatch, 10)
+	f := &Fetcher{
+		adapter:              adapter,
+		rawBatchCh:           rawBatchCh,
+		logger:               slog.Default(),
+		retryMaxAttempts:     1,
+		batchSizeByAddress:   cache.NewLRU[string, int](10000, time.Hour),
+		blockScanMaxBatchTxs: 3, // chunk into sub-batches of 3
+	}
+
+	job := event.FetchJob{
+		Chain:            model.ChainBase,
+		Network:          model.NetworkSepolia,
+		BlockScanMode:    true,
+		StartBlock:       100,
+		EndBlock:         106,
+		WatchedAddresses: []string{"0xaddr1", "0xaddr2"},
+	}
+
+	err := f.processJob(context.Background(), slog.Default(), job)
+	require.NoError(t, err)
+
+	// Expect 3 sub-batches: [3, 3, 1]
+	var batches []event.RawBatch
+	for i := 0; i < 3; i++ {
+		select {
+		case b := <-rawBatchCh:
+			batches = append(batches, b)
+		default:
+			t.Fatalf("expected 3 sub-batches, got %d", len(batches))
+		}
+	}
+
+	// No extra batches
+	select {
+	case <-rawBatchCh:
+		t.Fatal("unexpected extra batch")
+	default:
+	}
+
+	// Sub-batch 1: 3 txs, cursor holds at start block
+	assert.Len(t, batches[0].RawTransactions, 3)
+	assert.Len(t, batches[0].Signatures, 3)
+	assert.Nil(t, batches[0].NewCursorValue, "intermediate sub-batch should have nil cursor value")
+	assert.Equal(t, int64(100), batches[0].NewCursorSequence, "intermediate sub-batch should hold cursor at start block")
+	assert.True(t, batches[0].BlockScanMode)
+	assert.Equal(t, []string{"0xaddr1", "0xaddr2"}, batches[0].WatchedAddresses)
+
+	// Sub-batch 2: 3 txs, cursor holds at start block
+	assert.Len(t, batches[1].RawTransactions, 3)
+	assert.Len(t, batches[1].Signatures, 3)
+	assert.Nil(t, batches[1].NewCursorValue, "intermediate sub-batch should have nil cursor value")
+	assert.Equal(t, int64(100), batches[1].NewCursorSequence, "intermediate sub-batch should hold cursor at start block")
+	assert.True(t, batches[1].BlockScanMode)
+	assert.Equal(t, []string{"0xaddr1", "0xaddr2"}, batches[1].WatchedAddresses)
+
+	// Sub-batch 3 (last): 1 tx, cursor advances to newest
+	assert.Len(t, batches[2].RawTransactions, 1)
+	assert.Len(t, batches[2].Signatures, 1)
+	require.NotNil(t, batches[2].NewCursorValue, "last sub-batch should have cursor value")
+	assert.Equal(t, "sig-7", *batches[2].NewCursorValue)
+	assert.Equal(t, int64(106), batches[2].NewCursorSequence, "last sub-batch should advance cursor to newest")
+	assert.True(t, batches[2].BlockScanMode)
+	assert.Equal(t, []string{"0xaddr1", "0xaddr2"}, batches[2].WatchedAddresses)
+
+	// All sub-batches should share the same CreatedAt timestamp
+	assert.Equal(t, batches[0].CreatedAt, batches[1].CreatedAt)
+	assert.Equal(t, batches[0].CreatedAt, batches[2].CreatedAt)
+
+	// Total tx count across all sub-batches
+	totalTxs := 0
+	for _, b := range batches {
+		totalTxs += len(b.RawTransactions)
+	}
+	assert.Equal(t, 7, totalTxs)
+}
+
+func TestProcessBlockScanJob_NoBatchChunkingWhenUnderLimit(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockBase := chainmocks.NewMockChainAdapter(ctrl)
+
+	sigs := []chain.SignatureInfo{
+		{Hash: "sig-1", Sequence: 100},
+		{Hash: "sig-2", Sequence: 101},
+	}
+	rawTxs := []json.RawMessage{
+		json.RawMessage(`{"tx":1}`),
+		json.RawMessage(`{"tx":2}`),
+	}
+
+	adapter := &blockScanMockAdapter{
+		MockChainAdapter: mockBase,
+		scanBlocksFn: func(_ context.Context, _, _ int64, _ []string) ([]chain.SignatureInfo, error) {
+			return sigs, nil
+		},
+	}
+
+	mockBase.EXPECT().
+		FetchTransactions(gomock.Any(), []string{"sig-1", "sig-2"}).
+		Return(rawTxs, nil)
+
+	rawBatchCh := make(chan event.RawBatch, 10)
+	f := &Fetcher{
+		adapter:              adapter,
+		rawBatchCh:           rawBatchCh,
+		logger:               slog.Default(),
+		retryMaxAttempts:     1,
+		batchSizeByAddress:   cache.NewLRU[string, int](10000, time.Hour),
+		blockScanMaxBatchTxs: 500, // well above 2 txs
+	}
+
+	job := event.FetchJob{
+		Chain:            model.ChainBase,
+		Network:          model.NetworkSepolia,
+		BlockScanMode:    true,
+		StartBlock:       100,
+		EndBlock:         101,
+		WatchedAddresses: []string{"0xaddr1"},
+	}
+
+	err := f.processJob(context.Background(), slog.Default(), job)
+	require.NoError(t, err)
+
+	// Expect exactly 1 batch (no chunking)
+	batch := <-rawBatchCh
+	assert.Len(t, batch.RawTransactions, 2)
+	require.NotNil(t, batch.NewCursorValue)
+	assert.Equal(t, "sig-2", *batch.NewCursorValue)
+	assert.Equal(t, int64(101), batch.NewCursorSequence)
+	assert.True(t, batch.BlockScanMode)
+
+	select {
+	case <-rawBatchCh:
+		t.Fatal("unexpected extra batch")
+	default:
+	}
+}
+
+func TestProcessBlockScanJob_EmptyBatchNoChunking(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockBase := chainmocks.NewMockChainAdapter(ctrl)
+
+	adapter := &blockScanMockAdapter{
+		MockChainAdapter: mockBase,
+		scanBlocksFn: func(_ context.Context, _, _ int64, _ []string) ([]chain.SignatureInfo, error) {
+			return nil, nil // no signatures
+		},
+	}
+
+	rawBatchCh := make(chan event.RawBatch, 10)
+	f := &Fetcher{
+		adapter:              adapter,
+		rawBatchCh:           rawBatchCh,
+		logger:               slog.Default(),
+		retryMaxAttempts:     1,
+		batchSizeByAddress:   cache.NewLRU[string, int](10000, time.Hour),
+		blockScanMaxBatchTxs: 3,
+	}
+
+	job := event.FetchJob{
+		Chain:            model.ChainBase,
+		Network:          model.NetworkSepolia,
+		BlockScanMode:    true,
+		StartBlock:       100,
+		EndBlock:         110,
+		WatchedAddresses: []string{"0xaddr1"},
+	}
+
+	err := f.processJob(context.Background(), slog.Default(), job)
+	require.NoError(t, err)
+
+	// Should get the empty sentinel batch (watermark advance)
+	batch := <-rawBatchCh
+	assert.Len(t, batch.RawTransactions, 0)
+	assert.True(t, batch.BlockScanMode)
+	assert.Equal(t, int64(100), batch.PreviousCursorSequence)
+	assert.Equal(t, int64(110), batch.NewCursorSequence)
+}
+
+func TestProcessBlockScanJob_ExactlyAtLimit(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockBase := chainmocks.NewMockChainAdapter(ctrl)
+
+	// Exactly 3 sigs with maxBatch=3 -> should NOT chunk
+	sigs := []chain.SignatureInfo{
+		{Hash: "sig-1", Sequence: 100},
+		{Hash: "sig-2", Sequence: 101},
+		{Hash: "sig-3", Sequence: 102},
+	}
+	rawTxs := []json.RawMessage{
+		json.RawMessage(`{"tx":1}`),
+		json.RawMessage(`{"tx":2}`),
+		json.RawMessage(`{"tx":3}`),
+	}
+
+	adapter := &blockScanMockAdapter{
+		MockChainAdapter: mockBase,
+		scanBlocksFn: func(_ context.Context, _, _ int64, _ []string) ([]chain.SignatureInfo, error) {
+			return sigs, nil
+		},
+	}
+
+	mockBase.EXPECT().
+		FetchTransactions(gomock.Any(), []string{"sig-1", "sig-2", "sig-3"}).
+		Return(rawTxs, nil)
+
+	rawBatchCh := make(chan event.RawBatch, 10)
+	f := &Fetcher{
+		adapter:              adapter,
+		rawBatchCh:           rawBatchCh,
+		logger:               slog.Default(),
+		retryMaxAttempts:     1,
+		batchSizeByAddress:   cache.NewLRU[string, int](10000, time.Hour),
+		blockScanMaxBatchTxs: 3,
+	}
+
+	job := event.FetchJob{
+		Chain:            model.ChainBase,
+		Network:          model.NetworkSepolia,
+		BlockScanMode:    true,
+		StartBlock:       100,
+		EndBlock:         102,
+		WatchedAddresses: []string{"0xaddr1"},
+	}
+
+	err := f.processJob(context.Background(), slog.Default(), job)
+	require.NoError(t, err)
+
+	// Single batch, no chunking
+	batch := <-rawBatchCh
+	assert.Len(t, batch.RawTransactions, 3)
+	require.NotNil(t, batch.NewCursorValue)
+	assert.Equal(t, "sig-3", *batch.NewCursorValue)
+	assert.Equal(t, int64(102), batch.NewCursorSequence)
+
+	select {
+	case <-rawBatchCh:
+		t.Fatal("unexpected extra batch")
+	default:
+	}
+}
+
 func TestCanonicalSignatureIdentity_BTC(t *testing.T) {
 	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "ABCDEF0011"))
 	assert.Equal(t, "abcdef0011", identity.CanonicalSignatureIdentity(model.ChainBTC, "0xABCDEF0011"))

@@ -517,6 +517,9 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 	if p.cfg.Fetcher.BoundaryOverlapLookahead > 0 {
 		fetchOpts = append(fetchOpts, fetcher.WithBoundaryOverlapLookahead(p.cfg.Fetcher.BoundaryOverlapLookahead))
 	}
+	if p.cfg.Fetcher.BlockScanMaxBatchTxs > 0 {
+		fetchOpts = append(fetchOpts, fetcher.WithBlockScanMaxBatchTxs(p.cfg.Fetcher.BlockScanMaxBatchTxs))
+	}
 	fetchOpts = append(fetchOpts, fetcher.WithCircuitBreaker(
 		p.cfg.Fetcher.CircuitBreaker.FailureThreshold,
 		p.cfg.Fetcher.CircuitBreaker.SuccessThreshold,

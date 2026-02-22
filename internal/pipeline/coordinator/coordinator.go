@@ -35,6 +35,11 @@ type Coordinator struct {
 	configRepo               store.IndexerConfigRepository
 	maxInitialLookbackBlocks int64
 	intervalResetCh          chan struct{}
+
+	// Dedup: track last enqueued block range to avoid duplicate in-flight jobs.
+	hasEnqueued       bool
+	lastEnqueuedStart int64
+	lastEnqueuedEnd   int64
 }
 
 type headSequenceProvider interface {
@@ -418,6 +423,16 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 		endBlock = startBlock + int64(batchSize) - 1
 	}
 
+	// Skip duplicate enqueue if the same range is already in-flight.
+	// Only applies when watermark tracking is active (configRepo set),
+	// which is the production block-scan mode where stalled watermarks
+	// can cause the coordinator to re-enqueue the same range.
+	if c.configRepo != nil && c.hasEnqueued && startBlock == c.lastEnqueuedStart && endBlock == c.lastEnqueuedEnd {
+		c.logger.Debug("block-scan: same range already enqueued, skipping",
+			"start_block", startBlock, "end_block", endBlock)
+		return nil
+	}
+
 	watchedAddrs := make([]string, len(addresses))
 	for i, addr := range addresses {
 		watchedAddrs[i] = addr.Address
@@ -437,6 +452,9 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 	select {
 	case c.jobCh <- job:
 		metrics.CoordinatorJobsCreated.WithLabelValues(c.chain.String(), c.network.String()).Inc()
+		c.hasEnqueued = true
+		c.lastEnqueuedStart = startBlock
+		c.lastEnqueuedEnd = endBlock
 	default:
 		// Channel full -- log warning and try blocking send with timeout
 		c.logger.Warn("job channel full, waiting for capacity",
@@ -445,6 +463,9 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 		select {
 		case c.jobCh <- job:
 			metrics.CoordinatorJobsCreated.WithLabelValues(c.chain.String(), c.network.String()).Inc()
+			c.hasEnqueued = true
+			c.lastEnqueuedStart = startBlock
+			c.lastEnqueuedEnd = endBlock
 		case <-ctx.Done():
 			return ctx.Err()
 		}

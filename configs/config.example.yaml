@@ -109,6 +109,7 @@ pipeline:
   indexing_interval_ms: 5000           # INDEXING_INTERVAL_MS
   channel_buffer_size: 10              # CHANNEL_BUFFER_SIZE
   indexed_blocks_retention: 10000      # INDEXED_BLOCKS_RETENTION
+  interleave_max_skew_ms: 250          # INTERLEAVE_MAX_SKEW_MS (0 = disable interleaver waiting; auto-disabled for single-chain)
 
   # Watched addresses per chain (comma-separated in env vars)
   solana_watched_addresses: []     # SOLANA_WATCHED_ADDRESSES / WATCHED_ADDRESSES
@@ -153,6 +154,7 @@ pipeline:
     backoff_max_ms: 3000               # FETCHER_BACKOFF_MAX_MS
     adaptive_min_batch: 1              # FETCHER_ADAPTIVE_MIN_BATCH
     boundary_overlap_lookahead: 1      # FETCHER_BOUNDARY_OVERLAP_LOOKAHEAD
+    block_scan_max_batch_txs: 500      # BLOCK_SCAN_MAX_BATCH_TXS — max txs per sub-batch in block-scan mode (prevents memory spikes)
 
   # Pipeline stage tuning: Normalizer
   normalizer:

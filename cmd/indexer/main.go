@@ -42,8 +42,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const deterministicInterleaveMaxSkew = 250 * time.Millisecond
-
 type runtimeTarget struct {
 	chain   model.Chain
 	network model.Network
@@ -670,7 +668,12 @@ func run() error {
 
 	registry := pipeline.NewRegistry()
 	pipelines := make([]*pipeline.Pipeline, 0, len(targets))
-	commitInterleaver := ingester.NewDeterministicMandatoryChainInterleaver(deterministicInterleaveMaxSkew)
+	interleaveMaxSkew := time.Duration(cfg.Pipeline.InterleaveMaxSkewMs) * time.Millisecond
+	if len(targets) <= 1 {
+		interleaveMaxSkew = 0
+		logger.Info("single-chain deployment detected, commit interleaver disabled")
+	}
+	commitInterleaver := ingester.NewDeterministicMandatoryChainInterleaver(interleaveMaxSkew)
 	for _, target := range targets {
 		pipelineCfg := buildPipelineConfig(cfg, target, alerter, commitInterleaver)
 		p := pipeline.New(pipelineCfg, target.adapter, db, repos, logger.With("chain", target.chain, "network", target.network, "rpc", target.rpcURL))

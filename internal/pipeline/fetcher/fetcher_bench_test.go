@@ -80,10 +80,11 @@ func BenchmarkFetchSignatures(b *testing.B) {
 			logger := silentLogger()
 
 			f := &Fetcher{
-				adapter:          adapter,
-				rawBatchCh:       rawBatchCh,
-				logger:           logger,
-				retryMaxAttempts: 1,
+				adapter:            adapter,
+				rawBatchCh:         rawBatchCh,
+				logger:             logger,
+				retryMaxAttempts:   1,
+				batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 			}
 
 			job := event.FetchJob{
@@ -114,10 +115,11 @@ func BenchmarkFetchTransactions(b *testing.B) {
 
 			cursor := "sig-000000"
 			f := &Fetcher{
-				adapter:          adapter,
-				rawBatchCh:       rawBatchCh,
-				logger:           logger,
-				retryMaxAttempts: 1,
+				adapter:            adapter,
+				rawBatchCh:         rawBatchCh,
+				logger:             logger,
+				retryMaxAttempts:   1,
+				batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 			}
 
 			job := event.FetchJob{

@@ -162,6 +162,7 @@ type FetcherStageConfig struct {
 	BackoffMaxMs             int                  `yaml:"backoff_max_ms"`
 	AdaptiveMinBatch         int                  `yaml:"adaptive_min_batch"`
 	BoundaryOverlapLookahead int                  `yaml:"boundary_overlap_lookahead"`
+	BlockScanMaxBatchTxs     int                  `yaml:"block_scan_max_batch_txs"`
 	CircuitBreaker           CircuitBreakerConfig `yaml:"circuit_breaker"`
 }
 
@@ -246,6 +247,7 @@ type PipelineConfig struct {
 	Ingester                                      IngesterStageConfig      `yaml:"ingester"`
 	Health                                        HealthStageConfig        `yaml:"health"`
 	ConfigWatcher                                 ConfigWatcherStageConfig `yaml:"config_watcher"`
+	InterleaveMaxSkewMs                           int                      `yaml:"interleave_max_skew_ms"`
 }
 
 type ServerConfig struct {
@@ -464,6 +466,7 @@ func applyPipelineEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Pipeline.RawBatchChBufferSize, "RAW_BATCH_CH_BUFFER_SIZE")
 	overrideInt(&cfg.Pipeline.NormalizedChBufferSize, "NORMALIZED_CH_BUFFER_SIZE")
 	overrideInt(&cfg.Pipeline.IndexedBlocksRetention, "INDEXED_BLOCKS_RETENTION")
+	overrideInt(&cfg.Pipeline.InterleaveMaxSkewMs, "INTERLEAVE_MAX_SKEW_MS")
 
 	// Coordinator auto-tune
 	overrideBool(&cfg.Pipeline.CoordinatorAutoTuneEnabled, "COORDINATOR_AUTOTUNE_ENABLED")
@@ -491,6 +494,7 @@ func applyPipelineEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Pipeline.Fetcher.BackoffMaxMs, "FETCHER_BACKOFF_MAX_MS")
 	overrideInt(&cfg.Pipeline.Fetcher.AdaptiveMinBatch, "FETCHER_ADAPTIVE_MIN_BATCH")
 	overrideInt(&cfg.Pipeline.Fetcher.BoundaryOverlapLookahead, "FETCHER_BOUNDARY_OVERLAP_LOOKAHEAD")
+	overrideInt(&cfg.Pipeline.Fetcher.BlockScanMaxBatchTxs, "BLOCK_SCAN_MAX_BATCH_TXS")
 	overrideInt(&cfg.Pipeline.Fetcher.CircuitBreaker.FailureThreshold, "FETCHER_CB_FAILURE_THRESHOLD")
 	overrideInt(&cfg.Pipeline.Fetcher.CircuitBreaker.SuccessThreshold, "FETCHER_CB_SUCCESS_THRESHOLD")
 	overrideInt(&cfg.Pipeline.Fetcher.CircuitBreaker.OpenTimeoutMs, "FETCHER_CB_OPEN_TIMEOUT_MS")
@@ -688,6 +692,7 @@ func applyDefaults(cfg *Config) {
 	setDefaultStr(&cfg.Pipeline.CoordinatorAutoTunePolicyManifestDigest, "manifest-v1")
 	setDefault(&cfg.Pipeline.CoordinatorAutoTunePolicyActivationHoldTicks, 1)
 	setDefault(&cfg.Pipeline.IndexedBlocksRetention, 10000)
+	setDefault(&cfg.Pipeline.InterleaveMaxSkewMs, 250)
 
 	// AutoTune max batch defaults to batch_size if not set
 	if cfg.Pipeline.CoordinatorAutoTuneMaxBatchSize == 0 {
@@ -700,6 +705,7 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.Pipeline.Fetcher.BackoffMaxMs, 3000)
 	setDefault(&cfg.Pipeline.Fetcher.AdaptiveMinBatch, 1)
 	setDefault(&cfg.Pipeline.Fetcher.BoundaryOverlapLookahead, 1)
+	setDefault(&cfg.Pipeline.Fetcher.BlockScanMaxBatchTxs, 500)
 	setDefault(&cfg.Pipeline.Fetcher.CircuitBreaker.FailureThreshold, 10)
 	setDefault(&cfg.Pipeline.Fetcher.CircuitBreaker.SuccessThreshold, 3)
 	setDefault(&cfg.Pipeline.Fetcher.CircuitBreaker.OpenTimeoutMs, 30000)
