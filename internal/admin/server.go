@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
@@ -183,10 +184,13 @@ func validateChainNetwork(chain model.Chain, network model.Network) bool {
 }
 
 // writeJSON writes v as JSON with the given HTTP status code.
+// Encode errors are logged but cannot change the status (already written).
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Warn("writeJSON: failed to encode response", "error", err)
+	}
 }
 
 // requireChainNetworkQuery extracts and validates chain/network from query params.
@@ -361,6 +365,11 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 
 	if *req.FromBlock < 0 {
 		http.Error(w, `{"error":"from_block must be >= 0"}`, http.StatusBadRequest)
+		return
+	}
+
+	if utf8.RuneCountInString(req.Reason) > 500 {
+		http.Error(w, `{"error":"reason too long (max 500 chars)"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -572,6 +581,15 @@ func (s *Server) handleAddAddressBook(w http.ResponseWriter, r *http.Request) {
 
 	if req.Chain == "" || req.Network == "" || req.Address == "" || req.Name == "" {
 		http.Error(w, `{"error":"chain, network, address, and name are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if utf8.RuneCountInString(req.Name) > 255 {
+		http.Error(w, `{"error":"name too long (max 255 chars)"}`, http.StatusBadRequest)
+		return
+	}
+	if utf8.RuneCountInString(req.OrgID) > 255 {
+		http.Error(w, `{"error":"org_id too long (max 255 chars)"}`, http.StatusBadRequest)
 		return
 	}
 

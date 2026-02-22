@@ -468,6 +468,22 @@ var (
 		Help:      "Total balance mismatches detected during reconciliation",
 	}, []string{"chain", "network"})
 
+	// Config watcher
+	ConfigWatcherErrors = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "config_watcher",
+		Name:      "errors_total",
+		Help:      "Total config watcher poll failures",
+	}, []string{"chain", "network"})
+
+	// Reconciliation errors
+	ReconciliationErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "reconciliation",
+		Name:      "errors_total",
+		Help:      "Total errors during reconciliation comparison",
+	}, []string{"chain", "network"})
+
 	// Circuit breaker
 	CircuitBreakerStateChanges = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "indexer",

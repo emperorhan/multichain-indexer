@@ -10,8 +10,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"errors"
+	"time"
+
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 )
 
 // --- Mock repositories ---
@@ -632,5 +636,255 @@ func TestHandleReplayStatus_PipelineNotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+// --- Mock DashboardDataProvider ---
+
+type mockDashboardRepo struct {
+	getBalanceSummaryFunc     func(ctx context.Context, chain model.Chain, network model.Network) ([]store.DashboardAddressBalance, error)
+	getRecentEventsFunc       func(ctx context.Context, chain model.Chain, network model.Network, address string, limit, offset int) ([]store.DashboardEvent, int, error)
+	getAllWatermarksFunc       func(ctx context.Context) ([]model.PipelineWatermark, error)
+	countWatchedAddressesFunc func(ctx context.Context) (int, error)
+}
+
+func (m *mockDashboardRepo) GetBalanceSummary(ctx context.Context, chain model.Chain, network model.Network) ([]store.DashboardAddressBalance, error) {
+	return m.getBalanceSummaryFunc(ctx, chain, network)
+}
+
+func (m *mockDashboardRepo) GetRecentEvents(ctx context.Context, chain model.Chain, network model.Network, address string, limit, offset int) ([]store.DashboardEvent, int, error) {
+	return m.getRecentEventsFunc(ctx, chain, network, address, limit, offset)
+}
+
+func (m *mockDashboardRepo) GetAllWatermarks(ctx context.Context) ([]model.PipelineWatermark, error) {
+	return m.getAllWatermarksFunc(ctx)
+}
+
+func (m *mockDashboardRepo) CountWatchedAddresses(ctx context.Context) (int, error) {
+	return m.countWatchedAddressesFunc(ctx)
+}
+
+// --- Tests: Dashboard Overview ---
+
+func TestHandleDashboardOverview_Success(t *testing.T) {
+	now := time.Now().UTC()
+	dashRepo := &mockDashboardRepo{
+		getAllWatermarksFunc: func(_ context.Context) ([]model.PipelineWatermark, error) {
+			return []model.PipelineWatermark{
+				{Chain: model.ChainSolana, Network: model.NetworkDevnet, HeadSequence: 1000, IngestedSequence: 950, LastHeartbeatAt: now},
+				{Chain: model.ChainBase, Network: model.NetworkMainnet, HeadSequence: 5000, IngestedSequence: 4990, LastHeartbeatAt: now},
+			}, nil
+		},
+		countWatchedAddressesFunc: func(_ context.Context) (int, error) {
+			return 42, nil
+		},
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/overview", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp dashboardOverviewResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(resp.Pipelines) != 2 {
+		t.Fatalf("expected 2 pipelines, got %d", len(resp.Pipelines))
+	}
+	if resp.TotalWatchedAddresses != 42 {
+		t.Errorf("expected 42 watched addresses, got %d", resp.TotalWatchedAddresses)
+	}
+	if resp.ServerTime == "" {
+		t.Error("expected server_time to be non-empty")
+	}
+	// Verify lag calculation.
+	if resp.Pipelines[0].Lag != 50 {
+		t.Errorf("expected lag 50 for solana pipeline, got %d", resp.Pipelines[0].Lag)
+	}
+	if resp.Pipelines[1].Lag != 10 {
+		t.Errorf("expected lag 10 for base pipeline, got %d", resp.Pipelines[1].Lag)
+	}
+}
+
+func TestHandleDashboardOverview_RepoError(t *testing.T) {
+	dashRepo := &mockDashboardRepo{
+		getAllWatermarksFunc: func(_ context.Context) ([]model.PipelineWatermark, error) {
+			return nil, errors.New("db connection failed")
+		},
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/overview", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+}
+
+func TestHandleDashboardOverview_NoDashboardRepo(t *testing.T) {
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/overview", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+}
+
+// --- Tests: Dashboard Balances ---
+
+func TestHandleDashboardBalances_Success(t *testing.T) {
+	label := "my-wallet"
+	dashRepo := &mockDashboardRepo{
+		getBalanceSummaryFunc: func(_ context.Context, chain model.Chain, network model.Network) ([]store.DashboardAddressBalance, error) {
+			return []store.DashboardAddressBalance{
+				{
+					Address: "addr1",
+					Label:   &label,
+					Balances: []store.DashboardTokenBalance{
+						{TokenSymbol: "SOL", Amount: "5000000000", Decimals: 9},
+					},
+				},
+			}, nil
+		},
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/balances?chain=solana&network=devnet", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string][]store.DashboardAddressBalance
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	addrs := resp["addresses"]
+	if len(addrs) != 1 {
+		t.Fatalf("expected 1 address, got %d", len(addrs))
+	}
+	if addrs[0].Address != "addr1" {
+		t.Errorf("expected address 'addr1', got %q", addrs[0].Address)
+	}
+	if len(addrs[0].Balances) != 1 || addrs[0].Balances[0].TokenSymbol != "SOL" {
+		t.Error("expected SOL token balance")
+	}
+}
+
+func TestHandleDashboardBalances_MissingParams(t *testing.T) {
+	dashRepo := &mockDashboardRepo{}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/balances?chain=solana", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+// --- Tests: Dashboard Events ---
+
+func TestHandleDashboardEvents_Success(t *testing.T) {
+	now := time.Now().UTC()
+	dashRepo := &mockDashboardRepo{
+		getRecentEventsFunc: func(_ context.Context, _ model.Chain, _ model.Network, address string, limit, offset int) ([]store.DashboardEvent, int, error) {
+			events := []store.DashboardEvent{
+				{TxHash: "tx1", Address: "addr1", ActivityType: "deposit", Delta: "100000", BlockCursor: 200, BlockTime: &now, FinalityState: "confirmed"},
+				{TxHash: "tx2", Address: "addr1", ActivityType: "withdrawal", Delta: "-50000", BlockCursor: 199, BlockTime: &now, FinalityState: "confirmed"},
+			}
+			return events, 2, nil
+		},
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/events?chain=base&network=sepolia&limit=10&offset=0", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Events []store.DashboardEvent `json:"events"`
+		Total  int                    `json:"total"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(resp.Events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(resp.Events))
+	}
+	if resp.Total != 2 {
+		t.Errorf("expected total 2, got %d", resp.Total)
+	}
+	if resp.Events[0].TxHash != "tx1" {
+		t.Errorf("expected first event tx_hash 'tx1', got %q", resp.Events[0].TxHash)
+	}
+}
+
+func TestHandleDashboardEvents_WithAddressFilter(t *testing.T) {
+	var capturedAddr string
+	dashRepo := &mockDashboardRepo{
+		getRecentEventsFunc: func(_ context.Context, _ model.Chain, _ model.Network, address string, limit, offset int) ([]store.DashboardEvent, int, error) {
+			capturedAddr = address
+			return []store.DashboardEvent{}, 0, nil
+		},
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/events?chain=solana&network=devnet&address=myaddr", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if capturedAddr != "myaddr" {
+		t.Errorf("expected address filter 'myaddr', got %q", capturedAddr)
+	}
+}
+
+func TestHandleDashboardEvents_MissingParams(t *testing.T) {
+	dashRepo := &mockDashboardRepo{}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/events", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleDashboardEvents_RepoError(t *testing.T) {
+	dashRepo := &mockDashboardRepo{
+		getRecentEventsFunc: func(_ context.Context, _ model.Chain, _ model.Network, _ string, _, _ int) ([]store.DashboardEvent, int, error) {
+			return nil, 0, errors.New("query timeout")
+		},
+	}
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/events?chain=solana&network=devnet", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
 	}
 }

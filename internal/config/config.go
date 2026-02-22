@@ -44,15 +44,16 @@ type AlertConfig struct {
 }
 
 type DBConfig struct {
-	URL                string `yaml:"url"`
-	MaxOpenConns       int    `yaml:"max_open_conns"`
-	MaxIdleConns       int    `yaml:"max_idle_conns"`
-	ConnMaxLifetimeMin int    `yaml:"conn_max_lifetime_min"`
-	ConnMaxIdleTimeMin int    `yaml:"conn_max_idle_time_min"`
+	URL                     string  `yaml:"url"`
+	MaxOpenConns            int     `yaml:"max_open_conns"`
+	MaxIdleConns            int     `yaml:"max_idle_conns"`
+	ConnMaxLifetimeMin      int     `yaml:"conn_max_lifetime_min"`
+	ConnMaxIdleTimeMin      int     `yaml:"conn_max_idle_time_min"`
 	// TimeoutSec is used internally for YAML; SidecarConfig has similar pattern.
-	ConnMaxLifetime     time.Duration `yaml:"-"`
-	ConnMaxIdleTime     time.Duration `yaml:"-"`
-	PoolStatsIntervalMS int           `yaml:"pool_stats_interval_ms"`
+	ConnMaxLifetime         time.Duration `yaml:"-"`
+	ConnMaxIdleTime         time.Duration `yaml:"-"`
+	PoolStatsIntervalMS     int           `yaml:"pool_stats_interval_ms"`
+	PoolExhaustionThreshold float64       `yaml:"pool_exhaustion_threshold"`
 }
 
 type SidecarConfig struct {
@@ -174,11 +175,12 @@ type NormalizerStageConfig struct {
 
 // IngesterStageConfig holds tuning parameters for the ingester pipeline stage.
 type IngesterStageConfig struct {
-	RetryMaxAttempts    int `yaml:"retry_max_attempts"`
-	RetryDelayInitialMs int `yaml:"retry_delay_initial_ms"`
-	RetryDelayMaxMs     int `yaml:"retry_delay_max_ms"`
-	DeniedCacheCapacity int `yaml:"denied_cache_capacity"`
-	DeniedCacheTTLSec   int `yaml:"denied_cache_ttl_sec"`
+	RetryMaxAttempts         int `yaml:"retry_max_attempts"`
+	RetryDelayInitialMs      int `yaml:"retry_delay_initial_ms"`
+	RetryDelayMaxMs          int `yaml:"retry_delay_max_ms"`
+	DeniedCacheCapacity      int `yaml:"denied_cache_capacity"`
+	DeniedCacheTTLSec        int `yaml:"denied_cache_ttl_sec"`
+	BlockScanAddrCacheTTLSec int `yaml:"block_scan_addr_cache_ttl_sec"`
 }
 
 // HealthStageConfig holds tuning parameters for pipeline health tracking.
@@ -200,6 +202,7 @@ type AddressIndexConfig struct {
 }
 
 type PipelineConfig struct {
+	ShutdownTimeoutSec                            int      `yaml:"shutdown_timeout_sec"`
 	ReorgDetectorIntervalMs                       int      `yaml:"reorg_detector_interval_ms"`
 	FinalizerIntervalMs                           int      `yaml:"finalizer_interval_ms"`
 	BTCFinalityConfirmations                      int      `yaml:"btc_finality_confirmations"`
@@ -363,6 +366,7 @@ func applyInfraEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.DB.ConnMaxLifetimeMin, "DB_CONN_MAX_LIFETIME_MIN")
 	overrideInt(&cfg.DB.ConnMaxIdleTimeMin, "DB_CONN_MAX_IDLE_TIME_MIN")
 	overrideIntBounded(&cfg.DB.PoolStatsIntervalMS, "DB_POOL_STATS_INTERVAL_MS")
+	overrideFloat64(&cfg.DB.PoolExhaustionThreshold, "DB_POOL_EXHAUSTION_THRESHOLD")
 
 	// Sidecar
 	overrideStr(&cfg.Sidecar.Addr, "SIDECAR_ADDR")
@@ -447,6 +451,7 @@ func applyRuntimeEnvOverrides(cfg *Config) {
 
 func applyPipelineEnvOverrides(cfg *Config) {
 	// Core pipeline settings
+	overrideInt(&cfg.Pipeline.ShutdownTimeoutSec, "PIPELINE_SHUTDOWN_TIMEOUT_SEC")
 	overrideInt(&cfg.Pipeline.ReorgDetectorIntervalMs, "REORG_DETECTOR_INTERVAL_MS")
 	overrideInt(&cfg.Pipeline.FinalizerIntervalMs, "FINALIZER_INTERVAL_MS")
 	overrideInt(&cfg.Pipeline.BTCFinalityConfirmations, "BTC_FINALITY_CONFIRMATIONS")
@@ -500,6 +505,7 @@ func applyPipelineEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Pipeline.Ingester.RetryDelayMaxMs, "INGESTER_RETRY_DELAY_MAX_MS")
 	overrideInt(&cfg.Pipeline.Ingester.DeniedCacheCapacity, "INGESTER_DENIED_CACHE_CAPACITY")
 	overrideInt(&cfg.Pipeline.Ingester.DeniedCacheTTLSec, "INGESTER_DENIED_CACHE_TTL_SEC")
+	overrideInt(&cfg.Pipeline.Ingester.BlockScanAddrCacheTTLSec, "INGESTER_BLOCK_SCAN_ADDR_CACHE_TTL_SEC")
 	overrideInt(&cfg.Pipeline.Health.UnhealthyThreshold, "HEALTH_UNHEALTHY_THRESHOLD")
 	overrideInt(&cfg.Pipeline.ConfigWatcher.IntervalSec, "CONFIG_WATCHER_INTERVAL_SEC")
 
@@ -566,6 +572,7 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.DB.ConnMaxLifetimeMin, 30)
 	setDefault(&cfg.DB.ConnMaxIdleTimeMin, 2)
 	setDefault(&cfg.DB.PoolStatsIntervalMS, dbPoolStatsIntervalDefaultMS)
+	setDefaultFloat(&cfg.DB.PoolExhaustionThreshold, 0.8)
 
 	// Solana
 	setDefaultStr(&cfg.Solana.RPCURL, "https://api.devnet.solana.com")
@@ -624,6 +631,7 @@ func applyDefaults(cfg *Config) {
 	setDefaultStr(&cfg.Runtime.DeploymentMode, RuntimeDeploymentModeLikeGroup)
 
 	// Pipeline
+	setDefault(&cfg.Pipeline.ShutdownTimeoutSec, 30)
 	setDefault(&cfg.Pipeline.ReorgDetectorIntervalMs, 30000)
 	setDefault(&cfg.Pipeline.FinalizerIntervalMs, 60000)
 	setDefault(&cfg.Pipeline.BTCFinalityConfirmations, 6)
@@ -700,6 +708,7 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.Pipeline.Ingester.RetryDelayMaxMs, 1000)
 	setDefault(&cfg.Pipeline.Ingester.DeniedCacheCapacity, 10000)
 	setDefault(&cfg.Pipeline.Ingester.DeniedCacheTTLSec, 300)
+	setDefault(&cfg.Pipeline.Ingester.BlockScanAddrCacheTTLSec, 30)
 	setDefault(&cfg.Pipeline.Health.UnhealthyThreshold, 5)
 	setDefault(&cfg.Pipeline.ConfigWatcher.IntervalSec, 30)
 

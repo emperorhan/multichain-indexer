@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 )
 
@@ -108,6 +109,7 @@ func (w *ConfigWatcher) poll(ctx context.Context) {
 	configs, err := w.repo.GetActive(ctx, w.chain, w.network)
 	if err != nil {
 		w.logger.Warn("config watcher poll failed", "error", err)
+		metrics.ConfigWatcherErrors.WithLabelValues(string(w.chain), string(w.network)).Inc()
 		return
 	}
 

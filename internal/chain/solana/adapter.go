@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
@@ -381,40 +380,24 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 	}
 
 	results := make([]json.RawMessage, len(signatures))
-	var mu sync.Mutex
-	var firstErr error
 
-	sem := make(chan struct{}, a.maxConcurrentTxs)
-	var wg sync.WaitGroup
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(a.maxConcurrentTxs)
 
 	for i, sig := range signatures {
-		wg.Add(1)
-		go func(idx int, signature string) {
-			defer wg.Done()
-
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			result, err := a.client.GetTransaction(ctx, signature)
+		idx, signature := i, sig
+		g.Go(func() error {
+			result, err := a.client.GetTransaction(gCtx, signature)
 			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("fetch tx %s: %w", signature, err)
-				}
-				mu.Unlock()
-				return
+				return fmt.Errorf("fetch tx %s: %w", signature, err)
 			}
-
-			mu.Lock()
 			results[idx] = result
-			mu.Unlock()
-		}(i, sig)
+			return nil
+		})
 	}
 
-	wg.Wait()
-
-	if firstErr != nil {
-		return nil, firstErr
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	a.logger.Info("fetched transactions", "count", len(results))

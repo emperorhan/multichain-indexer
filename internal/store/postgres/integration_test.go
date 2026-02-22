@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/admin"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/emperorhan/multichain-indexer/internal/store/postgres"
@@ -1343,4 +1344,306 @@ func TestSetupTestDB_SkipsWhenNoEnv(t *testing.T) {
 	// Cannot call setupTestDB directly because it would skip this test.
 	// Instead, verify the environment variable is empty.
 	assert.Empty(t, os.Getenv("TEST_DB_URL"))
+}
+
+// ---------- AddressBookRepo ----------
+
+func TestAddressBookRepo_UpsertAndList(t *testing.T) {
+	db := testDB(t)
+	repo := postgres.NewAddressBookRepo(db.DB)
+	ctx := context.Background()
+
+	chain := model.ChainSolana
+	network := model.NetworkDevnet
+	suffix := uuid.NewString()[:8]
+	orgID := "org-" + suffix
+
+	// Upsert 2 entries.
+	entry1 := &admin.AddressBookEntry{
+		Chain: chain, Network: network,
+		OrgID: orgID, Address: "addr1-" + suffix,
+		Name: "Alice", Status: "ACTIVE",
+	}
+	entry2 := &admin.AddressBookEntry{
+		Chain: chain, Network: network,
+		OrgID: orgID, Address: "addr2-" + suffix,
+		Name: "Bob", Status: "ACTIVE",
+	}
+	require.NoError(t, repo.Upsert(ctx, entry1))
+	require.NoError(t, repo.Upsert(ctx, entry2))
+
+	// List should contain both entries.
+	entries, err := repo.List(ctx, chain, network)
+	require.NoError(t, err)
+
+	var found1, found2 bool
+	for _, e := range entries {
+		if e.Address == entry1.Address {
+			found1 = true
+			assert.Equal(t, "Alice", e.Name)
+		}
+		if e.Address == entry2.Address {
+			found2 = true
+			assert.Equal(t, "Bob", e.Name)
+		}
+	}
+	assert.True(t, found1, "entry1 should be in list")
+	assert.True(t, found2, "entry2 should be in list")
+
+	// Upsert same address with different name → update.
+	entry1.Name = "Alice Updated"
+	require.NoError(t, repo.Upsert(ctx, entry1))
+
+	entries2, err := repo.List(ctx, chain, network)
+	require.NoError(t, err)
+	for _, e := range entries2 {
+		if e.Address == entry1.Address {
+			assert.Equal(t, "Alice Updated", e.Name)
+		}
+	}
+}
+
+func TestAddressBookRepo_Delete(t *testing.T) {
+	db := testDB(t)
+	repo := postgres.NewAddressBookRepo(db.DB)
+	ctx := context.Background()
+
+	chain := model.ChainBase
+	network := model.NetworkSepolia
+	suffix := uuid.NewString()[:8]
+
+	entry := &admin.AddressBookEntry{
+		Chain: chain, Network: network,
+		OrgID: "org-del-" + suffix, Address: "addr-del-" + suffix,
+		Name: "ToDelete", Status: "ACTIVE",
+	}
+	require.NoError(t, repo.Upsert(ctx, entry))
+
+	// Verify it exists.
+	found, err := repo.FindByAddress(ctx, chain, network, entry.Address)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+
+	// Delete.
+	require.NoError(t, repo.Delete(ctx, chain, network, entry.Address))
+
+	// FindByAddress should return nil now.
+	found2, err := repo.FindByAddress(ctx, chain, network, entry.Address)
+	require.NoError(t, err)
+	assert.Nil(t, found2, "deleted entry should not be found")
+}
+
+func TestAddressBookRepo_FindByAddress(t *testing.T) {
+	db := testDB(t)
+	repo := postgres.NewAddressBookRepo(db.DB)
+	ctx := context.Background()
+
+	chain := model.ChainBTC
+	network := model.NetworkTestnet
+	suffix := uuid.NewString()[:8]
+
+	entry := &admin.AddressBookEntry{
+		Chain: chain, Network: network,
+		OrgID: "org-find-" + suffix, Address: "addr-find-" + suffix,
+		Name: "FindMe", Status: "ACTIVE",
+	}
+	require.NoError(t, repo.Upsert(ctx, entry))
+
+	found, err := repo.FindByAddress(ctx, chain, network, entry.Address)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	assert.Equal(t, entry.Address, found.Address)
+	assert.Equal(t, "FindMe", found.Name)
+	assert.Equal(t, "ACTIVE", found.Status)
+
+	// Non-existent address returns nil.
+	notFound, err := repo.FindByAddress(ctx, chain, network, "nonexistent-"+suffix)
+	require.NoError(t, err)
+	assert.Nil(t, notFound)
+}
+
+// ---------- DashboardRepo ----------
+
+func TestDashboardRepo_GetAllWatermarks(t *testing.T) {
+	db := testDB(t)
+	configRepo := postgres.NewIndexerConfigRepo(db)
+	dashRepo := postgres.NewDashboardRepo(db.DB)
+	ctx := context.Background()
+
+	chain := model.ChainSolana
+	network := model.NetworkDevnet
+
+	// Ensure at least one watermark exists.
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, configRepo.UpdateWatermarkTx(ctx, tx, chain, network, 42))
+	require.NoError(t, tx.Commit())
+
+	watermarks, err := dashRepo.GetAllWatermarks(ctx)
+	require.NoError(t, err)
+	assert.NotEmpty(t, watermarks, "should have at least one watermark")
+
+	found := false
+	for _, wm := range watermarks {
+		if wm.Chain == chain && wm.Network == network {
+			found = true
+			assert.GreaterOrEqual(t, wm.IngestedSequence, int64(42))
+		}
+	}
+	assert.True(t, found, "solana:devnet watermark should be present")
+}
+
+func TestDashboardRepo_CountWatchedAddresses(t *testing.T) {
+	db := testDB(t)
+	waRepo := postgres.NewWatchedAddressRepo(db)
+	dashRepo := postgres.NewDashboardRepo(db.DB)
+	ctx := context.Background()
+
+	suffix := uuid.NewString()[:8]
+
+	// Get initial count.
+	countBefore, err := dashRepo.CountWatchedAddresses(ctx)
+	require.NoError(t, err)
+
+	// Add 2 active watched addresses.
+	require.NoError(t, waRepo.Upsert(ctx, &model.WatchedAddress{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		Address: "dash-wa-1-" + suffix, IsActive: true, Source: model.AddressSourceEnv,
+	}))
+	require.NoError(t, waRepo.Upsert(ctx, &model.WatchedAddress{
+		Chain: model.ChainSolana, Network: model.NetworkDevnet,
+		Address: "dash-wa-2-" + suffix, IsActive: true, Source: model.AddressSourceEnv,
+	}))
+
+	countAfter, err := dashRepo.CountWatchedAddresses(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, countBefore+2, countAfter, "count should increase by 2")
+}
+
+func TestDashboardRepo_GetBalanceSummary(t *testing.T) {
+	db := testDB(t)
+	waRepo := postgres.NewWatchedAddressRepo(db)
+	tokenRepo := postgres.NewTokenRepo(db)
+	balanceRepo := postgres.NewBalanceRepo(db)
+	dashRepo := postgres.NewDashboardRepo(db.DB)
+	ctx := context.Background()
+
+	suffix := uuid.NewString()[:8]
+	chain := model.ChainSolana
+	network := model.NetworkDevnet
+	addr := "dash-bal-" + suffix
+	contract := "dash-bal-token-" + suffix
+
+	// Create watched address.
+	require.NoError(t, waRepo.Upsert(ctx, &model.WatchedAddress{
+		Chain: chain, Network: network, Address: addr,
+		IsActive: true, Source: model.AddressSourceEnv,
+	}))
+
+	// Create token and balance.
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	tokenID, err := tokenRepo.UpsertTx(ctx, tx, &model.Token{
+		Chain: chain, Network: network, ContractAddress: contract,
+		Symbol: "DSH", Name: "Dashboard Token", Decimals: 6,
+		TokenType: model.TokenTypeFungible, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+
+	walletID := "wallet-dash"
+	orgID := "org-dash"
+	require.NoError(t, balanceRepo.AdjustBalanceTx(ctx, tx, store.AdjustRequest{
+		Chain: chain, Network: network, Address: addr,
+		TokenID: tokenID, WalletID: &walletID, OrgID: &orgID,
+		Delta: "9999999", Cursor: 50, TxHash: "tx-dash-bal", BalanceType: "",
+	}))
+	require.NoError(t, tx.Commit())
+
+	// Query balance summary.
+	summary, err := dashRepo.GetBalanceSummary(ctx, chain, network)
+	require.NoError(t, err)
+
+	var found bool
+	for _, ab := range summary {
+		if ab.Address == addr {
+			found = true
+			require.NotEmpty(t, ab.Balances, "should have at least one token balance")
+			assert.Equal(t, "DSH", ab.Balances[0].TokenSymbol)
+			assert.Equal(t, "9999999", ab.Balances[0].Amount)
+		}
+	}
+	assert.True(t, found, "address should appear in balance summary")
+}
+
+func TestDashboardRepo_GetRecentEvents(t *testing.T) {
+	db := testDB(t)
+	txRepo := postgres.NewTransactionRepo(db)
+	tokenRepo := postgres.NewTokenRepo(db)
+	beRepo := postgres.NewBalanceEventRepo(db)
+	dashRepo := postgres.NewDashboardRepo(db.DB)
+	ctx := context.Background()
+
+	suffix := uuid.NewString()[:8]
+	chain := model.ChainBase
+	network := model.NetworkSepolia
+	addr := "dash-evt-" + suffix
+	contract := "dash-evt-token-" + suffix
+
+	// Setup token.
+	setupTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	tokenID, err := tokenRepo.UpsertTx(ctx, setupTx, &model.Token{
+		Chain: chain, Network: network, ContractAddress: contract,
+		Symbol: "EVT", Name: "Event Token", Decimals: 18,
+		TokenType: model.TokenTypeFungible, ChainData: json.RawMessage("{}"),
+	})
+	require.NoError(t, err)
+
+	// Insert 5 balance events.
+	for i := 0; i < 5; i++ {
+		txHash := fmt.Sprintf("dash-evt-tx-%d-%s", i, suffix)
+		txID, tErr := txRepo.UpsertTx(ctx, setupTx, &model.Transaction{
+			Chain: chain, Network: network, TxHash: txHash,
+			FeeAmount: "1000", FeePayer: "payer", Status: model.TxStatusSuccess,
+			ChainData: json.RawMessage("{}"), BlockCursor: int64(200 + i),
+		})
+		require.NoError(t, tErr)
+
+		eventID := fmt.Sprintf("dash-evt-%d-%s", i, suffix)
+		_, uErr := beRepo.UpsertTx(ctx, setupTx, &model.BalanceEvent{
+			Chain: chain, Network: network,
+			TransactionID: txID, TxHash: txHash, TokenID: tokenID,
+			ActivityType: model.ActivityDeposit, EventAction: "deposit",
+			Address: addr, Delta: "100000",
+			WatchedAddress: &addr, BlockCursor: int64(200 + i),
+			ChainData: json.RawMessage("{}"), EventID: eventID,
+			FinalityState: "confirmed", BalanceBefore: strPtr("0"),
+			BalanceAfter: strPtr("100000"), DecoderVersion: "v1", SchemaVersion: "v1",
+		})
+		require.NoError(t, uErr)
+	}
+	require.NoError(t, setupTx.Commit())
+
+	// GetRecentEvents with limit 3.
+	events, total, err := dashRepo.GetRecentEvents(ctx, chain, network, "", 3, 0)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(events), 3, "limit should be respected")
+	assert.GreaterOrEqual(t, total, 5, "total should include all events")
+
+	// GetRecentEvents filtered by address.
+	events2, total2, err := dashRepo.GetRecentEvents(ctx, chain, network, addr, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 5, len(events2), "should return all 5 events for this address")
+	assert.Equal(t, 5, total2)
+
+	// Verify events are ordered by block_cursor DESC.
+	for i := 1; i < len(events2); i++ {
+		assert.GreaterOrEqual(t, events2[i-1].BlockCursor, events2[i].BlockCursor,
+			"events should be ordered by block_cursor DESC")
+	}
+
+	// Pagination: offset 3 should return 2 events.
+	events3, _, err := dashRepo.GetRecentEvents(ctx, chain, network, addr, 10, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(events3), "offset 3 with 5 total should return 2")
 }

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/chain"
@@ -493,94 +492,51 @@ func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([
 
 func (a *Adapter) fetchReceiptsOneByOne(ctx context.Context, signatures []string) ([]*rpc.TransactionReceipt, error) {
 	receipts := make([]*rpc.TransactionReceipt, len(signatures))
-	var mu sync.Mutex
-	var firstErr error
 
-	sem := make(chan struct{}, a.maxConcurrentTxs)
-	var wg sync.WaitGroup
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(a.maxConcurrentTxs)
 
 	for i, hash := range signatures {
-		wg.Add(1)
-		go func(idx int, txHash string) {
-			defer wg.Done()
-
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			receipt, err := a.client.GetTransactionReceipt(ctx, txHash)
+		idx, txHash := i, hash
+		g.Go(func() error {
+			receipt, err := a.client.GetTransactionReceipt(gCtx, txHash)
 			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("fetch receipt %s: %w", txHash, err)
-				}
-				mu.Unlock()
-				return
+				return fmt.Errorf("fetch receipt %s: %w", txHash, err)
 			}
-
-			mu.Lock()
 			receipts[idx] = receipt
-			mu.Unlock()
-		}(i, hash)
+			return nil
+		})
 	}
 
-	wg.Wait()
-
-	if firstErr != nil {
-		return nil, firstErr
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 	return receipts, nil
 }
 
 func (a *Adapter) fetchTransactionsOneByOne(ctx context.Context, signatures []string) ([]json.RawMessage, error) {
 	results := make([]json.RawMessage, len(signatures))
-	var mu sync.Mutex
-	var firstErr error
 
-	sem := make(chan struct{}, a.maxConcurrentTxs)
-	var wg sync.WaitGroup
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(a.maxConcurrentTxs)
 
 	for i, hash := range signatures {
-		wg.Add(1)
-		go func(idx int, txHash string) {
-			defer wg.Done()
-
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			tx, err := a.client.GetTransactionByHash(ctx, txHash)
+		idx, txHash := i, hash
+		g.Go(func() error {
+			tx, err := a.client.GetTransactionByHash(gCtx, txHash)
 			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("fetch transaction %s: %w", txHash, err)
-				}
-				mu.Unlock()
-				return
+				return fmt.Errorf("fetch transaction %s: %w", txHash, err)
 			}
 			if tx == nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("transaction %s not found", txHash)
-				}
-				mu.Unlock()
-				return
+				return fmt.Errorf("transaction %s not found", txHash)
 			}
 
-			receipt, err := a.client.GetTransactionReceipt(ctx, txHash)
+			receipt, err := a.client.GetTransactionReceipt(gCtx, txHash)
 			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("fetch receipt %s: %w", txHash, err)
-				}
-				mu.Unlock()
-				return
+				return fmt.Errorf("fetch receipt %s: %w", txHash, err)
 			}
 			if receipt == nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("receipt %s not found", txHash)
-				}
-				mu.Unlock()
-				return
+				return fmt.Errorf("receipt %s not found", txHash)
 			}
 
 			payload, err := json.Marshal(map[string]interface{}{
@@ -590,24 +546,16 @@ func (a *Adapter) fetchTransactionsOneByOne(ctx context.Context, signatures []st
 				"receipt":   receipt,
 			})
 			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("marshal payload %s: %w", txHash, err)
-				}
-				mu.Unlock()
-				return
+				return fmt.Errorf("marshal payload %s: %w", txHash, err)
 			}
 
-			mu.Lock()
 			results[idx] = payload
-			mu.Unlock()
-		}(i, hash)
+			return nil
+		})
 	}
 
-	wg.Wait()
-
-	if firstErr != nil {
-		return nil, firstErr
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	a.logger.Info("fetched transactions (fallback)", "count", len(results))

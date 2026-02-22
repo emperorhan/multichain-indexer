@@ -216,9 +216,9 @@ func startDBPoolStatsPump(ctx context.Context, db dbStatsProvider, targets []run
 }
 
 // startDBPoolExhaustionAlert runs a background goroutine that checks db.Stats()
-// every 30 seconds and sends an alert if pool usage exceeds 80%.
+// every 30 seconds and sends an alert if pool usage exceeds the given threshold.
 // If MaxOpenConnections is 0 (unlimited), the check is skipped.
-func startDBPoolExhaustionAlert(ctx context.Context, db dbStatsProvider, alerter alert.Alerter, logger *slog.Logger) {
+func startDBPoolExhaustionAlert(ctx context.Context, db dbStatsProvider, alerter alert.Alerter, threshold float64, logger *slog.Logger) {
 	if db == nil || alerter == nil {
 		return
 	}
@@ -237,7 +237,7 @@ func startDBPoolExhaustionAlert(ctx context.Context, db dbStatsProvider, alerter
 					continue
 				}
 				usage := float64(stats.InUse) / float64(stats.MaxOpenConnections)
-				if usage > 0.8 {
+				if usage > threshold {
 					logger.Warn("DB connection pool near exhaustion",
 						"in_use", stats.InUse,
 						"max_open", stats.MaxOpenConnections,
@@ -758,7 +758,7 @@ func run() error {
 	}
 
 	startDBPoolStatsPump(gCtx, db.DB, targets, cfg.DB.PoolStatsIntervalMS, logger)
-	startDBPoolExhaustionAlert(gCtx, db.DB, alerter, logger)
+	startDBPoolExhaustionAlert(gCtx, db.DB, alerter, cfg.DB.PoolExhaustionThreshold, logger)
 
 	// Signal handler
 	g.Go(func() error {
@@ -785,8 +785,9 @@ func run() error {
 	select {
 	case <-done:
 		logger.Info("all pipelines shut down gracefully")
-	case <-time.After(30 * time.Second):
-		logger.Error("pipeline shutdown timed out after 30s, forcing exit")
+	case <-time.After(time.Duration(cfg.Pipeline.ShutdownTimeoutSec) * time.Second):
+		logger.Error("pipeline shutdown timed out, forcing exit",
+			"timeout_sec", cfg.Pipeline.ShutdownTimeoutSec)
 		os.Exit(1)
 	}
 
@@ -984,16 +985,22 @@ func runHealthServer(ctx context.Context, port int, metricsUser, metricsPass str
 	})
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			logger.Warn("failed to write livez response", "error", err)
+		}
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := checker.check(ctx); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("not ready: " + err.Error()))
+			if _, wErr := w.Write([]byte("not ready: " + err.Error())); wErr != nil {
+				logger.Warn("failed to write readyz response", "error", wErr)
+			}
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
+		if _, err := w.Write([]byte("ready")); err != nil {
+			logger.Warn("failed to write readyz response", "error", err)
+		}
 	})
 	metricsHandler := promhttp.Handler()
 	if metricsUser != "" && metricsPass != "" {

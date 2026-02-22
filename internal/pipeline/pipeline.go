@@ -275,7 +275,10 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			p.logger.Info("pipeline is deactivated, waiting for reactivation",
 				"chain", p.cfg.Chain, "network", p.cfg.Network)
 
-			// Wait for activation using sync.Cond (no signal loss)
+			// Wait for activation using sync.Cond (no signal loss).
+			// A dedicated goroutine watches ctx.Done() and broadcasts to
+			// guarantee the Wait() is unblocked even if cancellation races
+			// with the select below.
 			activated := make(chan struct{})
 			go func() {
 				p.activeMu.Lock()
@@ -285,9 +288,22 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				p.activeMu.Unlock()
 				close(activated)
 			}()
+			// Context watcher: ensures Broadcast fires even if the select
+			// below hasn't been reached yet when ctx is cancelled.
+			ctxWatchDone := make(chan struct{})
+			go func() {
+				defer close(ctxWatchDone)
+				select {
+				case <-ctx.Done():
+					p.stateCond.Broadcast()
+				case <-activated:
+					// activation happened first; no broadcast needed
+				}
+			}()
 
 			select {
 			case <-activated:
+				<-ctxWatchDone // ensure watcher goroutine exits
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
@@ -296,8 +312,9 @@ func (p *Pipeline) Run(ctx context.Context) error {
 				p.health.SetStatus(HealthStatusHealthy)
 				continue
 			case <-ctx.Done():
-				p.stateCond.Broadcast() // unblock waiting goroutine
-				<-activated            // ensure goroutine exits before returning
+				p.stateCond.Broadcast() // redundant but safe
+				<-activated             // ensure goroutine exits before returning
+				<-ctxWatchDone
 				return ctx.Err()
 			}
 		}
@@ -526,6 +543,11 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		ingesterOpts = append(ingesterOpts, ingester.WithDeniedCacheConfig(
 			p.cfg.Ingester.DeniedCacheCapacity,
 			time.Duration(p.cfg.Ingester.DeniedCacheTTLSec)*time.Second,
+		))
+	}
+	if p.cfg.Ingester.BlockScanAddrCacheTTLSec > 0 {
+		ingesterOpts = append(ingesterOpts, ingester.WithBlockScanAddrCacheTTL(
+			time.Duration(p.cfg.Ingester.BlockScanAddrCacheTTLSec)*time.Second,
 		))
 	}
 	if p.repos.IndexedBlock != nil {

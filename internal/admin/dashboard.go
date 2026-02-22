@@ -20,7 +20,9 @@ func (s *Server) handleDashboardIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
+	if _, err = w.Write(data); err != nil {
+		s.logger.Warn("failed to write dashboard response", "error", err)
+	}
 }
 
 // --- Dashboard API handlers ---

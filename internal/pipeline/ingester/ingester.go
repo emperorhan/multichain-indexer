@@ -41,8 +41,8 @@ const (
 	defaultDeniedCacheTTL          = 5 * time.Minute
 )
 
-// blockScanAddrCacheTTL is how long the block-scan watched address cache is valid.
-const blockScanAddrCacheTTL = 30 * time.Second
+// defaultBlockScanAddrCacheTTL is the default TTL for the block-scan watched address cache.
+const defaultBlockScanAddrCacheTTL = 30 * time.Second
 
 // Ingester is a single-writer that processes NormalizedBatches into the database.
 type Ingester struct {
@@ -68,6 +68,8 @@ type Ingester struct {
 	replayService     *replay.Service
 	watchedAddrRepo   store.WatchedAddressRepository
 	addressIndex      addressindex.Index
+
+	blockScanAddrCacheTTL time.Duration
 
 	// Block-scan watched address cache, protected by blockScanAddrMu for defensive safety.
 	blockScanAddrMu      sync.RWMutex
@@ -145,6 +147,12 @@ func WithDeniedCacheConfig(capacity int, ttl time.Duration) Option {
 	}
 }
 
+func WithBlockScanAddrCacheTTL(ttl time.Duration) Option {
+	return func(ing *Ingester) {
+		ing.blockScanAddrCacheTTL = ttl
+	}
+}
+
 func New(
 	db store.TxBeginner,
 	txRepo store.TransactionRepository,
@@ -170,9 +178,10 @@ func New(
 		retryDelayStart:      defaultRetryDelayInitial,
 		retryDelayMax:        defaultRetryDelayMax,
 		sleepFn:              sleepContext,
-		deniedCache:          cache.NewShardedLRU[string, bool](defaultDeniedCacheCapacity, defaultDeniedCacheTTL, func(k string) string { return k }),
-		blockScanAddrCache:   make(map[string]map[string]addrMeta),
-		blockScanAddrCacheAt: make(map[string]time.Time),
+		deniedCache:           cache.NewShardedLRU[string, bool](defaultDeniedCacheCapacity, defaultDeniedCacheTTL, func(k string) string { return k }),
+		blockScanAddrCacheTTL: defaultBlockScanAddrCacheTTL,
+		blockScanAddrCache:    make(map[string]map[string]addrMeta),
+		blockScanAddrCacheAt:  make(map[string]time.Time),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -1948,7 +1957,7 @@ func (ing *Ingester) getBlockScanAddrMap(ctx context.Context, chain model.Chain,
 	// Fast path: read-lock to check cache validity.
 	ing.blockScanAddrMu.RLock()
 	if cached, ok := ing.blockScanAddrCache[cacheKey]; ok {
-		if time.Since(ing.blockScanAddrCacheAt[cacheKey]) < blockScanAddrCacheTTL {
+		if time.Since(ing.blockScanAddrCacheAt[cacheKey]) < ing.blockScanAddrCacheTTL {
 			ing.blockScanAddrMu.RUnlock()
 			return cached, nil
 		}

@@ -160,6 +160,9 @@ func (s *Service) Reconcile(ctx context.Context, ch model.Chain, net model.Netwo
 	result.FinishedAt = time.Now()
 
 	metrics.ReconciliationRunsTotal.WithLabelValues(string(ch), string(net)).Inc()
+	if result.Errors > 0 {
+		metrics.ReconciliationErrorsTotal.WithLabelValues(string(ch), string(net)).Add(float64(result.Errors))
+	}
 	if result.Mismatched > 0 {
 		metrics.ReconciliationMismatchesTotal.WithLabelValues(string(ch), string(net)).Add(float64(result.Mismatched))
 
