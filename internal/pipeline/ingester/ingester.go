@@ -51,7 +51,7 @@ type Ingester struct {
 	balanceEventRepo  store.BalanceEventRepository
 	balanceRepo       store.BalanceRepository
 	tokenRepo         store.TokenRepository
-	configRepo        store.IndexerConfigRepository
+	wmRepo            store.WatermarkRepository
 	normalizedCh      <-chan event.NormalizedBatch
 	reorgCh           <-chan event.ReorgEvent
 	finalityCh        <-chan event.FinalityPromotion
@@ -159,7 +159,7 @@ func New(
 	balanceEventRepo store.BalanceEventRepository,
 	balanceRepo store.BalanceRepository,
 	tokenRepo store.TokenRepository,
-	configRepo store.IndexerConfigRepository,
+	wmRepo store.WatermarkRepository,
 	normalizedCh <-chan event.NormalizedBatch,
 	logger *slog.Logger,
 	opts ...Option,
@@ -170,7 +170,7 @@ func New(
 		balanceEventRepo:     balanceEventRepo,
 		balanceRepo:          balanceRepo,
 		tokenRepo:            tokenRepo,
-		configRepo:           configRepo,
+		wmRepo:               wmRepo,
 		normalizedCh:         normalizedCh,
 		logger:               logger.With("component", "ingester"),
 		reorgHandler:         nil,
@@ -1095,7 +1095,7 @@ func (ing *Ingester) writeBulkAndCommit(ctx context.Context, bc *batchContext) (
 		}
 	}
 
-	if err := ing.configRepo.UpdateWatermarkTx(ctx, bc.dbTx, batch.Chain, batch.Network, batch.NewCursorSequence); err != nil {
+	if err := ing.wmRepo.UpdateWatermarkTx(ctx, bc.dbTx, batch.Chain, batch.Network, batch.NewCursorSequence); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return 0, fmt.Errorf("update watermark: %w", err)
@@ -1213,7 +1213,7 @@ func (ing *Ingester) handleReorg(ctx context.Context, reorg event.ReorgEvent) er
 	if rewindSequence < 0 {
 		rewindSequence = 0
 	}
-	if err := ing.configRepo.RewindWatermarkTx(ctx, dbTx, reorg.Chain, reorg.Network, rewindSequence); err != nil {
+	if err := ing.wmRepo.RewindWatermarkTx(ctx, dbTx, reorg.Chain, reorg.Network, rewindSequence); err != nil {
 		return fmt.Errorf("rewind watermark: %w", err)
 	}
 
@@ -1491,7 +1491,7 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 		rewindWatermarkSequence = 0
 	}
 
-	if err := ing.configRepo.RewindWatermarkTx(
+	if err := ing.wmRepo.RewindWatermarkTx(
 		ctx, dbTx,
 		batch.Chain, batch.Network, rewindWatermarkSequence,
 	); err != nil {
@@ -1648,7 +1648,7 @@ func (ing *Ingester) reconcileBlockScanCommit(
 	batch event.NormalizedBatch,
 	commitErr error,
 ) (bool, error) {
-	watermark, err := ing.configRepo.GetWatermark(ctx, batch.Chain, batch.Network)
+	watermark, err := ing.wmRepo.GetWatermark(ctx, batch.Chain, batch.Network)
 	if err != nil {
 		return false, retry.Terminal(fmt.Errorf(
 			"commit_ambiguity_unresolved chain=%s network=%s reason=watermark_probe_failed expected_seq=%d commit_err=%v: %w",

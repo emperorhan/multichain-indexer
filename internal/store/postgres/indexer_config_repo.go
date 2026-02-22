@@ -8,32 +8,15 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 )
 
-type IndexerConfigRepo struct {
+type WatermarkRepo struct {
 	db *DB
 }
 
-func NewIndexerConfigRepo(db *DB) *IndexerConfigRepo {
-	return &IndexerConfigRepo{db: db}
+func NewWatermarkRepo(db *DB) *WatermarkRepo {
+	return &WatermarkRepo{db: db}
 }
 
-func (r *IndexerConfigRepo) Upsert(ctx context.Context, c *model.IndexerConfig) error {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO indexer_configs (chain, network, is_active, target_batch_size, indexing_interval_ms, chain_config)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (chain, network) DO UPDATE SET
-			is_active = EXCLUDED.is_active,
-			target_batch_size = EXCLUDED.target_batch_size,
-			indexing_interval_ms = EXCLUDED.indexing_interval_ms,
-			chain_config = EXCLUDED.chain_config,
-			updated_at = now()
-	`, c.Chain, c.Network, c.IsActive, c.TargetBatchSize, c.IndexingIntervalMs, c.ChainConfig)
-	if err != nil {
-		return fmt.Errorf("upsert indexer config: %w", err)
-	}
-	return nil
-}
-
-func (r *IndexerConfigRepo) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
+func (r *WatermarkRepo) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
 	var w model.PipelineWatermark
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, chain, network, ingested_sequence, last_heartbeat_at, created_at, updated_at
@@ -52,7 +35,7 @@ func (r *IndexerConfigRepo) GetWatermark(ctx context.Context, chain model.Chain,
 	return &w, nil
 }
 
-func (r *IndexerConfigRepo) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
+func (r *WatermarkRepo) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO pipeline_watermarks (chain, network, ingested_sequence, last_heartbeat_at)
 		VALUES ($1, $2, $3, now())
@@ -70,7 +53,7 @@ func (r *IndexerConfigRepo) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, c
 // RewindWatermarkTx unconditionally sets the watermark to the given sequence,
 // bypassing the GREATEST guard. Use this only for intentional rewinds (reorg rollback).
 // Uses INSERT ON CONFLICT to handle the case where the watermark row doesn't exist yet.
-func (r *IndexerConfigRepo) RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
+func (r *WatermarkRepo) RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO pipeline_watermarks (chain, network, ingested_sequence, last_heartbeat_at)
 		VALUES ($1, $2, $3, now())

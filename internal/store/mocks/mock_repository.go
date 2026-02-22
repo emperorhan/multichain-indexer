@@ -415,32 +415,32 @@ func (mr *MockTokenRepositoryMockRecorder) UpsertTx(ctx, tx, t any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTx", reflect.TypeOf((*MockTokenRepository)(nil).UpsertTx), ctx, tx, t)
 }
 
-// MockIndexerConfigRepository is a mock of IndexerConfigRepository interface.
-type MockIndexerConfigRepository struct {
+// MockWatermarkRepository is a mock of WatermarkRepository interface.
+type MockWatermarkRepository struct {
 	ctrl     *gomock.Controller
-	recorder *MockIndexerConfigRepositoryMockRecorder
+	recorder *MockWatermarkRepositoryMockRecorder
 	isgomock struct{}
 }
 
-// MockIndexerConfigRepositoryMockRecorder is the mock recorder for MockIndexerConfigRepository.
-type MockIndexerConfigRepositoryMockRecorder struct {
-	mock *MockIndexerConfigRepository
+// MockWatermarkRepositoryMockRecorder is the mock recorder for MockWatermarkRepository.
+type MockWatermarkRepositoryMockRecorder struct {
+	mock *MockWatermarkRepository
 }
 
-// NewMockIndexerConfigRepository creates a new mock instance.
-func NewMockIndexerConfigRepository(ctrl *gomock.Controller) *MockIndexerConfigRepository {
-	mock := &MockIndexerConfigRepository{ctrl: ctrl}
-	mock.recorder = &MockIndexerConfigRepositoryMockRecorder{mock}
+// NewMockWatermarkRepository creates a new mock instance.
+func NewMockWatermarkRepository(ctrl *gomock.Controller) *MockWatermarkRepository {
+	mock := &MockWatermarkRepository{ctrl: ctrl}
+	mock.recorder = &MockWatermarkRepositoryMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockIndexerConfigRepository) EXPECT() *MockIndexerConfigRepositoryMockRecorder {
+func (m *MockWatermarkRepository) EXPECT() *MockWatermarkRepositoryMockRecorder {
 	return m.recorder
 }
 
 // GetWatermark mocks base method.
-func (m *MockIndexerConfigRepository) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
+func (m *MockWatermarkRepository) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetWatermark", ctx, chain, network)
 	ret0, _ := ret[0].(*model.PipelineWatermark)
@@ -449,13 +449,13 @@ func (m *MockIndexerConfigRepository) GetWatermark(ctx context.Context, chain mo
 }
 
 // GetWatermark indicates an expected call of GetWatermark.
-func (mr *MockIndexerConfigRepositoryMockRecorder) GetWatermark(ctx, chain, network any) *gomock.Call {
+func (mr *MockWatermarkRepositoryMockRecorder) GetWatermark(ctx, chain, network any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWatermark", reflect.TypeOf((*MockIndexerConfigRepository)(nil).GetWatermark), ctx, chain, network)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWatermark", reflect.TypeOf((*MockWatermarkRepository)(nil).GetWatermark), ctx, chain, network)
 }
 
 // RewindWatermarkTx mocks base method.
-func (m *MockIndexerConfigRepository) RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
+func (m *MockWatermarkRepository) RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RewindWatermarkTx", ctx, tx, chain, network, ingestedSequence)
 	ret0, _ := ret[0].(error)
@@ -463,13 +463,13 @@ func (m *MockIndexerConfigRepository) RewindWatermarkTx(ctx context.Context, tx 
 }
 
 // RewindWatermarkTx indicates an expected call of RewindWatermarkTx.
-func (mr *MockIndexerConfigRepositoryMockRecorder) RewindWatermarkTx(ctx, tx, chain, network, ingestedSequence any) *gomock.Call {
+func (mr *MockWatermarkRepositoryMockRecorder) RewindWatermarkTx(ctx, tx, chain, network, ingestedSequence any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RewindWatermarkTx", reflect.TypeOf((*MockIndexerConfigRepository)(nil).RewindWatermarkTx), ctx, tx, chain, network, ingestedSequence)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RewindWatermarkTx", reflect.TypeOf((*MockWatermarkRepository)(nil).RewindWatermarkTx), ctx, tx, chain, network, ingestedSequence)
 }
 
 // UpdateWatermarkTx mocks base method.
-func (m *MockIndexerConfigRepository) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
+func (m *MockWatermarkRepository) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdateWatermarkTx", ctx, tx, chain, network, ingestedSequence)
 	ret0, _ := ret[0].(error)
@@ -477,23 +477,9 @@ func (m *MockIndexerConfigRepository) UpdateWatermarkTx(ctx context.Context, tx 
 }
 
 // UpdateWatermarkTx indicates an expected call of UpdateWatermarkTx.
-func (mr *MockIndexerConfigRepositoryMockRecorder) UpdateWatermarkTx(ctx, tx, chain, network, ingestedSequence any) *gomock.Call {
+func (mr *MockWatermarkRepositoryMockRecorder) UpdateWatermarkTx(ctx, tx, chain, network, ingestedSequence any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateWatermarkTx", reflect.TypeOf((*MockIndexerConfigRepository)(nil).UpdateWatermarkTx), ctx, tx, chain, network, ingestedSequence)
-}
-
-// Upsert mocks base method.
-func (m *MockIndexerConfigRepository) Upsert(ctx context.Context, c *model.IndexerConfig) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Upsert", ctx, c)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Upsert indicates an expected call of Upsert.
-func (mr *MockIndexerConfigRepositoryMockRecorder) Upsert(ctx, c any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Upsert", reflect.TypeOf((*MockIndexerConfigRepository)(nil).Upsert), ctx, c)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateWatermarkTx", reflect.TypeOf((*MockWatermarkRepository)(nil).UpdateWatermarkTx), ctx, tx, chain, network, ingestedSequence)
 }
 
 // MockIndexedBlockRepository is a mock of IndexedBlockRepository interface.

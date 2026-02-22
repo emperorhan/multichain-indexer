@@ -92,13 +92,10 @@ func main() {
 	balanceEventRepo := postgres.NewBalanceEventRepo(db)
 	balanceRepo := postgres.NewBalanceRepo(db)
 	tokenRepo := postgres.NewTokenRepo(db)
-	configRepo := postgres.NewIndexerConfigRepo(db)
+	wmRepo := postgres.NewWatermarkRepo(db)
 
-	// Ensure the indexer_configs row exists for watermark updates.
-	if err := ensureIndexerConfig(db, chain, network); err != nil {
-		logger.Error("failed to ensure indexer config", "error", err)
-		os.Exit(1)
-	}
+	// Ensure pipeline_watermarks row can be created by watermark updates.
+	// (No separate seeding needed; UpdateWatermarkTx uses INSERT ON CONFLICT.)
 
 	// Set up context with signal handling.
 	ctx, cancel := context.WithTimeout(context.Background(), *duration+10*time.Second)
@@ -138,7 +135,7 @@ func main() {
 		// Create a per-worker ingester with its own channel.
 		ch := make(chan event.NormalizedBatch, 8)
 		ing := ingester.New(
-			db, txRepo, balanceEventRepo, balanceRepo, tokenRepo, configRepo,
+			db, txRepo, balanceEventRepo, balanceRepo, tokenRepo, wmRepo,
 			ch, logger.With("worker", workerID),
 		)
 
@@ -598,16 +595,6 @@ func buildLoadTestBatch(
 		NewCursorValue:         &cursor,
 		NewCursorSequence:      baseSlot + int64(batchSize) - 1,
 	}
-}
-
-// ensureIndexerConfig creates a minimal indexer_configs row so watermark updates succeed.
-func ensureIndexerConfig(db *postgres.DB, chain model.Chain, network model.Network) error {
-	_, err := db.Exec(`
-		INSERT INTO indexer_configs (chain, network, is_active, target_batch_size, indexing_interval_ms, chain_config)
-		VALUES ($1, $2, true, 50, 1000, '{}')
-		ON CONFLICT (chain, network) DO NOTHING
-	`, chain, network)
-	return err
 }
 
 // percentile returns the value at the given percentile from a sorted slice.

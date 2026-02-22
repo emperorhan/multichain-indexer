@@ -133,7 +133,7 @@ type Repos struct {
 	BalanceEvent  store.BalanceEventRepository
 	Balance       store.BalanceRepository
 	Token         store.TokenRepository
-	Config        store.IndexerConfigRepository
+	Watermark     store.WatermarkRepository
 	RuntimeConfig store.RuntimeConfigRepository
 	IndexedBlock  store.IndexedBlockRepository
 }
@@ -495,7 +495,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 
 	// Enable block-scan mode for EVM/BTC/Solana adapters
 	if isBlockScanAdapter {
-		coord = coord.WithBlockScanMode(p.repos.Config)
+		coord = coord.WithBlockScanMode(p.repos.Watermark)
 		if p.cfg.MaxInitialLookbackBlocks > 0 {
 			coord = coord.WithMaxInitialLookbackBlocks(int64(p.cfg.MaxInitialLookbackBlocks))
 		}
@@ -610,7 +610,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		p.db,
 		p.repos.Transaction, p.repos.BalanceEvent,
 		p.repos.Balance, p.repos.Token,
-		p.repos.Config,
+		p.repos.Watermark,
 		normalizedCh, p.logger,
 		ingesterOpts...,
 	)

@@ -94,7 +94,7 @@ func newBenchIngester(b *testing.B) (*Ingester, func() *interleaveState) {
 		ing.balanceEventRepo = &interleaveBalanceEventRepo{state: s}
 		ing.balanceRepo = &interleaveBalanceRepo{state: s}
 		ing.tokenRepo = &interleaveTokenRepo{state: s}
-		ing.configRepo = &interleaveConfigRepo{state: s}
+		ing.wmRepo = &interleaveConfigRepo{state: s}
 		return s
 	}
 

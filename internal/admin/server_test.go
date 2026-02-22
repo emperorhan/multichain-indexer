@@ -38,34 +38,24 @@ func (m *mockWatchedAddressRepo) FindByAddress(ctx context.Context, chain model.
 	return m.findByAddressFunc(ctx, chain, network, address)
 }
 
-type mockIndexerConfigRepo struct {
-	getFunc              func(ctx context.Context, chain model.Chain, network model.Network) (*model.IndexerConfig, error)
-	upsertFunc           func(ctx context.Context, c *model.IndexerConfig) error
+type mockWatermarkRepo struct {
 	updateWatermarkFunc  func(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
 	rewindWatermarkFunc  func(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
 	getWatermarkFunc     func(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)
 }
 
-func (m *mockIndexerConfigRepo) Get(ctx context.Context, chain model.Chain, network model.Network) (*model.IndexerConfig, error) {
-	return m.getFunc(ctx, chain, network)
-}
-
-func (m *mockIndexerConfigRepo) Upsert(ctx context.Context, c *model.IndexerConfig) error {
-	return m.upsertFunc(ctx, c)
-}
-
-func (m *mockIndexerConfigRepo) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
+func (m *mockWatermarkRepo) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
 	return m.updateWatermarkFunc(ctx, tx, chain, network, ingestedSequence)
 }
 
-func (m *mockIndexerConfigRepo) RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
+func (m *mockWatermarkRepo) RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
 	if m.rewindWatermarkFunc != nil {
 		return m.rewindWatermarkFunc(ctx, tx, chain, network, ingestedSequence)
 	}
 	return nil
 }
 
-func (m *mockIndexerConfigRepo) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
+func (m *mockWatermarkRepo) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
 	return m.getWatermarkFunc(ctx, chain, network)
 }
 
@@ -99,9 +89,9 @@ func (m *mockReplayRequester) GetWatermark(_ context.Context, _ model.Chain, _ m
 
 // --- Helper ---
 
-func newTestServer(watchedRepo *mockWatchedAddressRepo, configRepo *mockIndexerConfigRepo, opts ...ServerOption) *Server {
+func newTestServer(watchedRepo *mockWatchedAddressRepo, wmRepo *mockWatermarkRepo, opts ...ServerOption) *Server {
 	logger := slog.Default()
-	return NewServer(watchedRepo, configRepo, logger, opts...)
+	return NewServer(watchedRepo, wmRepo, logger, opts...)
 }
 
 // --- Tests: ListWatchedAddresses ---
@@ -121,7 +111,7 @@ func TestHandleListWatchedAddresses_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	srv := newTestServer(watchedRepo, &mockIndexerConfigRepo{})
+	srv := newTestServer(watchedRepo, &mockWatermarkRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/watched-addresses?chain=solana&network=devnet", nil)
 	rec := httptest.NewRecorder()
@@ -158,7 +148,7 @@ func TestHandleListWatchedAddresses_Success(t *testing.T) {
 }
 
 func TestHandleListWatchedAddresses_MissingParams(t *testing.T) {
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{})
 
 	tests := []struct {
 		name string
@@ -184,7 +174,7 @@ func TestHandleListWatchedAddresses_MissingParams(t *testing.T) {
 }
 
 func TestHandleListWatchedAddresses_InvalidChain(t *testing.T) {
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/watched-addresses?chain=invalid_chain&network=devnet", nil)
 	rec := httptest.NewRecorder()
@@ -206,7 +196,7 @@ func TestHandleAddWatchedAddress_Success(t *testing.T) {
 			return nil
 		},
 	}
-	srv := newTestServer(watchedRepo, &mockIndexerConfigRepo{})
+	srv := newTestServer(watchedRepo, &mockWatermarkRepo{})
 
 	body := `{"chain":"solana","network":"devnet","address":"SomeAddr123"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/watched-addresses", bytes.NewBufferString(body))
@@ -248,7 +238,7 @@ func TestHandleAddWatchedAddress_Success(t *testing.T) {
 }
 
 func TestHandleAddWatchedAddress_InvalidJSON(t *testing.T) {
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{})
 
 	body := `{this is not valid json}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/watched-addresses", bytes.NewBufferString(body))
@@ -263,7 +253,7 @@ func TestHandleAddWatchedAddress_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleAddWatchedAddress_MissingFields(t *testing.T) {
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{})
 
 	tests := []struct {
 		name string
@@ -291,7 +281,7 @@ func TestHandleAddWatchedAddress_MissingFields(t *testing.T) {
 }
 
 func TestHandleAddWatchedAddress_InvalidChainNetwork(t *testing.T) {
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{})
 
 	tests := []struct {
 		name string
@@ -320,7 +310,7 @@ func TestHandleAddWatchedAddress_InvalidChainNetwork(t *testing.T) {
 // --- Tests: GetStatus ---
 
 func TestHandleGetStatus_Success(t *testing.T) {
-	configRepo := &mockIndexerConfigRepo{
+	configRepo := &mockWatermarkRepo{
 		getWatermarkFunc: func(_ context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
 			return &model.PipelineWatermark{
 				Chain:            chain,
@@ -357,7 +347,7 @@ func TestHandleGetStatus_Success(t *testing.T) {
 }
 
 func TestHandleGetStatus_NoWatermark(t *testing.T) {
-	configRepo := &mockIndexerConfigRepo{
+	configRepo := &mockWatermarkRepo{
 		getWatermarkFunc: func(_ context.Context, _ model.Chain, _ model.Network) (*model.PipelineWatermark, error) {
 			return nil, nil
 		},
@@ -390,7 +380,7 @@ func TestHandleGetStatus_NoWatermark(t *testing.T) {
 }
 
 func TestHandleGetStatus_InvalidChain(t *testing.T) {
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/status?chain=invalid_chain&network=devnet", nil)
 	rec := httptest.NewRecorder()
@@ -405,7 +395,7 @@ func TestHandleGetStatus_InvalidChain(t *testing.T) {
 // --- Tests: Replay ---
 
 func TestHandleReplay_NoReplayRequester(t *testing.T) {
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{})
 
 	body := `{"chain":"base","network":"mainnet","from_block":100}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
@@ -431,7 +421,7 @@ func TestHandleReplay_Success(t *testing.T) {
 			DurationMs:         1234,
 		},
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithReplayRequester(rr))
 
 	body := `{"chain":"base","network":"mainnet","from_block":100,"reason":"test"}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
@@ -464,7 +454,7 @@ func TestHandleReplay_DryRun(t *testing.T) {
 			DryRun:             true,
 		},
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithReplayRequester(rr))
 
 	body := `{"chain":"base","network":"mainnet","from_block":100,"dry_run":true}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
@@ -487,7 +477,7 @@ func TestHandleReplay_DryRun(t *testing.T) {
 
 func TestHandleReplay_MissingFields(t *testing.T) {
 	rr := &mockReplayRequester{hasPipeline: true}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithReplayRequester(rr))
 
 	tests := []struct {
 		name string
@@ -515,7 +505,7 @@ func TestHandleReplay_MissingFields(t *testing.T) {
 
 func TestHandleReplay_PipelineNotFound(t *testing.T) {
 	rr := &mockReplayRequester{hasPipeline: false}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithReplayRequester(rr))
 
 	body := `{"chain":"base","network":"mainnet","from_block":100}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
@@ -533,7 +523,7 @@ func TestHandleReplay_FinalizedConflict(t *testing.T) {
 		hasPipeline: true,
 		requestErr:  replay.ErrFinalizedBlock,
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithReplayRequester(rr))
 
 	body := `{"chain":"base","network":"mainnet","from_block":100}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
@@ -548,7 +538,7 @@ func TestHandleReplay_FinalizedConflict(t *testing.T) {
 
 func TestHandleReplay_NegativeFromBlock(t *testing.T) {
 	rr := &mockReplayRequester{hasPipeline: true}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithReplayRequester(rr))
 
 	body := `{"chain":"base","network":"mainnet","from_block":-1}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
@@ -563,7 +553,7 @@ func TestHandleReplay_NegativeFromBlock(t *testing.T) {
 
 func TestHandleReplay_InvalidChainNetwork(t *testing.T) {
 	rr := &mockReplayRequester{hasPipeline: true}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithReplayRequester(rr))
 
 	body := `{"chain":"dogecoin","network":"mainnet","from_block":100}`
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/replay", bytes.NewBufferString(body))
@@ -585,7 +575,7 @@ func TestHandleReplayStatus_Success(t *testing.T) {
 			IngestedSequence: 5234,
 		},
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithReplayRequester(rr))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/replay/status?chain=base&network=mainnet", nil)
 	rec := httptest.NewRecorder()
@@ -606,7 +596,7 @@ func TestHandleReplayStatus_Success(t *testing.T) {
 }
 
 func TestHandleReplayStatus_NoRequester(t *testing.T) {
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/replay/status?chain=base&network=mainnet", nil)
 	rec := httptest.NewRecorder()
@@ -620,7 +610,7 @@ func TestHandleReplayStatus_NoRequester(t *testing.T) {
 
 func TestHandleReplayStatus_PipelineNotFound(t *testing.T) {
 	rr := &mockReplayRequester{hasPipeline: false}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithReplayRequester(rr))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithReplayRequester(rr))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/replay/status?chain=base&network=mainnet", nil)
 	rec := httptest.NewRecorder()
@@ -672,7 +662,7 @@ func TestHandleDashboardOverview_Success(t *testing.T) {
 			return 42, nil
 		},
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithDashboardRepo(dashRepo))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/overview", nil)
 	rec := httptest.NewRecorder()
@@ -703,7 +693,7 @@ func TestHandleDashboardOverview_RepoError(t *testing.T) {
 			return nil, errors.New("db connection failed")
 		},
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithDashboardRepo(dashRepo))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/overview", nil)
 	rec := httptest.NewRecorder()
@@ -715,7 +705,7 @@ func TestHandleDashboardOverview_RepoError(t *testing.T) {
 }
 
 func TestHandleDashboardOverview_NoDashboardRepo(t *testing.T) {
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{})
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/overview", nil)
 	rec := httptest.NewRecorder()
@@ -743,7 +733,7 @@ func TestHandleDashboardBalances_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithDashboardRepo(dashRepo))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/balances?chain=solana&network=devnet", nil)
 	rec := httptest.NewRecorder()
@@ -771,7 +761,7 @@ func TestHandleDashboardBalances_Success(t *testing.T) {
 
 func TestHandleDashboardBalances_MissingParams(t *testing.T) {
 	dashRepo := &mockDashboardRepo{}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithDashboardRepo(dashRepo))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/balances?chain=solana", nil)
 	rec := httptest.NewRecorder()
@@ -795,7 +785,7 @@ func TestHandleDashboardEvents_Success(t *testing.T) {
 			return events, 2, nil
 		},
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithDashboardRepo(dashRepo))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/events?chain=base&network=sepolia&limit=10&offset=0", nil)
 	rec := httptest.NewRecorder()
@@ -831,7 +821,7 @@ func TestHandleDashboardEvents_WithAddressFilter(t *testing.T) {
 			return []store.DashboardEvent{}, 0, nil
 		},
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithDashboardRepo(dashRepo))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/events?chain=solana&network=devnet&address=myaddr", nil)
 	rec := httptest.NewRecorder()
@@ -847,7 +837,7 @@ func TestHandleDashboardEvents_WithAddressFilter(t *testing.T) {
 
 func TestHandleDashboardEvents_MissingParams(t *testing.T) {
 	dashRepo := &mockDashboardRepo{}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithDashboardRepo(dashRepo))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/events", nil)
 	rec := httptest.NewRecorder()
@@ -864,7 +854,7 @@ func TestHandleDashboardEvents_RepoError(t *testing.T) {
 			return nil, 0, errors.New("query timeout")
 		},
 	}
-	srv := newTestServer(&mockWatchedAddressRepo{}, &mockIndexerConfigRepo{}, WithDashboardRepo(dashRepo))
+	srv := newTestServer(&mockWatchedAddressRepo{}, &mockWatermarkRepo{}, WithDashboardRepo(dashRepo))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/dashboard/events?chain=solana&network=devnet", nil)
 	rec := httptest.NewRecorder()

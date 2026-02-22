@@ -81,7 +81,7 @@ func newIngesterMocks(t *testing.T) (
 	*storemocks.MockBalanceEventRepository,
 	*storemocks.MockBalanceRepository,
 	*storemocks.MockTokenRepository,
-	*storemocks.MockIndexerConfigRepository,
+	*storemocks.MockWatermarkRepository,
 ) {
 	ctrl := gomock.NewController(t)
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
@@ -112,7 +112,7 @@ func newIngesterMocks(t *testing.T) (
 		storemocks.NewMockBalanceEventRepository(ctrl),
 		mockBalanceRepo,
 		mockTokenRepo,
-		storemocks.NewMockIndexerConfigRepository(ctrl)
+		storemocks.NewMockWatermarkRepository(ctrl)
 }
 
 func setupBeginTx(mockDB *storemocks.MockTxBeginner) {
@@ -123,25 +123,17 @@ func setupBeginTx(mockDB *storemocks.MockTxBeginner) {
 		})
 }
 
-type testIndexerConfigStateRepo struct {
+type testWatermarkStateRepo struct {
 	HighestWatermark int64
 	Requested        []int64
 	Applied          []int64
 }
 
-func (r *testIndexerConfigStateRepo) Get(_ context.Context, _ model.Chain, _ model.Network) (*model.IndexerConfig, error) {
+func (r *testWatermarkStateRepo) GetWatermark(_ context.Context, _ model.Chain, _ model.Network) (*model.PipelineWatermark, error) {
 	return nil, nil
 }
 
-func (r *testIndexerConfigStateRepo) GetWatermark(_ context.Context, _ model.Chain, _ model.Network) (*model.PipelineWatermark, error) {
-	return nil, nil
-}
-
-func (r *testIndexerConfigStateRepo) Upsert(_ context.Context, _ *model.IndexerConfig) error {
-	return nil
-}
-
-func (r *testIndexerConfigStateRepo) UpdateWatermarkTx(
+func (r *testWatermarkStateRepo) UpdateWatermarkTx(
 	_ context.Context,
 	_ *sql.Tx,
 	_ model.Chain,
@@ -156,7 +148,7 @@ func (r *testIndexerConfigStateRepo) UpdateWatermarkTx(
 	return nil
 }
 
-func (r *testIndexerConfigStateRepo) RewindWatermarkTx(
+func (r *testWatermarkStateRepo) RewindWatermarkTx(
 	_ context.Context,
 	_ *sql.Tx,
 	_ model.Chain,
@@ -306,7 +298,7 @@ func TestProcessBatch_PostRecoveryCursorAndWatermarkMonotonicity(t *testing.T) {
 	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
 	mockTokenRepo := storemocks.NewMockTokenRepository(ctrl)
 
-	configRepo := &testIndexerConfigStateRepo{}
+	configRepo := &testWatermarkStateRepo{}
 	// Seed a high-watermark state to emulate previously observed progress.
 	configRepo.HighestWatermark = 300
 
@@ -3678,7 +3670,7 @@ func TestCanonicalSignatureIdentity_BTC(t *testing.T) {
 func TestProcessBatch_BlockScanMode_MultiAddressResolution(t *testing.T) {
 	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, _ := newIngesterMocks(t)
 	mockWatchedAddrRepo := storemocks.NewMockWatchedAddressRepository(ctrl)
-	configRepo := &testIndexerConfigStateRepo{}
+	configRepo := &testWatermarkStateRepo{}
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
 	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, configRepo, normalizedCh, slog.Default(),
@@ -3821,7 +3813,7 @@ func TestProcessBatch_BlockScanMode_MultiAddressResolution(t *testing.T) {
 func TestProcessBatch_BlockScanMode_EVMAddressCanonicalization(t *testing.T) {
 	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, _ := newIngesterMocks(t)
 	mockWatchedAddrRepo := storemocks.NewMockWatchedAddressRepository(ctrl)
-	configRepo := &testIndexerConfigStateRepo{}
+	configRepo := &testWatermarkStateRepo{}
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
 	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, configRepo, normalizedCh, slog.Default(),
@@ -3932,7 +3924,7 @@ func TestProcessBatch_BlockScanMode_EVMAddressCanonicalization(t *testing.T) {
 func TestProcessBatch_BlockScanMode_CounterpartyResolution(t *testing.T) {
 	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, _ := newIngesterMocks(t)
 	mockWatchedAddrRepo := storemocks.NewMockWatchedAddressRepository(ctrl)
-	configRepo := &testIndexerConfigStateRepo{}
+	configRepo := &testWatermarkStateRepo{}
 
 	normalizedCh := make(chan event.NormalizedBatch, 1)
 	ing := New(mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, configRepo, normalizedCh, slog.Default(),

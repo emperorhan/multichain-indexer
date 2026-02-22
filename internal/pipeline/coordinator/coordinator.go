@@ -32,7 +32,7 @@ type Coordinator struct {
 	autoTune        *autotune.Controller
 	autoTuneSignals autotune.AutoTuneSignalSource
 
-	configRepo               store.IndexerConfigRepository
+	wmRepo                   store.WatermarkRepository
 	maxInitialLookbackBlocks int64
 	intervalResetCh          chan struct{}
 
@@ -87,8 +87,8 @@ func (c *Coordinator) WithHeadProvider(provider headSequenceProvider) *Coordinat
 
 // WithBlockScanMode configures the indexer config repository used for
 // reading the pipeline watermark. All chains use block-scan mode exclusively.
-func (c *Coordinator) WithBlockScanMode(configRepo store.IndexerConfigRepository) *Coordinator {
-	c.configRepo = configRepo
+func (c *Coordinator) WithBlockScanMode(wmRepo store.WatermarkRepository) *Coordinator {
+	c.wmRepo = wmRepo
 	return c
 }
 
@@ -368,8 +368,8 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 	// Read watermark as the start block.
 	startBlock := int64(0)
 	hasWatermark := false
-	if c.configRepo != nil {
-		wm, wmErr := c.configRepo.GetWatermark(ctx, c.chain, c.network)
+	if c.wmRepo != nil {
+		wm, wmErr := c.wmRepo.GetWatermark(ctx, c.chain, c.network)
 		if wmErr != nil {
 			c.logger.Warn("block-scan watermark read failed, starting from 0", "error", wmErr)
 		} else if wm != nil && wm.IngestedSequence > 0 {
@@ -427,7 +427,7 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 	// Only applies when watermark tracking is active (configRepo set),
 	// which is the production block-scan mode where stalled watermarks
 	// can cause the coordinator to re-enqueue the same range.
-	if c.configRepo != nil && c.hasEnqueued && startBlock == c.lastEnqueuedStart && endBlock == c.lastEnqueuedEnd {
+	if c.wmRepo != nil && c.hasEnqueued && startBlock == c.lastEnqueuedStart && endBlock == c.lastEnqueuedEnd {
 		c.logger.Debug("block-scan: same range already enqueued, skipping",
 			"start_block", startBlock, "end_block", endBlock)
 		return nil

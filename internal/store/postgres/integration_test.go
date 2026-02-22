@@ -749,9 +749,9 @@ func TestBalanceRepo_ConcurrentAdjustBalance(t *testing.T) {
 	assert.Equal(t, "1000001000", result[keys[0]].Amount)
 }
 
-func TestIndexerConfigRepo_WatermarkOnlyAdvances(t *testing.T) {
+func TestWatermarkRepo_WatermarkOnlyAdvances(t *testing.T) {
 	db := testDB(t)
-	configRepo := postgres.NewIndexerConfigRepo(db)
+	configRepo := postgres.NewWatermarkRepo(db)
 	ctx := context.Background()
 
 	// Use a unique chain/network to avoid conflicts with other tests.
@@ -1281,11 +1281,11 @@ func TestWatchedAddressRepo_UpsertAndGetActive(t *testing.T) {
 	assert.True(t, foundAddr.IsActive)
 }
 
-// TestIndexerConfigRepo_WatermarkGetRoundtrip verifies that GetWatermark returns
+// TestWatermarkRepo_WatermarkGetRoundtrip verifies that GetWatermark returns
 // the watermark set by UpdateWatermarkTx.
-func TestIndexerConfigRepo_WatermarkGetRoundtrip(t *testing.T) {
+func TestWatermarkRepo_WatermarkGetRoundtrip(t *testing.T) {
 	db := testDB(t)
-	configRepo := postgres.NewIndexerConfigRepo(db)
+	configRepo := postgres.NewWatermarkRepo(db)
 	ctx := context.Background()
 
 	chain := model.ChainBase
@@ -1306,11 +1306,11 @@ func TestIndexerConfigRepo_WatermarkGetRoundtrip(t *testing.T) {
 	assert.GreaterOrEqual(t, wm.IngestedSequence, int64(500))
 }
 
-// TestIndexerConfigRepo_RewindWatermark verifies that RewindWatermarkTx bypasses
+// TestWatermarkRepo_RewindWatermark verifies that RewindWatermarkTx bypasses
 // the GREATEST guard and actually regresses the watermark.
-func TestIndexerConfigRepo_RewindWatermark(t *testing.T) {
+func TestWatermarkRepo_RewindWatermark(t *testing.T) {
 	db := testDB(t)
-	configRepo := postgres.NewIndexerConfigRepo(db)
+	configRepo := postgres.NewWatermarkRepo(db)
 	ctx := context.Background()
 
 	chain := model.ChainBTC
@@ -1466,7 +1466,7 @@ func TestAddressBookRepo_FindByAddress(t *testing.T) {
 
 func TestDashboardRepo_GetAllWatermarks(t *testing.T) {
 	db := testDB(t)
-	configRepo := postgres.NewIndexerConfigRepo(db)
+	configRepo := postgres.NewWatermarkRepo(db)
 	dashRepo := postgres.NewDashboardRepo(db.DB)
 	ctx := context.Background()
 

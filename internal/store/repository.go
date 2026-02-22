@@ -101,9 +101,8 @@ type TokenRepository interface {
 	DenyTokenTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, contractAddress string, reason string, source string, score int16, signals []string) error
 }
 
-// IndexerConfigRepository provides access to indexer configuration and watermark data.
-type IndexerConfigRepository interface {
-	Upsert(ctx context.Context, c *model.IndexerConfig) error
+// WatermarkRepository provides access to pipeline watermark data.
+type WatermarkRepository interface {
 	UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
 	RewindWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
 	GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)

@@ -23,7 +23,7 @@ const defaultQueryTimeout = 30 * time.Second
 type Service struct {
 	db          store.TxBeginner
 	balanceRepo store.BalanceRepository
-	configRepo  store.IndexerConfigRepository
+	wmRepo      store.WatermarkRepository
 	blockRepo   store.IndexedBlockRepository
 	logger      *slog.Logger
 }
@@ -33,14 +33,14 @@ type Service struct {
 func NewService(
 	db store.TxBeginner,
 	balanceRepo store.BalanceRepository,
-	configRepo store.IndexerConfigRepository,
+	wmRepo store.WatermarkRepository,
 	blockRepo store.IndexedBlockRepository,
 	logger *slog.Logger,
 ) *Service {
 	return &Service{
 		db:          db,
 		balanceRepo: balanceRepo,
-		configRepo:  configRepo,
+		wmRepo:      wmRepo,
 		blockRepo:   blockRepo,
 		logger:      logger.With("component", "replay"),
 	}
@@ -255,7 +255,7 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 	if newWatermark < 0 {
 		newWatermark = 0
 	}
-	if err := s.configRepo.RewindWatermarkTx(ctx, dbTx, req.Chain, req.Network, newWatermark); err != nil {
+	if err := s.wmRepo.RewindWatermarkTx(ctx, dbTx, req.Chain, req.Network, newWatermark); err != nil {
 		return nil, fmt.Errorf("rewind watermark: %w", err)
 	}
 	result.NewWatermark = newWatermark

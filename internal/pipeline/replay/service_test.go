@@ -67,14 +67,6 @@ type mockConfigRepo struct {
 	capturedWatermark  int64
 }
 
-func (m *mockConfigRepo) Get(_ context.Context, _ model.Chain, _ model.Network) (*model.IndexerConfig, error) {
-	return nil, nil
-}
-
-func (m *mockConfigRepo) Upsert(_ context.Context, _ *model.IndexerConfig) error {
-	return nil
-}
-
 func (m *mockConfigRepo) UpdateWatermarkTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) error {
 	return nil
 }

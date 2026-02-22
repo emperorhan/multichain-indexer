@@ -69,7 +69,7 @@ type DashboardDataProvider interface {
 // Server provides an HTTP-based admin API for operational management.
 type Server struct {
 	watchedAddrRepo store.WatchedAddressRepository
-	configRepo      store.IndexerConfigRepository
+	wmRepo          store.WatermarkRepository
 	replayReq       ReplayRequester
 	healthProvider  HealthProvider
 	reconcileReq    ReconcileRequester
@@ -83,13 +83,13 @@ type Server struct {
 // functionality is not needed.
 func NewServer(
 	watchedAddrRepo store.WatchedAddressRepository,
-	configRepo store.IndexerConfigRepository,
+	wmRepo store.WatermarkRepository,
 	logger *slog.Logger,
 	opts ...ServerOption,
 ) *Server {
 	s := &Server{
 		watchedAddrRepo: watchedAddrRepo,
-		configRepo:      configRepo,
+		wmRepo:          wmRepo,
 		logger:          logger.With("component", "admin"),
 	}
 	for _, opt := range opts {
@@ -319,7 +319,7 @@ func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	watermark, err := s.configRepo.GetWatermark(r.Context(), chain, network)
+	watermark, err := s.wmRepo.GetWatermark(r.Context(), chain, network)
 	if err != nil {
 		s.logger.Error("get status failed", "error", err)
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)

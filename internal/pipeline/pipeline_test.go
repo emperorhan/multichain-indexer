@@ -37,7 +37,7 @@ func TestNew_SmokeTest(t *testing.T) {
 		BalanceEvent: storemocks.NewMockBalanceEventRepository(ctrl),
 		Balance:      storemocks.NewMockBalanceRepository(ctrl),
 		Token:        storemocks.NewMockTokenRepository(ctrl),
-		Config:       storemocks.NewMockIndexerConfigRepository(ctrl),
+		Watermark:    storemocks.NewMockWatermarkRepository(ctrl),
 	}
 
 	p := New(cfg, mockAdapter, mockDB, repos, slog.Default())
@@ -72,7 +72,7 @@ func TestPipeline_Run_ImmediateCancel(t *testing.T) {
 		BalanceEvent: storemocks.NewMockBalanceEventRepository(ctrl),
 		Balance:      storemocks.NewMockBalanceRepository(ctrl),
 		Token:        storemocks.NewMockTokenRepository(ctrl),
-		Config:       storemocks.NewMockIndexerConfigRepository(ctrl),
+		Watermark:    storemocks.NewMockWatermarkRepository(ctrl),
 	}
 
 	p := New(cfg, mockAdapter, mockDB, repos, slog.Default())

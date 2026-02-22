@@ -231,7 +231,7 @@ func TestBaseSepoliaFetchDecodeNormalizeIngestE2E(t *testing.T) {
 			}
 			return result, nil
 		})
-	mockConfigRepo := storemocks.NewMockIndexerConfigRepository(ctrl)
+	mockConfigRepo := storemocks.NewMockWatermarkRepository(ctrl)
 
 	fakeDB := openE2EFakeDB(t)
 	mockDB.EXPECT().

@@ -433,16 +433,8 @@ type interleaveConfigRepo struct {
 	state *interleaveState
 }
 
-func (*interleaveConfigRepo) Get(context.Context, model.Chain, model.Network) (*model.IndexerConfig, error) {
-	return nil, nil
-}
-
 func (*interleaveConfigRepo) GetWatermark(context.Context, model.Chain, model.Network) (*model.PipelineWatermark, error) {
 	return nil, nil
-}
-
-func (*interleaveConfigRepo) Upsert(context.Context, *model.IndexerConfig) error {
-	return nil
 }
 
 func (r *interleaveConfigRepo) UpdateWatermarkTx(

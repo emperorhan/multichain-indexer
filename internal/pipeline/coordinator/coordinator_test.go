@@ -17783,18 +17783,10 @@ type autoTuneHarness struct {
 	jobCh       chan event.FetchJob
 }
 
-// inMemoryConfigRepo implements store.IndexerConfigRepository for tests.
+// inMemoryConfigRepo implements store.WatermarkRepository for tests.
 // It provides a mutable watermark for block-scan mode.
 type inMemoryConfigRepo struct {
 	watermark int64
-}
-
-func (r *inMemoryConfigRepo) Get(context.Context, model.Chain, model.Network) (*model.IndexerConfig, error) {
-	return nil, nil
-}
-
-func (r *inMemoryConfigRepo) Upsert(context.Context, *model.IndexerConfig) error {
-	return nil
 }
 
 func (r *inMemoryConfigRepo) UpdateWatermarkTx(context.Context, *sql.Tx, model.Chain, model.Network, int64) error {

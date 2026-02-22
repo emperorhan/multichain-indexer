@@ -503,7 +503,7 @@ func initRepositories(db *postgres.DB) *pipeline.Repos {
 		BalanceEvent:  postgres.NewBalanceEventRepo(db),
 		Balance:       postgres.NewBalanceRepo(db),
 		Token:         postgres.NewTokenRepo(db),
-		Config:        postgres.NewIndexerConfigRepo(db),
+		Watermark:     postgres.NewWatermarkRepo(db),
 		RuntimeConfig: postgres.NewRuntimeConfigRepo(db),
 		IndexedBlock:  postgres.NewIndexedBlockRepo(db.DB),
 	}
@@ -664,7 +664,7 @@ func run() error {
 	}
 
 	alerter := buildAlerter(cfg, logger)
-	replayService := replay.NewService(db, repos.Balance, repos.Config, repos.IndexedBlock, logger)
+	replayService := replay.NewService(db, repos.Balance, repos.Watermark, repos.IndexedBlock, logger)
 
 	registry := pipeline.NewRegistry()
 	pipelines := make([]*pipeline.Pipeline, 0, len(targets))
@@ -716,11 +716,11 @@ func run() error {
 
 	// Admin API server (optional)
 	if cfg.Server.AdminAddr != "" {
-		replayAdapter := pipeline.NewRegistryReplayAdapter(registry, replayService, repos.Config)
+		replayAdapter := pipeline.NewRegistryReplayAdapter(registry, replayService, repos.Watermark)
 		healthAdapter := pipeline.NewRegistryHealthAdapter(registry)
 		addressBookRepo := postgres.NewAddressBookRepo(db.DB)
 		dashboardRepo := postgres.NewDashboardRepo(db.DB)
-		adminSrv := admin.NewServer(repos.WatchedAddr, repos.Config, logger,
+		adminSrv := admin.NewServer(repos.WatchedAddr, repos.Watermark, logger,
 			admin.WithReplayRequester(replayAdapter),
 			admin.WithHealthProvider(healthAdapter),
 			admin.WithReconcileRequester(reconService),

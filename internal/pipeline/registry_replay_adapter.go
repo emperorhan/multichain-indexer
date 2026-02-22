@@ -13,15 +13,15 @@ import (
 type RegistryReplayAdapter struct {
 	registry      *Registry
 	replayService *replay.Service
-	configRepo    store.IndexerConfigRepository
+	wmRepo        store.WatermarkRepository
 }
 
 // NewRegistryReplayAdapter creates a new adapter.
-func NewRegistryReplayAdapter(registry *Registry, replayService *replay.Service, configRepo store.IndexerConfigRepository) *RegistryReplayAdapter {
+func NewRegistryReplayAdapter(registry *Registry, replayService *replay.Service, wmRepo store.WatermarkRepository) *RegistryReplayAdapter {
 	return &RegistryReplayAdapter{
 		registry:      registry,
 		replayService: replayService,
-		configRepo:    configRepo,
+		wmRepo:        wmRepo,
 	}
 }
 
@@ -49,7 +49,7 @@ func (a *RegistryReplayAdapter) DryRunPurge(ctx context.Context, req replay.Purg
 
 // GetWatermark returns the current watermark for the given chain/network.
 func (a *RegistryReplayAdapter) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
-	return a.configRepo.GetWatermark(ctx, chain, network)
+	return a.wmRepo.GetWatermark(ctx, chain, network)
 }
 
 // RegistryHealthAdapter adapts the Registry to satisfy admin.HealthProvider.
