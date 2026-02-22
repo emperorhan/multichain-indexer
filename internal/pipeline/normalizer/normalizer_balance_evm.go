@@ -29,7 +29,16 @@ func buildCanonicalBaseBalanceEventsMulti(
 	watchedAddresses map[string]struct{},
 ) []event.NormalizedBalanceEvent {
 	finalityState = normalizeFinalityStateOrDefault(chain, finalityState)
-	normalizedEvents := buildRawBalanceEventsMulti(rawEvents, watchedAddresses, true)
+
+	// Defense-in-depth: reverted EVM transactions have all state changes rolled back
+	// (value transfers + logs). Only gas fee is consumed. Even if the sidecar
+	// mistakenly returns balance events for a FAILED tx, discard them here.
+	var normalizedEvents []event.NormalizedBalanceEvent
+	if strings.EqualFold(txStatus, string(model.TxStatusFailed)) {
+		normalizedEvents = make([]event.NormalizedBalanceEvent, 0, 2)
+	} else {
+		normalizedEvents = buildRawBalanceEventsMulti(rawEvents, watchedAddresses, true)
+	}
 	meta := collectBaseMetadata(rawEvents)
 	missingDataFee := !hasBaseDataFee(meta)
 	eventPath := resolveBaseFeeEventPath(meta)

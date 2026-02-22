@@ -76,6 +76,23 @@ export function decodeBaseTransaction(
   const normalizedWatched = new Set(Array.from(watchedAddresses).map(normalizeAddress));
   const balanceEvents: BalanceEventInfo[] = [];
 
+  // Reverted transactions: all state changes (value transfers + logs) are rolled back.
+  // Only the gas fee is consumed. Return early with no balance events — the Go
+  // normalizer emits fee events separately based on the FAILED status.
+  if (status === 'FAILED') {
+    return {
+      txHash,
+      blockCursor,
+      blockTime,
+      feeAmount,
+      feePayer,
+      status,
+      error,
+      balanceEvents: [],
+      metadata: feeMetadata,
+    };
+  }
+
   const from = normalizeAddress(tx.from || receipt.from);
   const to = normalizeAddress(tx.to || receipt.to);
   const transferValue = toBigInt(tx.value);
