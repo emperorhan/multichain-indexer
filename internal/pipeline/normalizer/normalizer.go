@@ -495,7 +495,7 @@ func (n *Normalizer) normalizedTxFromResult(batch event.RawBatch, result *sideca
 		FeeAmount:   result.FeeAmount,
 		FeePayer:    result.FeePayer,
 		Status:      model.TxStatus(result.Status),
-		ChainData:   json.RawMessage("{}"),
+		ChainData:   emptyJSONObject,
 	}
 
 	if result.BlockTime != 0 {
@@ -611,6 +611,8 @@ func resolveResultFinalityState(chainID model.Chain, result *sidecarv1.Transacti
 	}
 	return defaultFinalityState(chainID)
 }
+
+var emptyJSONObject = json.RawMessage(`{}`)
 
 var finalityMetadataKeysMap = map[model.Chain][]string{
 	model.ChainSolana: {"commitment", "confirmation_status", "finality_state", "finality"},

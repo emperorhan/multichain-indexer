@@ -278,7 +278,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			activated := make(chan struct{})
 			go func() {
 				p.activeMu.Lock()
-				for p.stateFlag.Load() == 0 {
+				for p.stateFlag.Load() == 0 && ctx.Err() == nil {
 					p.stateCond.Wait()
 				}
 				p.activeMu.Unlock()
@@ -287,12 +287,16 @@ func (p *Pipeline) Run(ctx context.Context) error {
 
 			select {
 			case <-activated:
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				p.logger.Info("pipeline reactivated",
 					"chain", p.cfg.Chain, "network", p.cfg.Network)
 				p.health.SetStatus(HealthStatusHealthy)
 				continue
 			case <-ctx.Done():
 				p.stateCond.Broadcast() // unblock waiting goroutine
+				<-activated            // ensure goroutine exits before returning
 				return ctx.Err()
 			}
 		}

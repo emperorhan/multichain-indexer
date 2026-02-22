@@ -119,9 +119,6 @@ func (r *DashboardRepo) GetRecentEvents(ctx context.Context, chain model.Chain, 
 		offset = 0
 	}
 
-	const countAll = `SELECT COUNT(*) FROM balance_events be WHERE be.chain = $1 AND be.network = $2`
-	const countByAddr = `SELECT COUNT(*) FROM balance_events be WHERE be.chain = $1 AND be.network = $2 AND be.address = $3`
-
 	const dataAll = `
 		SELECT
 			be.tx_hash,
@@ -134,7 +131,8 @@ func (r *DashboardRepo) GetRecentEvents(ctx context.Context, chain model.Chain, 
 			be.block_cursor,
 			be.block_time,
 			COALESCE(be.finality_state, '') AS finality_state,
-			be.created_at
+			be.created_at,
+			COUNT(*) OVER() AS total_count
 		FROM balance_events be
 		LEFT JOIN tokens t ON t.id = be.token_id
 		WHERE be.chain = $1 AND be.network = $2
@@ -153,7 +151,8 @@ func (r *DashboardRepo) GetRecentEvents(ctx context.Context, chain model.Chain, 
 			be.block_cursor,
 			be.block_time,
 			COALESCE(be.finality_state, '') AS finality_state,
-			be.created_at
+			be.created_at,
+			COUNT(*) OVER() AS total_count
 		FROM balance_events be
 		LEFT JOIN tokens t ON t.id = be.token_id
 		WHERE be.chain = $1 AND be.network = $2 AND be.address = $3
@@ -161,19 +160,12 @@ func (r *DashboardRepo) GetRecentEvents(ctx context.Context, chain model.Chain, 
 		LIMIT $4 OFFSET $5
 	`
 
-	var total int
 	var rows *sql.Rows
 	var err error
 
 	if address != "" {
-		if err = r.db.QueryRowContext(ctx, countByAddr, string(chain), string(network), address).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("count events: %w", err)
-		}
 		rows, err = r.db.QueryContext(ctx, dataByAddr, string(chain), string(network), address, limit, offset)
 	} else {
-		if err = r.db.QueryRowContext(ctx, countAll, string(chain), string(network)).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("count events: %w", err)
-		}
 		rows, err = r.db.QueryContext(ctx, dataAll, string(chain), string(network), limit, offset)
 	}
 	if err != nil {
@@ -181,6 +173,7 @@ func (r *DashboardRepo) GetRecentEvents(ctx context.Context, chain model.Chain, 
 	}
 	defer rows.Close()
 
+	var total int
 	var events []store.DashboardEvent
 	for rows.Next() {
 		var e store.DashboardEvent
@@ -188,6 +181,7 @@ func (r *DashboardRepo) GetRecentEvents(ctx context.Context, chain model.Chain, 
 			&e.TxHash, &e.Address, &e.CounterpartyAddress,
 			&e.ActivityType, &e.Delta, &e.TokenSymbol, &e.Decimals,
 			&e.BlockCursor, &e.BlockTime, &e.FinalityState, &e.CreatedAt,
+			&total,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan event row: %w", err)
 		}

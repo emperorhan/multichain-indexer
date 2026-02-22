@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -54,8 +55,21 @@ func (r *IndexedBlockRepo) BulkUpsertTx(ctx context.Context, tx *sql.Tx, blocks 
 			sb.WriteString(", ")
 		}
 		base := i * 7
-		fmt.Fprintf(&sb, "($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6, base+7)
+		sb.WriteString("($")
+		sb.WriteString(strconv.Itoa(base + 1))
+		sb.WriteString(", $")
+		sb.WriteString(strconv.Itoa(base + 2))
+		sb.WriteString(", $")
+		sb.WriteString(strconv.Itoa(base + 3))
+		sb.WriteString(", $")
+		sb.WriteString(strconv.Itoa(base + 4))
+		sb.WriteString(", $")
+		sb.WriteString(strconv.Itoa(base + 5))
+		sb.WriteString(", $")
+		sb.WriteString(strconv.Itoa(base + 6))
+		sb.WriteString(", $")
+		sb.WriteString(strconv.Itoa(base + 7))
+		sb.WriteString(")")
 		args = append(args,
 			block.Chain, block.Network, block.BlockNumber,
 			block.BlockHash, block.ParentHash, block.FinalityState, block.BlockTime,

@@ -2,6 +2,7 @@ package normalizer
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -795,7 +796,7 @@ func classifyDecodeErrors(
 		if reason == "" {
 			reason = "decode failed"
 		}
-		decision := retry.Classify(fmt.Errorf("sidecar decode error: %s", reason))
+		decision := retry.Classify(errors.New("sidecar decode error: " + reason))
 		log.Warn("sidecar decode error",
 			"stage", stage,
 			"signature", decErr.Signature,
@@ -833,7 +834,7 @@ func formatDecodeDiagnostics(errorBySignature map[string]string) string {
 	sort.Strings(signatures)
 	diagnostics := make([]string, 0, len(signatures))
 	for _, signature := range signatures {
-		diagnostics = append(diagnostics, fmt.Sprintf("%s=%s", signature, errorBySignature[signature]))
+		diagnostics = append(diagnostics, signature+"="+errorBySignature[signature])
 	}
 	return strings.Join(diagnostics, ",")
 }

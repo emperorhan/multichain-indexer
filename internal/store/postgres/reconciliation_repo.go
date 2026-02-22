@@ -3,7 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/emperorhan/multichain-indexer/internal/reconciliation"
@@ -50,8 +50,25 @@ func (r *ReconciliationSnapshotRepo) insertBatch(ctx context.Context, tx *sql.Tx
 			sb.WriteString(",")
 		}
 		base := i * 9
-		sb.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9))
+		sb.WriteString("($")
+		sb.WriteString(strconv.Itoa(base + 1))
+		sb.WriteString(",$")
+		sb.WriteString(strconv.Itoa(base + 2))
+		sb.WriteString(",$")
+		sb.WriteString(strconv.Itoa(base + 3))
+		sb.WriteString(",$")
+		sb.WriteString(strconv.Itoa(base + 4))
+		sb.WriteString(",$")
+		sb.WriteString(strconv.Itoa(base + 5))
+		sb.WriteString(",$")
+		sb.WriteString(strconv.Itoa(base + 6))
+		sb.WriteString(",$")
+		sb.WriteString(strconv.Itoa(base + 7))
+		sb.WriteString(",$")
+		sb.WriteString(strconv.Itoa(base + 8))
+		sb.WriteString(",$")
+		sb.WriteString(strconv.Itoa(base + 9))
+		sb.WriteString(")")
 		args = append(args,
 			snap.Chain, snap.Network, snap.Address, snap.TokenContract,
 			snap.OnChainBalance, snap.DBBalance, snap.Difference, snap.IsMatch, snap.CheckedAt)

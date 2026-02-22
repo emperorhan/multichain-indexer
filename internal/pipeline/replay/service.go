@@ -110,28 +110,23 @@ func (s *Service) dryRun(ctx context.Context, req PurgeRequest, start time.Time)
 
 	var eventCount, txCount, blockCount int64
 
-	err := queryCount(ctx, s.db, `
-		SELECT COUNT(*) FROM balance_events
-		WHERE chain = $1 AND network = $2 AND block_cursor >= $3
-	`, req.Chain, req.Network, req.FromBlock, &eventCount)
-	if err != nil {
-		return nil, fmt.Errorf("dry run count events: %w", err)
-	}
+	dryCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
+	defer cancel()
 
-	err = queryCount(ctx, s.db, `
-		SELECT COUNT(*) FROM transactions
-		WHERE chain = $1 AND network = $2 AND block_cursor >= $3
-	`, req.Chain, req.Network, req.FromBlock, &txCount)
+	dryTx, err := s.db.BeginTx(dryCtx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, fmt.Errorf("dry run count transactions: %w", err)
+		return nil, fmt.Errorf("dry run begin tx: %w", err)
 	}
+	defer dryTx.Rollback()
 
-	err = queryCount(ctx, s.db, `
-		SELECT COUNT(*) FROM indexed_blocks
-		WHERE chain = $1 AND network = $2 AND block_number >= $3
-	`, req.Chain, req.Network, req.FromBlock, &blockCount)
+	err = dryTx.QueryRowContext(dryCtx, `
+		SELECT
+			(SELECT COUNT(*) FROM balance_events WHERE chain = $1 AND network = $2 AND block_cursor >= $3),
+			(SELECT COUNT(*) FROM transactions WHERE chain = $1 AND network = $2 AND block_cursor >= $3),
+			(SELECT COUNT(*) FROM indexed_blocks WHERE chain = $1 AND network = $2 AND block_number >= $3)
+	`, req.Chain, req.Network, req.FromBlock).Scan(&eventCount, &txCount, &blockCount)
 	if err != nil {
-		return nil, fmt.Errorf("dry run count blocks: %w", err)
+		return nil, fmt.Errorf("dry run counts: %w", err)
 	}
 
 	result.PurgedEvents = eventCount
@@ -180,8 +175,9 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 		return nil, fmt.Errorf("fetch rollback events: %w", err)
 	}
 
-	// Step 2: Reverse applied balance deltas (including staking)
-	var reversedCount int64
+	// Step 2: Reverse applied balance deltas (including staking) using bulk adjust
+	var liquidItems []store.BulkAdjustItem
+	var stakedItems []store.BulkAdjustItem
 	for _, be := range rollbackEvents {
 		if !be.balanceApplied {
 			continue
@@ -190,26 +186,18 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 		if err != nil {
 			return nil, fmt.Errorf("negate delta for %s: %w", be.txHash, err)
 		}
-		if err := s.balanceRepo.AdjustBalanceTx(ctx, dbTx, store.AdjustRequest{
-			Chain:       req.Chain,
-			Network:     req.Network,
-			Address:     be.address,
-			TokenID:     be.tokenID,
-			WalletID:    be.walletID,
-			OrgID:       be.organizationID,
-			Delta:       invertedDelta,
-			Cursor:      be.blockCursor,
-			TxHash:      be.txHash,
-			BalanceType: "",
-		}); err != nil {
-			return nil, fmt.Errorf("revert balance: %w", err)
-		}
-		reversedCount++
+		liquidItems = append(liquidItems, store.BulkAdjustItem{
+			Address:  be.address,
+			TokenID:  be.tokenID,
+			WalletID: be.walletID,
+			OrgID:    be.organizationID,
+			Delta:    invertedDelta,
+			Cursor:   be.blockCursor,
+			TxHash:   be.txHash,
+		})
 
 		if identity.IsStakingActivity(be.activityType) {
-			if err := s.balanceRepo.AdjustBalanceTx(ctx, dbTx, store.AdjustRequest{
-				Chain:       req.Chain,
-				Network:     req.Network,
+			stakedItems = append(stakedItems, store.BulkAdjustItem{
 				Address:     be.address,
 				TokenID:     be.tokenID,
 				WalletID:    be.walletID,
@@ -218,12 +206,20 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 				Cursor:      be.blockCursor,
 				TxHash:      be.txHash,
 				BalanceType: "staked",
-			}); err != nil {
-				return nil, fmt.Errorf("revert staked balance: %w", err)
-			}
+			})
 		}
 	}
-	result.ReversedBalances = reversedCount
+	if len(liquidItems) > 0 {
+		if err := s.balanceRepo.BulkAdjustBalanceTx(ctx, dbTx, req.Chain, req.Network, liquidItems); err != nil {
+			return nil, fmt.Errorf("revert balances: %w", err)
+		}
+	}
+	if len(stakedItems) > 0 {
+		if err := s.balanceRepo.BulkAdjustBalanceTx(ctx, dbTx, req.Chain, req.Network, stakedItems); err != nil {
+			return nil, fmt.Errorf("revert staked balances: %w", err)
+		}
+	}
+	result.ReversedBalances = int64(len(liquidItems))
 
 	// Step 3: Delete balance events from fromBlock onward
 	evRes, err := dbTx.ExecContext(ctx, `
@@ -381,22 +377,3 @@ func (s *Service) fetchRollbackBatch(
 	return events, rows.Err()
 }
 
-// queryCount is a helper to execute a COUNT query using a read-only transaction.
-func queryCount(ctx context.Context, db store.TxBeginner, query string, args ...interface{}) error {
-	dest := args[len(args)-1].(*int64)
-	queryArgs := args[:len(args)-1]
-
-	ctx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
-	defer cancel()
-
-	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(dest); err != nil {
-		return err
-	}
-	return tx.Commit()
-}

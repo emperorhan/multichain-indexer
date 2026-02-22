@@ -877,7 +877,7 @@ func runtimeTargetKeys(targets []runtimeTarget) []string {
 }
 
 func runtimeTargetKey(chain model.Chain, network model.Network) string {
-	return fmt.Sprintf("%s-%s", chain, network)
+	return string(chain) + "-" + string(network)
 }
 
 func syncWatchedAddresses(

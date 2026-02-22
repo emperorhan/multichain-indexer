@@ -176,7 +176,7 @@ func buildSolanaFeeBalanceEvent(feePayer, feeAmount string) event.NormalizedBala
 		Address:               feePayer,
 		CounterpartyAddress:   "",
 		Delta:                 canonicalFeeDelta(feeAmount),
-		ChainData:             json.RawMessage("{}"),
+		ChainData:             emptyJSONObject,
 		TokenSymbol:           "SOL",
 		TokenName:             "Solana",
 		TokenDecimals:         9,
@@ -406,12 +406,24 @@ func canonicalFeeDelta(amount string) string {
 		return "-0"
 	}
 	trimmed := clean
-	if strings.HasPrefix(trimmed, "+") || strings.HasPrefix(trimmed, "-") {
+	if len(trimmed) > 0 && (trimmed[0] == '+' || trimmed[0] == '-') {
 		trimmed = trimmed[1:]
 	}
-	if trimmed == "" {
+	if trimmed == "" || trimmed == "0" {
 		return "-0"
 	}
+	// Fast path: if all digits, skip big.Int allocation
+	allDigits := true
+	for i := 0; i < len(trimmed); i++ {
+		if trimmed[i] < '0' || trimmed[i] > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		return "-" + trimmed
+	}
+	// Slow path for unusual formats
 	amountInt := new(big.Int)
 	if _, ok := amountInt.SetString(trimmed, 10); !ok {
 		return "-0"

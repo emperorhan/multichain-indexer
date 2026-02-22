@@ -1,7 +1,6 @@
 package normalizer
 
 import (
-	"encoding/json"
 	"math/big"
 	"sort"
 	"strings"
@@ -324,7 +323,7 @@ func buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath string, token evmN
 		Address:               feePayer,
 		CounterpartyAddress:   "",
 		Delta:                 canonicalFeeDelta(feeAmount),
-		ChainData:             json.RawMessage("{}"),
+		ChainData:             emptyJSONObject,
 		TokenSymbol:           token.Symbol,
 		TokenName:             token.Name,
 		TokenDecimals:         token.Decimals,
@@ -349,7 +348,7 @@ func buildBaseFeeBalanceEvent(
 		Address:               feePayer,
 		CounterpartyAddress:   "",
 		Delta:                 canonicalFeeDelta(feeAmount),
-		ChainData:             json.RawMessage("{}"),
+		ChainData:             emptyJSONObject,
 		TokenSymbol:           "ETH",
 		TokenName:             "Ether",
 		TokenDecimals:         18,

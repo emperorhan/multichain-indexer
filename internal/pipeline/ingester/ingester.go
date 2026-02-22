@@ -29,6 +29,8 @@ import (
 	otelTrace "go.opentelemetry.io/otel/trace"
 )
 
+var emptyJSONObject = json.RawMessage(`{}`)
+
 const (
 	defaultProcessRetryMaxAttempts = 3
 	defaultRetryDelayInitial       = 100 * time.Millisecond
@@ -617,7 +619,7 @@ func (ing *Ingester) collectEvents(ctx context.Context, bc *batchContext) error 
 				Err: ntx.Err, ChainData: ntx.ChainData, BlockHash: ntx.BlockHash, ParentHash: ntx.ParentHash,
 			}
 			if txModel.ChainData == nil {
-				txModel.ChainData = json.RawMessage("{}")
+				txModel.ChainData = emptyJSONObject
 			}
 			txModelsByHash[canonicalTxHash] = txModel
 			bc.txModels = append(bc.txModels, txModel)
@@ -629,7 +631,7 @@ func (ing *Ingester) collectEvents(ctx context.Context, bc *batchContext) error 
 					Chain: batch.Chain, Network: batch.Network,
 					ContractAddress: be.ContractAddress, Symbol: defaultTokenSymbol(be),
 					Name: defaultTokenName(be), Decimals: be.TokenDecimals,
-					TokenType: be.TokenType, ChainData: json.RawMessage("{}"),
+					TokenType: be.TokenType, ChainData: emptyJSONObject,
 				}
 				tokenModelsByContract[be.ContractAddress] = tokenModel
 				bc.tokenModels = append(bc.tokenModels, tokenModel)
@@ -648,7 +650,7 @@ func (ing *Ingester) collectEvents(ctx context.Context, bc *batchContext) error 
 					Chain: batch.Chain, Network: batch.Network,
 					ContractAddress: nativeContract, Symbol: nativeTokenSymbol(batch.Chain),
 					Name: nativeTokenName(batch.Chain), Decimals: nativeTokenDecimals(batch.Chain),
-					TokenType: model.TokenTypeNative, ChainData: json.RawMessage("{}"),
+					TokenType: model.TokenTypeNative, ChainData: emptyJSONObject,
 				}
 				tokenModelsByContract[nativeContract] = tokenModel
 				bc.tokenModels = append(bc.tokenModels, tokenModel)
@@ -820,7 +822,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 
 		chainData := ec.be.ChainData
 		if chainData == nil {
-			chainData = json.RawMessage("{}")
+			chainData = emptyJSONObject
 		}
 		eventWalletID := batch.WalletID
 		eventOrgID := batch.OrgID
@@ -1270,7 +1272,7 @@ func (ing *Ingester) promoteBalanceEvents(
 	network model.Network,
 	upToBlock int64,
 ) ([]promotedEvent, error) {
-	// Update finality_state for all events up to the finalized block
+	// Step 1: Update finality_state for all events up to the finalized block
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE balance_events
 		SET finality_state = 'finalized'
@@ -1280,15 +1282,16 @@ func (ing *Ingester) promoteBalanceEvents(
 		return nil, fmt.Errorf("update balance events finality: %w", err)
 	}
 
-	// Find events that need balance_applied promotion (were pending, now finalized)
+	// Step 2: Set balance_applied=true and return newly promoted events in one query
 	rows, err := tx.QueryContext(ctx, `
-		SELECT token_id, address, delta, block_cursor, tx_hash, wallet_id, organization_id, activity_type
-		FROM balance_events
+		UPDATE balance_events
+		SET balance_applied = true
 		WHERE chain = $1 AND network = $2 AND block_cursor <= $3
 		  AND balance_applied = false AND finality_state = 'finalized'
+		RETURNING token_id, address, delta, block_cursor, tx_hash, wallet_id, organization_id, activity_type
 	`, chain, network, upToBlock)
 	if err != nil {
-		return nil, fmt.Errorf("query promotable events: %w", err)
+		return nil, fmt.Errorf("promote balance events: %w", err)
 	}
 	defer rows.Close()
 
@@ -1298,7 +1301,7 @@ func (ing *Ingester) promoteBalanceEvents(
 		var walletID sql.NullString
 		var orgID sql.NullString
 		if err := rows.Scan(&pe.TokenID, &pe.Address, &pe.Delta, &pe.BlockCursor, &pe.TxHash, &walletID, &orgID, &pe.ActivityType); err != nil {
-			return nil, fmt.Errorf("scan promotable event: %w", err)
+			return nil, fmt.Errorf("scan promoted event: %w", err)
 		}
 		if walletID.Valid {
 			pe.WalletID = &walletID.String
@@ -1309,19 +1312,7 @@ func (ing *Ingester) promoteBalanceEvents(
 		events = append(events, pe)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read promotable events: %w", err)
-	}
-
-	// Set balance_applied=true for promoted events
-	if len(events) > 0 {
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE balance_events
-			SET balance_applied = true
-			WHERE chain = $1 AND network = $2 AND block_cursor <= $3
-			  AND balance_applied = false AND finality_state = 'finalized'
-		`, chain, network, upToBlock); err != nil {
-			return nil, fmt.Errorf("update balance_applied: %w", err)
-		}
+		return nil, fmt.Errorf("read promoted events: %w", err)
 	}
 
 	return events, nil
@@ -1756,12 +1747,12 @@ func buildFeeOnlyEvent(ntx event.NormalizedTransaction, batch event.NormalizedBa
 		Address:               ntx.FeePayer,
 		CounterpartyAddress:   "",
 		Delta:                 negFee,
-		ChainData:             json.RawMessage("{}"),
+		ChainData:             emptyJSONObject,
 		TokenSymbol:           nativeTokenSymbol(batch.Chain),
 		TokenName:             nativeTokenName(batch.Chain),
 		TokenDecimals:         nativeTokenDecimals(batch.Chain),
 		TokenType:             model.TokenTypeNative,
-		EventID:               fmt.Sprintf("fee:%s:%s", batch.Chain, ntx.TxHash),
+		EventID:               "fee:" + string(batch.Chain) + ":" + ntx.TxHash,
 		BlockHash:             ntx.BlockHash,
 		TxIndex:               0,
 		EventPath:             "fee_only",

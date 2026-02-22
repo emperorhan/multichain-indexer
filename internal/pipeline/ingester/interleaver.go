@@ -175,5 +175,5 @@ func (d *deterministicMandatoryChainInterleaver) signalLocked() {
 }
 
 func commitInterleaveKey(chain model.Chain, network model.Network) string {
-	return fmt.Sprintf("%s-%s", chain, network)
+	return string(chain) + "-" + string(network)
 }

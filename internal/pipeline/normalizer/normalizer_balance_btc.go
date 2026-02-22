@@ -2,8 +2,8 @@ package normalizer
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
@@ -11,6 +11,10 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 )
+
+// btcFeeChainData is a pre-computed JSON payload for BTC fee events,
+// avoiding json.Marshal allocation on every fee event.
+var btcFeeChainData = json.RawMessage(`{"event_path":"fee:miner"}`)
 
 func buildCanonicalBTCBalanceEvents(
 	chain model.Chain,
@@ -118,7 +122,7 @@ func resolveBTCEventPathFromMetadata(metadata map[string]string, outerInstructio
 	}
 	utxoPathType := strings.ToLower(strings.TrimSpace(metadata["utxo_path_type"]))
 	if (utxoPathType == "vin" || utxoPathType == "vout") && outerInstructionIndex >= 0 {
-		return fmt.Sprintf("%s:%d", utxoPathType, outerInstructionIndex)
+		return utxoPathType + ":" + strconv.FormatInt(int64(outerInstructionIndex), 10)
 	}
 	return ""
 }
@@ -225,7 +229,6 @@ func hasBTCFeeEvent(events []event.NormalizedBalanceEvent, feePayer string) bool
 }
 
 func buildBTCFeeBalanceEvent(feePayer, feeAmount string) event.NormalizedBalanceEvent {
-	chainData, _ := json.Marshal(map[string]string{"event_path": "fee:miner"})
 	return event.NormalizedBalanceEvent{
 		OuterInstructionIndex: -1,
 		InnerInstructionIndex: -1,
@@ -236,7 +239,7 @@ func buildBTCFeeBalanceEvent(feePayer, feeAmount string) event.NormalizedBalance
 		Address:               feePayer,
 		CounterpartyAddress:   "",
 		Delta:                 canonicalFeeDelta(feeAmount),
-		ChainData:             chainData,
+		ChainData:             btcFeeChainData,
 		TokenSymbol:           "BTC",
 		TokenName:             "Bitcoin",
 		TokenDecimals:         8,

@@ -756,7 +756,7 @@ func isCanonicalAddressExactForm(identity, address string) bool {
 }
 
 func stableAddressScopeOrderKey(chain model.Chain, network model.Network, address string) string {
-	return fmt.Sprintf("%s|%s|%s", chain, network, stableAddressOrderKey(chain, address))
+	return string(chain) + "|" + string(network) + "|" + stableAddressOrderKey(chain, address)
 }
 
 func stableAddressOrderKey(chain model.Chain, address string) string {
