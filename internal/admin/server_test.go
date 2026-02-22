@@ -582,7 +582,6 @@ func TestHandleReplayStatus_Success(t *testing.T) {
 	rr := &mockReplayRequester{
 		hasPipeline: true,
 		watermark: &model.PipelineWatermark{
-			HeadSequence:     8000,
 			IngestedSequence: 5234,
 		},
 	}
@@ -603,12 +602,6 @@ func TestHandleReplayStatus_Success(t *testing.T) {
 	}
 	if resp.CurrentWatermark != 5234 {
 		t.Errorf("expected watermark 5234, got %d", resp.CurrentWatermark)
-	}
-	if resp.HeadSequence != 8000 {
-		t.Errorf("expected head_sequence 8000, got %d", resp.HeadSequence)
-	}
-	if resp.Lag != 2766 {
-		t.Errorf("expected lag 2766, got %d", resp.Lag)
 	}
 }
 
@@ -671,8 +664,8 @@ func TestHandleDashboardOverview_Success(t *testing.T) {
 	dashRepo := &mockDashboardRepo{
 		getAllWatermarksFunc: func(_ context.Context) ([]model.PipelineWatermark, error) {
 			return []model.PipelineWatermark{
-				{Chain: model.ChainSolana, Network: model.NetworkDevnet, HeadSequence: 1000, IngestedSequence: 950, LastHeartbeatAt: now},
-				{Chain: model.ChainBase, Network: model.NetworkMainnet, HeadSequence: 5000, IngestedSequence: 4990, LastHeartbeatAt: now},
+				{Chain: model.ChainSolana, Network: model.NetworkDevnet, IngestedSequence: 950, LastHeartbeatAt: now},
+				{Chain: model.ChainBase, Network: model.NetworkMainnet, IngestedSequence: 4990, LastHeartbeatAt: now},
 			}, nil
 		},
 		countWatchedAddressesFunc: func(_ context.Context) (int, error) {
@@ -701,13 +694,6 @@ func TestHandleDashboardOverview_Success(t *testing.T) {
 	}
 	if resp.ServerTime == "" {
 		t.Error("expected server_time to be non-empty")
-	}
-	// Verify lag calculation.
-	if resp.Pipelines[0].Lag != 50 {
-		t.Errorf("expected lag 50 for solana pipeline, got %d", resp.Pipelines[0].Lag)
-	}
-	if resp.Pipelines[1].Lag != 10 {
-		t.Errorf("expected lag 10 for base pipeline, got %d", resp.Pipelines[1].Lag)
 	}
 }
 

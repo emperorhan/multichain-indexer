@@ -202,7 +202,7 @@ func (r *DashboardRepo) GetAllWatermarks(ctx context.Context) ([]model.PipelineW
 	defer cancel()
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, chain, network, head_sequence, ingested_sequence, last_heartbeat_at, created_at, updated_at
+		SELECT id, chain, network, ingested_sequence, last_heartbeat_at, created_at, updated_at
 		FROM pipeline_watermarks
 		ORDER BY chain, network
 	`)
@@ -214,7 +214,7 @@ func (r *DashboardRepo) GetAllWatermarks(ctx context.Context) ([]model.PipelineW
 	var watermarks []model.PipelineWatermark
 	for rows.Next() {
 		var w model.PipelineWatermark
-		if err := rows.Scan(&w.ID, &w.Chain, &w.Network, &w.HeadSequence, &w.IngestedSequence, &w.LastHeartbeatAt, &w.CreatedAt, &w.UpdatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.Chain, &w.Network, &w.IngestedSequence, &w.LastHeartbeatAt, &w.CreatedAt, &w.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan watermark row: %w", err)
 		}
 		watermarks = append(watermarks, w)

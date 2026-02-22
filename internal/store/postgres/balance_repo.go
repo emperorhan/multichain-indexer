@@ -45,7 +45,7 @@ func (r *BalanceRepo) GetByAddress(ctx context.Context, chain model.Chain, netwo
 
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, chain, network, address, token_id, balance_type, wallet_id, organization_id,
-			   amount, pending_withdrawal_amount, last_updated_cursor, last_updated_tx_hash,
+			   amount, last_updated_cursor, last_updated_tx_hash,
 			   created_at, updated_at
 		FROM balances
 		WHERE chain = $1 AND network = $2 AND address = $3
@@ -61,7 +61,7 @@ func (r *BalanceRepo) GetByAddress(ctx context.Context, chain model.Chain, netwo
 		if err := rows.Scan(
 			&b.ID, &b.Chain, &b.Network, &b.Address, &b.TokenID, &b.BalanceType,
 			&b.WalletID, &b.OrganizationID, &b.Amount,
-			&b.PendingWithdrawalAmount, &b.LastUpdatedCursor,
+			&b.LastUpdatedCursor,
 			&b.LastUpdatedTxHash, &b.CreatedAt, &b.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan balance: %w", err)

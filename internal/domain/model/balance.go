@@ -15,9 +15,8 @@ type Balance struct {
 	BalanceType             string    `db:"balance_type"`
 	WalletID                *string   `db:"wallet_id"`
 	OrganizationID          *string   `db:"organization_id"`
-	Amount                  string    `db:"amount"`
-	PendingWithdrawalAmount string    `db:"pending_withdrawal_amount"`
-	LastUpdatedCursor       int64     `db:"last_updated_cursor"`
+	Amount            string `db:"amount"`
+	LastUpdatedCursor int64  `db:"last_updated_cursor"`
 	LastUpdatedTxHash       *string   `db:"last_updated_tx_hash"`
 	CreatedAt               time.Time `db:"created_at"`
 	UpdatedAt               time.Time `db:"updated_at"`

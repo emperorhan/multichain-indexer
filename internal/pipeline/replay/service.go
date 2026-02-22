@@ -296,7 +296,7 @@ func (s *Service) executePurge(ctx context.Context, req PurgeRequest, start time
 
 // rollbackEvent holds the fields needed to reverse a balance delta.
 type rollbackEvent struct {
-	id             int64
+	id             uuid.UUID
 	tokenID        uuid.UUID
 	address        string
 	delta          string
@@ -318,7 +318,7 @@ func (s *Service) fetchRollbackEvents(
 	fromBlock int64,
 ) ([]rollbackEvent, error) {
 	var all []rollbackEvent
-	var lastID int64
+	var lastID uuid.UUID
 	for {
 		batch, err := s.fetchRollbackBatch(ctx, tx, chain, network, fromBlock, lastID, rollbackBatchSize)
 		if err != nil {
@@ -339,7 +339,7 @@ func (s *Service) fetchRollbackBatch(
 	chain model.Chain,
 	network model.Network,
 	fromBlock int64,
-	afterID int64,
+	afterID uuid.UUID,
 	limit int,
 ) ([]rollbackEvent, error) {
 	rows, err := tx.QueryContext(ctx, `

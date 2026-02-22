@@ -22,7 +22,6 @@ type PipelineWatermark struct {
 	ID               uuid.UUID `db:"id"`
 	Chain            Chain     `db:"chain"`
 	Network          Network   `db:"network"`
-	HeadSequence     int64     `db:"head_sequence"`
 	IngestedSequence int64     `db:"ingested_sequence"`
 	LastHeartbeatAt  time.Time `db:"last_heartbeat_at"`
 	CreatedAt        time.Time `db:"created_at"`

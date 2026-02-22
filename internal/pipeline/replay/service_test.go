@@ -399,7 +399,7 @@ func TestPurgeFromBlock_ReversesSingleBalance(t *testing.T) {
 	tokenID := uuid.New()
 	events := []rollbackEvent{
 		{
-			id: 1, tokenID: tokenID, address: "0xaddr1", delta: "500",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000001"), tokenID: tokenID, address: "0xaddr1", delta: "500",
 			blockCursor: 100, txHash: "0xtx1", activityType: model.ActivityDeposit,
 			balanceApplied: true,
 		},
@@ -472,17 +472,17 @@ func TestPurgeFromBlock_ReversesMultipleBalances(t *testing.T) {
 	tokenID2 := uuid.New()
 	events := []rollbackEvent{
 		{
-			id: 1, tokenID: tokenID1, address: "0xaddr1", delta: "100",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000001"), tokenID: tokenID1, address: "0xaddr1", delta: "100",
 			blockCursor: 100, txHash: "0xtx1", activityType: model.ActivityDeposit,
 			balanceApplied: true,
 		},
 		{
-			id: 2, tokenID: tokenID2, address: "0xaddr2", delta: "-200",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000002"), tokenID: tokenID2, address: "0xaddr2", delta: "-200",
 			blockCursor: 101, txHash: "0xtx2", activityType: model.ActivityWithdrawal,
 			balanceApplied: true,
 		},
 		{
-			id: 3, tokenID: tokenID1, address: "0xaddr1", delta: "300",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000003"), tokenID: tokenID1, address: "0xaddr1", delta: "300",
 			blockCursor: 102, txHash: "0xtx3", activityType: model.ActivityDeposit,
 			balanceApplied: true,
 		},
@@ -543,12 +543,12 @@ func TestPurgeFromBlock_SkipsUnappliedEvents(t *testing.T) {
 	tokenID := uuid.New()
 	events := []rollbackEvent{
 		{
-			id: 1, tokenID: tokenID, address: "0xaddr1", delta: "500",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000001"), tokenID: tokenID, address: "0xaddr1", delta: "500",
 			blockCursor: 100, txHash: "0xtx1", activityType: model.ActivityDeposit,
 			balanceApplied: false, // NOT applied - should be skipped
 		},
 		{
-			id: 2, tokenID: tokenID, address: "0xaddr2", delta: "300",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000002"), tokenID: tokenID, address: "0xaddr2", delta: "300",
 			blockCursor: 101, txHash: "0xtx2", activityType: model.ActivityDeposit,
 			balanceApplied: true, // Applied - should be reversed
 		},
@@ -607,7 +607,7 @@ func TestPurgeFromBlock_HandlesStakingActivity(t *testing.T) {
 	orgID := "org-1"
 	events := []rollbackEvent{
 		{
-			id: 1, tokenID: tokenID, address: "0xaddr1", delta: "1000",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000001"), tokenID: tokenID, address: "0xaddr1", delta: "1000",
 			blockCursor: 100, txHash: "0xtx1", activityType: model.ActivityStake,
 			balanceApplied: true, walletID: &walletID, organizationID: &orgID,
 		},
@@ -868,7 +868,7 @@ func TestPurgeFromBlock_TransactionAtomicity_BalanceAdjustFailure(t *testing.T) 
 	tokenID := uuid.New()
 	events := []rollbackEvent{
 		{
-			id: 1, tokenID: tokenID, address: "0xaddr1", delta: "100",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000001"), tokenID: tokenID, address: "0xaddr1", delta: "100",
 			blockCursor: 100, txHash: "0xtx1", activityType: model.ActivityDeposit,
 			balanceApplied: true,
 		},
@@ -1126,17 +1126,17 @@ func TestPurgeFromBlock_NegateDecimalString_VariousFormats(t *testing.T) {
 	tokenID := uuid.New()
 	events := []rollbackEvent{
 		{
-			id: 1, tokenID: tokenID, address: "0xaddr1", delta: "999999999999999999999999",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000001"), tokenID: tokenID, address: "0xaddr1", delta: "999999999999999999999999",
 			blockCursor: 100, txHash: "0xtx1", activityType: model.ActivityDeposit,
 			balanceApplied: true,
 		},
 		{
-			id: 2, tokenID: tokenID, address: "0xaddr2", delta: "-42",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000002"), tokenID: tokenID, address: "0xaddr2", delta: "-42",
 			blockCursor: 100, txHash: "0xtx2", activityType: model.ActivityWithdrawal,
 			balanceApplied: true,
 		},
 		{
-			id: 3, tokenID: tokenID, address: "0xaddr3", delta: "0",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000003"), tokenID: tokenID, address: "0xaddr3", delta: "0",
 			blockCursor: 100, txHash: "0xtx3", activityType: model.ActivityDeposit,
 			balanceApplied: true,
 		},
@@ -1331,7 +1331,7 @@ func TestPurgeFromBlock_UnstakeActivity_ReversesBothBalances(t *testing.T) {
 	tokenID := uuid.New()
 	events := []rollbackEvent{
 		{
-			id: 1, tokenID: tokenID, address: "0xaddr1", delta: "-500",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000001"), tokenID: tokenID, address: "0xaddr1", delta: "-500",
 			blockCursor: 100, txHash: "0xtx1", activityType: model.ActivityUnstake,
 			balanceApplied: true,
 		},
@@ -1422,17 +1422,17 @@ func TestPurgeFromBlock_MixedAppliedAndUnappliedWithStaking(t *testing.T) {
 	tokenID := uuid.New()
 	events := []rollbackEvent{
 		{
-			id: 1, tokenID: tokenID, address: "0xaddr1", delta: "100",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000001"), tokenID: tokenID, address: "0xaddr1", delta: "100",
 			blockCursor: 100, txHash: "0xtx1", activityType: model.ActivityDeposit,
 			balanceApplied: true,
 		},
 		{
-			id: 2, tokenID: tokenID, address: "0xaddr2", delta: "200",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000002"), tokenID: tokenID, address: "0xaddr2", delta: "200",
 			blockCursor: 100, txHash: "0xtx2", activityType: model.ActivityStake,
 			balanceApplied: false, // unapplied staking event
 		},
 		{
-			id: 3, tokenID: tokenID, address: "0xaddr3", delta: "300",
+			id: uuid.MustParse("00000000-0000-0000-0000-000000000003"), tokenID: tokenID, address: "0xaddr3", delta: "300",
 			blockCursor: 100, txHash: "0xtx3", activityType: model.ActivityStake,
 			balanceApplied: true, // applied staking event
 		},

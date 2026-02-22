@@ -2,6 +2,7 @@
 
 Cross-verified against codebase. 12 confirmed issues fixed; 4 false positives documented.
 This file now also includes a supplemental pipeline efficiency/data-integrity re-audit with open risks.
+DB schema unnecessary-structure audit is documented separately in `docs/audit/db-schema-audit-2026-02-22.md`.
 
 ---
 

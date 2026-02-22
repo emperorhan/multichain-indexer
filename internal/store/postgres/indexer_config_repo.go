@@ -36,11 +36,11 @@ func (r *IndexerConfigRepo) Upsert(ctx context.Context, c *model.IndexerConfig) 
 func (r *IndexerConfigRepo) GetWatermark(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error) {
 	var w model.PipelineWatermark
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, chain, network, head_sequence, ingested_sequence, last_heartbeat_at, created_at, updated_at
+		SELECT id, chain, network, ingested_sequence, last_heartbeat_at, created_at, updated_at
 		FROM pipeline_watermarks
 		WHERE chain = $1 AND network = $2
 	`, chain, network).Scan(
-		&w.ID, &w.Chain, &w.Network, &w.HeadSequence, &w.IngestedSequence,
+		&w.ID, &w.Chain, &w.Network, &w.IngestedSequence,
 		&w.LastHeartbeatAt, &w.CreatedAt, &w.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {

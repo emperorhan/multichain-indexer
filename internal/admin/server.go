@@ -431,8 +431,6 @@ type replayStatusResponse struct {
 	Chain            string `json:"chain"`
 	Network          string `json:"network"`
 	CurrentWatermark int64  `json:"current_watermark"`
-	HeadSequence     int64  `json:"head_sequence"`
-	Lag              int64  `json:"lag"`
 }
 
 func (s *Server) handleReplayStatus(w http.ResponseWriter, r *http.Request) {
@@ -464,11 +462,6 @@ func (s *Server) handleReplayStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if watermark != nil {
 		resp.CurrentWatermark = watermark.IngestedSequence
-		resp.HeadSequence = watermark.HeadSequence
-		resp.Lag = watermark.HeadSequence - watermark.IngestedSequence
-		if resp.Lag < 0 {
-			resp.Lag = 0
-		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

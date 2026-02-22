@@ -30,9 +30,7 @@ func (s *Server) handleDashboardIndex(w http.ResponseWriter, r *http.Request) {
 type dashboardOverviewPipeline struct {
 	Chain            string    `json:"chain"`
 	Network          string    `json:"network"`
-	HeadSequence     int64     `json:"head_sequence"`
 	IngestedSequence int64     `json:"ingested_sequence"`
-	Lag              int64     `json:"lag"`
 	LastHeartbeatAt  time.Time `json:"last_heartbeat_at"`
 }
 
@@ -64,16 +62,10 @@ func (s *Server) handleDashboardOverview(w http.ResponseWriter, r *http.Request)
 
 	pipelines := make([]dashboardOverviewPipeline, 0, len(watermarks))
 	for _, wm := range watermarks {
-		lag := wm.HeadSequence - wm.IngestedSequence
-		if lag < 0 {
-			lag = 0
-		}
 		pipelines = append(pipelines, dashboardOverviewPipeline{
 			Chain:            string(wm.Chain),
 			Network:          string(wm.Network),
-			HeadSequence:     wm.HeadSequence,
 			IngestedSequence: wm.IngestedSequence,
-			Lag:              lag,
 			LastHeartbeatAt:  wm.LastHeartbeatAt,
 		})
 	}

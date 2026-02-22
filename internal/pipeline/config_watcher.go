@@ -18,7 +18,6 @@ const (
 	// Known runtime config keys.
 	ConfigKeyBatchSize        = "batch_size"
 	ConfigKeyIndexingInterval = "indexing_interval_ms"
-	ConfigKeyRPCURL           = "rpc_url"
 	ConfigKeyIsActive         = "is_active"
 )
 
