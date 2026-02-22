@@ -7,10 +7,12 @@
 # Database (PostgreSQL)
 db:
   url: "postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=require"  # DB_URL (required; use sslmode=disable for local dev only)
-  max_open_conns: 50             # DB_MAX_OPEN_CONNS
+  max_open_conns: 50             # DB_MAX_OPEN_CONNS (max 200)
   max_idle_conns: 10             # DB_MAX_IDLE_CONNS
   conn_max_lifetime_min: 30      # DB_CONN_MAX_LIFETIME_MIN
+  conn_max_idle_time_min: 2      # DB_CONN_MAX_IDLE_TIME_MIN
   pool_stats_interval_ms: 5000   # DB_POOL_STATS_INTERVAL_MS (range: 100-3600000)
+  pool_exhaustion_threshold: 0.8 # DB_POOL_EXHAUSTION_THRESHOLD
 
 # Sidecar (gRPC decoder)
 sidecar:
@@ -20,6 +22,7 @@ sidecar:
   tls_cert: ""             # SIDECAR_TLS_CERT
   tls_key: ""              # SIDECAR_TLS_KEY
   tls_ca: ""               # SIDECAR_TLS_CA
+  max_msg_size_mb: 64      # SIDECAR_MAX_MSG_SIZE_MB
 
 # Chain: Solana
 solana:
@@ -32,6 +35,7 @@ solana:
   max_concurrent_txs: 10     # SOLANA_MAX_CONCURRENT_TXS
   block_scan_batch_size: 10    # SOLANA_BLOCK_SCAN_BATCH_SIZE
   block_scan_concurrency: 10   # SOLANA_BLOCK_SCAN_CONCURRENCY — parallel slot fetches
+  max_initial_lookback_blocks: 100  # SOLANA_MAX_INITIAL_LOOKBACK_BLOCKS
 
 # Chain: Base (EVM L2)
 base:
@@ -61,6 +65,7 @@ btc:
     rps: 5       # BTC_RPC_RATE_LIMIT
     burst: 10    # BTC_RPC_BURST
   max_initial_lookback_blocks: 10   # BTC_MAX_INITIAL_LOOKBACK_BLOCKS
+  block_scan_batch_size: 3          # BTC_BLOCK_SCAN_BATCH_SIZE
 
 # Chain: Polygon
 polygon:
@@ -100,6 +105,7 @@ runtime:
 
 # Pipeline settings
 pipeline:
+  shutdown_timeout_sec: 30              # PIPELINE_SHUTDOWN_TIMEOUT_SEC
   reorg_detector_interval_ms: 30000   # REORG_DETECTOR_INTERVAL_MS
   finalizer_interval_ms: 60000        # FINALIZER_INTERVAL_MS
   btc_finality_confirmations: 6       # BTC_FINALITY_CONFIRMATIONS
@@ -108,6 +114,9 @@ pipeline:
   batch_size: 100                      # BATCH_SIZE
   indexing_interval_ms: 5000           # INDEXING_INTERVAL_MS
   channel_buffer_size: 10              # CHANNEL_BUFFER_SIZE
+  job_ch_buffer_size: 0                # JOB_CH_BUFFER_SIZE (0 = use channel_buffer_size; standalone default 20)
+  raw_batch_ch_buffer_size: 0          # RAW_BATCH_CH_BUFFER_SIZE (0 = use channel_buffer_size; standalone default 10)
+  normalized_ch_buffer_size: 0         # NORMALIZED_CH_BUFFER_SIZE (0 = use channel_buffer_size; standalone default 5)
   indexed_blocks_retention: 10000      # INDEXED_BLOCKS_RETENTION
   interleave_max_skew_ms: 250          # INTERLEAVE_MAX_SKEW_MS (0 = disable interleaver waiting; auto-disabled for single-chain)
 
@@ -155,12 +164,20 @@ pipeline:
     adaptive_min_batch: 1              # FETCHER_ADAPTIVE_MIN_BATCH
     boundary_overlap_lookahead: 1      # FETCHER_BOUNDARY_OVERLAP_LOOKAHEAD
     block_scan_max_batch_txs: 500      # BLOCK_SCAN_MAX_BATCH_TXS — max txs per sub-batch in block-scan mode (prevents memory spikes)
+    circuit_breaker:
+      failure_threshold: 10            # FETCHER_CB_FAILURE_THRESHOLD
+      success_threshold: 3             # FETCHER_CB_SUCCESS_THRESHOLD
+      open_timeout_ms: 30000           # FETCHER_CB_OPEN_TIMEOUT_MS
 
   # Pipeline stage tuning: Normalizer
   normalizer:
     retry_max_attempts: 3              # NORMALIZER_RETRY_MAX_ATTEMPTS
     retry_delay_initial_ms: 100        # NORMALIZER_RETRY_DELAY_INITIAL_MS
     retry_delay_max_ms: 1000           # NORMALIZER_RETRY_DELAY_MAX_MS
+    circuit_breaker:
+      failure_threshold: 5             # NORMALIZER_CB_FAILURE_THRESHOLD
+      success_threshold: 2             # NORMALIZER_CB_SUCCESS_THRESHOLD
+      open_timeout_ms: 30000           # NORMALIZER_CB_OPEN_TIMEOUT_MS
 
   # Pipeline stage tuning: Ingester
   ingester:
@@ -169,6 +186,7 @@ pipeline:
     retry_delay_max_ms: 1000           # INGESTER_RETRY_DELAY_MAX_MS
     denied_cache_capacity: 10000       # INGESTER_DENIED_CACHE_CAPACITY
     denied_cache_ttl_sec: 300          # INGESTER_DENIED_CACHE_TTL_SEC
+    block_scan_addr_cache_ttl_sec: 30  # INGESTER_BLOCK_SCAN_ADDR_CACHE_TTL_SEC
 
   # Pipeline stage tuning: Health
   health:
@@ -186,6 +204,7 @@ server:
   admin_addr: ""             # ADMIN_ADDR (host:port or :port)
   admin_auth_user: ""        # ADMIN_AUTH_USER
   admin_auth_pass: ""        # ADMIN_AUTH_PASS
+  admin_auth_token: ""       # ADMIN_AUTH_TOKEN
   admin_rate_limit_enabled: true   # ADMIN_RATE_LIMIT_ENABLED (rate limit admin endpoints)
   admin_require_auth: true         # ADMIN_REQUIRE_AUTH (require auth when admin_addr is set)
 

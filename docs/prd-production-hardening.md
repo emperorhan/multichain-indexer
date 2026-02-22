@@ -67,23 +67,24 @@ Critical 4건 / High 11건 / Medium 18건의 이슈가 식별되었다.
 - **해결**: `model.Chain`, `model.Network` 상수 기반 화이트리스트 검증 추가
 - **위치**: `internal/admin/server.go`
 
-### H-4. Admin API 테스트 작성
+### H-4. Admin API 테스트 작성 -- DONE
 
 - **현상**: `internal/admin/` 테스트 0건
 - **해결**: `server_test.go` 작성 — httptest 기반 핸들러 테스트 (정상, 400, 500)
-- **위치**: `internal/admin/server_test.go` (신규)
+- **위치**: `internal/admin/server_test.go`
+- **상태**: DONE (`internal/admin/server_test.go` 구현 완료)
 
-### H-5. Rate limiter 테스트 작성
+### H-5. Rate limiter 테스트 작성 -- DONE
 
 - **현상**: `internal/chain/ratelimit/` 테스트 0건
 - **해결**: `limiter_test.go` 작성 — Allow/Wait 동작, 컨텍스트 취소, 메트릭 카운터 검증
-- **위치**: `internal/chain/ratelimit/limiter_test.go` (신규)
+- **위치**: `internal/chain/ratelimit/limiter_test.go`
+- **상태**: DONE (`internal/chain/ratelimit/limiter_test.go` 구현 완료)
 
-### H-6. Partition manager 테스트 작성
+### H-6. Partition manager 테스트 작성 -- OBSOLETE
 
 - **현상**: 파티션 생성/삭제 코드 테스트 0건
-- **해결**: `partition_manager_test.go` 작성 — EnsurePartitions, DropOldPartitions, quoteIdent 검증
-- **위치**: `internal/store/postgres/partition_manager_test.go` (신규)
+- **상태**: OBSOLETE -- PartitionManager가 완전 삭제됨. `balance_events`는 flat 테이블로 전환되어 daily partitioning이 제거됨. 해당 항목은 더 이상 유효하지 않음
 
 ### H-7. Pool registry 테스트 작성
 
@@ -125,13 +126,13 @@ Critical 4건 / High 11건 / Medium 18건의 이슈가 식별되었다.
 |---|------|------|------|
 | M-1 | Admin API `MaxBytesReader` 적용 | `admin/server.go` | DONE (H-3에서 구현) |
 | M-2 | TLS 기본 활성화 (Helm) | `values.yaml` | DONE |
-| M-3 | Redis URL 로그 마스킹 누락 경로 | `main.go:113` | DONE |
+| M-3 | Redis URL 로그 마스킹 누락 경로 | `main.go:113` | OBSOLETE (Redis 완전 제거됨 -- StreamTransport, RedisConfig 삭제) |
 | M-4 | RPC URL 로그 API 키 마스킹 | `main.go:362-385` | DONE |
 | M-5 | 잘못된 정수/실수 env var silent fallback | `config.go:getEnvInt` | DONE |
 | M-6 | ADMIN_ADDR, rate limit 값 검증 | `config.go` | DONE |
 | M-7 | Watermark GREATEST reorg 되감기 불가 | `indexer_config_repo.go:80` | DONE |
-| M-8 | 과거 데이터 DEFAULT 파티션 잔류 | `migrations/011` | DONE |
-| M-9 | `id` 쿼리 시 전 파티션 스캔 | `balance_event_repo.go:92` | DEFERRED (PK에 block_time 포함, 구조적 제약) |
+| M-8 | 과거 데이터 DEFAULT 파티션 잔류 | `migrations/011` | OBSOLETE (파티셔닝 제거됨, flat 테이블 전환) |
+| M-9 | `id` 쿼리 시 전 파티션 스캔 | `balance_event_repo.go:92` | OBSOLETE (파티셔닝 제거됨, flat 테이블이므로 파티션 스캔 이슈 해당 없음) |
 | M-10 | `balance_applied` 인덱스 누락 | `migrations/013` | DONE |
 | M-11 | 커넥션 풀 기본값 7체인 부족 | `config.go:201` | DONE (25→50/10) |
 | M-12 | OTel 샘플러 미설정 | `tracing.go` | DONE (TraceIDRatioBased + ParentBased) |
@@ -141,6 +142,32 @@ Critical 4건 / High 11건 / Medium 18건의 이슈가 식별되었다.
 | M-16 | Readiness probe `/readyz` 전환 | `values.yaml` | DONE |
 | M-17 | E2E 테스트 에러 시나리오 추가 | `normalizer/*_error_test.go` | DONE |
 | M-18 | 부하 테스트 데이터 무결성 검증 | `test/loadtest/main.go` | DONE |
+
+---
+
+## 추가 구현 완료 항목 (Production Hardening)
+
+상용화 점검 이후 추가로 구현된 안정성/운영 강화 항목:
+
+| # | 항목 | 위치 | 상태 |
+|---|------|------|------|
+| PH-1 | Circuit breaker (Fetcher RPC + Normalizer sidecar) | `internal/circuitbreaker/breaker.go` | DONE |
+| PH-2 | CB 설정 외부화 (YAML+env vars) | `FetcherStageConfig`, `NormalizerStageConfig` | DONE |
+| PH-3 | Pipeline auto-restart (exponential backoff 1s->5min cap) | `internal/pipeline/pipeline.go` | DONE |
+| PH-4 | Worker panic recovery (defer-recover) | fetcher/normalizer goroutine, ingester Run loop | DONE |
+| PH-5 | Shutdown timeout 30s -> os.Exit(1) | `cmd/indexer/main.go` | DONE |
+| PH-6 | Preflight connectivity validation (DB+RPC ping, 5s timeout) | `cmd/indexer/main.go` | DONE |
+| PH-7 | Config validation (MaxOpenConns<=200, BatchSize<=10000) | `internal/config/` | DONE |
+| PH-8 | Alerter state-transition awareness (type change bypasses cooldown) | `internal/alert/alerter.go` | DONE |
+| PH-9 | Reorg detector consecutiveRPCErrs (5회 연속 실패 alert) | `internal/pipeline/reorgdetector/` | DONE |
+| PH-10 | Empty sentinel batch (빈 블록 범위 워터마크 전진) | fetcher/normalizer/ingester | DONE |
+| PH-11 | Block-scan batch chunking (BlockScanMaxBatchTxs=500) | coordinator/fetcher | DONE |
+| PH-12 | Configurable interleaver (InterleaveMaxSkewMs=250) | coordinator | DONE |
+| PH-13 | Coordinator job dedup (lastEnqueued range tracking) | coordinator | DONE |
+| PH-14 | 6차례 성능 최적화 | 전체 파이프라인 | DONE |
+| PH-15 | Redis 완전 제거 | 전체 | DONE |
+| PH-16 | PartitionManager 삭제 + flat 테이블 전환 | store/postgres | DONE |
+| PH-17 | Per-address cursor 제거 (watermark-only) | ingester | DONE |
 
 ---
 

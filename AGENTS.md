@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Purpose
-This repository runs a multi-agent autonomous loop for a multi-chain on-chain indexer (Solana/Base/BTC runtime targets).
+This repository runs a multi-agent autonomous loop for a multi-chain on-chain indexer (Solana, Base, Ethereum, BTC, Polygon, Arbitrum, BSC).
 
 ## Agent Roles
 - Planner (`role/planner`):
@@ -26,6 +26,8 @@ This repository runs a multi-agent autonomous loop for a multi-chain on-chain in
   - `scripts/ralph_loop_local.sh`
 
 ## Required Validation
+- `go build ./cmd/indexer` — verify Go compilation
+- `cd sidecar && npm run build` — verify sidecar compilation
 - `make test`
 - `make test-sidecar`
 - `make lint`

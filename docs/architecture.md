@@ -2,7 +2,7 @@
 
 > 멀티체인 커스터디 인덱서 — Go 파이프라인 + Node.js Sidecar (gRPC 디코더)
 
-## 0. Current Snapshot (2026-02-20)
+## 0. Current Snapshot (2026-02-22)
 
 이 문서는 장기 설계 설명과 함께 현재 구현 스냅샷을 함께 제공합니다.
 현재 코드 기준 핵심 상태는 아래와 같습니다.
@@ -24,12 +24,15 @@
    - chain-neutral 단일 인터페이스 전환 정책: `docs/sidecar-deployment-decision.md`
 5. **운영 인프라**
    - Admin REST API (`internal/admin/`): 감시 주소 관리, 리플레이, 상태 조회
-   - Alert 시스템 (`internal/alert/`): Slack/Webhook, per-key cooldown
+   - Admin Dashboard: `/dashboard` 임베디드 (auth middleware 포함)
+   - Alert 시스템 (`internal/alert/`): Slack/Webhook, per-key cooldown, 상태 전환 인식 (type 변경 시 cooldown 바이패스)
+   - Circuit Breaker (`internal/circuitbreaker/`): Fetcher(RPC) + Normalizer(sidecar) 장애 격리
    - Reconciliation (`internal/reconciliation/`): 온체인 vs DB 잔액 검증
-   - Reorg 감지 (`internal/pipeline/reorgdetector/`): 블록 해시 기반 롤백
+   - Reorg 감지 (`internal/pipeline/reorgdetector/`): 블록 해시 기반 롤백, 연속 RPC 에러 5회 후 알림
    - OpenTelemetry 분산 트레이싱 (`internal/tracing/`)
    - Prometheus 메트릭 (`internal/metrics/`)
-   - 63개 테스트 파일, race detector 전체 통과
+   - Preflight 연결 검증: 시작 시 DB + RPC ping
+   - 65개 테스트 파일, race detector 전체 통과
 6. **설정 시스템**
    - YAML 기반 계층형 설정: YAML → 환경변수 → 빌트인 기본값
    - `configs/config.example.yaml` 참조
@@ -133,7 +136,11 @@ graph TB
     end
 
     subgraph "internal/config"
-        config["config.go<br/>환경변수 로딩"]
+        config["config.go<br/>YAML + 환경변수 계층형 설정"]
+    end
+
+    subgraph "internal/circuitbreaker"
+        cb["breaker.go<br/>Circuit Breaker"]
     end
 
     subgraph "internal/pipeline"
@@ -174,7 +181,9 @@ graph TB
     pipeline --> fetch
     pipeline --> norm
     pipeline --> ingest
+    fetch --> cb
     fetch --> adapter_if
+    norm --> cb
     sol_adapter --> sol_rpc
     sol_adapter -.-> adapter_if
     ingest --> repos
@@ -276,16 +285,16 @@ sequenceDiagram
 3개의 typed Go 채널이 파이프라인 스테이지를 연결한다 (`pipeline.go:66-71`):
 
 ```go
-jobCh        := make(chan event.FetchJob, bufSize)        // Coordinator → Fetcher
-rawBatchCh   := make(chan event.RawBatch, bufSize)         // Fetcher → Normalizer
-normalizedCh := make(chan event.NormalizedBatch, bufSize)   // Normalizer → Ingester
+jobCh        := make(chan event.FetchJob, 20)               // Coordinator → Fetcher
+rawBatchCh   := make(chan event.RawBatch, 10)               // Fetcher → Normalizer
+normalizedCh := make(chan event.NormalizedBatch, 5)          // Normalizer → Ingester
 ```
 
 | 채널 | 타입 | 방향 | 기본 버퍼 |
 |------|------|------|----------|
-| `jobCh` | `event.FetchJob` | Coordinator → Fetcher | 10 |
+| `jobCh` | `event.FetchJob` | Coordinator → Fetcher | 20 |
 | `rawBatchCh` | `event.RawBatch` | Fetcher → Normalizer | 10 |
-| `normalizedCh` | `event.NormalizedBatch` | Normalizer → Ingester | 10 |
+| `normalizedCh` | `event.NormalizedBatch` | Normalizer → Ingester | 5 |
 
 **Backpressure 전파:**
 
@@ -300,6 +309,8 @@ Ingester 처리 느림
 ```
 
 모든 채널 send는 `select` 문으로 `ctx.Done()`과 함께 사용되어 context 취소 시 블로킹 해제.
+
+**Pipeline auto-restart:** 파이프라인 실패 시 지수 백오프로 자동 재시작 (1초 → 최대 5분 cap).
 
 ### 3.3 Coordinator
 
@@ -318,7 +329,9 @@ Ingester 처리 느림
 **특성:**
 - 단일 고루틴 (직렬 처리)
 - 에러 발생 시 해당 주소 스킵 후 계속 (`coordinator.go:82-84`)
-- 채널 가득 시 `ctx.Done()` 확인하며 블로킹
+- 채널 가득 시 non-blocking enqueue (dropped-jobs 메트릭 기록)
+- Job dedup: `lastEnqueued` 범위 추적으로 중복 FetchJob 방지
+- Configurable interleaver: `InterleaveMaxSkewMs` (기본 250, 단일 체인 시 자동 비활성화)
 
 ### 3.4 Fetcher
 
@@ -341,15 +354,17 @@ for i := 0; i < f.workerCount; i++ {
 wg.Wait()
 ```
 
-- 기본 2 workers (`FETCH_WORKERS` 환경변수)
+- 기본 1 worker (`FETCH_WORKERS` 환경변수, strict block ordering 보장)
 - 공유 `jobCh`에서 fair scheduling (Go 채널 특성)
+- Worker panic recovery: `defer-recover`로 개별 worker 패닉이 전체 파이프라인을 중단하지 않음
 
 **처리 흐름 (`processJob`, fetcher.go:75-132):**
 1. `FetchNewSignatures()`: 커서 이후 서명 수집 (oldest-first)
-2. 서명 없으면 조기 반환
+2. 서명 없으면 empty sentinel `RawBatch` 발송 (empty block range 표시)
 3. `FetchTransactions()`: 원본 트랜잭션 JSON fetch (최대 10 병렬)
-4. `RawBatch` 구성 → `rawBatchCh`로 전송
-5. 새 커서 = 배치의 마지막(가장 최신) 서명
+4. Block-scan 모드: `BlockScanMaxBatchTxs` (기본 500)로 배치 청킹
+5. `RawBatch` 구성 → `rawBatchCh`로 전송
+6. 새 커서 = 배치의 마지막(가장 최신) 서명
 
 ### 3.5 Normalizer
 
@@ -369,7 +384,8 @@ client := sidecarv1.NewChainDecoderClient(conn)  // 모든 worker가 공유
 ```
 
 - 단일 gRPC 연결을 모든 worker가 공유 (gRPC는 멀티플렉싱 지원)
-- 기본 2 workers (`NORMALIZER_WORKERS` 환경변수)
+- 기본 1 worker (`NORMALIZER_WORKERS` 환경변수, strict block ordering 보장)
+- Worker panic recovery: `defer-recover`로 개별 worker 패닉이 전체 파이프라인을 중단하지 않음
 - 배치별 timeout: `SIDECAR_TIMEOUT_SEC` (기본 30초, `normalizer.go:107`)
 
 **Response 변환:**
@@ -411,6 +427,7 @@ BEGIN sql.Tx
 - 에러 시 전체 배치 롤백 (부분 커밋 없음)
 - 로그 후 다음 배치 처리 계속 (파이프라인 중단 없음)
 - Signed delta 모델: sidecar에서 부호가 결정되어 Ingester는 direction 판단 불필요
+- Panic recovery: Run loop에 `defer-recover` 적용
 
 ---
 
@@ -646,8 +663,8 @@ graph TB
 - main: 1
 - errgroup (outer): health(1) + pipeline(1) + signal(1) = 3
 - errgroup (inner): coordinator(1) + fetcher(1) + normalizer(1) + ingester(1) = 4
-- WaitGroup: fetcher workers(2) + normalizer workers(2) = 4
-- **합계: ~12 고루틴**
+- WaitGroup: fetcher workers(1) + normalizer workers(1) = 2
+- **합계: ~10 고루틴**
 
 ### 5.2 Context 전파 및 알려진 갭
 
@@ -665,7 +682,7 @@ main() context.WithCancel
        └── signal handler → cancel()
 ```
 
-**알려진 갭: Fetcher/Normalizer의 `sync.WaitGroup` 문제:**
+**알려진 갭 (완화됨): Fetcher/Normalizer의 `sync.WaitGroup` 문제:**
 
 ```go
 // fetcher.go:37-52
@@ -675,6 +692,7 @@ func (f *Fetcher) Run(ctx context.Context) error {
         wg.Add(1)
         go func(workerID int) {
             defer wg.Done()
+            defer func() { /* panic recovery */ }()
             f.worker(ctx, workerID)
         }(i)
     }
@@ -686,9 +704,13 @@ func (f *Fetcher) Run(ctx context.Context) error {
 **문제**: `wg.Wait()`는 context를 감시하지 않는다. worker 내부에서 `ctx.Done()`을 감지하여
 반환하지만, 진행 중인 RPC 호출이 끝나야 worker가 종료된다.
 
-**영향**: Graceful shutdown 시 진행 중인 RPC 호출 완료까지 지연 가능.
+**완화**: Worker panic recovery (`defer-recover`)가 적용되어 개별 worker 패닉이 전체
+파이프라인을 중단하지 않는다. 또한 shutdown timeout (30초) 초과 시 `os.Exit(1)`로
+강제 종료하여 무한 대기를 방지한다.
 
-**해결 방향**: `errgroup` 으로 worker 관리 교체, 또는 worker 내부에서 context가 취소된
+**영향**: Graceful shutdown 시 진행 중인 RPC 호출 완료까지 지연 가능 (최대 30초).
+
+**남은 개선**: `errgroup` 으로 worker 관리 교체, 또는 worker 내부에서 context가 취소된
 RPC 호출을 즉시 중단.
 
 ### 5.3 Worker Pool 패턴
@@ -716,16 +738,16 @@ for {
 
 ```
 Ingester (느림)
-  ↑ normalizedCh 버퍼(10) 가득 참
+  ↑ normalizedCh 버퍼(5) 가득 참
 Normalizer worker (블로킹)
   ↑ rawBatchCh 버퍼(10) 가득 참
 Fetcher worker (블로킹)
-  ↑ jobCh 버퍼(10) 가득 참
+  ↑ jobCh 버퍼(20) 가득 참
 Coordinator tick (블로킹)
   ↑ 다음 tick까지 대기
 ```
 
-최대 버퍼: 10 (FetchJob) + 10 (RawBatch) + 10 (NormalizedBatch) = **30 배치**
+최대 버퍼: 20 (FetchJob) + 10 (RawBatch) + 5 (NormalizedBatch) = **35 배치**
 
 ---
 
@@ -848,7 +870,20 @@ sem := make(chan struct{}, maxConcurrentTxs)  // maxConcurrentTxs = 10
 
 **Commitment Level**: `"confirmed"` (finalized보다 빠르지만, 극히 드물게 되돌릴 수 있음)
 
-### 7.3 EVM 체인 추가 가이드
+### 7.3 BTC 구현 최적화
+
+- **Batch RPC**: `GetBlocks` 배치 메서드로 다수 블록 동시 요청
+- **prefetchPrevouts**: 배치 RPC로 이전 출력 일괄 조회
+- **prefetchBlocks**: 배치 RPC로 블록 일괄 프리페치
+- **Head block 캐시**: 5초 TTL 캐시
+
+### 7.4 EVM 구현 최적화
+
+- **Concurrent topic logs**: `fetchAddressTopicLogs`에서 3개 topic position 동시 errgroup 요청
+- **Partial receipt retry**: 실패 시 전체 재요청 대신 누락 인덱스만 부분 재시도
+- **finality_rank()**: PG function으로 finality 순서 결정 (hardcoded CASE WHEN 대체, migration 020)
+
+### 7.5 EVM 체인 추가 가이드
 
 새 체인을 추가하려면 다음 6단계를 따른다:
 
@@ -939,14 +974,14 @@ case model.ChainEthereum:
 ### 8.1 RPC 장애
 
 - **증상**: Fetcher에서 HTTP 에러 또는 timeout
-- **처리**: 에러 로그 → 해당 FetchJob 드랍 → 커서 미전진
-- **복구**: 다음 Coordinator tick에서 같은 주소/커서로 재시도
-- **알려진 갭**: 재시도 로직 없음 (지수 백오프 미구현)
+- **처리**: Circuit breaker (`internal/circuitbreaker/`) 적용 → 장애 격리, 재시도 분류 (`internal/pipeline/retry/`) → transient 에러는 지수 백오프 재시도
+- **복구**: 재시도 소진 시 다음 Coordinator tick에서 같은 주소/커서로 재시도
+- **Reorg 감지**: 연속 RPC 에러 5회 시 알림 발생
 
 ### 8.2 Sidecar 장애
 
 - **증상**: gRPC 연결 실패 또는 timeout (30초)
-- **처리**: 에러 로그 → 해당 RawBatch 드랍
+- **처리**: Circuit breaker (`internal/circuitbreaker/`) 적용 → Normalizer에서 sidecar 장애 격리, 에러 로그 → 해당 RawBatch 드랍
 - **복구**: 다음 Coordinator tick에서 같은 데이터 재처리
 - **알려진 갭**: DLQ(Dead Letter Queue) 없음, 드랍된 배치 추적 불가
 
@@ -1004,11 +1039,15 @@ mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 
 ### 9.3 설정
 
-2개 소스:
-1. **환경변수**: `config.Load()` (`config.go`)
-2. **DB 테이블**: `indexer_configs`, `watched_addresses`
+계층형 3개 소스 (우선순위 순):
+1. **YAML 파일**: `config.yaml` (기본 경로, `CONFIG_FILE` 환경변수로 오버라이드)
+2. **환경변수**: YAML 값 오버라이드
+3. **빌트인 기본값**: 나머지 zero-value 필드에 적용
 
-환경변수 우선 → DB 동기화 (`main.go:138-157`, `syncWatchedAddresses`)
+YAML 파일이 없으면 env-only 모드로 동작 (하위 호환). `configs/config.example.yaml` 참조.
+
+**런타임 설정**: DB 테이블 (`indexer_configs`, `watched_addresses`) + ConfigWatcher 폴링 (30초)
+**설정 검증**: MaxOpenConns <= 200, BatchSize <= 10000, worker count 1-100 clamp
 
 ### 9.4 배포
 
@@ -1057,7 +1096,8 @@ sequenceDiagram
         HS->>HS: server.Shutdown(5s timeout)
     end
 
-    Note over SH: errgroup.Wait() 완료
+    Note over SH: errgroup.Wait() 완료 (30s timeout)
+    Note over SH: timeout 초과 시 os.Exit(1)
     Note over SH: db.Close()
     Note over SH: exit(0)
 ```
@@ -1073,22 +1113,22 @@ sequenceDiagram
 | 1 | ~~재시도 로직 없음~~ | — | 안정성 | **해결됨** (`internal/pipeline/retry/`) |
 | 2 | DLQ 없음 (실패 배치 추적 불가) | 높음 | 운영성 | 미해결 |
 | 3 | ~~메트릭/모니터링 없음~~ | — | 운영성 | **해결됨** (`internal/metrics/`, Prometheus) |
-| 4 | Fetcher/Normalizer WaitGroup context 갭 | 중간 | 안정성 | 미해결 |
+| 4 | Fetcher/Normalizer WaitGroup context 갭 | 중간 | 안정성 | **완화됨** (panic recovery + 30s shutdown timeout) |
 | 5 | gRPC insecure 연결 | 중간 | 보안 | 미해결 |
 | 6 | 단일 인스턴스 (수평 스케일링 불가) | 중간 | 확장성 | 미해결 |
 | 7 | ~~Rate limiting 없음~~ | — | 안정성 | **해결됨** (`internal/chain/ratelimit/`) |
-| 8 | ~~테스트 커버리지 0%~~ | — | 품질 | **해결됨** (63개 테스트 파일) |
+| 8 | ~~테스트 커버리지 0%~~ | — | 품질 | **해결됨** (65개 테스트 파일) |
 | 9 | ~~EVM ChainAdapter 없음~~ | — | 기능 | **해결됨** (7개 체인 지원) |
 | 10 | ~~분산 트레이싱 없음~~ | — | 운영성 | **해결됨** (OpenTelemetry) |
+| 11 | ~~Circuit Breaker 없음~~ | — | 안정성 | **해결됨** (`internal/circuitbreaker/breaker.go`, Fetcher+Normalizer 통합) |
 
 ### 10.2 남은 개선 사항
 
 1. **DLQ (Dead Letter Queue)**: 실패 배치 추적 및 재처리 자동화
-2. **WaitGroup → errgroup**: Fetcher/Normalizer context 전파 갭 해결
+2. **WaitGroup → errgroup**: Fetcher/Normalizer context 전파 갭 완전 해결 (현재 panic recovery + 30s shutdown timeout으로 완화)
 3. **gRPC TLS**: 프로덕션 환경 mTLS 적용
 4. **수평 스케일링**: 주소 범위별 파티셔닝
 5. **CDC (Change Data Capture)**: DB 변경 스트림 → 외부 소비자
-6. **Circuit Breaker**: RPC/sidecar 장애 격리
 
 ---
 
@@ -1106,11 +1146,11 @@ sequenceDiagram
 | `SIDECAR_TIMEOUT_SEC` | 30 | gRPC 호출 timeout (초) |
 | `SOLANA_RPC_URL` | `https://api.devnet.solana.com` | Solana RPC 엔드포인트 |
 | `SOLANA_NETWORK` | `devnet` | 네트워크 식별자 |
-| `FETCH_WORKERS` | 2 | Fetcher 동시 worker 수 |
-| `NORMALIZER_WORKERS` | 2 | Normalizer 동시 worker 수 |
+| `FETCH_WORKERS` | 1 | Fetcher 동시 worker 수 (strict block ordering) |
+| `NORMALIZER_WORKERS` | 1 | Normalizer 동시 worker 수 (strict block ordering) |
 | `BATCH_SIZE` | 100 | 배치당 서명 수 |
 | `INDEXING_INTERVAL_MS` | 5000 | Coordinator tick 간격 (ms) |
-| `CHANNEL_BUFFER_SIZE` | 10 | 채널 버퍼 크기 |
+| `CHANNEL_BUFFER_SIZE` | — | Per-stage sizing: jobCh=20, rawBatchCh=10, normalizedCh=5 |
 | `HEALTH_PORT` | 8080 | Health check 포트 |
 | `LOG_LEVEL` | `info` | 로그 레벨 |
 | `WATCHED_ADDRESSES` | — | 모니터링 주소 (쉼표 구분) |
@@ -1146,7 +1186,8 @@ multichain-indexer/
 │   ├── addressindex/                   # 주소 인덱스 관리
 │   ├── admin/                          # Admin REST API (server, audit, ratelimit)
 │   ├── alert/                          # Slack/Webhook 알림 + per-key cooldown
-│   ├── cache/                          # LRU 캐시 유틸리티
+│   ├── cache/                          # LRU 캐시 유틸리티 (ShardedLRU)
+│   ├── circuitbreaker/                # Circuit breaker (Fetcher RPC + Normalizer sidecar)
 │   ├── config/
 │   │   └── config.go                   # YAML + 환경변수 계층형 설정
 │   ├── domain/
@@ -1185,7 +1226,7 @@ multichain-indexer/
 │   └── store/
 │       └── postgres/
 │           ├── db.go                   # 연결 풀
-│           ├── migrations/             # 001~019 마이그레이션
+│           ├── migrations/             # 001~022 마이그레이션
 │           └── *_repo.go              # 11개 리포지토리
 ├── proto/sidecar/v1/                   # Protobuf 정의
 ├── pkg/generated/sidecar/v1/           # Go protobuf 생성 코드

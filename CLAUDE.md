@@ -7,7 +7,7 @@ Multi-chain custody indexer: Go pipeline + Node.js sidecar (gRPC decoder).
 - **Go pipeline**: Coordinator → Fetcher → Normalizer → Ingester
 - **Node.js sidecar**: gRPC decoder with plugin-based balance event detection
 - **Storage**: PostgreSQL (balance_events + JSONB)
-- **MVP target**: Solana devnet (SOL + SPL Token)
+- **Chains**: Solana, Base, Ethereum, BTC, Polygon, Arbitrum, BSC (7 chains)
 
 ## Quick Start
 
@@ -35,7 +35,18 @@ make run
 - `internal/pipeline/` — pipeline stages (coordinator, fetcher, normalizer, ingester)
 - `internal/pipeline/identity/` — shared identity/canonicalization functions (dedup across pipeline stages)
 - `internal/pipeline/health.go` — per-chain health monitoring (HEALTHY/UNHEALTHY/INACTIVE)
-- `internal/alert/` — alert system (Slack, Webhook) with per-key cooldown
+- `internal/pipeline/registry.go` — chain:network → Pipeline instance mapping
+- `internal/pipeline/config_watcher.go` — hot config reload (polls runtime_configs every 30s)
+- `internal/pipeline/finalizer/` — optional Finalizer stage for reorg-aware chains
+- `internal/pipeline/reorgdetector/` — reorg detection (consecutive RPC error alerts)
+- `internal/pipeline/replay/` — replay service
+- `internal/pipeline/retry/` — retry classification
+- `internal/circuitbreaker/` — circuit breaker (Fetcher RPC + Normalizer sidecar)
+- `internal/cache/` — ShardedLRU cache
+- `internal/tracing/` — OpenTelemetry tracing
+- `internal/metrics/` — Prometheus metrics
+- `internal/admin/` — admin API + embedded dashboard (auth, rate limiting, audit logging)
+- `internal/alert/` — alert system (Slack, Webhook) with state-transition-aware cooldown
 - `internal/reconciliation/` — balance reconciliation (on-chain vs DB)
 - `internal/store/` — repository implementations (PostgreSQL)
 - `proto/` — protobuf definitions
@@ -62,6 +73,8 @@ make lint           # Run linter
 - Core tables: `transactions`, `balance_events`, `balances`, `tokens`, `watched_addresses`, `indexer_configs`, `indexed_blocks`, `pipeline_watermarks`
 - Operational tables: `address_books`, `balance_reconciliation_snapshots`, `runtime_configs`
 - `balance_events` uses signed delta model (+deposit, -withdrawal) with UNIQUE INDEX on event_id for dedup
+- `finality_rank()` PG function for finality ordering (replaces hardcoded CASE WHEN)
+- 22 migrations (001–022)
 
 ## Configuration
 
@@ -79,11 +92,26 @@ See `configs/config.example.yaml` for the full reference with all fields, defaul
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CONFIG_FILE` | Path to YAML config file | `config.yaml` |
-| `SOLANA_RPC_URL` | Solana RPC endpoint | `https://api.devnet.solana.com` |
 | `DB_URL` | PostgreSQL connection string | `postgres://indexer:indexer@localhost:5433/custody_indexer?sslmode=disable` |
 | `SIDECAR_ADDR` | Sidecar gRPC address | `localhost:50051` |
-| `WATCHED_ADDRESSES` | Comma-separated Solana addresses | — |
+| `WATCHED_ADDRESSES` | Comma-separated watched addresses | — |
 | `LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
+| `SOLANA_RPC_URL` | Solana RPC endpoint | `https://api.devnet.solana.com` |
+| `BASE_RPC_URL` | Base RPC endpoint | — |
+| `ETH_RPC_URL` | Ethereum RPC endpoint | — |
+| `BTC_RPC_URL` | Bitcoin RPC endpoint | — |
+| `POLYGON_RPC_URL` | Polygon RPC endpoint | — |
+| `ARBITRUM_RPC_URL` | Arbitrum RPC endpoint | — |
+| `BSC_RPC_URL` | BSC RPC endpoint | — |
+| `FETCH_WORKERS` | Fetcher worker count | — |
+| `NORMALIZER_WORKERS` | Normalizer worker count | — |
+| `BATCH_SIZE` | Batch size (max 10000) | — |
+| `BLOCK_SCAN_MAX_BATCH_TXS` | Block-scan batch chunking limit | `500` |
+| `INTERLEAVE_MAX_SKEW_MS` | Commit interleaver max skew | — |
+| `ADMIN_API_KEY` | Admin API authentication key | — |
+| `ADMIN_LISTEN_ADDR` | Admin API listen address | — |
+| `RECONCILIATION_ENABLED` | Enable balance reconciliation | — |
+| `RECONCILIATION_INTERVAL_MS` | Reconciliation interval | — |
 | `SLACK_WEBHOOK_URL` | Slack webhook for alerts | — |
 | `ALERT_WEBHOOK_URL` | Generic webhook for alerts | — |
 | `ALERT_COOLDOWN_MS` | Alert dedup cooldown | `1800000` (30 min) |

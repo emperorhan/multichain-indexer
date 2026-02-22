@@ -28,8 +28,8 @@ graph LR
 
     subgraph go_process ["Go Pipeline Process"]
         COORD["Coordinator\n1 goroutine · ticker"]
-        FETCH["Fetcher Pool\nN workers (default 2)"]
-        NORM["Normalizer\nN workers (default 2)"]
+        FETCH["Fetcher Pool\nN workers (default 1)"]
+        NORM["Normalizer\nN workers (default 1)"]
         INGEST["Ingester\n1 goroutine · single-writer"]
 
         COORD -- "jobCh\n(buffered)" --> FETCH
@@ -134,13 +134,13 @@ case <-ctx.Done():
 
 ### Channel Topology
 
-| Channel | Type | Direction | Buffer |
-|---------|------|-----------|--------|
-| `jobCh` | `event.FetchJob` | Coordinator → Fetcher | configurable |
-| `rawBatchCh` | `event.RawBatch` | Fetcher → Normalizer | configurable |
-| `normalizedCh` | `event.NormalizedBatch` | Normalizer → Ingester | configurable |
+| Channel | Type | Direction | Default Buffer |
+|---------|------|-----------|----------------|
+| `jobCh` | `event.FetchJob` | Coordinator → Fetcher | 20 |
+| `rawBatchCh` | `event.RawBatch` | Fetcher → Normalizer | 10 |
+| `normalizedCh` | `event.NormalizedBatch` | Normalizer → Ingester | 5 |
 
-**Max in-flight**: 3 x `CHANNEL_BUFFER_SIZE` batches (default 30)
+**Max in-flight**: 20 + 10 + 5 = 35 batches (per-stage sizing for optimal backpressure)
 
 ---
 
@@ -188,7 +188,7 @@ graph TB
 | Normalizer | N (`NORMALIZER_WORKERS`) | Worker pool, shared gRPC connection |
 | Ingester | 1 (fixed) | Single-writer for financial consistency |
 
-**Default total**: ~12 goroutines (1 + 3 + 4 + 4)
+**Default total**: ~4 goroutines (1 + 1 + 1 + 1) with default workers=1 for strict block ordering
 
 ---
 
@@ -210,6 +210,8 @@ RPC에서 서명과 원본 트랜잭션 데이터를 병렬로 가져옵니다.
 - N workers가 `jobCh`에서 공정 분배 (Go 채널 특성 활용)
 - `getSignaturesForAddress()` → 커서 이후 서명 수집 (oldest-first)
 - `getTransaction()` x N 병렬 fetch (semaphore 10 제한)
+- Circuit breaker wraps RPC calls (configurable thresholds)
+- Empty block ranges emit sentinel `RawBatch` to advance watermark
 - `RawBatch` 구성 → `rawBatchCh`로 전송
 
 ### 3. Normalizer
@@ -217,6 +219,7 @@ RPC에서 서명과 원본 트랜잭션 데이터를 병렬로 가져옵니다.
 원본 트랜잭션을 gRPC sidecar로 디코딩합니다.
 
 - N workers, 단일 gRPC 연결 공유 (gRPC multiplexing)
+- Circuit breaker wraps sidecar gRPC calls
 - `DecodeSolanaTransactionBatch` 호출 (배치별 timeout)
 - Response → `NormalizedTransaction` + `NormalizedBalanceEvent` 변환
 - `NormalizedBatch` 구성 → `normalizedCh`로 전송
@@ -307,6 +310,50 @@ Operational: `address_books`, `balance_reconciliation_snapshots`, `runtime_confi
 
 ---
 
+## Operational Resilience
+
+### Circuit Breaker
+
+`internal/circuitbreaker/breaker.go` -- integrated in Fetcher (RPC calls) and Normalizer (sidecar gRPC). Configuration externalized via `CircuitBreakerConfig` in `FetcherStageConfig`/`NormalizerStageConfig` (YAML + env vars).
+
+### Startup and Shutdown
+
+- **Preflight connectivity validation**: DB + RPC ping on startup before pipeline begins
+- **Pipeline auto-restart**: Exponential backoff (1s -> 5min cap); `context.Canceled` only causes return
+- **Worker panic recovery**: `defer`-`recover` in fetcher/normalizer goroutines + ingester Run loop
+- **Shutdown timeout**: 30s graceful shutdown -> `os.Exit(1)` for stuck goroutines
+
+### Config Validation
+
+- `MaxOpenConns` upper bound 200, `BatchSize` upper bound 10000
+- Worker count bounds validation (1-100 clamp)
+- `ConnMaxIdleTime` default 2min
+
+### Pipeline Operational Features
+
+- **Empty sentinel batch**: Fetcher emits empty `RawBatch` for empty block ranges; normalizer passes through; ingester advances watermark
+- **Block-scan batch chunking**: `BlockScanMaxBatchTxs` (default 500) limits transactions per batch
+- **Configurable interleaver**: `InterleaveMaxSkewMs` (default 250, auto-disabled for single-chain)
+- **Coordinator job dedup**: `lastEnqueued` range tracking prevents duplicate FetchJobs
+- **Alerter state-transition awareness**: type change (e.g. UNHEALTHY -> RECOVERY) bypasses cooldown
+- **Reorg detector**: consecutive RPC error alerts after 5 failures
+
+### Admin Dashboard
+
+Embedded at `/dashboard` via `embed.FS` with auth middleware. 3 JSON APIs under `/admin/v1/dashboard/`.
+
+### Chain-Specific Optimizations
+
+- **BTC batch RPC**: `GetBlocks` batch method; `prefetchPrevouts` + `prefetchBlocks` for parallel I/O; head block 5s TTL cache
+- **EVM optimizations**: concurrent topic logs via `errgroup` for 3 topic positions; partial receipt retry (only missing indices)
+- **finality_rank()**: PG function (migration 020) replacing hardcoded `CASE WHEN` in query locations
+
+### E2E Latency Metrics
+
+`RawBatch.CreatedAt` -> `NormalizedBatch.FetchedAt`/`NormalizedAt` -> ingester observes end-to-end pipeline latency.
+
+---
+
 ## Node.js Sidecar (gRPC Decoder)
 
 체인별 디코딩 라이브러리를 활용한 플러그인 기반 balance event 디코더.
@@ -388,11 +435,13 @@ make lint           # Run golangci-lint
 | `RUNTIME_LIKE_GROUP` | — | Limit targets to one group in `like-group` mode (`solana-like`, `evm-like`, `btc-like`) |
 | `RUNTIME_CHAIN_TARGET` | — | Single target for independent deployment (e.g. `base-sepolia`) |
 | `RUNTIME_CHAIN_TARGETS` | — | CSV override target list (e.g. `solana-devnet,base-sepolia`) |
-| `FETCH_WORKERS` | `2` | Parallel RPC fetch workers |
-| `NORMALIZER_WORKERS` | `2` | Parallel gRPC decode workers |
+| `FETCH_WORKERS` | `1` | Parallel RPC fetch workers (default 1 for strict block ordering) |
+| `NORMALIZER_WORKERS` | `1` | Parallel gRPC decode workers (default 1 for strict block ordering) |
 | `BATCH_SIZE` | `100` | Signatures per fetch batch |
 | `INDEXING_INTERVAL_MS` | `5000` | Coordinator tick interval (ms) |
-| `CHANNEL_BUFFER_SIZE` | `10` | Inter-stage channel buffer |
+| `JOB_CH_BUFFER` | `20` | jobCh buffer (Coordinator -> Fetcher) |
+| `RAW_BATCH_CH_BUFFER` | `10` | rawBatchCh buffer (Fetcher -> Normalizer) |
+| `NORMALIZED_CH_BUFFER` | `5` | normalizedCh buffer (Normalizer -> Ingester) |
 | `COORDINATOR_AUTOTUNE_ENABLED` | `false` | Enable chain-scoped coordinator batch auto-tune |
 | `COORDINATOR_AUTOTUNE_MIN_BATCH_SIZE` | `10` | Lower batch bound for auto-tune |
 | `COORDINATOR_AUTOTUNE_MAX_BATCH_SIZE` | `BATCH_SIZE` | Upper batch bound for auto-tune |
@@ -424,7 +473,8 @@ multichain-indexer/
 │   ├── addressindex/         # Address index management
 │   ├── admin/                # Admin REST API (server, audit, rate limiting)
 │   ├── alert/                # Alert system (Slack, Webhook) with per-key cooldown
-│   ├── cache/                # LRU caching utilities
+│   ├── cache/                # LRU caching utilities (ShardedLRU for ingester deniedCache)
+│   ├── circuitbreaker/       # Circuit breaker (Fetcher RPC + Normalizer sidecar)
 │   ├── chain/
 │   │   ├── adapter.go        # ChainAdapter + BlockScanAdapter interfaces
 │   │   ├── solana/           # Solana adapter (cursor-based)
@@ -456,7 +506,7 @@ multichain-indexer/
 │   │   └── identity/         # Shared canonicalization functions
 │   ├── reconciliation/       # Balance reconciliation (on-chain vs DB)
 │   ├── store/
-│   │   └── postgres/         # 11 repository implementations + 19 migrations
+│   │   └── postgres/         # 11 repository implementations + 22 migrations (001-022)
 │   └── tracing/              # OpenTelemetry tracing integration
 ├── proto/sidecar/v1/         # Protobuf definitions
 ├── pkg/generated/            # Generated Go protobuf code

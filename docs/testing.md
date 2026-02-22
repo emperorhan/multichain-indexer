@@ -8,11 +8,11 @@
 
 ### 1.1 현재 상태 (2026-02-20)
 
-- Go 테스트 파일: **63개** `*_test.go`
+- Go 테스트 파일: **65개** `*_test.go`
 - 테스트 범위: unit, benchmark, integration, E2E (runtime), error scenario
 - 전체 테스트 `-race` 통과
 - 인터페이스 기반 mock 주입 완료 (ingester, coordinator, fetcher 등)
-- sidecar Jest 테스트: 별도 구성
+- sidecar vitest 테스트: 별도 구성
 
 ### 1.2 테스트 목표
 
@@ -82,7 +82,7 @@
 모든 파이프라인 스테이지가 **인터페이스**에 의존하도록 리팩토링 완료:
 
 - Ingester: `TransactionRepository`, `BalanceEventRepository`, `BalanceRepository`, `TokenRepository`, `WatermarkRepository`, `WatchedAddressRepository` 등
-- Coordinator: `WatchedAddressRepository`, `WatermarkReader`
+- Coordinator: `WatchedAddressRepository`, `WatermarkReader` (per-address cursorRepo 제거됨)
 - Pipeline: `Repos` 구조체가 인터페이스 필드로 구성
 
 Go implicit interface 패턴으로 `postgres.*Repo` 구현체가 자동으로 인터페이스를 만족한다.
@@ -124,13 +124,13 @@ type mockBalanceEventRepo struct {
 | # | 케이스 | Setup | Assert |
 |---|--------|-------|--------|
 | 1 | 빈 주소 목록 | GetActive → [] | jobCh에 아무것도 전송 안 됨 |
-| 2 | 정상 주소 1개 | GetActive → [addr1], Get cursor → nil | FetchJob{Address:addr1, CursorValue:nil} |
-| 3 | 커서 있는 주소 | Get cursor → {CursorValue: "sig123"} | FetchJob{CursorValue: &"sig123"} |
-| 4 | 커서 조회 에러 | Get cursor → error | 해당 주소 스킵, 로그 출력 |
-| 5 | 다중 주소 | GetActive → [addr1, addr2] | 2개 FetchJob 전송 |
-| 6 | context 취소 | cancel() 호출 | Run() 반환, ctx.Err() |
-| 7 | WalletID/OrgID 전파 | WatchedAddress에 wallet/org 설정 | FetchJob에 동일 값 |
-| 8 | 주기적 실행 | interval=10ms, 50ms 대기 | tick 최소 4회 이상 |
+| 2 | 정상 주소 1개 | GetActive → [addr1] | FetchJob{Address:addr1} |
+| 3 | 다중 주소 | GetActive → [addr1, addr2] | 2개 FetchJob 전송 |
+| 4 | context 취소 | cancel() 호출 | Run() 반환, ctx.Err() |
+| 5 | WalletID/OrgID 전파 | WatchedAddress에 wallet/org 설정 | FetchJob에 동일 값 |
+| 6 | 주기적 실행 | interval=10ms, 50ms 대기 | tick 최소 4회 이상 |
+| 7 | block-scan 모드 (EVM/BTC) | BlockScanAdapter 등록 | 단일 FetchJob with WatchedAddresses |
+| 8 | non-blocking enqueue | jobCh 가득 찬 상태 | job 드롭 + metric 기록 |
 
 ```go
 func TestCoordinator_EmptyAddresses(t *testing.T) {
@@ -139,10 +139,9 @@ func TestCoordinator_EmptyAddresses(t *testing.T) {
             return nil, nil
         },
     }
-    mockCursor := &mockCursorRepo{}
 
     jobCh := make(chan event.FetchJob, 10)
-    coord := coordinator.New(model.ChainSolana, model.NetworkDevnet, mockWatched, mockCursor, 100, time.Second, jobCh, slog.Default())
+    coord := coordinator.New(model.ChainSolana, model.NetworkDevnet, mockWatched, 100, time.Second, jobCh, slog.Default())
 
     ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
     defer cancel()
@@ -202,37 +201,23 @@ func TestCoordinator_EmptyAddresses(t *testing.T) {
 | 6 | defaultTokenSymbol (Fungible) | TokenType=FUNGIBLE, TokenSymbol="" | symbol="UNKNOWN" |
 | 7 | defaultTokenName (Native) | TokenType=NATIVE, TokenName="" | name="Solana" |
 
-#### 4.5.3 Direction 추론
+#### 4.5.3 Signed Delta (balance_events)
+
+Ingester는 `NormalizedBalanceEvent`의 signed delta를 직접 사용한다.
+Direction 추론 없이, sidecar/normalizer가 생성한 양수(입금)/음수(출금) delta를 그대로 저장한다.
 
 | # | 케이스 | Input | Assert |
 |---|--------|-------|--------|
-| 8 | DEPOSIT | watched_address == to_address | direction = &DEPOSIT |
-| 9 | WITHDRAWAL | watched_address == from_address | direction = &WITHDRAWAL |
-| 10 | UNKNOWN | watched ≠ from ≠ to (edge case) | direction = nil |
-
-```go
-func TestIngester_DirectionDeposit(t *testing.T) {
-    batch := event.NormalizedBatch{
-        Address: "watched_addr_1",
-        Transactions: []event.NormalizedTransaction{{
-            TxHash: "sig1", Status: model.TxStatusSuccess,
-            Transfers: []event.NormalizedTransfer{{
-                FromAddress: "sender_addr",
-                ToAddress:   "watched_addr_1",   // == batch.Address → DEPOSIT
-                Amount:      "1000000000",        // 1 SOL
-            }},
-        }},
-    }
-    // ... assert direction == &model.DirectionDeposit
-}
-```
+| 8 | 양수 delta (입금) | NormalizedBalanceEvent{Delta: "1000000000"} | balance_events에 delta="+1000000000" 저장 |
+| 9 | 음수 delta (출금) | NormalizedBalanceEvent{Delta: "-500000000"} | balance_events에 delta="-500000000" 저장 |
+| 10 | event_id 멱등 | 동일 event_id 2회 | UNIQUE INDEX on event_id → 1행만 |
 
 #### 4.5.4 Balance 조정
 
 | # | 케이스 | Input | Assert |
 |---|--------|-------|--------|
-| 11 | 입금 잔액 | direction=DEPOSIT, amount="100" | AdjustBalanceTx(delta="100") |
-| 12 | 출금 잔액 | direction=WITHDRAWAL, amount="100" | AdjustBalanceTx(delta="-100") |
+| 11 | 입금 잔액 | delta="100" (양수) | AdjustBalanceTx(delta="100") |
+| 12 | 출금 잔액 | delta="-100" (음수) | AdjustBalanceTx(delta="-100") |
 
 #### 4.5.5 수수료 차감
 
@@ -245,7 +230,7 @@ func TestIngester_DirectionDeposit(t *testing.T) {
 
 | # | 케이스 | Input | Assert |
 |---|--------|-------|--------|
-| 15 | 에러 시 롤백 | 중간 단계에서 에러 주입 | dbTx.Rollback 호출, 커서 미전진 |
+| 15 | 에러 시 롤백 | 중간 단계에서 에러 주입 | dbTx.Rollback 호출, 워터마크 미전진 |
 
 #### negateAmount 헬퍼
 
@@ -290,7 +275,7 @@ func TestNegateAmount(t *testing.T) {
 | 4 | request ID 증가 | 3회 호출 | ID 1, 2, 3 |
 | 5 | GetTransaction 인코딩 | — | encoding="jsonParsed", commitment="confirmed" |
 
-### 4.8 Sidecar 디코더 (Jest)
+### 4.8 Sidecar 디코더 (vitest)
 
 **파일**: `sidecar/src/decoder/solana/__tests__/transaction_decoder.test.ts`
 
@@ -365,14 +350,14 @@ func setupTestDB(t *testing.T) *postgres.DB {
 |---|-----------|--------|--------|
 | 1 | TransactionRepo | Upsert → Get round-trip | 동일 데이터 |
 | 2 | TransactionRepo | 동일 tx_hash 2회 upsert | 1행, 멱등 |
-| 3 | TransferRepo | Upsert → 유니크 제약 확인 | ON CONFLICT DO NOTHING |
-| 4 | TransferRepo | 동일 (tx_hash, instruction_index, watched_address) 2회 | 1행 |
+| 3 | BalanceEventRepo | Upsert → UNIQUE INDEX on event_id | ON CONFLICT 멱등 |
+| 4 | BalanceEventRepo | 동일 event_id 2회 upsert | 1행, signed delta 보존 |
 | 5 | BalanceRepo | AdjustBalanceTx +100, +200 | amount == 300 |
 | 6 | BalanceRepo | AdjustBalanceTx +100, -30 | amount == 70 |
 | 7 | BalanceRepo | GREATEST cursor | 높은 cursor만 저장 |
 | 8 | WatermarkRepo | UpdateWatermarkTx GREATEST | 비퇴행 확인 |
-| 10 | WatchedAddressRepo | GetActive is_active=true만 | 비활성 제외 |
-| 11 | TokenRepo | Upsert RETURNING id | 기존 행 ID 반환 |
+| 9 | WatchedAddressRepo | GetActive is_active=true만 | 비활성 제외 |
+| 10 | TokenRepo | Upsert RETURNING id | 기존 행 ID 반환 |
 
 **멱등성 테스트:**
 
@@ -460,10 +445,11 @@ func TestIngester_ProcessBatch_Integration(t *testing.T) {
         Transactions: []event.NormalizedTransaction{{
             TxHash: "sig1", BlockCursor: 100, FeeAmount: "5000",
             FeePayer: "watched_addr_1", Status: model.TxStatusSuccess,
-            Transfers: []event.NormalizedTransfer{{
-                InstructionIndex: 0, ContractAddress: "11111111111111111111111111111111",
-                FromAddress: "sender", ToAddress: "watched_addr_1",
-                Amount: "1000000000", TokenType: model.TokenTypeNative,
+            BalanceEvents: []event.NormalizedBalanceEvent{{
+                EventID: "solana:devnet:sig1:0:watched_addr_1",
+                Address: "watched_addr_1",
+                Delta:   "1000000000", // +1 SOL (signed delta)
+                TokenType: model.TokenTypeNative,
                 TokenDecimals: 9,
             }},
         }},
@@ -478,10 +464,10 @@ func TestIngester_ProcessBatch_Integration(t *testing.T) {
     db.QueryRow("SELECT COUNT(*) FROM transactions WHERE tx_hash='sig1'").Scan(&txCount)
     assert.Equal(t, 1, txCount)
 
-    // Assert: transfer with DEPOSIT direction
-    var direction string
-    db.QueryRow("SELECT direction FROM transfers WHERE tx_hash='sig1'").Scan(&direction)
-    assert.Equal(t, "DEPOSIT", direction)
+    // Assert: balance_event with signed delta
+    var delta string
+    db.QueryRow("SELECT delta FROM balance_events WHERE event_id='solana:devnet:sig1:0:watched_addr_1'").Scan(&delta)
+    assert.Equal(t, "1000000000", delta)
 
     // Assert: balance = 1 SOL - fee (0.000005 SOL)
     var amount string
@@ -508,12 +494,12 @@ func TestIngester_Idempotent_Integration(t *testing.T) {
     err2 := ing.ProcessBatch(ctx, batch)
     require.NoError(t, err2)
 
-    // Assert: tx 1건, transfer 1건
-    var txCount, transferCount int
+    // Assert: tx 1건, balance_event 1건 (UNIQUE INDEX on event_id)
+    var txCount, eventCount int
     db.QueryRow("SELECT COUNT(*) FROM transactions WHERE tx_hash='sig1'").Scan(&txCount)
-    db.QueryRow("SELECT COUNT(*) FROM transfers WHERE tx_hash='sig1'").Scan(&transferCount)
+    db.QueryRow("SELECT COUNT(*) FROM balance_events WHERE tx_hash='sig1'").Scan(&eventCount)
     assert.Equal(t, 1, txCount)
-    assert.Equal(t, 1, transferCount)
+    assert.Equal(t, 1, eventCount)
 
     // Assert: balance 1배 (2배 아님)
     var amount string
@@ -581,11 +567,11 @@ func TestPipeline_E2E(t *testing.T) {
     }, 5*time.Second, 100*time.Millisecond)
 
     // 8. Assert DB state
-    var txCount, transferCount int
+    var txCount, eventCount int
     db.QueryRow("SELECT COUNT(*) FROM transactions").Scan(&txCount)
-    db.QueryRow("SELECT COUNT(*) FROM transfers").Scan(&transferCount)
+    db.QueryRow("SELECT COUNT(*) FROM balance_events").Scan(&eventCount)
     assert.Equal(t, 5, txCount)
-    assert.GreaterOrEqual(t, transferCount, 1)
+    assert.GreaterOrEqual(t, eventCount, 1)
 
     // Assert watermark
     var ingestedSeq int64
@@ -760,17 +746,18 @@ testdata/
 | 테이블 | ON CONFLICT | 멱등 보장 |
 |--------|-------------|----------|
 | transactions | `DO UPDATE SET chain = transactions.chain` (no-op) | 완전 멱등 (ID 반환) |
-| transfers | `DO NOTHING` | 완전 멱등 (무시) |
+| balance_events | `ON CONFLICT (event_id) DO NOTHING` | 완전 멱등 (UNIQUE INDEX) |
 | tokens | `DO UPDATE SET ... RETURNING id` | 완전 멱등 (ID 반환) |
 | balances | `DO UPDATE SET amount = amount + $7` | **비멱등** (누적) |
-| cursors | `DO UPDATE SET cursor_value = EXCLUDED` | 멱등 (덮어쓰기) |
+| pipeline_watermarks | `DO UPDATE SET ... GREATEST` | 멱등 (비퇴행) |
 
 **중요**: `balances`의 `amount += delta`는 멱등하지 않다.
 동일 배치 2회 처리 시 잔액이 2배가 된다.
 
-**방어 메커니즘**: 커서 기반 — Ingester가 커서를 COMMIT 내에서 전진시키므로,
-동일 데이터를 다시 fetch하지 않음. 크래시 시에도 커서가 전진하지 않은 상태이므로
-재처리 시 동일 데이터를 받지만, `balance += delta`로 중복 반영됨.
+**방어 메커니즘**: watermark 기반 — Ingester가 pipeline_watermarks를 COMMIT 내에서 전진시키므로,
+동일 데이터를 다시 fetch하지 않음. balance_events는 UNIQUE INDEX on event_id로 중복 삽입을 방지한다.
+크래시 시에도 워터마크가 전진하지 않은 상태이므로 재처리 시 동일 데이터를 받지만,
+balance_events의 event_id 유니크 제약으로 중복 이벤트는 무시된다.
 
 **테스트 방법:**
 
@@ -790,14 +777,15 @@ func TestIdempotency_BalanceRisk(t *testing.T) {
 
 ```
 Step 1: BEGIN tx
-Step 2: upsert transactions ← 성공
-Step 3: upsert transfers    ← 성공
-Step 4: adjust balance      ← 크래시 발생!
+Step 2: upsert transactions     ← 성공
+Step 3: upsert balance_events   ← 성공
+Step 4: adjust balance          ← 크래시 발생!
         → dbTx 자동 rollback (PostgreSQL 연결 끊김)
-        → cursor 미전진 (Step 4 이후 커밋 전)
+        → watermark 미전진 (Step 4 이후 커밋 전)
 Step 5: 프로세스 재시작
-        → Coordinator: cursor = 이전 값 → 같은 데이터 재fetch
+        → Coordinator: watermark = 이전 값 → 같은 데이터 재fetch
         → Ingester: 처음부터 재처리
+        → balance_events: event_id UNIQUE INDEX → 중복 무시
         → 결과: 정상 처리 (at-least-once)
 ```
 
@@ -807,10 +795,10 @@ Step 5: 프로세스 재시작
 func TestCrashRecovery(t *testing.T) {
     // 1. Mock balanceRepo.AdjustBalanceTx → error 반환
     // 2. processBatch → error (rollback)
-    // 3. Assert: cursor 미전진
+    // 3. Assert: watermark 미전진
     // 4. Mock 정상화
     // 5. processBatch 다시 호출 → 성공
-    // 6. Assert: cursor 전진, balance 정확
+    // 6. Assert: watermark 전진, balance 정확
 }
 ```
 
@@ -826,11 +814,10 @@ func TestCrashRecovery(t *testing.T) {
 
 ```go
 func TestOrderGuarantee(t *testing.T) {
-    // 1. 3개 batch 순서대로 전송: cursor_seq 100, 200, 300
-    // 2. Assert: cursor_sequence == 300 (마지막)
-    // 3. Assert: watermark ingested_sequence == 300
-    // 4. 역순 batch: cursor_seq 250
-    // 5. Assert: watermark == 300 (GREATEST, 비퇴행)
+    // 1. 3개 batch 순서대로 전송: ingested_sequence 100, 200, 300
+    // 2. Assert: watermark ingested_sequence == 300
+    // 3. 역순 batch: ingested_sequence 250
+    // 4. Assert: watermark == 300 (GREATEST, 비퇴행)
 }
 ```
 
@@ -842,8 +829,7 @@ func TestOrderGuarantee(t *testing.T) {
 초기 잔액: 0
 
 Batch 1 (입금):
-  transfer: to_address == watched, amount = 100_000_000_000 (100 SOL)
-  direction: DEPOSIT
+  balance_event: delta = +100_000_000_000 (100 SOL, signed delta 양수)
   balance += 100_000_000_000
   fee: fee_payer == watched, fee = 5000
   balance -= 5000
@@ -851,13 +837,12 @@ Batch 1 (입금):
   → 잔액: 99_999_995_000
 
 Batch 2 (출금):
-  transfer: from_address == watched, amount = 30_000_000_000 (30 SOL)
-  direction: WITHDRAWAL
+  balance_event: delta = -30_000_000_000 (30 SOL, signed delta 음수)
   balance -= 30_000_000_000
   fee: fee_payer == watched, fee = 5000
   balance -= 5000
 
-  → 잔액: 69_999_990_000 (≈ 69.99999 SOL)
+  → 잔액: 69_999_990_000 (approximately 69.99999 SOL)
 ```
 
 ### 8.5 Watched Address 필터링
@@ -872,7 +857,7 @@ Transaction:
   transfer[3]: watched_addr → E (출금) ← 저장
   transfer[4]: C → F (무관)
 
-→ transfers 테이블에 2건만 저장
+→ balance_events 테이블에 2건만 저장 (signed delta: +입금, -출금)
 → balance: +transfer[1].amount - transfer[3].amount - fee
 ```
 
@@ -883,14 +868,14 @@ func TestWatchedAddressFiltering(t *testing.T) {
     batch := event.NormalizedBatch{
         Address: "watched_addr",
         Transactions: []event.NormalizedTransaction{{
-            Transfers: []event.NormalizedTransfer{
-                {FromAddress: "A", ToAddress: "B", Amount: "100"},       // 무관
-                {FromAddress: "A", ToAddress: "watched_addr", Amount: "200"}, // 입금
-                {FromAddress: "watched_addr", ToAddress: "C", Amount: "50"}, // 출금
+            BalanceEvents: []event.NormalizedBalanceEvent{
+                {Address: "watched_addr", Delta: "200"},  // 입금 (양수 delta)
+                {Address: "watched_addr", Delta: "-50"},  // 출금 (음수 delta)
             },
         }},
     }
-    // 주의: 현재 Sidecar에서 필터링하므로, Ingester에는 이미 필터링된 데이터가 옴
+    // 주의: Sidecar/normalizer에서 필터링 + signed delta 계산하므로,
+    // Ingester에는 watched address에 대한 balance_events만 도착
     // 이 테스트는 Sidecar 테스트에서 수행
 }
 ```
@@ -1003,7 +988,7 @@ stages:
 
 ## 11. 테스트 파일 구조 (현재)
 
-### 11.1 Go (63개 테스트 파일)
+### 11.1 Go (65개 테스트 파일)
 
 ```
 cmd/indexer/
@@ -1021,7 +1006,10 @@ internal/
 │   └── alerter_test.go
 ├── cache/
 │   ├── lru_bench_test.go
-│   └── lru_test.go
+│   ├── lru_test.go
+│   └── sharded_lru_test.go
+├── circuitbreaker/
+│   └── breaker_test.go
 ├── chain/
 │   ├── arbitrum/adapter_test.go
 │   ├── base/
@@ -1049,6 +1037,8 @@ internal/
 │   ├── health_test.go
 │   ├── pipeline_test.go
 │   ├── registry_test.go
+│   ├── identity/
+│   │   └── identity_test.go
 │   ├── coordinator/
 │   │   ├── coordinator_test.go
 │   │   └── autotune/{autotune_test.go, autotune_scenario_test.go}
@@ -1082,13 +1072,13 @@ internal/
     └── retry_test.go
 ```
 
-### 11.2 Sidecar (Jest)
+### 11.2 Sidecar (vitest)
 
 ```
 sidecar/
 ├── src/decoder/{solana,base,btc}/__tests__/
 ├── testdata/
-├── jest.config.ts
+├── vitest.config.ts
 └── package.json
 ```
 
