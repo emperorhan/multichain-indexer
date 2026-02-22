@@ -144,6 +144,15 @@ func (d *Detector) check(ctx context.Context) error {
 		unfinalizedBlocks = unfinalizedBlocks[:d.maxCheckDepth]
 	}
 
+	// Parent-hash chain continuity check (no RPC needed).
+	// Build a lookup of block_number -> block_hash from indexed data, then
+	// verify that each block's ParentHash matches the hash of block N-1.
+	// This catches subtle data corruption or stale forks without any RPC calls.
+	if reorgBlock := d.verifyParentHashChain(unfinalizedBlocks); reorgBlock != nil {
+		d.lastVerified = nil
+		return d.emitReorg(ctx, *reorgBlock, reorgBlock.BlockHash)
+	}
+
 	// Tip-first: check the most recent block first. If it matches and was
 	// already verified last tick, deeper blocks are extremely unlikely to
 	// have reorged — skip them entirely.
@@ -196,10 +205,48 @@ func (d *Detector) check(ctx context.Context) error {
 	return nil
 }
 
-// verifyBlock checks a single block's hash against the chain.
-// Returns (match, onchainHash, error).
+// verifyParentHashChain checks that consecutive indexed blocks have consistent
+// parent hashes (block N's ParentHash == block N-1's BlockHash). This catches
+// reorgs and data corruption without any RPC calls.
+// Returns the first block whose parent hash is inconsistent, or nil if all are OK.
+// Blocks that lack a ParentHash (e.g. Solana) are silently skipped.
+func (d *Detector) verifyParentHashChain(blocks []model.IndexedBlock) *model.IndexedBlock {
+	if len(blocks) < 2 {
+		return nil
+	}
+
+	// Build block_number -> block_hash index from the provided set.
+	hashByNumber := make(map[int64]string, len(blocks))
+	for _, b := range blocks {
+		hashByNumber[b.BlockNumber] = b.BlockHash
+	}
+
+	// Blocks are sorted descending. Walk from tip toward genesis.
+	for _, block := range blocks {
+		if block.ParentHash == "" {
+			continue // chain does not populate parent hash (e.g. Solana)
+		}
+		parentBlockHash, ok := hashByNumber[block.BlockNumber-1]
+		if !ok {
+			continue // parent block not in the unfinalized set — cannot verify
+		}
+		if block.ParentHash != parentBlockHash {
+			d.logger.Warn("parent hash chain break detected",
+				"block_number", block.BlockNumber,
+				"block_hash", block.BlockHash,
+				"parent_hash", block.ParentHash,
+				"expected_parent_hash", parentBlockHash,
+			)
+			return &block
+		}
+	}
+	return nil
+}
+
+// verifyBlock checks a single block's hash (and parent hash, if available)
+// against the chain. Returns (match, onchainHash, error).
 func (d *Detector) verifyBlock(ctx context.Context, block model.IndexedBlock) (bool, string, error) {
-	onchainHash, _, err := d.adapter.GetBlockHash(ctx, block.BlockNumber)
+	onchainHash, onchainParentHash, err := d.adapter.GetBlockHash(ctx, block.BlockNumber)
 	if err != nil {
 		d.consecutiveRPCErrs++
 		metrics.ReorgDetectorRPCErrorsTotal.WithLabelValues(d.chain.String(), d.network.String()).Inc()
@@ -223,7 +270,24 @@ func (d *Detector) verifyBlock(ctx context.Context, block model.IndexedBlock) (b
 	}
 
 	d.consecutiveRPCErrs = 0
-	return onchainHash == block.BlockHash, onchainHash, nil
+
+	if onchainHash != block.BlockHash {
+		return false, onchainHash, nil
+	}
+
+	// Additional parent hash verification: if both the indexed block and the
+	// on-chain response carry a parent hash, verify they match. A mismatch
+	// means the indexed block was stored from a now-orphaned fork.
+	if block.ParentHash != "" && onchainParentHash != "" && block.ParentHash != onchainParentHash {
+		d.logger.Warn("parent hash mismatch with on-chain data",
+			"block_number", block.BlockNumber,
+			"indexed_parent_hash", block.ParentHash,
+			"onchain_parent_hash", onchainParentHash,
+		)
+		return false, onchainHash, nil
+	}
+
+	return true, onchainHash, nil
 }
 
 func (d *Detector) emitReorg(ctx context.Context, block model.IndexedBlock, actualHash string) error {

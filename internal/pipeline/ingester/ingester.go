@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"math/big"
 	"math/rand/v2"
+	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/addressindex"
@@ -67,7 +69,8 @@ type Ingester struct {
 	watchedAddrRepo   store.WatchedAddressRepository
 	addressIndex      addressindex.Index
 
-	// Block-scan watched address cache (single-writer, no mutex needed).
+	// Block-scan watched address cache, protected by blockScanAddrMu for defensive safety.
+	blockScanAddrMu      sync.RWMutex
 	blockScanAddrCache   map[string]map[string]addrMeta // key: "chain:network"
 	blockScanAddrCacheAt map[string]time.Time
 }
@@ -179,7 +182,16 @@ func New(
 	return ing
 }
 
-func (ing *Ingester) Run(ctx context.Context) error {
+func (ing *Ingester) Run(ctx context.Context) (retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			ing.logger.Error("ingester panic recovered",
+				"panic", fmt.Sprintf("%v", r),
+				"stack", string(debug.Stack()),
+			)
+			retErr = fmt.Errorf("ingester panicked: %v", r)
+		}
+	}()
 	ing.logger.Info("ingester started")
 
 	// Use nil channels if not configured (select will never match nil channels)
@@ -643,6 +655,16 @@ func (ing *Ingester) collectEvents(ctx context.Context, bc *batchContext) error 
 		// GAP-6: synthetic fee-only withdrawal for failed txs
 		if ntx.Status == model.TxStatusFailed && len(ntx.BalanceEvents) == 0 &&
 			ntx.FeeAmount != "" && ntx.FeeAmount != "0" && ntx.FeePayer != "" {
+			// Validate fee amount before creating synthetic event
+			var feeVal big.Int
+			if _, feeOK := feeVal.SetString(strings.TrimSpace(ntx.FeeAmount), 10); !feeOK || feeVal.Sign() < 0 {
+				ing.logger.Warn("invalid fee amount, skipping synthetic fee event",
+					"fee_amount", ntx.FeeAmount,
+					"tx_hash", ntx.TxHash,
+					"chain", batch.Chain,
+				)
+				continue
+			}
 			feeOnlyEvent := buildFeeOnlyEvent(ntx, batch)
 			nativeContract := nativeTokenContract(batch.Chain)
 			if _, exists := tokenModelsByContract[nativeContract]; !exists {
@@ -734,12 +756,33 @@ func (ing *Ingester) prefetchBulkData(ctx context.Context, bc *batchContext) err
 			balanceKeys = append(balanceKeys, bk)
 		}
 	}
+	const maxBalanceKeysPerQuery = 5000
+
 	if len(balanceKeys) > 0 {
-		bc.balanceMap, err = ing.balanceRepo.BulkGetAmountWithExistsTx(ctx, bc.dbTx, batch.Chain, batch.Network, balanceKeys)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return fmt.Errorf("bulk get balances: %w", err)
+		if len(balanceKeys) <= maxBalanceKeysPerQuery {
+			bc.balanceMap, err = ing.balanceRepo.BulkGetAmountWithExistsTx(ctx, bc.dbTx, batch.Chain, batch.Network, balanceKeys)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return fmt.Errorf("bulk get balances: %w", err)
+			}
+		} else {
+			bc.balanceMap = make(map[store.BalanceKey]store.BalanceInfo, len(balanceKeys))
+			for i := 0; i < len(balanceKeys); i += maxBalanceKeysPerQuery {
+				end := i + maxBalanceKeysPerQuery
+				if end > len(balanceKeys) {
+					end = len(balanceKeys)
+				}
+				chunk, chunkErr := ing.balanceRepo.BulkGetAmountWithExistsTx(ctx, bc.dbTx, batch.Chain, batch.Network, balanceKeys[i:end])
+				if chunkErr != nil {
+					span.RecordError(chunkErr)
+					span.SetStatus(codes.Error, chunkErr.Error())
+					return fmt.Errorf("bulk get balances chunk: %w", chunkErr)
+				}
+				for k, v := range chunk {
+					bc.balanceMap[k] = v
+				}
+			}
 		}
 	} else {
 		bc.balanceMap = make(map[store.BalanceKey]store.BalanceInfo)
@@ -813,11 +856,38 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 			continue
 		}
 
+		// Self-transfer detection: sender == receiver for the same token in same tx
+		// This is normal on some chains but should be tracked for auditing
+		if ec.be.Address == ec.be.CounterpartyAddress && ec.be.CounterpartyAddress != "" {
+			ing.logger.Debug("self-transfer detected",
+				"address", ec.be.Address,
+				"delta", ec.be.Delta,
+				"tx_hash", ec.canonicalTxHash,
+				"chain", batch.Chain,
+			)
+		}
+
 		balanceAfter, calcErr := addDecimalStrings(balanceBefore, ec.be.Delta)
 		if calcErr != nil {
 			span.RecordError(calcErr)
 			span.SetStatus(codes.Error, calcErr.Error())
 			return fmt.Errorf("apply delta %s to balance %s: %w", ec.be.Delta, balanceBefore, calcErr)
+		}
+
+		// Detect negative balance (indicates a bug or unexpected chain behavior)
+		if len(balanceAfter) > 0 && balanceAfter[0] == '-' {
+			ing.logger.Warn("negative balance detected, clamping to zero",
+				"address", ec.be.Address,
+				"token_id", tokenID,
+				"balance_before", balanceBefore,
+				"delta", ec.be.Delta,
+				"balance_after", balanceAfter,
+				"tx_hash", ec.canonicalTxHash,
+				"chain", batch.Chain,
+				"network", batch.Network,
+			)
+			metrics.IngesterNegativeBalancesDetected.WithLabelValues(string(batch.Chain), string(batch.Network)).Inc()
+			balanceAfter = "0"
 		}
 
 		chainData := ec.be.ChainData
@@ -879,7 +949,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 			AssetID: ec.be.AssetID, FinalityState: ec.be.FinalityState,
 			DecoderVersion: ec.be.DecoderVersion, SchemaVersion: ec.be.SchemaVersion,
 		}
-		beModel.BalanceApplied = meetsBalanceThreshold(batch.Chain, beModel.FinalityState)
+		beModel.BalanceApplied = meetsBalanceThreshold(batch.Chain, beModel.FinalityState, ec.be.TokenType, ec.be.Delta)
 		if beModel.BalanceApplied {
 			beModel.BalanceBefore = &balanceBefore
 			beModel.BalanceAfter = &balanceAfter
@@ -1366,7 +1436,18 @@ func addDecimalStrings(a, b string) (string, error) {
 	}
 
 	left.Add(&left, &right)
-	return left.String(), nil
+
+	// Validate result fits in PostgreSQL numeric(78,0) — 78 digits max
+	result := left.String()
+	digits := result
+	if digits[0] == '-' {
+		digits = digits[1:]
+	}
+	if len(digits) > 78 {
+		return "", fmt.Errorf("balance overflow: result has %d digits (max 78)", len(digits))
+	}
+
+	return result, nil
 }
 
 func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx, batch event.NormalizedBatch) error {
@@ -1615,15 +1696,34 @@ func containsAnySubstring(value string, tokens []string) bool {
 
 
 // meetsBalanceThreshold checks whether the finality state is strong enough
-// to apply the balance adjustment for the given chain.
-func meetsBalanceThreshold(chain model.Chain, finality string) bool {
+// to apply the balance adjustment for the given chain, and filters dust
+// amounts for non-native tokens.
+func meetsBalanceThreshold(chain model.Chain, finality string, tokenType model.TokenType, amount string) bool {
+	// Step 1: finality gate
+	var finalityOK bool
 	switch chain {
 	case model.ChainSolana:
-		return true // Solana events are delivered as finalized
+		finalityOK = true // Solana events are delivered as finalized
 	default:
 		// EVM/BTC: require confirmed or stronger
-		return finalityStateRank(finality) >= 2
+		finalityOK = finalityStateRank(finality) >= 2
 	}
+	if !finalityOK {
+		return false
+	}
+
+	// Step 2: dust filter for non-native tokens
+	// Native tokens on any chain: always meet threshold (fees are valid even if tiny)
+	if tokenType == model.TokenTypeNative {
+		return true
+	}
+	// For non-native tokens, check minimum amount to filter dust
+	// This helps prevent spam tokens with extremely small amounts
+	var val big.Int
+	if _, ok := val.SetString(strings.TrimSpace(amount), 10); !ok {
+		return false
+	}
+	return val.Sign() != 0 // non-zero amount meets threshold
 }
 
 func finalityStateRank(state string) int {
@@ -1844,12 +1944,18 @@ func strPtrOrNil(s string) *string {
 // using a TTL cache to avoid querying the DB on every batch.
 func (ing *Ingester) getBlockScanAddrMap(ctx context.Context, chain model.Chain, network model.Network) (map[string]addrMeta, error) {
 	cacheKey := string(chain) + ":" + string(network)
+
+	// Fast path: read-lock to check cache validity.
+	ing.blockScanAddrMu.RLock()
 	if cached, ok := ing.blockScanAddrCache[cacheKey]; ok {
 		if time.Since(ing.blockScanAddrCacheAt[cacheKey]) < blockScanAddrCacheTTL {
+			ing.blockScanAddrMu.RUnlock()
 			return cached, nil
 		}
 	}
+	ing.blockScanAddrMu.RUnlock()
 
+	// Slow path: fetch from DB and update cache under write-lock.
 	activeAddrs, err := ing.watchedAddrRepo.GetActive(ctx, chain, network)
 	if err != nil {
 		return nil, err
@@ -1859,8 +1965,12 @@ func (ing *Ingester) getBlockScanAddrMap(ctx context.Context, chain model.Chain,
 		key := identity.CanonicalAddressIdentity(chain, wa.Address)
 		addrMap[key] = addrMeta{walletID: wa.WalletID, orgID: wa.OrganizationID}
 	}
+
+	ing.blockScanAddrMu.Lock()
 	ing.blockScanAddrCache[cacheKey] = addrMap
 	ing.blockScanAddrCacheAt[cacheKey] = time.Now()
+	ing.blockScanAddrMu.Unlock()
+
 	return addrMap, nil
 }
 

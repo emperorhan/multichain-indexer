@@ -618,7 +618,15 @@ func cloneDecodedResult(result *sidecarv1.TransactionResult) *sidecarv1.Transact
 	if result == nil {
 		return nil
 	}
-	cloned := *result // shallow copy
+
+	cloned := &sidecarv1.TransactionResult{
+		TxHash:      result.TxHash,
+		BlockCursor: result.BlockCursor,
+		BlockTime:   result.BlockTime,
+		FeeAmount:   result.FeeAmount,
+		FeePayer:    result.FeePayer,
+		Status:      result.Status,
+	}
 
 	// Deep copy mutable pointer field
 	if result.Error != nil {
@@ -634,14 +642,29 @@ func cloneDecodedResult(result *sidecarv1.TransactionResult) *sidecarv1.Transact
 		}
 	}
 
-	return &cloned
+	return cloned
 }
 
 func cloneDecodedBalanceEvent(be *sidecarv1.BalanceEventInfo) *sidecarv1.BalanceEventInfo {
 	if be == nil {
 		return nil
 	}
-	cloned := *be // shallow copy
+
+	cloned := &sidecarv1.BalanceEventInfo{
+		OuterInstructionIndex: be.OuterInstructionIndex,
+		InnerInstructionIndex: be.InnerInstructionIndex,
+		EventCategory:         be.EventCategory,
+		EventAction:           be.EventAction,
+		ProgramId:             be.ProgramId,
+		Address:               be.Address,
+		ContractAddress:       be.ContractAddress,
+		Delta:                 be.Delta,
+		CounterpartyAddress:   be.CounterpartyAddress,
+		TokenSymbol:           be.TokenSymbol,
+		TokenName:             be.TokenName,
+		TokenDecimals:         be.TokenDecimals,
+		TokenType:             be.TokenType,
+	}
 
 	// Deep copy the Metadata map (mutable)
 	if len(be.Metadata) > 0 {
@@ -651,7 +674,7 @@ func cloneDecodedBalanceEvent(be *sidecarv1.BalanceEventInfo) *sidecarv1.Balance
 		}
 	}
 
-	return &cloned
+	return cloned
 }
 
 type decodedResultScore struct {

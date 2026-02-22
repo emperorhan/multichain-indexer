@@ -147,20 +147,29 @@ type RuntimeConfig struct {
 	ChainTargets   []string `yaml:"chain_targets"`
 }
 
+// CircuitBreakerConfig holds tuning parameters for circuit breakers.
+type CircuitBreakerConfig struct {
+	FailureThreshold int `yaml:"failure_threshold"`
+	SuccessThreshold int `yaml:"success_threshold"`
+	OpenTimeoutMs    int `yaml:"open_timeout_ms"`
+}
+
 // FetcherStageConfig holds tuning parameters for the fetcher pipeline stage.
 type FetcherStageConfig struct {
-	RetryMaxAttempts         int `yaml:"retry_max_attempts"`
-	BackoffInitialMs         int `yaml:"backoff_initial_ms"`
-	BackoffMaxMs             int `yaml:"backoff_max_ms"`
-	AdaptiveMinBatch         int `yaml:"adaptive_min_batch"`
-	BoundaryOverlapLookahead int `yaml:"boundary_overlap_lookahead"`
+	RetryMaxAttempts         int                  `yaml:"retry_max_attempts"`
+	BackoffInitialMs         int                  `yaml:"backoff_initial_ms"`
+	BackoffMaxMs             int                  `yaml:"backoff_max_ms"`
+	AdaptiveMinBatch         int                  `yaml:"adaptive_min_batch"`
+	BoundaryOverlapLookahead int                  `yaml:"boundary_overlap_lookahead"`
+	CircuitBreaker           CircuitBreakerConfig `yaml:"circuit_breaker"`
 }
 
 // NormalizerStageConfig holds tuning parameters for the normalizer pipeline stage.
 type NormalizerStageConfig struct {
-	RetryMaxAttempts    int `yaml:"retry_max_attempts"`
-	RetryDelayInitialMs int `yaml:"retry_delay_initial_ms"`
-	RetryDelayMaxMs     int `yaml:"retry_delay_max_ms"`
+	RetryMaxAttempts    int                  `yaml:"retry_max_attempts"`
+	RetryDelayInitialMs int                  `yaml:"retry_delay_initial_ms"`
+	RetryDelayMaxMs     int                  `yaml:"retry_delay_max_ms"`
+	CircuitBreaker      CircuitBreakerConfig `yaml:"circuit_breaker"`
 }
 
 // IngesterStageConfig holds tuning parameters for the ingester pipeline stage.
@@ -243,6 +252,7 @@ type ServerConfig struct {
 	AdminAddr             string `yaml:"admin_addr"`
 	AdminAuthUser         string `yaml:"admin_auth_user"`
 	AdminAuthPass         string `yaml:"admin_auth_pass"`
+	AdminAuthToken        string `yaml:"admin_auth_token"`
 	AdminRateLimitEnabled bool   `yaml:"admin_rate_limit_enabled"`
 	AdminRequireAuth      bool   `yaml:"admin_require_auth"`
 }
@@ -476,9 +486,15 @@ func applyPipelineEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Pipeline.Fetcher.BackoffMaxMs, "FETCHER_BACKOFF_MAX_MS")
 	overrideInt(&cfg.Pipeline.Fetcher.AdaptiveMinBatch, "FETCHER_ADAPTIVE_MIN_BATCH")
 	overrideInt(&cfg.Pipeline.Fetcher.BoundaryOverlapLookahead, "FETCHER_BOUNDARY_OVERLAP_LOOKAHEAD")
+	overrideInt(&cfg.Pipeline.Fetcher.CircuitBreaker.FailureThreshold, "FETCHER_CB_FAILURE_THRESHOLD")
+	overrideInt(&cfg.Pipeline.Fetcher.CircuitBreaker.SuccessThreshold, "FETCHER_CB_SUCCESS_THRESHOLD")
+	overrideInt(&cfg.Pipeline.Fetcher.CircuitBreaker.OpenTimeoutMs, "FETCHER_CB_OPEN_TIMEOUT_MS")
 	overrideInt(&cfg.Pipeline.Normalizer.RetryMaxAttempts, "NORMALIZER_RETRY_MAX_ATTEMPTS")
 	overrideInt(&cfg.Pipeline.Normalizer.RetryDelayInitialMs, "NORMALIZER_RETRY_DELAY_INITIAL_MS")
 	overrideInt(&cfg.Pipeline.Normalizer.RetryDelayMaxMs, "NORMALIZER_RETRY_DELAY_MAX_MS")
+	overrideInt(&cfg.Pipeline.Normalizer.CircuitBreaker.FailureThreshold, "NORMALIZER_CB_FAILURE_THRESHOLD")
+	overrideInt(&cfg.Pipeline.Normalizer.CircuitBreaker.SuccessThreshold, "NORMALIZER_CB_SUCCESS_THRESHOLD")
+	overrideInt(&cfg.Pipeline.Normalizer.CircuitBreaker.OpenTimeoutMs, "NORMALIZER_CB_OPEN_TIMEOUT_MS")
 	overrideInt(&cfg.Pipeline.Ingester.RetryMaxAttempts, "INGESTER_RETRY_MAX_ATTEMPTS")
 	overrideInt(&cfg.Pipeline.Ingester.RetryDelayInitialMs, "INGESTER_RETRY_DELAY_INITIAL_MS")
 	overrideInt(&cfg.Pipeline.Ingester.RetryDelayMaxMs, "INGESTER_RETRY_DELAY_MAX_MS")
@@ -510,6 +526,7 @@ func applyServerEnvOverrides(cfg *Config) {
 	overrideStr(&cfg.Server.AdminAddr, "ADMIN_ADDR")
 	overrideStr(&cfg.Server.AdminAuthUser, "ADMIN_AUTH_USER")
 	overrideStr(&cfg.Server.AdminAuthPass, "ADMIN_AUTH_PASS")
+	overrideStr(&cfg.Server.AdminAuthToken, "ADMIN_AUTH_TOKEN")
 	overrideBool(&cfg.Server.AdminRateLimitEnabled, "ADMIN_RATE_LIMIT_ENABLED")
 	overrideBool(&cfg.Server.AdminRequireAuth, "ADMIN_REQUIRE_AUTH")
 }
@@ -669,9 +686,15 @@ func applyDefaults(cfg *Config) {
 	setDefault(&cfg.Pipeline.Fetcher.BackoffMaxMs, 3000)
 	setDefault(&cfg.Pipeline.Fetcher.AdaptiveMinBatch, 1)
 	setDefault(&cfg.Pipeline.Fetcher.BoundaryOverlapLookahead, 1)
+	setDefault(&cfg.Pipeline.Fetcher.CircuitBreaker.FailureThreshold, 10)
+	setDefault(&cfg.Pipeline.Fetcher.CircuitBreaker.SuccessThreshold, 3)
+	setDefault(&cfg.Pipeline.Fetcher.CircuitBreaker.OpenTimeoutMs, 30000)
 	setDefault(&cfg.Pipeline.Normalizer.RetryMaxAttempts, 3)
 	setDefault(&cfg.Pipeline.Normalizer.RetryDelayInitialMs, 100)
 	setDefault(&cfg.Pipeline.Normalizer.RetryDelayMaxMs, 1000)
+	setDefault(&cfg.Pipeline.Normalizer.CircuitBreaker.FailureThreshold, 5)
+	setDefault(&cfg.Pipeline.Normalizer.CircuitBreaker.SuccessThreshold, 2)
+	setDefault(&cfg.Pipeline.Normalizer.CircuitBreaker.OpenTimeoutMs, 30000)
 	setDefault(&cfg.Pipeline.Ingester.RetryMaxAttempts, 3)
 	setDefault(&cfg.Pipeline.Ingester.RetryDelayInitialMs, 100)
 	setDefault(&cfg.Pipeline.Ingester.RetryDelayMaxMs, 1000)
@@ -948,6 +971,16 @@ func (c *Config) validate() error {
 	}
 	if requiredChains["bsc"] && c.BSC.RPCURL == "" {
 		return fmt.Errorf("BSC_RPC_URL is required for selected runtime targets")
+	}
+
+	// DB pool bounds
+	if c.DB.MaxOpenConns > 200 {
+		return fmt.Errorf("DB_MAX_OPEN_CONNS=%d exceeds maximum 200 — reduce to avoid connection exhaustion", c.DB.MaxOpenConns)
+	}
+
+	// Pipeline bounds
+	if c.Pipeline.BatchSize > 10000 {
+		return fmt.Errorf("BATCH_SIZE=%d exceeds maximum 10000 — large batch sizes cause memory pressure and RPC timeouts", c.Pipeline.BatchSize)
 	}
 
 	if c.Server.AdminAddr != "" && !isValidAddr(c.Server.AdminAddr) {

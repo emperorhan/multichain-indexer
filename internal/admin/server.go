@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,6 +74,7 @@ type Server struct {
 	reconcileReq    ReconcileRequester
 	addressBookRepo AddressBookRepo
 	dashboardRepo   DashboardDataProvider
+	authToken       string
 	logger          *slog.Logger
 }
 
@@ -123,24 +125,53 @@ func WithDashboardRepo(repo DashboardDataProvider) ServerOption {
 	return func(s *Server) { s.dashboardRepo = repo }
 }
 
+// WithAuthToken sets the bearer token for admin API authentication.
+// If empty, authentication is skipped (backward compatible for dev/local usage).
+func WithAuthToken(token string) ServerOption {
+	return func(s *Server) { s.authToken = token }
+}
+
+// authMiddleware checks for a valid Bearer token on incoming requests.
+// If authToken is empty, all requests are allowed (backward compatible).
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.authToken == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		expected := "Bearer " + s.authToken
+		if auth == "" || subtle.ConstantTimeCompare([]byte(auth), []byte(expected)) != 1 {
+			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Handler returns the HTTP handler for the admin API.
 func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /admin/v1/watched-addresses", s.handleListWatchedAddresses)
-	mux.HandleFunc("POST /admin/v1/watched-addresses", s.handleAddWatchedAddress)
-	mux.HandleFunc("GET /admin/v1/status", s.handleGetStatus)
-	mux.HandleFunc("POST /admin/v1/replay", s.handleReplay)
-	mux.HandleFunc("GET /admin/v1/replay/status", s.handleReplayStatus)
-	mux.HandleFunc("GET /admin/v1/health", s.handleHealth)
-	mux.HandleFunc("POST /admin/v1/reconcile", s.handleReconcile)
-	mux.HandleFunc("GET /admin/v1/address-books", s.handleListAddressBooks)
-	mux.HandleFunc("POST /admin/v1/address-books", s.handleAddAddressBook)
-	mux.HandleFunc("DELETE /admin/v1/address-books", s.handleDeleteAddressBook)
+	// Admin v1 API routes — protected by bearer token auth.
+	adminMux := http.NewServeMux()
+	adminMux.HandleFunc("GET /admin/v1/watched-addresses", s.handleListWatchedAddresses)
+	adminMux.HandleFunc("POST /admin/v1/watched-addresses", s.handleAddWatchedAddress)
+	adminMux.HandleFunc("GET /admin/v1/status", s.handleGetStatus)
+	adminMux.HandleFunc("POST /admin/v1/replay", s.handleReplay)
+	adminMux.HandleFunc("GET /admin/v1/replay/status", s.handleReplayStatus)
+	adminMux.HandleFunc("GET /admin/v1/health", s.handleHealth)
+	adminMux.HandleFunc("POST /admin/v1/reconcile", s.handleReconcile)
+	adminMux.HandleFunc("GET /admin/v1/address-books", s.handleListAddressBooks)
+	adminMux.HandleFunc("POST /admin/v1/address-books", s.handleAddAddressBook)
+	adminMux.HandleFunc("DELETE /admin/v1/address-books", s.handleDeleteAddressBook)
+	adminMux.HandleFunc("GET /admin/v1/dashboard/overview", s.handleDashboardOverview)
+	adminMux.HandleFunc("GET /admin/v1/dashboard/balances", s.handleDashboardBalances)
+	adminMux.HandleFunc("GET /admin/v1/dashboard/events", s.handleDashboardEvents)
 
-	// Dashboard API + static files
-	mux.HandleFunc("GET /admin/v1/dashboard/overview", s.handleDashboardOverview)
-	mux.HandleFunc("GET /admin/v1/dashboard/balances", s.handleDashboardBalances)
-	mux.HandleFunc("GET /admin/v1/dashboard/events", s.handleDashboardEvents)
+	// Top-level mux: auth-protected /admin/v1/ + unauthenticated /dashboard & /readyz.
+	mux := http.NewServeMux()
+	mux.Handle("/admin/v1/", s.authMiddleware(adminMux))
+
+	// Dashboard static files and /readyz — no auth required.
 	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("/dashboard", s.handleDashboardIndex)
 

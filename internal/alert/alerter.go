@@ -22,6 +22,7 @@ const (
 	AlertTypeReorg        AlertType = "REORG"
 	AlertTypeScamToken    AlertType = "SCAM_TOKEN"
 	AlertTypeReconcileErr AlertType = "RECONCILE_MISMATCH"
+	AlertTypeDBPool       AlertType = "DB_POOL"
 )
 
 // Alert represents a single alert event.
@@ -45,17 +46,19 @@ type MultiAlerter struct {
 	cooldown time.Duration
 	logger   *slog.Logger
 
-	mu       sync.Mutex
-	lastSent map[string]time.Time
+	mu            sync.Mutex
+	lastSent      map[string]time.Time
+	lastAlertType map[string]AlertType // key: "chain:network" -> last alert type sent
 }
 
 // NewMultiAlerter creates a new multi-channel alerter with cooldown.
 func NewMultiAlerter(cooldown time.Duration, logger *slog.Logger, alerters ...Alerter) *MultiAlerter {
 	return &MultiAlerter{
-		alerters: alerters,
-		cooldown: cooldown,
-		logger:   logger.With("component", "alerter"),
-		lastSent: make(map[string]time.Time),
+		alerters:      alerters,
+		cooldown:      cooldown,
+		logger:        logger.With("component", "alerter"),
+		lastSent:      make(map[string]time.Time),
+		lastAlertType: make(map[string]AlertType),
 	}
 }
 
@@ -64,22 +67,48 @@ func cooldownKey(a Alert) string {
 	return fmt.Sprintf("%s:%s:%s", a.Type, a.Chain, a.Network)
 }
 
+// stateKey generates a key for state-transition tracking (type-agnostic).
+func stateKey(a Alert) string {
+	return fmt.Sprintf("%s:%s", a.Chain, a.Network)
+}
+
 // Send dispatches alert to all channels, respecting cooldown.
+// State-transition awareness: if the alert type changes for a given chain:network
+// (e.g., UNHEALTHY -> RECOVERY), the cooldown timer is bypassed so that
+// RECOVERY alerts are sent immediately after UNHEALTHY alerts.
 func (m *MultiAlerter) Send(ctx context.Context, alert Alert) error {
 	key := cooldownKey(alert)
+	sk := stateKey(alert)
 
 	m.mu.Lock()
-	if last, ok := m.lastSent[key]; ok && time.Since(last) < m.cooldown {
-		m.mu.Unlock()
-		m.logger.Debug("alert suppressed by cooldown", "key", key)
-		for _, a := range m.alerters {
-			channelName := alerterName(a)
-			metrics.AlertsCooldownSkipped.WithLabelValues(channelName, string(alert.Type)).Inc()
+	// Check for state transition: if the alert type changed for this chain:network,
+	// bypass cooldown to allow immediate delivery (e.g., RECOVERY after UNHEALTHY).
+	prevType, hasPrev := m.lastAlertType[sk]
+	stateChanged := hasPrev && prevType != alert.Type
+
+	if !stateChanged {
+		if last, ok := m.lastSent[key]; ok && time.Since(last) < m.cooldown {
+			m.mu.Unlock()
+			m.logger.Debug("alert suppressed by cooldown", "key", key)
+			for _, a := range m.alerters {
+				channelName := alerterName(a)
+				metrics.AlertsCooldownSkipped.WithLabelValues(channelName, string(alert.Type)).Inc()
+			}
+			return nil
 		}
-		return nil
 	}
 	m.lastSent[key] = time.Now()
+	m.lastAlertType[sk] = alert.Type
 	m.mu.Unlock()
+
+	if stateChanged {
+		m.logger.Info("alert state transition detected, bypassing cooldown",
+			"chain", alert.Chain,
+			"network", alert.Network,
+			"previous_type", prevType,
+			"new_type", alert.Type,
+		)
+	}
 
 	var firstErr error
 	for _, a := range m.alerters {
@@ -144,6 +173,8 @@ func (s *SlackAlerter) Send(ctx context.Context, alert Alert) error {
 		emoji = ":no_entry:"
 	case AlertTypeReconcileErr:
 		emoji = ":scales:"
+	case AlertTypeDBPool:
+		emoji = ":hourglass_flowing_sand:"
 	}
 
 	text := fmt.Sprintf("%s *[%s]* %s/%s: %s\n%s",

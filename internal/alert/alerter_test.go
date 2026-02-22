@@ -230,6 +230,52 @@ func TestSlackAlerter_PayloadFormat(t *testing.T) {
 	}
 }
 
+// TestMultiAlerter_StateTransitionBypassesCooldown verifies that when the
+// alert type changes for a chain:network (e.g., UNHEALTHY → RECOVERY), the
+// cooldown timer is bypassed so that the RECOVERY alert is sent immediately.
+func TestMultiAlerter_StateTransitionBypassesCooldown(t *testing.T) {
+	var received atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	webhook := NewWebhookAlerter(srv.URL)
+	// Use a very long cooldown so that without bypass, the second alert would be suppressed.
+	multi := NewMultiAlerter(time.Hour, testLogger(), webhook)
+
+	// Send UNHEALTHY alert.
+	unhealthy := Alert{
+		Type:    AlertTypeUnhealthy,
+		Chain:   "solana",
+		Network: "devnet",
+		Title:   "Node down",
+		Message: "RPC not responding",
+	}
+	err := multi.Send(context.Background(), unhealthy)
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), received.Load())
+
+	// Send RECOVERY alert immediately — should bypass cooldown because type changed.
+	recovery := Alert{
+		Type:    AlertTypeRecovery,
+		Chain:   "solana",
+		Network: "devnet",
+		Title:   "Node recovered",
+		Message: "RPC responding again",
+	}
+	err = multi.Send(context.Background(), recovery)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), received.Load(), "RECOVERY alert should bypass cooldown after UNHEALTHY")
+
+	// Send the same RECOVERY alert again — should be suppressed by cooldown (no state transition).
+	err = multi.Send(context.Background(), recovery)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), received.Load(), "Duplicate RECOVERY should be suppressed by cooldown")
+}
+
 // TestWebhookAlerter_PayloadFormat verifies the JSON payload sent to the
 // generic webhook contains type, chain, network, title, message, fields,
 // and time fields.

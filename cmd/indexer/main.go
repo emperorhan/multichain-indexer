@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -101,11 +103,11 @@ func logSecurityWarnings(cfg *config.Config, logger *slog.Logger) error {
 	if cfg.Server.MetricsAuthUser == "" {
 		logger.Warn("SECURITY: /metrics endpoint has no authentication — set METRICS_AUTH_USER and METRICS_AUTH_PASS in production")
 	}
-	if cfg.Server.AdminAddr != "" && cfg.Server.AdminAuthUser == "" {
+	if cfg.Server.AdminAddr != "" && cfg.Server.AdminAuthUser == "" && cfg.Server.AdminAuthToken == "" {
 		if cfg.Server.AdminRequireAuth {
-			return fmt.Errorf("admin API requires authentication but ADMIN_AUTH_USER is not set — set ADMIN_AUTH_USER and ADMIN_AUTH_PASS or set ADMIN_REQUIRE_AUTH=false")
+			return fmt.Errorf("admin API requires authentication but neither ADMIN_AUTH_USER nor ADMIN_AUTH_TOKEN is set — configure one or set ADMIN_REQUIRE_AUTH=false")
 		}
-		logger.Warn("SECURITY: admin API has no authentication — set ADMIN_AUTH_USER and ADMIN_AUTH_PASS in production")
+		logger.Warn("SECURITY: admin API has no authentication — set ADMIN_AUTH_TOKEN (bearer) or ADMIN_AUTH_USER/ADMIN_AUTH_PASS (basic) in production")
 	}
 	return nil
 }
@@ -154,7 +156,8 @@ func basicAuthMiddleware(user, pass string, next http.Handler) http.Handler {
 }
 
 type healthChecker struct {
-	db *sql.DB
+	db        *sql.DB
+	pipelines []*pipeline.Pipeline
 }
 
 func (h *healthChecker) check(ctx context.Context) error {
@@ -165,6 +168,12 @@ func (h *healthChecker) check(ctx context.Context) error {
 	defer cancel()
 	if err := h.db.PingContext(checkCtx); err != nil {
 		return fmt.Errorf("database: %w", err)
+	}
+	for _, p := range h.pipelines {
+		snap := p.Health().Snapshot()
+		if snap.Status == string(pipeline.HealthStatusUnhealthy) {
+			return fmt.Errorf("pipeline %s/%s: unhealthy (%d consecutive failures)", snap.Chain, snap.Network, snap.ConsecutiveFailures)
+		}
 	}
 	return nil
 }
@@ -200,6 +209,47 @@ func startDBPoolStatsPump(ctx context.Context, db dbStatsProvider, targets []run
 			case <-ticker.C:
 				if err := collectDBPoolStats(db, targets, gauges); err != nil {
 					logger.Warn("failed to collect db pool stats", "error", err)
+				}
+			}
+		}
+	}()
+}
+
+// startDBPoolExhaustionAlert runs a background goroutine that checks db.Stats()
+// every 30 seconds and sends an alert if pool usage exceeds 80%.
+// If MaxOpenConnections is 0 (unlimited), the check is skipped.
+func startDBPoolExhaustionAlert(ctx context.Context, db dbStatsProvider, alerter alert.Alerter, logger *slog.Logger) {
+	if db == nil || alerter == nil {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				stats := db.Stats()
+				if stats.MaxOpenConnections <= 0 {
+					// Unlimited pool; skip the check.
+					continue
+				}
+				usage := float64(stats.InUse) / float64(stats.MaxOpenConnections)
+				if usage > 0.8 {
+					logger.Warn("DB connection pool near exhaustion",
+						"in_use", stats.InUse,
+						"max_open", stats.MaxOpenConnections,
+						"usage_pct", fmt.Sprintf("%.0f%%", usage*100),
+					)
+					if err := alerter.Send(ctx, alert.Alert{
+						Type:    alert.AlertTypeDBPool,
+						Title:   "DB connection pool near exhaustion",
+						Message: fmt.Sprintf("Pool usage: %d/%d (%.0f%%)", stats.InUse, stats.MaxOpenConnections, usage*100),
+					}); err != nil {
+						logger.Warn("failed to send DB pool alert", "error", err)
+					}
 				}
 			}
 		}
@@ -636,7 +686,7 @@ func run() error {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	// Health check server
-	checker := &healthChecker{db: db.DB}
+	checker := &healthChecker{db: db.DB, pipelines: pipelines}
 	g.Go(func() error {
 		return runHealthServer(gCtx, cfg.Server.HealthPort, cfg.Server.MetricsAuthUser, cfg.Server.MetricsAuthPass, checker, logger)
 	})
@@ -670,6 +720,7 @@ func run() error {
 			admin.WithReconcileRequester(reconService),
 			admin.WithAddressBookRepo(addressBookRepo),
 			admin.WithDashboardRepo(dashboardRepo),
+			admin.WithAuthToken(cfg.Server.AdminAuthToken),
 		)
 		var adminHandler http.Handler = adminSrv.Handler()
 		adminHandler = admin.AuditMiddleware(logger, adminHandler)
@@ -690,8 +741,16 @@ func run() error {
 		p := p
 		pipelineWg.Add(1)
 		go func() {
-			defer pipelineWg.Done()
-			if err := p.Run(gCtx); err != nil && err != context.Canceled {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("pipeline panicked",
+						"chain", p.Chain(), "network", p.Network(),
+						"panic", fmt.Sprintf("%v", r),
+						"stack", string(debug.Stack()))
+				}
+				pipelineWg.Done()
+			}()
+			if err := p.Run(gCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("pipeline exited with error",
 					"chain", p.Chain(), "network", p.Network(), "error", err)
 			}
@@ -699,6 +758,7 @@ func run() error {
 	}
 
 	startDBPoolStatsPump(gCtx, db.DB, targets, cfg.DB.PoolStatsIntervalMS, logger)
+	startDBPoolExhaustionAlert(gCtx, db.DB, alerter, logger)
 
 	// Signal handler
 	g.Go(func() error {
@@ -712,12 +772,23 @@ func run() error {
 		}
 	})
 
-	if err := g.Wait(); err != nil && err != context.Canceled {
+	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("indexer exited: %w", err)
 	}
 
-	// Wait for all pipelines to finish after context cancellation.
-	pipelineWg.Wait()
+	// Wait for pipelines with a timeout.
+	done := make(chan struct{})
+	go func() {
+		pipelineWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		logger.Info("all pipelines shut down gracefully")
+	case <-time.After(30 * time.Second):
+		logger.Error("pipeline shutdown timed out after 30s, forcing exit")
+		os.Exit(1)
+	}
 
 	logger.Info("indexer shut down gracefully")
 	return nil

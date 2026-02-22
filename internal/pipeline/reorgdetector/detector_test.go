@@ -9,12 +9,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emperorhan/multichain-indexer/internal/alert"
 	chainpkg "github.com/emperorhan/multichain-indexer/internal/chain"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// countingAlerter counts how many alerts were sent.
+type countingAlerter struct {
+	sent *int
+}
+
+func (c *countingAlerter) Send(_ context.Context, _ alert.Alert) error {
+	*c.sent++
+	return nil
+}
 
 // fakeReorgAwareAdapter implements chain.ReorgAwareAdapter for testing.
 type fakeReorgAwareAdapter struct {
@@ -180,6 +191,79 @@ func TestDetector_HashMismatch_SendsReorgEvent(t *testing.T) {
 	default:
 		t.Fatal("expected reorg event")
 	}
+}
+
+// TestDetector_ConsecutiveRPCErrors_AlertAfterThreshold verifies that the
+// reorg detector sends an alert after 5 consecutive RPC errors.
+func TestDetector_ConsecutiveRPCErrors_AlertAfterThreshold(t *testing.T) {
+	t.Parallel()
+
+	// Adapter always returns error
+	adapter := &fakeReorgAwareAdapter{
+		chainName: "base",
+		hashErr:   fmt.Errorf("rpc unavailable"),
+	}
+
+	// 6 blocks → 6 RPC calls, all will fail
+	blocks := make([]model.IndexedBlock, 6)
+	for i := range blocks {
+		blocks[i] = model.IndexedBlock{
+			Chain:       model.ChainBase,
+			Network:     model.NetworkSepolia,
+			BlockNumber: int64(100 + i),
+			BlockHash:   fmt.Sprintf("0x%d", i),
+		}
+	}
+	blockRepo := &fakeBlockRepo{unfinalizedBlocks: blocks}
+	reorgCh := make(chan event.ReorgEvent, 1)
+
+	var alertsSent int
+	fakeAlerter := &countingAlerter{sent: &alertsSent}
+
+	d := New(model.ChainBase, model.NetworkSepolia, adapter, blockRepo, reorgCh, time.Second, slog.Default())
+	d.WithAlerter(fakeAlerter)
+
+	err := d.check(context.Background())
+	require.NoError(t, err)
+
+	// With 6 blocks failing, consecutiveRPCErrs reaches 5 at block[4], then 6 at block[5].
+	// Alert should be sent at least once (when threshold is first reached or exceeded).
+	assert.GreaterOrEqual(t, alertsSent, 1, "Alert should have been sent after 5+ consecutive RPC errors")
+	assert.Equal(t, 6, d.consecutiveRPCErrs, "Should have 6 consecutive RPC errors")
+}
+
+// TestDetector_RPCErrorCountResetsOnSuccess verifies that a successful RPC call
+// resets the consecutive error counter.
+func TestDetector_RPCErrorCountResetsOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeReorgAwareAdapter{
+		chainName: "base",
+		blockHashes: map[int64]string{
+			103: "0xaaa",
+		},
+		parentHashes: map[int64]string{
+			103: "0x999",
+		},
+		// blocks 100-102 missing → error; 103 succeeds
+	}
+
+	blocks := []model.IndexedBlock{
+		{Chain: model.ChainBase, Network: model.NetworkSepolia, BlockNumber: 100, BlockHash: "0xa"},
+		{Chain: model.ChainBase, Network: model.NetworkSepolia, BlockNumber: 101, BlockHash: "0xb"},
+		{Chain: model.ChainBase, Network: model.NetworkSepolia, BlockNumber: 102, BlockHash: "0xc"},
+		{Chain: model.ChainBase, Network: model.NetworkSepolia, BlockNumber: 103, BlockHash: "0xaaa"},
+	}
+	blockRepo := &fakeBlockRepo{unfinalizedBlocks: blocks}
+	reorgCh := make(chan event.ReorgEvent, 1)
+
+	d := New(model.ChainBase, model.NetworkSepolia, adapter, blockRepo, reorgCh, time.Second, slog.Default())
+
+	err := d.check(context.Background())
+	require.NoError(t, err)
+
+	// Block 103 succeeded, so counter should be reset to 0
+	assert.Equal(t, 0, d.consecutiveRPCErrs, "Successful RPC should reset consecutive error count")
 }
 
 func TestDetector_RPCError_ContinuesChecking(t *testing.T) {

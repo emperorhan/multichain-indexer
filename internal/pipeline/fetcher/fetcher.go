@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/cache"
 	"github.com/emperorhan/multichain-indexer/internal/chain"
+	"github.com/emperorhan/multichain-indexer/internal/circuitbreaker"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
@@ -50,6 +52,12 @@ type Fetcher struct {
 	sleepFn                   func(ctx context.Context, d time.Duration) error
 
 	batchSizeByAddress *cache.LRU[string, int]
+
+	cbFailureThreshold int
+	cbSuccessThreshold int
+	cbOpenTimeout      time.Duration
+	cbOnStateChange    func(from, to circuitbreaker.State)
+	circuitBreaker     *circuitbreaker.Breaker
 }
 
 type Option func(*Fetcher)
@@ -77,6 +85,15 @@ func WithAdaptiveMinBatch(minBatch int) Option {
 func WithBoundaryOverlapLookahead(n int) Option {
 	return func(f *Fetcher) {
 		f.boundaryOverlapLookahead = n
+	}
+}
+
+func WithCircuitBreaker(failureThreshold int, successThreshold int, openTimeout time.Duration, onStateChange func(from, to circuitbreaker.State)) Option {
+	return func(f *Fetcher) {
+		f.cbFailureThreshold = failureThreshold
+		f.cbSuccessThreshold = successThreshold
+		f.cbOpenTimeout = openTimeout
+		f.cbOnStateChange = onStateChange
 	}
 }
 
@@ -126,12 +143,42 @@ func New(
 func (f *Fetcher) Run(ctx context.Context) error {
 	f.logger.Info("fetcher started", "workers", f.workerCount)
 
+	// Initialize circuit breaker if configured.
+	if f.circuitBreaker == nil {
+		cbCfg := circuitbreaker.Config{
+			FailureThreshold: f.cbFailureThreshold,
+			SuccessThreshold: f.cbSuccessThreshold,
+			OpenTimeout:      f.cbOpenTimeout,
+			OnStateChange:    f.cbOnStateChange,
+		}
+		if cbCfg.FailureThreshold <= 0 {
+			cbCfg.FailureThreshold = 10
+		}
+		if cbCfg.SuccessThreshold <= 0 {
+			cbCfg.SuccessThreshold = 3
+		}
+		if cbCfg.OpenTimeout <= 0 {
+			cbCfg.OpenTimeout = 30 * time.Second
+		}
+		f.circuitBreaker = circuitbreaker.New(cbCfg)
+	}
+
 	// Use errgroup so that a worker error propagates up and cancels all
 	// sibling workers via gCtx, achieving fail-fast without panic.
 	g, gCtx := errgroup.WithContext(ctx)
 	for i := 0; i < f.workerCount; i++ {
 		workerID := i
-		g.Go(func() error {
+		g.Go(func() (retErr error) {
+			defer func() {
+				if r := recover(); r != nil {
+					f.logger.Error("fetcher worker panic recovered",
+						"worker", workerID,
+						"panic", fmt.Sprintf("%v", r),
+						"stack", string(debug.Stack()),
+					)
+					retErr = fmt.Errorf("fetcher worker %d panicked: %v", workerID, r)
+				}
+			}()
 			return f.worker(gCtx, workerID)
 		})
 	}
@@ -182,6 +229,13 @@ func (f *Fetcher) worker(ctx context.Context, workerID int) error {
 }
 
 func (f *Fetcher) processJob(ctx context.Context, log *slog.Logger, job event.FetchJob) error {
+	// Circuit breaker: reject early if RPC is known to be down.
+	if f.circuitBreaker != nil {
+		if cbErr := f.circuitBreaker.Allow(); cbErr != nil {
+			return retry.Transient(fmt.Errorf("rpc circuit breaker open: %w", cbErr))
+		}
+	}
+
 	if job.BlockScanMode {
 		return f.processBlockScanJob(ctx, log, job)
 	}
@@ -587,10 +641,16 @@ func (f *Fetcher) fetchTransactionsWithRetry(
 }
 
 func (f *Fetcher) recordRPCResult(chain, network string, isError bool) {
-	if f.autoTuneSignals == nil {
-		return
+	if f.autoTuneSignals != nil {
+		f.autoTuneSignals.RecordRPCResult(chain, network, isError)
 	}
-	f.autoTuneSignals.RecordRPCResult(chain, network, isError)
+	if f.circuitBreaker != nil {
+		if isError {
+			f.circuitBreaker.RecordFailure()
+		} else {
+			f.circuitBreaker.RecordSuccess()
+		}
+	}
 }
 
 func (f *Fetcher) resolveBatchSize(chain model.Chain, network model.Network, address string, hardCap int) int {

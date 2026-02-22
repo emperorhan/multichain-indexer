@@ -13,6 +13,7 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/addressindex"
 	"github.com/emperorhan/multichain-indexer/internal/alert"
 	"github.com/emperorhan/multichain-indexer/internal/chain"
+	"github.com/emperorhan/multichain-indexer/internal/circuitbreaker"
 	"github.com/emperorhan/multichain-indexer/internal/config"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
@@ -320,8 +321,26 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			// Pipeline terminated normally or with error.
 			runCancel()
 			if err != nil && !errors.Is(err, context.Canceled) {
-				p.health.RecordFailure()
+				if becameUnhealthy := p.health.RecordFailure(); becameUnhealthy && p.cfg.Alerter != nil {
+					p.cfg.Alerter.Send(ctx, alert.Alert{
+						Type:    alert.AlertTypeUnhealthy,
+						Chain:   string(p.cfg.Chain),
+						Network: string(p.cfg.Network),
+						Title:   "Pipeline became unhealthy",
+						Message: fmt.Sprintf("Pipeline %s/%s has become unhealthy after %d consecutive failures", p.cfg.Chain, p.cfg.Network, p.health.Snapshot().ConsecutiveFailures),
+					})
+				}
 				return err
+			}
+			// Success path: check for recovery from unhealthy state.
+			if recovered := p.health.RecordSuccessWithRecovery(); recovered && p.cfg.Alerter != nil {
+				p.cfg.Alerter.Send(ctx, alert.Alert{
+					Type:    alert.AlertTypeRecovery,
+					Chain:   string(p.cfg.Chain),
+					Network: string(p.cfg.Network),
+					Title:   "Pipeline recovered",
+					Message: fmt.Sprintf("Pipeline %s/%s recovered from unhealthy state", p.cfg.Chain, p.cfg.Network),
+				})
 			}
 			return nil
 
@@ -450,6 +469,12 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 	if p.cfg.Fetcher.BoundaryOverlapLookahead > 0 {
 		fetchOpts = append(fetchOpts, fetcher.WithBoundaryOverlapLookahead(p.cfg.Fetcher.BoundaryOverlapLookahead))
 	}
+	fetchOpts = append(fetchOpts, fetcher.WithCircuitBreaker(
+		p.cfg.Fetcher.CircuitBreaker.FailureThreshold,
+		p.cfg.Fetcher.CircuitBreaker.SuccessThreshold,
+		time.Duration(p.cfg.Fetcher.CircuitBreaker.OpenTimeoutMs)*time.Millisecond,
+		cbStateChangeCallback("fetcher", p.cfg.Chain.String(), p.cfg.Network.String(), p.logger),
+	))
 	fetch := fetcher.New(
 		p.adapter, jobCh, rawBatchCh,
 		p.cfg.FetchWorkers, p.logger,
@@ -467,6 +492,12 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 			time.Duration(p.cfg.Normalizer.RetryDelayMaxMs)*time.Millisecond,
 		))
 	}
+	normOpts = append(normOpts, normalizer.WithCircuitBreaker(
+		p.cfg.Normalizer.CircuitBreaker.FailureThreshold,
+		p.cfg.Normalizer.CircuitBreaker.SuccessThreshold,
+		time.Duration(p.cfg.Normalizer.CircuitBreaker.OpenTimeoutMs)*time.Millisecond,
+		cbStateChangeCallback("normalizer", p.cfg.Chain.String(), p.cfg.Network.String(), p.logger),
+	))
 	norm := normalizer.New(
 		p.cfg.SidecarAddr, p.cfg.SidecarTimeout,
 		rawBatchCh, normalizedCh,
@@ -624,4 +655,21 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 	}
 
 	return g.Wait()
+}
+
+// cbStateChangeCallback returns a circuit breaker state change callback that
+// logs the transition and increments the Prometheus counter.
+func cbStateChangeCallback(component, chainStr, networkStr string, logger *slog.Logger) func(from, to circuitbreaker.State) {
+	return func(from, to circuitbreaker.State) {
+		logger.Warn("circuit breaker state change",
+			"component", component,
+			"chain", chainStr,
+			"network", networkStr,
+			"from", from.String(),
+			"to", to.String(),
+		)
+		metrics.CircuitBreakerStateChanges.WithLabelValues(
+			component, chainStr, networkStr, from.String(), to.String(),
+		).Inc()
+	}
 }

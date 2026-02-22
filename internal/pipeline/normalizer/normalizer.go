@@ -9,12 +9,14 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	sidecarv1 "github.com/emperorhan/multichain-indexer/pkg/generated/sidecar/v1"
 
 	"github.com/emperorhan/multichain-indexer/internal/cache"
+	"github.com/emperorhan/multichain-indexer/internal/circuitbreaker"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
@@ -50,11 +52,16 @@ type Normalizer struct {
 	retryDelayStart  time.Duration
 	retryDelayMax    time.Duration
 	sleepFn          func(context.Context, time.Duration) error
-	coverageFloor    cache.Cache[string, *sidecarv1.TransactionResult]
-	tlsEnabled       bool
-	tlsCA            string
-	tlsCert          string
-	tlsKey           string
+	coverageFloor      cache.Cache[string, *sidecarv1.TransactionResult]
+	tlsEnabled         bool
+	tlsCA              string
+	tlsCert            string
+	tlsKey             string
+	cbFailureThreshold int
+	cbSuccessThreshold int
+	cbOpenTimeout      time.Duration
+	cbOnStateChange    func(from, to circuitbreaker.State)
+	circuitBreaker     *circuitbreaker.Breaker
 }
 
 type Option func(*Normalizer)
@@ -76,6 +83,15 @@ func WithRetryConfig(maxAttempts int, delayInitial, delayMax time.Duration) Opti
 		n.retryMaxAttempts = maxAttempts
 		n.retryDelayStart = delayInitial
 		n.retryDelayMax = delayMax
+	}
+}
+
+func WithCircuitBreaker(failureThreshold, successThreshold int, openTimeout time.Duration, onStateChange func(from, to circuitbreaker.State)) Option {
+	return func(n *Normalizer) {
+		n.cbFailureThreshold = failureThreshold
+		n.cbSuccessThreshold = successThreshold
+		n.cbOpenTimeout = openTimeout
+		n.cbOnStateChange = onStateChange
 	}
 }
 
@@ -120,6 +136,26 @@ func New(
 func (n *Normalizer) Run(ctx context.Context) error {
 	n.logger.Info("normalizer started", "sidecar_addr", n.sidecarAddr, "workers", n.workerCount, "tls", n.tlsEnabled)
 
+	// Initialize circuit breaker if configured.
+	if n.circuitBreaker == nil {
+		cbCfg := circuitbreaker.Config{
+			FailureThreshold: n.cbFailureThreshold,
+			SuccessThreshold: n.cbSuccessThreshold,
+			OpenTimeout:      n.cbOpenTimeout,
+			OnStateChange:    n.cbOnStateChange,
+		}
+		if cbCfg.FailureThreshold <= 0 {
+			cbCfg.FailureThreshold = 5
+		}
+		if cbCfg.SuccessThreshold <= 0 {
+			cbCfg.SuccessThreshold = 2
+		}
+		if cbCfg.OpenTimeout <= 0 {
+			cbCfg.OpenTimeout = 30 * time.Second
+		}
+		n.circuitBreaker = circuitbreaker.New(cbCfg)
+	}
+
 	transportCreds, err := n.buildTransportCredentials()
 	if err != nil {
 		return fmt.Errorf("build transport credentials: %w", err)
@@ -150,7 +186,17 @@ func (n *Normalizer) Run(ctx context.Context) error {
 	g, gCtx := errgroup.WithContext(ctx)
 	for i := 0; i < n.workerCount; i++ {
 		workerID := i
-		g.Go(func() error {
+		g.Go(func() (retErr error) {
+			defer func() {
+				if r := recover(); r != nil {
+					n.logger.Error("normalizer worker panic recovered",
+						"worker", workerID,
+						"panic", fmt.Sprintf("%v", r),
+						"stack", string(debug.Stack()),
+					)
+					retErr = fmt.Errorf("normalizer worker %d panicked: %v", workerID, r)
+				}
+			}()
 			return n.worker(gCtx, workerID, client)
 		})
 	}
@@ -277,6 +323,16 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		),
 	)
 
+	// Circuit breaker: reject early if sidecar is known to be down.
+	if n.circuitBreaker != nil {
+		if cbErr := n.circuitBreaker.Allow(); cbErr != nil {
+			grpcSpan.RecordError(cbErr)
+			grpcSpan.SetStatus(codes.Error, cbErr.Error())
+			grpcSpan.End()
+			return retry.Transient(fmt.Errorf("sidecar circuit breaker open: %w", cbErr))
+		}
+	}
+
 	callCtx, cancel := context.WithTimeout(grpcCtx, n.sidecarTimeout)
 	defer cancel()
 
@@ -289,10 +345,21 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		WatchedAddresses: watchedAddrs,
 	})
 	if err != nil {
+		// Circuit breaker: record failure for transient errors.
+		if n.circuitBreaker != nil {
+			decision := retry.Classify(err)
+			if decision.IsTransient() {
+				n.circuitBreaker.RecordFailure()
+			}
+		}
 		grpcSpan.RecordError(err)
 		grpcSpan.SetStatus(codes.Error, err.Error())
 		grpcSpan.End()
 		return fmt.Errorf("sidecar decode: %w", err)
+	}
+	// Circuit breaker: record success.
+	if n.circuitBreaker != nil {
+		n.circuitBreaker.RecordSuccess()
 	}
 	grpcSpan.SetAttributes(attribute.Int("results_count", len(resp.GetResults())))
 	grpcSpan.End()

@@ -143,6 +143,14 @@ var (
 		Help:      "Total tokens auto-detected and denied as scam",
 	}, []string{"chain", "network"})
 
+	// Negative balance detection
+	IngesterNegativeBalancesDetected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "ingester",
+		Name:      "negative_balances_detected_total",
+		Help:      "Number of negative balance calculations detected and clamped to zero",
+	}, []string{"chain", "network"})
+
 	// Pipeline-level
 	PipelineCursorSequence = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "indexer",
@@ -459,4 +467,11 @@ var (
 		Name:      "mismatches_total",
 		Help:      "Total balance mismatches detected during reconciliation",
 	}, []string{"chain", "network"})
+
+	// Circuit breaker
+	CircuitBreakerStateChanges = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Name:      "circuit_breaker_state_changes_total",
+		Help:      "Number of circuit breaker state transitions",
+	}, []string{"component", "chain", "network", "from_state", "to_state"})
 )

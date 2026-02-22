@@ -1271,22 +1271,22 @@ func TestProcessBatch_Withdrawal_WithFee(t *testing.T) {
 	mockBERepo.EXPECT().BulkUpsertTx(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ *sql.Tx, events []*model.BalanceEvent) (store.BulkUpsertEventResult, error) {
 			require.Len(t, events, 2)
-			// First event: transfer
+			// First event: transfer (negative balance clamped to 0)
 			assert.Equal(t, "-2000000", events[0].Delta)
 			if assert.NotNil(t, events[0].BalanceBefore) {
 				assert.Equal(t, "0", *events[0].BalanceBefore)
 			}
 			if assert.NotNil(t, events[0].BalanceAfter) {
-				assert.Equal(t, "-2000000", *events[0].BalanceAfter)
+				assert.Equal(t, "0", *events[0].BalanceAfter) // clamped from -2000000
 			}
-			// Second event: fee (in-memory balance tracks across events in same batch)
+			// Second event: fee (in-memory balance tracks clamped value)
 			assert.Equal(t, "-5000", events[1].Delta)
 			assert.Equal(t, model.ActivityFee, events[1].ActivityType)
 			if assert.NotNil(t, events[1].BalanceBefore) {
-				assert.Equal(t, "-2000000", *events[1].BalanceBefore)
+				assert.Equal(t, "0", *events[1].BalanceBefore) // clamped in-memory balance
 			}
 			if assert.NotNil(t, events[1].BalanceAfter) {
-				assert.Equal(t, "-2005000", *events[1].BalanceAfter)
+				assert.Equal(t, "0", *events[1].BalanceAfter) // clamped from -5000
 			}
 			return store.BulkUpsertEventResult{InsertedCount: 2}, nil
 		})
