@@ -20,7 +20,9 @@ func TestInit_EmptyEndpoint_ReturnsNoOpProvider(t *testing.T) {
 func TestTracer_ReturnsNonNil(t *testing.T) {
 	shutdown, err := Init(context.Background(), "test-svc", "", true, 0.1)
 	require.NoError(t, err)
-	defer shutdown(context.Background())
+	defer func() {
+		assert.NoError(t, shutdown(context.Background()))
+	}()
 
 	tracer := Tracer("test-tracer")
 	assert.NotNil(t, tracer)

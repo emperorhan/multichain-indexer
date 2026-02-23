@@ -90,7 +90,8 @@ func TestClient_CallSuccess(t *testing.T) {
 		require.NoError(t, json.Unmarshal(body, &receivedReq))
 
 		w.WriteHeader(http.StatusOK)
-		w.Write(rpcOK(int64(840000)))
+		_, err = w.Write(rpcOK(int64(840000)))
+		require.NoError(t, err)
 	})
 	defer ts.Close()
 
@@ -118,7 +119,8 @@ func TestClient_CallSuccess(t *testing.T) {
 func TestClient_CallRPCError(t *testing.T) {
 	ts := newMockServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(rpcError(-1, "Block not found"))
+		_, err := w.Write(rpcError(-1, "Block not found"))
+		require.NoError(t, err)
 	})
 	defer ts.Close()
 
@@ -144,7 +146,8 @@ func TestClient_CallHTTPError(t *testing.T) {
 	t.Run("non-200 status code", func(t *testing.T) {
 		ts := newMockServer(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("internal error"))
+			_, err := w.Write([]byte("internal error"))
+			require.NoError(t, err)
 		})
 		defer ts.Close()
 
@@ -171,7 +174,8 @@ func TestClient_CallHTTPError(t *testing.T) {
 		ts := newMockServer(func(w http.ResponseWriter, r *http.Request) {
 			// This handler should never be reached because context is cancelled.
 			w.WriteHeader(http.StatusOK)
-			w.Write(rpcOK(int64(100)))
+			_, err := w.Write(rpcOK(int64(100)))
+			require.NoError(t, err)
 		})
 		defer ts.Close()
 
@@ -194,7 +198,8 @@ func TestClient_CallMalformedJSON(t *testing.T) {
 	t.Run("completely invalid JSON", func(t *testing.T) {
 		ts := newMockServer(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("this is not json at all"))
+			_, err := w.Write([]byte("this is not json at all"))
+			require.NoError(t, err)
 		})
 		defer ts.Close()
 
@@ -209,7 +214,8 @@ func TestClient_CallMalformedJSON(t *testing.T) {
 	t.Run("truncated JSON", func(t *testing.T) {
 		ts := newMockServer(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":`))
+			_, err := w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":`))
+			require.NoError(t, err)
 		})
 		defer ts.Close()
 
@@ -224,7 +230,8 @@ func TestClient_CallMalformedJSON(t *testing.T) {
 	t.Run("valid JSON but wrong structure", func(t *testing.T) {
 		ts := newMockServer(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"foo":"bar"}`))
+			_, err := w.Write([]byte(`{"foo":"bar"}`))
+			require.NoError(t, err)
 		})
 		defer ts.Close()
 
@@ -252,7 +259,8 @@ func TestClient_RequestIDIncrement(t *testing.T) {
 		ids = append(ids, req.ID)
 
 		w.WriteHeader(http.StatusOK)
-		w.Write(rpcOK(int64(1)))
+		_, err := w.Write(rpcOK(int64(1)))
+		require.NoError(t, err)
 	})
 	defer ts.Close()
 

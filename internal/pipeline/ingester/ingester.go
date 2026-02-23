@@ -16,11 +16,11 @@ import (
 
 	"github.com/emperorhan/multichain-indexer/internal/addressindex"
 	"github.com/emperorhan/multichain-indexer/internal/cache"
-	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/coordinator/autotune"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/replay"
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/retry"
 	"github.com/emperorhan/multichain-indexer/internal/store"
@@ -165,19 +165,19 @@ func New(
 	opts ...Option,
 ) *Ingester {
 	ing := &Ingester{
-		db:                   db,
-		txRepo:               txRepo,
-		balanceEventRepo:     balanceEventRepo,
-		balanceRepo:          balanceRepo,
-		tokenRepo:            tokenRepo,
-		wmRepo:               wmRepo,
-		normalizedCh:         normalizedCh,
-		logger:               logger.With("component", "ingester"),
-		reorgHandler:         nil,
-		retryMaxAttempts:     defaultProcessRetryMaxAttempts,
-		retryDelayStart:      defaultRetryDelayInitial,
-		retryDelayMax:        defaultRetryDelayMax,
-		sleepFn:              sleepContext,
+		db:                    db,
+		txRepo:                txRepo,
+		balanceEventRepo:      balanceEventRepo,
+		balanceRepo:           balanceRepo,
+		tokenRepo:             tokenRepo,
+		wmRepo:                wmRepo,
+		normalizedCh:          normalizedCh,
+		logger:                logger.With("component", "ingester"),
+		reorgHandler:          nil,
+		retryMaxAttempts:      defaultProcessRetryMaxAttempts,
+		retryDelayStart:       defaultRetryDelayInitial,
+		retryDelayMax:         defaultRetryDelayMax,
+		sleepFn:               sleepContext,
 		deniedCache:           cache.NewShardedLRU[string, bool](defaultDeniedCacheCapacity, defaultDeniedCacheTTL, func(k string) string { return k }),
 		blockScanAddrCacheTTL: defaultBlockScanAddrCacheTTL,
 		blockScanAddrCache:    make(map[string]map[string]addrMeta),
@@ -447,16 +447,15 @@ type batchContext struct {
 	allEvents        []eventContext
 
 	// Phase 2 outputs
-	txIDMap        map[string]uuid.UUID
-	tokenIDMap     map[string]uuid.UUID
-	cachedDenied   map[string]bool
-	balanceMap     map[store.BalanceKey]store.BalanceInfo
+	txIDMap         map[string]uuid.UUID
+	tokenIDMap      map[string]uuid.UUID
+	cachedDenied    map[string]bool
+	balanceMap      map[store.BalanceKey]store.BalanceInfo
 	deniedKeyPrefix string // "chain:network:" — computed once, reused across phases
 
 	// Phase 3 outputs
 	eventModels      []*model.BalanceEvent
 	aggregatedDeltas map[adjustmentKey]*adjustmentAccum
-	totalEvents      int
 }
 
 type addrMeta struct {
@@ -946,7 +945,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 			TransactionID: txID, TxHash: ec.canonicalTxHash,
 			OuterInstructionIndex: ec.be.OuterInstructionIndex,
 			InnerInstructionIndex: ec.be.InnerInstructionIndex,
-			TokenID: tokenID, ActivityType: ec.be.ActivityType,
+			TokenID:               tokenID, ActivityType: ec.be.ActivityType,
 			EventAction: ec.be.EventAction, ProgramID: ec.be.ProgramID,
 			Address: ec.be.Address, CounterpartyAddress: ec.be.CounterpartyAddress,
 			Delta: ec.be.Delta, WatchedAddress: eventWatchedAddr,
@@ -972,7 +971,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 
 			ak := adjustmentKey{
 				BalanceKey: store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: ""},
-				walletID: derefStr(eventWalletID), orgID: derefStr(eventOrgID),
+				walletID:   derefStr(eventWalletID), orgID: derefStr(eventOrgID),
 			}
 			delta := new(big.Int)
 			if _, ok := delta.SetString(strings.TrimSpace(ec.be.Delta), 10); !ok {
@@ -1000,7 +999,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 				}
 				sak := adjustmentKey{
 					BalanceKey: store.BalanceKey{Address: ec.be.Address, TokenID: tokenID, BalanceType: "staked"},
-					walletID: derefStr(eventWalletID), orgID: derefStr(eventOrgID),
+					walletID:   derefStr(eventWalletID), orgID: derefStr(eventOrgID),
 				}
 				stakeDelta := new(big.Int)
 				if _, ok := stakeDelta.SetString(strings.TrimSpace(invertedDelta), 10); !ok {
@@ -1686,7 +1685,6 @@ func (ing *Ingester) reconcileBlockScanCommit(
 	))
 }
 
-
 func isAmbiguousCommitAckError(err error) bool {
 	if err == nil {
 		return false
@@ -1721,7 +1719,6 @@ func containsAnySubstring(value string, tokens []string) bool {
 	}
 	return false
 }
-
 
 // meetsBalanceThreshold checks whether the finality state is strong enough
 // to apply the balance adjustment for the given chain, and filters dust

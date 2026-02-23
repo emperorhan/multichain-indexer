@@ -19,17 +19,6 @@ import (
 	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 )
 
-// buildRawBalanceEvents converts sidecar raw events into NormalizedBalanceEvents,
-// filtering by watchedAddress. When handleSelfTransfer is true, transfer events
-// where counterparty == watchedAddress are emitted as delta=0 SELF_TRANSFER events.
-func buildRawBalanceEvents(
-	rawEvents []*sidecarv1.BalanceEventInfo,
-	watchedAddress string,
-	handleSelfTransfer bool,
-) []event.NormalizedBalanceEvent {
-	return buildRawBalanceEventsMulti(rawEvents, map[string]struct{}{watchedAddress: {}}, handleSelfTransfer)
-}
-
 // buildRawBalanceEventsMulti converts sidecar raw events into NormalizedBalanceEvents,
 // filtering by a set of watched addresses.
 func buildRawBalanceEventsMulti(
@@ -349,6 +338,10 @@ func shouldReplaceCanonicalSolanaEvent(
 
 var sha256Pool = sync.Pool{New: func() any { return sha256.New() }}
 
+func writeHashString(h hash.Hash, s string) {
+	_, _ = io.WriteString(h, s)
+}
+
 func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eventPath, actorAddress, assetID string, activityType model.ActivityType) string {
 	canonicalTxHash := identity.CanonicalSignatureIdentity(chain, txHash)
 	if canonicalTxHash == "" {
@@ -356,20 +349,20 @@ func buildCanonicalEventID(chain model.Chain, network model.Network, txHash, eve
 	}
 	h := sha256Pool.Get().(hash.Hash)
 	h.Reset()
-	io.WriteString(h, "chain=")
-	io.WriteString(h, string(chain))
-	io.WriteString(h, "|network=")
-	io.WriteString(h, string(network))
-	io.WriteString(h, "|tx=")
-	io.WriteString(h, canonicalTxHash)
-	io.WriteString(h, "|path=")
-	io.WriteString(h, eventPath)
-	io.WriteString(h, "|actor=")
-	io.WriteString(h, actorAddress)
-	io.WriteString(h, "|asset=")
-	io.WriteString(h, assetID)
-	io.WriteString(h, "|activity=")
-	io.WriteString(h, string(activityType))
+	writeHashString(h, "chain=")
+	writeHashString(h, string(chain))
+	writeHashString(h, "|network=")
+	writeHashString(h, string(network))
+	writeHashString(h, "|tx=")
+	writeHashString(h, canonicalTxHash)
+	writeHashString(h, "|path=")
+	writeHashString(h, eventPath)
+	writeHashString(h, "|actor=")
+	writeHashString(h, actorAddress)
+	writeHashString(h, "|asset=")
+	writeHashString(h, assetID)
+	writeHashString(h, "|activity=")
+	writeHashString(h, string(activityType))
 	var buf [32]byte
 	h.Sum(buf[:0])
 	sha256Pool.Put(h)

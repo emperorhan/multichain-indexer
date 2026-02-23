@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	defaultInterval      = 30 * time.Second
-	defaultMaxCheckDepth = 256
+	defaultInterval        = 30 * time.Second
+	defaultMaxCheckDepth   = 256
 	rpcErrorAlertThreshold = 5
 )
 
@@ -258,13 +258,16 @@ func (d *Detector) verifyBlock(ctx context.Context, block model.IndexedBlock) (b
 		)
 
 		if d.consecutiveRPCErrs >= rpcErrorAlertThreshold && d.alerter != nil {
-			d.alerter.Send(ctx, alert.Alert{
+			sendErr := d.alerter.Send(ctx, alert.Alert{
 				Type:    "reorg_detector_rpc_errors",
 				Chain:   string(d.chain),
 				Network: string(d.network),
 				Title:   "Reorg detector RPC errors",
 				Message: fmt.Sprintf("Reorg detector has %d consecutive RPC errors for %s/%s", d.consecutiveRPCErrs, d.chain, d.network),
 			})
+			if sendErr != nil {
+				d.logger.Warn("failed to send reorg detector rpc error alert", "error", sendErr)
+			}
 		}
 		return false, "", err
 	}

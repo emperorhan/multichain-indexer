@@ -31,37 +31,37 @@ import (
 )
 
 type Config struct {
-	Chain                  model.Chain
-	Network                model.Network
-	BatchSize              int
-	IndexingInterval       time.Duration
-	CoordinatorAutoTune    CoordinatorAutoTuneConfig
-	FetchWorkers           int
-	NormalizerWorkers      int
-	ChannelBufferSize      int
-	JobChBufferSize        int // Coordinator -> Fetcher (default: 20)
-	RawBatchChBufferSize   int // Fetcher -> Normalizer (default: 10)
-	NormalizedChBufferSize int // Normalizer -> Ingester (default: 5)
-	SidecarAddr            string
-	SidecarTimeout         time.Duration
-	SidecarMaxMsgSizeMB    int
-	SidecarTLSEnabled      bool
-	SidecarTLSCert         string
-	SidecarTLSKey          string
-	SidecarTLSCA           string
-	CommitInterleaver      ingester.CommitInterleaver
-	ReorgDetectorInterval  time.Duration
-	FinalizerInterval      time.Duration
-	IndexedBlocksRetention int64
-	AddressIndex              config.AddressIndexConfig
-	Fetcher                   config.FetcherStageConfig
-	Normalizer                config.NormalizerStageConfig
-	Ingester                  config.IngesterStageConfig
-	Health                    config.HealthStageConfig
-	ConfigWatcher             config.ConfigWatcherStageConfig
+	Chain                      model.Chain
+	Network                    model.Network
+	BatchSize                  int
+	IndexingInterval           time.Duration
+	CoordinatorAutoTune        CoordinatorAutoTuneConfig
+	FetchWorkers               int
+	NormalizerWorkers          int
+	ChannelBufferSize          int
+	JobChBufferSize            int // Coordinator -> Fetcher (default: 20)
+	RawBatchChBufferSize       int // Fetcher -> Normalizer (default: 10)
+	NormalizedChBufferSize     int // Normalizer -> Ingester (default: 5)
+	SidecarAddr                string
+	SidecarTimeout             time.Duration
+	SidecarMaxMsgSizeMB        int
+	SidecarTLSEnabled          bool
+	SidecarTLSCert             string
+	SidecarTLSKey              string
+	SidecarTLSCA               string
+	CommitInterleaver          ingester.CommitInterleaver
+	ReorgDetectorInterval      time.Duration
+	FinalizerInterval          time.Duration
+	IndexedBlocksRetention     int64
+	AddressIndex               config.AddressIndexConfig
+	Fetcher                    config.FetcherStageConfig
+	Normalizer                 config.NormalizerStageConfig
+	Ingester                   config.IngesterStageConfig
+	Health                     config.HealthStageConfig
+	ConfigWatcher              config.ConfigWatcherStageConfig
 	ReorgDetectorMaxCheckDepth int
 	MaxInitialLookbackBlocks   int
-	Alerter                   alert.Alerter
+	Alerter                    alert.Alerter
 }
 
 type CoordinatorAutoTuneConfig struct {
@@ -356,13 +356,16 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			if err != nil && !errors.Is(err, context.Canceled) {
 				p.consecutiveFailures++
 				if becameUnhealthy := p.health.RecordFailure(); becameUnhealthy && p.cfg.Alerter != nil {
-					p.cfg.Alerter.Send(ctx, alert.Alert{
+					sendErr := p.cfg.Alerter.Send(ctx, alert.Alert{
 						Type:    alert.AlertTypeUnhealthy,
 						Chain:   string(p.cfg.Chain),
 						Network: string(p.cfg.Network),
 						Title:   "Pipeline became unhealthy",
 						Message: fmt.Sprintf("Pipeline %s/%s has become unhealthy after %d consecutive failures", p.cfg.Chain, p.cfg.Network, p.health.Snapshot().ConsecutiveFailures),
 					})
+					if sendErr != nil {
+						p.logger.Warn("failed to send unhealthy alert", "error", sendErr)
+					}
 				}
 
 				backoff := p.calcRestartBackoff()
@@ -384,13 +387,16 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			// Success path: reset failure counter and check for recovery from unhealthy state.
 			p.consecutiveFailures = 0
 			if recovered := p.health.RecordSuccessWithRecovery(); recovered && p.cfg.Alerter != nil {
-				p.cfg.Alerter.Send(ctx, alert.Alert{
+				sendErr := p.cfg.Alerter.Send(ctx, alert.Alert{
 					Type:    alert.AlertTypeRecovery,
 					Chain:   string(p.cfg.Chain),
 					Network: string(p.cfg.Network),
 					Title:   "Pipeline recovered",
 					Message: fmt.Sprintf("Pipeline %s/%s recovered from unhealthy state", p.cfg.Chain, p.cfg.Network),
 				})
+				if sendErr != nil {
+					p.logger.Warn("failed to send recovery alert", "error", sendErr)
+				}
 			}
 			return nil
 

@@ -56,15 +56,12 @@ func (mr *methodRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ID:      req.ID,
 			Error:   &RPCError{Code: -32601, Message: "Method not found"},
 		})
-		w.Write(resp)
+		_, _ = w.Write(resp)
 		return
 	}
 
 	// Convert params from []interface{} (they arrive as json decoded values).
-	var params []interface{}
-	for _, p := range req.Params {
-		params = append(params, p)
-	}
+	params := append([]interface{}(nil), req.Params...)
 
 	result, rpcErr := handler(params)
 
@@ -79,7 +76,7 @@ func (mr *methodRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Error:   rpcErr,
 		})
 		w.WriteHeader(http.StatusOK)
-		w.Write(resp)
+		_, _ = w.Write(resp)
 		return
 	}
 
@@ -90,7 +87,7 @@ func (mr *methodRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Result:  raw,
 	})
 	w.WriteHeader(http.StatusOK)
-	w.Write(resp)
+	_, _ = w.Write(resp)
 }
 
 // newClientWithRouter creates a test server + Client wired to it.
@@ -459,7 +456,7 @@ func TestRateLimiter_ContextCancellation(t *testing.T) {
 			ID:      1,
 			Result:  json.RawMessage(`840000`),
 		})
-		w.Write(resp)
+		_, _ = w.Write(resp)
 	}))
 	defer ts.Close()
 
@@ -604,7 +601,7 @@ func TestGetBlockHeader_NullResult(t *testing.T) {
 	// Use raw httptest server to return explicit null result.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":null}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":null}`))
 	}))
 	defer ts.Close()
 
@@ -618,7 +615,7 @@ func TestMethods_HTTPErrorPropagation(t *testing.T) {
 	// Verify that each method properly wraps HTTP-level errors.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("service unavailable"))
+		_, _ = w.Write([]byte("service unavailable"))
 	}))
 	defer ts.Close()
 

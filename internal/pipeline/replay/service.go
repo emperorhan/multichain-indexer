@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
-	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
+	"github.com/emperorhan/multichain-indexer/internal/pipeline/identity"
 	"github.com/emperorhan/multichain-indexer/internal/store"
 	"github.com/google/uuid"
 )
@@ -117,7 +117,9 @@ func (s *Service) dryRun(ctx context.Context, req PurgeRequest, start time.Time)
 	if err != nil {
 		return nil, fmt.Errorf("dry run begin tx: %w", err)
 	}
-	defer dryTx.Rollback()
+	defer func() {
+		_ = dryTx.Rollback()
+	}()
 
 	err = dryTx.QueryRowContext(dryCtx, `
 		SELECT
@@ -376,4 +378,3 @@ func (s *Service) fetchRollbackBatch(
 	}
 	return events, rows.Err()
 }
-

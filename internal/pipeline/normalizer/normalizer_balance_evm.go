@@ -317,10 +317,6 @@ func evmDecoderVersion(chain model.Chain) string {
 
 // --- EVM fee event builders ---
 
-func buildEthL1FeeBalanceEvent(feePayer, feeAmount, eventPath string) event.NormalizedBalanceEvent {
-	return buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath, evmNativeToken(model.ChainEthereum))
-}
-
 func buildEVML1FeeBalanceEvent(feePayer, feeAmount, eventPath string, token evmNativeTokenInfo) event.NormalizedBalanceEvent {
 	return event.NormalizedBalanceEvent{
 		OuterInstructionIndex: -1,

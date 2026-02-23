@@ -78,7 +78,7 @@ type rfEmptyRows struct{}
 func (r *rfEmptyRows) Columns() []string {
 	return []string{"token_id", "address", "delta", "block_cursor", "tx_hash", "wallet_id", "organization_id", "activity_type", "balance_applied"}
 }
-func (r *rfEmptyRows) Close() error                  { return nil }
+func (r *rfEmptyRows) Close() error                   { return nil }
 func (r *rfEmptyRows) Next(dest []driver.Value) error { return io.EOF }
 
 // rfDataRows returns pre-loaded rows of data for multi-row tests.
@@ -2054,6 +2054,3 @@ func TestHandleReorg_WithRollbackEvents_CallsBulkAdjust(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
-
-func ctx() context.Context { return context.Background() }
-

@@ -26,8 +26,6 @@ import (
 // Helper: build a minimal batch with balance events for processBatch tests.
 // ---------------------------------------------------------------------------
 
-func ptrStr(s string) *string { return &s }
-
 func makeBasicBatch(chain model.Chain, network model.Network, address string, newSeq int64, txs []event.NormalizedTransaction) event.NormalizedBatch {
 	walletID := "wallet-" + address
 	orgID := "org-" + address

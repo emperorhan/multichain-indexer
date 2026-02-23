@@ -116,44 +116,6 @@ func cloneAutoTuneRestartState(state *AutoTuneRestartState) *AutoTuneRestartStat
 	return &cloned
 }
 
-func runAutoTuneTickScenario(
-	t *testing.T,
-	chain model.Chain,
-	network model.Network,
-	ticks [][]model.WatchedAddress,
-	headSequence int64,
-	autoTuneCfg *AutoTuneConfig,
-) ([]lagAwareJobSnapshot, []int) {
-	t.Helper()
-
-	watchedRepo := &scriptedWatchedAddressRepo{ticks: ticks}
-	configRepo := &inMemoryConfigRepo{watermark: 0}
-	jobCh := make(chan event.FetchJob, len(ticks)+1)
-	c := New(chain, network, watchedRepo, 100, time.Second, jobCh, slog.Default()).
-		WithHeadProvider(&stubHeadProvider{head: headSequence}).
-		WithBlockScanMode(configRepo)
-	if autoTuneCfg != nil {
-		c = c.WithAutoTune(*autoTuneCfg)
-	}
-
-	snapshots := make([]lagAwareJobSnapshot, 0, len(ticks))
-	batches := make([]int, 0, len(ticks))
-	for range ticks {
-		require.NoError(t, c.tick(context.Background()))
-		require.Len(t, jobCh, 1)
-		job := <-jobCh
-
-		snapshots = append(snapshots, snapshotFromFetchJob(job))
-		batches = append(batches, job.BatchSize)
-
-		// Advance watermark by a fixed amount from StartBlock (independent of batch size).
-		if job.BlockScanMode {
-			configRepo.watermark = job.StartBlock + 5
-		}
-	}
-	return snapshots, batches
-}
-
 func runAutoTuneTraceWithPolicyScheduleAndCrashpoints(
 	t *testing.T,
 	chain model.Chain,
@@ -527,8 +489,4 @@ func assertNoImmediateDirectionFlip(t *testing.T, batches []int) {
 		}
 		lastDirection = direction
 	}
-}
-
-func strPtr(v string) *string {
-	return &v
 }

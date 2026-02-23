@@ -170,7 +170,6 @@ type slotResult struct {
 	slot    int64
 	sigs    []chain.SignatureInfo
 	skipped bool
-	err     error
 }
 
 // ScanBlocks scans a range of slots and returns signatures for transactions
@@ -324,8 +323,12 @@ func extractTokenBalanceOwners(meta json.RawMessage) []string {
 	}
 
 	var parsed struct {
-		PreTokenBalances  []struct{ Owner string `json:"owner"` } `json:"preTokenBalances"`
-		PostTokenBalances []struct{ Owner string `json:"owner"` } `json:"postTokenBalances"`
+		PreTokenBalances []struct {
+			Owner string `json:"owner"`
+		} `json:"preTokenBalances"`
+		PostTokenBalances []struct {
+			Owner string `json:"owner"`
+		} `json:"postTokenBalances"`
 	}
 	if err := json.Unmarshal(meta, &parsed); err != nil {
 		return nil

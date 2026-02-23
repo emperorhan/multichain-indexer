@@ -28,10 +28,7 @@ type mockRowScanner struct {
 }
 
 func (m *mockRowScanner) Next() bool {
-	if m.idx >= len(m.rows) {
-		return false
-	}
-	return true
+	return m.idx < len(m.rows)
 }
 
 func (m *mockRowScanner) Scan(dest ...any) error {
