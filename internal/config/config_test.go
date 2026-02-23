@@ -751,6 +751,9 @@ func writeYAML(t *testing.T, content string) {
 }
 
 func TestLoad_YAMLOnly(t *testing.T) {
+	// Keep DB_URL deterministic when CI exports DB_URL for integration jobs.
+	t.Setenv("DB_URL", "postgres://yaml:yaml@yamlhost/yamldb")
+
 	writeYAML(t, `
 db:
   url: "postgres://yaml:yaml@yamlhost/yamldb"
@@ -789,6 +792,9 @@ pipeline:
 }
 
 func TestLoad_EnvOverridesYAML(t *testing.T) {
+	// Keep DB_URL deterministic when CI exports DB_URL for integration jobs.
+	t.Setenv("DB_URL", "postgres://yaml:yaml@yamlhost/yamldb")
+
 	writeYAML(t, `
 db:
   url: "postgres://yaml:yaml@yamlhost/yamldb"
