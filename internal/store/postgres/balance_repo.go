@@ -26,9 +26,9 @@ func NewBalanceRepo(db *DB) *BalanceRepo {
 func (r *BalanceRepo) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, req store.AdjustRequest) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO balances (chain, network, address, token_id, wallet_id, organization_id, amount, last_updated_cursor, last_updated_tx_hash, balance_type)
-		VALUES ($1, $2, $3, $4, $5, $6, GREATEST(0, $7::numeric), $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10)
 		ON CONFLICT (chain, network, address, token_id, balance_type) DO UPDATE SET
-			amount = GREATEST(0, balances.amount + $7::numeric),
+			amount = balances.amount + $7::numeric,
 			last_updated_cursor = GREATEST(balances.last_updated_cursor, $8),
 			last_updated_tx_hash = $9,
 			updated_at = now()
@@ -186,7 +186,7 @@ func (r *BalanceRepo) BulkAdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain
 		updated AS (
 			UPDATE balances b
 			SET
-				amount = GREATEST(0, b.amount + i.delta),
+				amount = b.amount + i.delta,
 				last_updated_cursor = GREATEST(b.last_updated_cursor, i.cursor),
 				last_updated_tx_hash = i.tx_hash,
 				updated_at = now()
@@ -205,7 +205,7 @@ func (r *BalanceRepo) BulkAdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain
 		)
 		SELECT
 			$1, $2, i.address, i.token_id, i.wallet_id, i.organization_id,
-			GREATEST(0, i.delta), i.cursor, i.tx_hash, i.balance_type
+			i.delta, i.cursor, i.tx_hash, i.balance_type
 		FROM input i
 		LEFT JOIN updated u
 			ON u.address = i.address AND u.token_id = i.token_id AND u.balance_type = i.balance_type

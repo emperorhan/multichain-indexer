@@ -442,3 +442,49 @@ func (r *BalanceEventRepo) execBulkChunk(ctx context.Context, tx *sql.Tx, chunk 
 
 	return insertedCount, nil
 }
+
+// getByBlockRangeQuery is the static query for GetByBlockRange.
+const getByBlockRangeQuery = `SELECT id, event_id, chain, network, tx_hash,
+	block_cursor, block_hash, block_time, tx_index,
+	activity_type, event_action, event_path, event_path_type,
+	program_id, address, actor_address, counterparty_address,
+	asset_type, asset_id, delta, balance_applied,
+	finality_state, decoder_version, schema_version, chain_data,
+	watched_address, wallet_id, organization_id
+FROM balance_events
+WHERE chain = $1 AND network = $2 AND block_cursor >= $3 AND block_cursor <= $4
+ORDER BY block_cursor, tx_index, event_path`
+
+// GetByBlockRange returns all balance_events for a chain/network within a
+// block cursor range. Used by the replay verifier for post-hoc comparison.
+func (r *BalanceEventRepo) GetByBlockRange(ctx context.Context, chain, network string, startBlock, endBlock int64) ([]model.BalanceEvent, error) {
+	qCtx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
+	rows, err := r.db.QueryContext(qCtx, getByBlockRangeQuery, chain, network, startBlock, endBlock)
+	if err != nil {
+		return nil, fmt.Errorf("get by block range: %w", err)
+	}
+	defer rows.Close()
+
+	var events []model.BalanceEvent
+	for rows.Next() {
+		var ev model.BalanceEvent
+		if err := rows.Scan(
+			&ev.ID, &ev.EventID, &ev.Chain, &ev.Network, &ev.TxHash,
+			&ev.BlockCursor, &ev.BlockHash, &ev.BlockTime, &ev.TxIndex,
+			&ev.ActivityType, &ev.EventAction, &ev.EventPath, &ev.EventPathType,
+			&ev.ProgramID, &ev.Address, &ev.ActorAddress, &ev.CounterpartyAddress,
+			&ev.AssetType, &ev.AssetID, &ev.Delta, &ev.BalanceApplied,
+			&ev.FinalityState, &ev.DecoderVersion, &ev.SchemaVersion, &ev.ChainData,
+			&ev.WatchedAddress, &ev.WalletID, &ev.OrganizationID,
+		); err != nil {
+			return nil, fmt.Errorf("get by block range scan: %w", err)
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get by block range rows: %w", err)
+	}
+	return events, nil
+}

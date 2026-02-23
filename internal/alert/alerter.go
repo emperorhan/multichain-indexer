@@ -17,12 +17,13 @@ import (
 type AlertType string
 
 const (
-	AlertTypeUnhealthy    AlertType = "UNHEALTHY"
-	AlertTypeRecovery     AlertType = "RECOVERY"
-	AlertTypeReorg        AlertType = "REORG"
-	AlertTypeScamToken    AlertType = "SCAM_TOKEN"
-	AlertTypeReconcileErr AlertType = "RECONCILE_MISMATCH"
-	AlertTypeDBPool       AlertType = "DB_POOL"
+	AlertTypeUnhealthy       AlertType = "UNHEALTHY"
+	AlertTypeRecovery        AlertType = "RECOVERY"
+	AlertTypeReorg           AlertType = "REORG"
+	AlertTypeScamToken       AlertType = "SCAM_TOKEN"
+	AlertTypeReconcileErr    AlertType = "RECONCILE_MISMATCH"
+	AlertTypeDBPool          AlertType = "DB_POOL"
+	AlertTypeNegativeBalance AlertType = "NEGATIVE_BALANCE"
 )
 
 // Alert represents a single alert event.
@@ -175,6 +176,8 @@ func (s *SlackAlerter) Send(ctx context.Context, alert Alert) error {
 		emoji = ":scales:"
 	case AlertTypeDBPool:
 		emoji = ":hourglass_flowing_sand:"
+	case AlertTypeNegativeBalance:
+		emoji = ":chart_with_downwards_trend:"
 	}
 
 	text := fmt.Sprintf("%s *[%s]* %s/%s: %s\n%s",

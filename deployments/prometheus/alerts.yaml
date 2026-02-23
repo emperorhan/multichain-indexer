@@ -37,6 +37,22 @@ groups:
           severity: warning
         annotations:
           summary: "Pipeline cursor has not advanced in 10m"
+      - alert: NegativeBalanceDetected
+        expr: increase(indexer_ingester_negative_balances_detected_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Negative balance detected"
+          description: "{{ $labels.chain }}/{{ $labels.network }}: {{ $value }} negative balance event(s) in last 5m. Likely mid-history sync — check if backfill is needed."
+      - alert: NegativeBalanceSustained
+        expr: increase(indexer_ingester_negative_balances_detected_total[1h]) > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sustained negative balance detections"
+          description: "{{ $labels.chain }}/{{ $labels.network }}: {{ $value }} negative balance events in last 1h. Likely missing historical data or backfill needed."
       - alert: DBPoolExhausted
         expr: indexer_postgres_db_pool_in_use / indexer_postgres_db_pool_open > 0.9
         for: 5m

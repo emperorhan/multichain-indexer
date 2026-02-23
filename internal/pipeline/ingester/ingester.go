@@ -882,11 +882,12 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 			return fmt.Errorf("apply delta %s to balance %s: %w", ec.be.Delta, balanceBefore, calcErr)
 		}
 
-		// Detect negative balance: log, record the event, but skip balance application.
-		// The event is still persisted for forensic analysis; only balance state update is skipped.
+		// Detect negative balance: log + metric for observability, but still apply.
+		// Negative balances occur legitimately when syncing an existing wallet from a
+		// specific block (withdrawals arrive before deposits). Developers handle via DB.
 		negativeBalance := len(balanceAfter) > 0 && balanceAfter[0] == '-'
 		if negativeBalance {
-			ing.logger.Error("negative balance detected, skipping balance application",
+			ing.logger.Warn("negative balance detected",
 				"address", ec.be.Address,
 				"token_id", tokenID,
 				"balance_before", balanceBefore,
@@ -958,7 +959,7 @@ func (ing *Ingester) buildEventModels(ctx context.Context, bc *batchContext) err
 			AssetID: ec.be.AssetID, FinalityState: ec.be.FinalityState,
 			DecoderVersion: ec.be.DecoderVersion, SchemaVersion: ec.be.SchemaVersion,
 		}
-		beModel.BalanceApplied = !negativeBalance && meetsBalanceThreshold(batch.Chain, beModel.FinalityState, ec.be.TokenType, ec.be.Delta)
+		beModel.BalanceApplied = meetsBalanceThreshold(batch.Chain, beModel.FinalityState, ec.be.TokenType, ec.be.Delta)
 		if beModel.BalanceApplied {
 			beModel.BalanceBefore = &balanceBefore
 			beModel.BalanceAfter = &balanceAfter

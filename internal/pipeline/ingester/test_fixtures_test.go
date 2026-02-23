@@ -242,6 +242,10 @@ func (r *interleaveBalanceEventRepo) BulkUpsertTx(_ context.Context, _ *sql.Tx, 
 	return result, nil
 }
 
+func (r *interleaveBalanceEventRepo) GetByBlockRange(_ context.Context, _, _ string, _, _ int64) ([]model.BalanceEvent, error) {
+	return nil, nil
+}
+
 func (r *interleaveBalanceEventRepo) RecalculateBalanceFieldsTx(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, _ int64) error {
 	return nil
 }

@@ -263,6 +263,21 @@ func (mr *MockBalanceEventRepositoryMockRecorder) BulkUpsertTx(ctx, tx, events a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BulkUpsertTx", reflect.TypeOf((*MockBalanceEventRepository)(nil).BulkUpsertTx), ctx, tx, events)
 }
 
+// GetByBlockRange mocks base method.
+func (m *MockBalanceEventRepository) GetByBlockRange(ctx context.Context, chain, network string, startBlock, endBlock int64) ([]model.BalanceEvent, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByBlockRange", ctx, chain, network, startBlock, endBlock)
+	ret0, _ := ret[0].([]model.BalanceEvent)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByBlockRange indicates an expected call of GetByBlockRange.
+func (mr *MockBalanceEventRepositoryMockRecorder) GetByBlockRange(ctx, chain, network, startBlock, endBlock any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByBlockRange", reflect.TypeOf((*MockBalanceEventRepository)(nil).GetByBlockRange), ctx, chain, network, startBlock, endBlock)
+}
+
 // UpsertTx mocks base method.
 func (m *MockBalanceEventRepository) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (store.UpsertResult, error) {
 	m.ctrl.T.Helper()

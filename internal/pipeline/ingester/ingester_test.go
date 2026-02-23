@@ -90,8 +90,7 @@ func newIngesterMocks(t *testing.T) (
 		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, keys []store.BalanceKey) (map[store.BalanceKey]store.BalanceInfo, error) {
 			result := make(map[store.BalanceKey]store.BalanceInfo, len(keys))
 			for _, k := range keys {
-				// Large initial balance so negative deltas don't trigger the
-			// negative-balance guard (which now skips balance application).
+				// Large initial balance for realistic test scenarios.
 			result[k] = store.BalanceInfo{Amount: "999999999999999999999", Exists: true}
 			}
 			return result, nil

@@ -155,7 +155,7 @@ var (
 		Namespace: "indexer",
 		Subsystem: "ingester",
 		Name:      "negative_balances_detected_total",
-		Help:      "Number of negative balance calculations detected and clamped to zero",
+		Help:      "Number of negative balance calculations detected (balance still applied)",
 	}, []string{"chain", "network"})
 
 	// Pipeline-level

@@ -249,7 +249,7 @@ func TestBuildEventModels_ScamSignalFromChainData(t *testing.T) {
 // Test: buildEventModels — negative balance path
 // ---------------------------------------------------------------------------
 
-func TestBuildEventModels_NegativeBalance_SkipsBalanceApplication(t *testing.T) {
+func TestBuildEventModels_NegativeBalance_StillAppliesBalance(t *testing.T) {
 	ctrl, mockDB, mockTxRepo, mockBERepo, mockBalanceRepo, mockTokenRepo, mockConfigRepo := newCustomMocks(t)
 	_ = ctrl
 
@@ -259,7 +259,7 @@ func TestBuildEventModels_NegativeBalance_SkipsBalanceApplication(t *testing.T) 
 	contractAddress := "SOL"
 	now := time.Now()
 
-	// Delta -200 with balance 100 => negative
+	// Delta -200 with balance 100 => negative (-100)
 	be := makeNormalizedBalanceEvent(address, contractAddress, "-200", model.TokenTypeNative, model.ActivityWithdrawal)
 
 	batch := makeBasicBatch(model.ChainSolana, model.NetworkDevnet, address, 100,
@@ -308,7 +308,11 @@ func TestBuildEventModels_NegativeBalance_SkipsBalanceApplication(t *testing.T) 
 			return store.BulkUpsertEventResult{InsertedCount: len(events)}, nil
 		})
 
-	// No adjustments (negative balance → BalanceApplied=false)
+	// Balance IS applied even with negative result — adjustment expected
+	mockBalanceRepo.EXPECT().
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainSolana, model.NetworkDevnet, gomock.Any()).
+		Return(nil)
+
 	mockConfigRepo.EXPECT().
 		UpdateWatermarkTx(gomock.Any(), gomock.Any(), model.ChainSolana, model.NetworkDevnet, int64(100)).
 		Return(nil)
@@ -316,7 +320,11 @@ func TestBuildEventModels_NegativeBalance_SkipsBalanceApplication(t *testing.T) 
 	require.NoError(t, ing.processBatch(context.Background(), batch))
 
 	require.Len(t, capturedEvents, 1)
-	assert.False(t, capturedEvents[0].BalanceApplied, "negative balance should result in BalanceApplied=false")
+	assert.True(t, capturedEvents[0].BalanceApplied, "negative balance should still have BalanceApplied=true")
+	require.NotNil(t, capturedEvents[0].BalanceBefore)
+	assert.Equal(t, "100", *capturedEvents[0].BalanceBefore)
+	require.NotNil(t, capturedEvents[0].BalanceAfter)
+	assert.Equal(t, "-100", *capturedEvents[0].BalanceAfter)
 }
 
 // ---------------------------------------------------------------------------

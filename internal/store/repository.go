@@ -46,6 +46,7 @@ type BulkUpsertEventResult struct {
 type BalanceEventRepository interface {
 	UpsertTx(ctx context.Context, tx *sql.Tx, be *model.BalanceEvent) (UpsertResult, error)
 	BulkUpsertTx(ctx context.Context, tx *sql.Tx, events []*model.BalanceEvent) (BulkUpsertEventResult, error)
+	GetByBlockRange(ctx context.Context, chain, network string, startBlock, endBlock int64) ([]model.BalanceEvent, error)
 }
 
 // BalanceKey uniquely identifies a balance record.
