@@ -105,6 +105,7 @@ func BenchmarkProcessBatch_1Tx(b *testing.B) {
 	ing, resetState := newBenchIngester(b)
 	batch := buildBenchBatch(1)
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		resetState()
@@ -116,6 +117,7 @@ func BenchmarkProcessBatch_10Tx(b *testing.B) {
 	ing, resetState := newBenchIngester(b)
 	batch := buildBenchBatch(10)
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		resetState()
@@ -127,6 +129,7 @@ func BenchmarkProcessBatch_50Tx(b *testing.B) {
 	ing, resetState := newBenchIngester(b)
 	batch := buildBenchBatch(50)
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		resetState()
@@ -138,6 +141,7 @@ func BenchmarkProcessBatch_100Tx(b *testing.B) {
 	ing, resetState := newBenchIngester(b)
 	batch := buildBenchBatch(100)
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		resetState()

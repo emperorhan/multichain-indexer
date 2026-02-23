@@ -1252,23 +1252,7 @@ func (ing *Ingester) fetchReorgRollbackEvents(
 	}
 	defer rows.Close()
 
-	var events []rollbackBalanceEvent
-	for rows.Next() {
-		var be rollbackBalanceEvent
-		var walletID sql.NullString
-		var organizationID sql.NullString
-		if err := rows.Scan(&be.TokenID, &be.Address, &be.Delta, &be.BlockCursor, &be.TxHash, &walletID, &organizationID, &be.ActivityType, &be.BalanceApplied); err != nil {
-			return nil, fmt.Errorf("scan reorg rollback event: %w", err)
-		}
-		if walletID.Valid {
-			be.WalletID = &walletID.String
-		}
-		if organizationID.Valid {
-			be.OrganizationID = &organizationID.String
-		}
-		events = append(events, be)
-	}
-	return events, rows.Err()
+	return scanRollbackEvents(rows)
 }
 
 // handleFinalityPromotion promotes balance events and indexed blocks to finalized state.
@@ -1375,27 +1359,7 @@ func (ing *Ingester) promoteBalanceEvents(
 	}
 	defer rows.Close()
 
-	var events []promotedEvent
-	for rows.Next() {
-		var pe promotedEvent
-		var walletID sql.NullString
-		var orgID sql.NullString
-		if err := rows.Scan(&pe.TokenID, &pe.Address, &pe.Delta, &pe.BlockCursor, &pe.TxHash, &walletID, &orgID, &pe.ActivityType); err != nil {
-			return nil, fmt.Errorf("scan promoted event: %w", err)
-		}
-		if walletID.Valid {
-			pe.WalletID = &walletID.String
-		}
-		if orgID.Valid {
-			pe.OrganizationID = &orgID.String
-		}
-		events = append(events, pe)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read promoted events: %w", err)
-	}
-
-	return events, nil
+	return scanPromotedEvents(rows)
 }
 
 // detectScamSignal checks for scam token signals.
@@ -1513,6 +1477,63 @@ type rollbackBalanceEvent struct {
 	BalanceApplied bool
 }
 
+// rowScanner abstracts *sql.Rows for testability of scan logic.
+type rowScanner interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}
+
+// scanRollbackEvents scans rows into rollbackBalanceEvent slice.
+// Extracted from fetchReorgRollbackEvents/fetchRollbackEvents for testability.
+func scanRollbackEvents(rows rowScanner) ([]rollbackBalanceEvent, error) {
+	var events []rollbackBalanceEvent
+	for rows.Next() {
+		var be rollbackBalanceEvent
+		var walletID sql.NullString
+		var organizationID sql.NullString
+		if err := rows.Scan(&be.TokenID, &be.Address, &be.Delta, &be.BlockCursor, &be.TxHash, &walletID, &organizationID, &be.ActivityType, &be.BalanceApplied); err != nil {
+			return nil, fmt.Errorf("scan rollback event: %w", err)
+		}
+		if walletID.Valid {
+			be.WalletID = &walletID.String
+		}
+		if organizationID.Valid {
+			be.OrganizationID = &organizationID.String
+		}
+		events = append(events, be)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read rollback event rows: %w", err)
+	}
+	return events, nil
+}
+
+// scanPromotedEvents scans rows into promotedEvent slice.
+// Extracted from promoteBalanceEvents for testability.
+func scanPromotedEvents(rows rowScanner) ([]promotedEvent, error) {
+	var events []promotedEvent
+	for rows.Next() {
+		var pe promotedEvent
+		var walletID sql.NullString
+		var orgID sql.NullString
+		if err := rows.Scan(&pe.TokenID, &pe.Address, &pe.Delta, &pe.BlockCursor, &pe.TxHash, &walletID, &orgID, &pe.ActivityType); err != nil {
+			return nil, fmt.Errorf("scan promoted event: %w", err)
+		}
+		if walletID.Valid {
+			pe.WalletID = &walletID.String
+		}
+		if orgID.Valid {
+			pe.OrganizationID = &orgID.String
+		}
+		events = append(events, pe)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read promoted event rows: %w", err)
+	}
+	return events, nil
+}
+
 // buildReversalAdjustItems creates bulk adjust items that reverse the balance
 // deltas of the given events. For staking activities, an additional adjustment
 // item is produced (inverted sign) for the "staked" balance type.
@@ -1607,27 +1628,7 @@ func (ing *Ingester) fetchRollbackEvents(
 	}
 	defer rows.Close()
 
-	events := make([]rollbackBalanceEvent, 0)
-	for rows.Next() {
-		var be rollbackBalanceEvent
-		var walletID sql.NullString
-		var organizationID sql.NullString
-		if err := rows.Scan(&be.TokenID, &be.Address, &be.Delta, &be.BlockCursor, &be.TxHash, &walletID, &organizationID, &be.ActivityType, &be.BalanceApplied); err != nil {
-			return nil, fmt.Errorf("scan rollback event: %w", err)
-		}
-		if walletID.Valid {
-			be.WalletID = &walletID.String
-		}
-		if organizationID.Valid {
-			be.OrganizationID = &organizationID.String
-		}
-		events = append(events, be)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read rollback event rows: %w", err)
-	}
-
-	return events, nil
+	return scanRollbackEvents(rows)
 }
 
 func (ing *Ingester) reconcileAmbiguousCommitOutcome(

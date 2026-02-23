@@ -1,4 +1,4 @@
-.PHONY: build run test test-sidecar lint proto migrate migrate-down sidecar-build sidecar-run docker-up docker-down mock-gen docker-build-indexer evaluate
+.PHONY: build run test bench test-sidecar lint proto migrate migrate-down sidecar-build sidecar-run docker-up docker-down mock-gen docker-build-indexer evaluate
 
 # Go
 BINARY_NAME=multichain-indexer
@@ -19,7 +19,10 @@ run:
 	go run $(MAIN_PATH)
 
 test:
-	go test ./... -v -race -count=1
+	go test ./... -v -race -bench=. -benchmem -count=1
+
+bench:
+	go test ./... -bench=. -benchmem -run=^$$ -count=1
 
 test-sidecar:
 	cd sidecar && npm test

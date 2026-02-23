@@ -5,14 +5,17 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
-	"sync"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/event"
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/emperorhan/multichain-indexer/internal/store"
 	storemocks "github.com/emperorhan/multichain-indexer/internal/store/mocks"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -21,28 +24,26 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Fake driver for reorg/finality tests (separate from the one in ingester_test.go
-// and reorg_interleave_test.go to avoid double-registration).
+// Fake driver for reorg/finality tests. Each test gets a unique driver name
+// via atomic counter, eliminating shared state and connection pool issues.
 // ---------------------------------------------------------------------------
-type rfFakeDriver struct{}
+
+// rfQueryHandler returns rows for a given query. If nil, returns empty rows.
+type rfQueryHandler func(query string, args []driver.Value) (driver.Rows, error)
+
+var rfDriverSeq atomic.Int64
+
+// rfFakeDriver wraps a single rfFakeConn per Open call.
+type rfFakeDriver struct {
+	conn *rfFakeConn
+}
 type rfFakeConn struct {
-	mu         sync.Mutex
-	execCalls  []rfExecCall
-	queryCalls []rfQueryCall
+	queryHandler rfQueryHandler
+	execHandler  func(query string, args []driver.Value) (driver.Result, error)
 }
 type rfFakeTx struct{ conn *rfFakeConn }
 
-type rfExecCall struct {
-	Query string
-	Args  []driver.Value
-}
-
-type rfQueryCall struct {
-	Query string
-	Args  []driver.Value
-}
-
-func (d *rfFakeDriver) Open(string) (driver.Conn, error) { return &rfFakeConn{}, nil }
+func (d *rfFakeDriver) Open(string) (driver.Conn, error) { return d.conn, nil }
 func (c *rfFakeConn) Prepare(query string) (driver.Stmt, error) {
 	return &rfFakeStmt{conn: c, query: query}, nil
 }
@@ -56,25 +57,23 @@ type rfFakeStmt struct {
 	query string
 }
 
-func (s *rfFakeStmt) Close() error { return nil }
-func (s *rfFakeStmt) NumInput() int {
-	return -1 // variadic
-}
+func (s *rfFakeStmt) Close() error  { return nil }
+func (s *rfFakeStmt) NumInput() int { return -1 }
 func (s *rfFakeStmt) Exec(args []driver.Value) (driver.Result, error) {
-	s.conn.mu.Lock()
-	defer s.conn.mu.Unlock()
-	s.conn.execCalls = append(s.conn.execCalls, rfExecCall{Query: s.query, Args: args})
+	if s.conn.execHandler != nil {
+		return s.conn.execHandler(s.query, args)
+	}
 	return driver.RowsAffected(0), nil
 }
 func (s *rfFakeStmt) Query(args []driver.Value) (driver.Rows, error) {
-	s.conn.mu.Lock()
-	defer s.conn.mu.Unlock()
-	s.conn.queryCalls = append(s.conn.queryCalls, rfQueryCall{Query: s.query, Args: args})
-	// Return empty result set for SELECT queries (rollback/promote queries).
+	if s.conn.queryHandler != nil {
+		return s.conn.queryHandler(s.query, args)
+	}
 	return &rfEmptyRows{}, nil
 }
 
-type rfEmptyRows struct{ closed bool }
+// rfEmptyRows returns no rows.
+type rfEmptyRows struct{}
 
 func (r *rfEmptyRows) Columns() []string {
 	return []string{"token_id", "address", "delta", "block_cursor", "tx_hash", "wallet_id", "organization_id", "activity_type", "balance_applied"}
@@ -82,14 +81,55 @@ func (r *rfEmptyRows) Columns() []string {
 func (r *rfEmptyRows) Close() error                  { return nil }
 func (r *rfEmptyRows) Next(dest []driver.Value) error { return io.EOF }
 
-var registerRFFakeDriver sync.Once
+// rfDataRows returns pre-loaded rows of data for multi-row tests.
+type rfDataRows struct {
+	columns []string
+	data    [][]driver.Value
+	idx     int
+}
 
+func (r *rfDataRows) Columns() []string { return r.columns }
+func (r *rfDataRows) Close() error      { return nil }
+func (r *rfDataRows) Next(dest []driver.Value) error {
+	if r.idx >= len(r.data) {
+		return io.EOF
+	}
+	copy(dest, r.data[r.idx])
+	r.idx++
+	return nil
+}
+
+// rollbackEventColumns are the 9 columns returned by fetchReorgRollbackEvents / fetchRollbackEvents.
+var rollbackEventColumns = []string{
+	"token_id", "address", "delta", "block_cursor", "tx_hash",
+	"wallet_id", "organization_id", "activity_type", "balance_applied",
+}
+
+// promotedEventColumns are the 8 columns returned by promoteBalanceEvents RETURNING clause.
+var promotedEventColumns = []string{
+	"token_id", "address", "delta", "block_cursor", "tx_hash",
+	"wallet_id", "organization_id", "activity_type",
+}
+
+// openRFFakeDB creates a fake DB with no query handler (empty results, no errors).
 func openRFFakeDB(t *testing.T) *sql.DB {
 	t.Helper()
-	registerRFFakeDriver.Do(func() {
-		sql.Register("fake_rf_ingester", &rfFakeDriver{})
-	})
-	db, err := sql.Open("fake_rf_ingester", "")
+	return openRFFakeDBWith(t, nil, nil)
+}
+
+// openRFFakeDBWithHandler creates a fake DB whose queries return rows from the handler.
+func openRFFakeDBWithHandler(t *testing.T, handler rfQueryHandler) *sql.DB {
+	t.Helper()
+	return openRFFakeDBWith(t, handler, nil)
+}
+
+// openRFFakeDBWith creates an isolated fake DB per test using a unique driver name.
+func openRFFakeDBWith(t *testing.T, queryH rfQueryHandler, execH func(string, []driver.Value) (driver.Result, error)) *sql.DB {
+	t.Helper()
+	name := fmt.Sprintf("fake_rf_%d", rfDriverSeq.Add(1))
+	conn := &rfFakeConn{queryHandler: queryH, execHandler: execH}
+	sql.Register(name, &rfFakeDriver{conn: conn})
+	db, err := sql.Open(name, "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	return db
@@ -840,6 +880,94 @@ func TestHandleReorg_Direct_NoBlockRepo(t *testing.T) {
 // Test: handleFinalityPromotion error propagation
 // ---------------------------------------------------------------------------
 
+func TestHandleFinalityPromotion_PromoteQueryError_Propagates(t *testing.T) {
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		if strings.Contains(query, "RETURNING") {
+			return nil, errors.New("query deadlock")
+		}
+		return &rfEmptyRows{}, nil
+	})
+
+	normalizedCh := make(chan event.NormalizedBatch)
+	ing := New(
+		&interleaveTxBeginner{db: fakeDB},
+		nil, nil, nil, nil, nil,
+		normalizedCh,
+		slog.Default(),
+	)
+
+	err := ing.handleFinalityPromotion(context.Background(), event.FinalityPromotion{
+		Chain:             model.ChainBase,
+		Network:           model.NetworkMainnet,
+		NewFinalizedBlock: 100,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "promote balance events")
+}
+
+func TestHandleFinalityPromotion_ExecError_Propagates(t *testing.T) {
+	fakeDB := openRFFakeDBWith(t, nil, func(query string, _ []driver.Value) (driver.Result, error) {
+		if strings.Contains(query, "UPDATE") {
+			return nil, errors.New("exec deadlock")
+		}
+		return driver.RowsAffected(0), nil
+	})
+
+	normalizedCh := make(chan event.NormalizedBatch)
+	ing := New(
+		&interleaveTxBeginner{db: fakeDB},
+		nil, nil, nil, nil, nil,
+		normalizedCh,
+		slog.Default(),
+	)
+
+	err := ing.handleFinalityPromotion(context.Background(), event.FinalityPromotion{
+		Chain:             model.ChainBase,
+		Network:           model.NetworkMainnet,
+		NewFinalizedBlock: 100,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "promote balance events")
+}
+
+func TestHandleFinalityPromotion_BulkAdjustError_Propagates(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tokenID := uuid.New()
+
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		if strings.Contains(query, "RETURNING") {
+			return &rfDataRows{
+				columns: promotedEventColumns,
+				data: [][]driver.Value{
+					{tokenID.String(), "addr1", "1000", int64(100), "tx-100", nil, nil, string(model.ActivityDeposit)},
+				},
+			}, nil
+		}
+		return &rfEmptyRows{}, nil
+	})
+
+	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
+	mockBalanceRepo.EXPECT().
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("adjust failed"))
+
+	normalizedCh := make(chan event.NormalizedBatch)
+	ing := New(
+		&interleaveTxBeginner{db: fakeDB},
+		nil, nil, mockBalanceRepo, nil, nil,
+		normalizedCh,
+		slog.Default(),
+	)
+
+	err := ing.handleFinalityPromotion(context.Background(), event.FinalityPromotion{
+		Chain:             model.ChainBase,
+		Network:           model.NetworkMainnet,
+		NewFinalizedBlock: 200,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bulk adjust balances for finality promotion")
+}
+
 func TestHandleFinalityPromotion_UpdateFinalityError_Propagates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	fakeDB := openRFFakeDB(t)
@@ -871,6 +999,56 @@ func TestHandleFinalityPromotion_UpdateFinalityError_Propagates(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Test: handleReorg error propagation
 // ---------------------------------------------------------------------------
+
+func TestHandleReorg_DeleteBalanceEventsError_Propagates(t *testing.T) {
+	fakeDB := openRFFakeDBWith(t, nil, func(query string, _ []driver.Value) (driver.Result, error) {
+		if strings.Contains(query, "DELETE FROM balance_events") {
+			return nil, errors.New("delete failed")
+		}
+		return driver.RowsAffected(0), nil
+	})
+
+	normalizedCh := make(chan event.NormalizedBatch)
+	ing := New(
+		&interleaveTxBeginner{db: fakeDB},
+		nil, nil, nil, nil, nil,
+		normalizedCh,
+		slog.Default(),
+	)
+
+	err := ing.handleReorg(context.Background(), event.ReorgEvent{
+		Chain:           model.ChainBase,
+		Network:         model.NetworkSepolia,
+		ForkBlockNumber: 100,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete reorg balance events")
+}
+
+func TestHandleReorg_DeleteTransactionsError_Propagates(t *testing.T) {
+	fakeDB := openRFFakeDBWith(t, nil, func(query string, _ []driver.Value) (driver.Result, error) {
+		if strings.Contains(query, "DELETE FROM transactions") {
+			return nil, errors.New("tx delete failed")
+		}
+		return driver.RowsAffected(0), nil
+	})
+
+	normalizedCh := make(chan event.NormalizedBatch)
+	ing := New(
+		&interleaveTxBeginner{db: fakeDB},
+		nil, nil, nil, nil, nil,
+		normalizedCh,
+		slog.Default(),
+	)
+
+	err := ing.handleReorg(context.Background(), event.ReorgEvent{
+		Chain:           model.ChainBase,
+		Network:         model.NetworkSepolia,
+		ForkBlockNumber: 100,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete reorg transactions")
+}
 
 func TestHandleReorg_RewindWatermarkError_Propagates(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -1261,35 +1439,21 @@ func TestBuildPromotionAdjustItems_MixedStaking(t *testing.T) {
 // Test: handleReorg BulkAdjustBalanceTx error propagation
 // ---------------------------------------------------------------------------
 
-func TestHandleReorg_BulkAdjustError_Propagates(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	fakeDB := openRFFakeDB(t)
-
-	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
-	mockWmRepo := storemocks.NewMockWatermarkRepository(ctrl)
+func TestHandleReorg_FetchError_Propagates(t *testing.T) {
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		if strings.Contains(query, "SELECT") {
+			return nil, errors.New("query timeout")
+		}
+		return &rfEmptyRows{}, nil
+	})
 
 	normalizedCh := make(chan event.NormalizedBatch)
-
-	// Create an ingester with a custom fetchReorgRollbackEvents that returns events,
-	// so BulkAdjustBalanceTx will actually be called.
 	ing := New(
 		&interleaveTxBeginner{db: fakeDB},
-		nil, nil,
-		mockBalanceRepo,
-		nil,
-		mockWmRepo,
+		nil, nil, nil, nil, nil,
 		normalizedCh,
 		slog.Default(),
 	)
-
-	// We can't easily inject rollback events into the real fetchReorgRollbackEvents
-	// because it uses SQL. Instead, test the error propagation on the BulkAdjustBalanceTx
-	// by creating a scenario where there are rollback events.
-	// Since the fake driver returns no rows, BulkAdjustBalanceTx won't be called.
-	// Instead, test the watermark rewind error.
-	mockWmRepo.EXPECT().
-		RewindWatermarkTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(errors.New("bulk adjust failed"))
 
 	err := ing.handleReorg(context.Background(), event.ReorgEvent{
 		Chain:           model.ChainBase,
@@ -1297,6 +1461,47 @@ func TestHandleReorg_BulkAdjustError_Propagates(t *testing.T) {
 		ForkBlockNumber: 100,
 	})
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fetch reorg rollback events")
+}
+
+func TestHandleReorg_BulkAdjustError_Propagates(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tokenID := uuid.New()
+
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		if strings.Contains(query, "SELECT") {
+			return &rfDataRows{
+				columns: rollbackEventColumns,
+				data: [][]driver.Value{
+					{tokenID.String(), "addr1", "1000", int64(100), "tx-100", nil, nil, string(model.ActivityDeposit), true},
+				},
+			}, nil
+		}
+		return &rfEmptyRows{}, nil
+	})
+
+	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
+	mockBalanceRepo.EXPECT().
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("bulk adjust failed"))
+
+	normalizedCh := make(chan event.NormalizedBatch)
+	ing := New(
+		&interleaveTxBeginner{db: fakeDB},
+		nil, nil,
+		mockBalanceRepo,
+		nil, nil,
+		normalizedCh,
+		slog.Default(),
+	)
+
+	err := ing.handleReorg(context.Background(), event.ReorgEvent{
+		Chain:           model.ChainBase,
+		Network:         model.NetworkSepolia,
+		ForkBlockNumber: 100,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "revert balances")
 }
 
 // ---------------------------------------------------------------------------
@@ -1416,25 +1621,9 @@ func TestProcessBatch_RealRollbackCanonicalityDrift_IsUsedByDefault(t *testing.T
 }
 
 // ---------------------------------------------------------------------------
-// Test: fetchRollbackEvents and fetchReorgRollbackEvents error handling
+// Direct tests: fetchReorgRollbackEvents, fetchRollbackEvents, promoteBalanceEvents
+// Each test creates an isolated fake DB with per-test driver name.
 // ---------------------------------------------------------------------------
-
-func TestFetchRollbackEvents_EmptyResult(t *testing.T) {
-	fakeDB := openRFFakeDB(t)
-	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
-	require.NoError(t, err)
-	defer func() { _ = dbTx.Rollback() }()
-
-	ing := &Ingester{logger: slog.Default()}
-
-	events, err := ing.fetchRollbackEvents(
-		context.Background(), dbTx,
-		model.ChainSolana, model.NetworkDevnet,
-		"some-address", 100,
-	)
-	require.NoError(t, err)
-	assert.Empty(t, events)
-}
 
 func TestFetchReorgRollbackEvents_EmptyResult(t *testing.T) {
 	fakeDB := openRFFakeDB(t)
@@ -1443,12 +1632,428 @@ func TestFetchReorgRollbackEvents_EmptyResult(t *testing.T) {
 	defer func() { _ = dbTx.Rollback() }()
 
 	ing := &Ingester{logger: slog.Default()}
-
-	events, err := ing.fetchReorgRollbackEvents(
-		context.Background(), dbTx,
-		model.ChainBase, model.NetworkSepolia, 50,
-	)
+	events, err := ing.fetchReorgRollbackEvents(context.Background(), dbTx, model.ChainBase, model.NetworkSepolia, 50)
 	require.NoError(t, err)
 	assert.Empty(t, events)
 }
+
+func TestFetchReorgRollbackEvents_MultiRow(t *testing.T) {
+	tokenID := uuid.New()
+	walletID := "wallet-reorg-1"
+
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		return &rfDataRows{
+			columns: rollbackEventColumns,
+			data: [][]driver.Value{
+				{tokenID.String(), "addr1", "10000", int64(200), "tx-200", walletID, nil, string(model.ActivityDeposit), true},
+				{tokenID.String(), "addr2", "-5000", int64(201), "tx-201", nil, nil, string(model.ActivityStake), true},
+				{tokenID.String(), "addr3", "1000", int64(202), "tx-202", nil, nil, string(model.ActivityDeposit), false},
+			},
+		}, nil
+	})
+
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.fetchReorgRollbackEvents(context.Background(), dbTx, model.ChainBase, model.NetworkSepolia, 200)
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+
+	assert.Equal(t, tokenID, events[0].TokenID)
+	assert.Equal(t, "10000", events[0].Delta)
+	require.NotNil(t, events[0].WalletID)
+	assert.Equal(t, walletID, *events[0].WalletID)
+	assert.True(t, events[0].BalanceApplied)
+
+	assert.Equal(t, "-5000", events[1].Delta)
+	assert.Equal(t, model.ActivityStake, events[1].ActivityType)
+	assert.Nil(t, events[1].WalletID)
+
+	assert.False(t, events[2].BalanceApplied)
+}
+
+func TestFetchReorgRollbackEvents_QueryError(t *testing.T) {
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		return nil, errors.New("connection lost")
+	})
+
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.fetchReorgRollbackEvents(context.Background(), dbTx, model.ChainBase, model.NetworkSepolia, 50)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "query reorg rollback events")
+	assert.Nil(t, events)
+}
+
+func TestFetchRollbackEvents_EmptyResult(t *testing.T) {
+	fakeDB := openRFFakeDB(t)
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.fetchRollbackEvents(context.Background(), dbTx, model.ChainSolana, model.NetworkDevnet, "some-address", 100)
+	require.NoError(t, err)
+	assert.Empty(t, events)
+}
+
+func TestFetchRollbackEvents_MultiRow(t *testing.T) {
+	tokenID := uuid.New()
+	orgID := "org-rb"
+
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		return &rfDataRows{
+			columns: rollbackEventColumns,
+			data: [][]driver.Value{
+				{tokenID.String(), "addr1", "3000", int64(300), "tx-300", nil, orgID, string(model.ActivityDeposit), true},
+				{tokenID.String(), "addr1", "-1500", int64(301), "tx-301", nil, nil, string(model.ActivityWithdrawal), true},
+			},
+		}, nil
+	})
+
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.fetchRollbackEvents(context.Background(), dbTx, model.ChainSolana, model.NetworkDevnet, "addr1", 300)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+
+	assert.Equal(t, "3000", events[0].Delta)
+	require.NotNil(t, events[0].OrganizationID)
+	assert.Equal(t, orgID, *events[0].OrganizationID)
+	assert.Equal(t, "-1500", events[1].Delta)
+	assert.Equal(t, model.ActivityWithdrawal, events[1].ActivityType)
+}
+
+func TestFetchRollbackEvents_QueryError(t *testing.T) {
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		return nil, errors.New("timeout")
+	})
+
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.fetchRollbackEvents(context.Background(), dbTx, model.ChainSolana, model.NetworkDevnet, "addr1", 100)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "query rollback events")
+	assert.Nil(t, events)
+}
+
+func TestPromoteBalanceEvents_EmptyResult(t *testing.T) {
+	fakeDB := openRFFakeDB(t)
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.promoteBalanceEvents(context.Background(), dbTx, model.ChainBase, model.NetworkMainnet, 500)
+	require.NoError(t, err)
+	assert.Empty(t, events)
+}
+
+func TestPromoteBalanceEvents_MultiRow(t *testing.T) {
+	tokenID := uuid.New()
+	walletID := "wallet-promo"
+
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		if strings.Contains(query, "RETURNING") {
+			return &rfDataRows{
+				columns: promotedEventColumns,
+				data: [][]driver.Value{
+					{tokenID.String(), "addr1", "8000", int64(400), "tx-400", walletID, nil, string(model.ActivityDeposit)},
+					{tokenID.String(), "addr1", "-3000", int64(401), "tx-401", nil, nil, string(model.ActivityStake)},
+				},
+			}, nil
+		}
+		return &rfEmptyRows{}, nil
+	})
+
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.promoteBalanceEvents(context.Background(), dbTx, model.ChainBase, model.NetworkMainnet, 500)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+
+	assert.Equal(t, "8000", events[0].Delta)
+	require.NotNil(t, events[0].WalletID)
+	assert.Equal(t, walletID, *events[0].WalletID)
+	assert.Equal(t, model.ActivityDeposit, events[0].ActivityType)
+
+	assert.Equal(t, "-3000", events[1].Delta)
+	assert.Equal(t, model.ActivityStake, events[1].ActivityType)
+	assert.Nil(t, events[1].WalletID)
+}
+
+func TestPromoteBalanceEvents_ExecError(t *testing.T) {
+	fakeDB := openRFFakeDBWith(t, nil, func(query string, _ []driver.Value) (driver.Result, error) {
+		if strings.Contains(query, "UPDATE") {
+			return nil, errors.New("exec failed: deadlock")
+		}
+		return driver.RowsAffected(0), nil
+	})
+
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.promoteBalanceEvents(context.Background(), dbTx, model.ChainBase, model.NetworkMainnet, 500)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update balance events finality")
+	assert.Nil(t, events)
+}
+
+func TestPromoteBalanceEvents_QueryError(t *testing.T) {
+	fakeDB := openRFFakeDBWith(t,
+		func(query string, _ []driver.Value) (driver.Rows, error) {
+			return nil, errors.New("query failed: connection reset")
+		},
+		nil, // exec succeeds
+	)
+
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.promoteBalanceEvents(context.Background(), dbTx, model.ChainBase, model.NetworkMainnet, 500)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "promote balance events")
+	assert.Nil(t, events)
+}
+
+// ---------------------------------------------------------------------------
+// E2E: fetchReorgRollbackEvents → buildReversalAdjustItems (via fake driver)
+// ---------------------------------------------------------------------------
+
+func TestFetchReorgRollbackEvents_E2E_BuildReversal(t *testing.T) {
+	tokenID := uuid.New()
+	walletID := "wallet-e2e"
+
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		return &rfDataRows{
+			columns: rollbackEventColumns,
+			data: [][]driver.Value{
+				{tokenID.String(), "addr1", "10000", int64(200), "tx-200", walletID, nil, string(model.ActivityDeposit), true},
+				{tokenID.String(), "addr1", "-4000", int64(201), "tx-201", nil, nil, string(model.ActivityStake), true},
+				{tokenID.String(), "addr2", "500", int64(202), "tx-202", nil, nil, string(model.ActivityDeposit), false},
+			},
+		}, nil
+	})
+
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.fetchReorgRollbackEvents(context.Background(), dbTx, model.ChainBase, model.NetworkSepolia, 200)
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+
+	// Build reversal items from fetched events
+	items, err := buildReversalAdjustItems(events)
+	require.NoError(t, err)
+	// applied deposit(1) + applied stake(2) + not-applied(0) = 3
+	require.Len(t, items, 3)
+	assert.Equal(t, "-10000", items[0].Delta)
+	assert.Equal(t, "4000", items[1].Delta)
+	assert.Equal(t, "-4000", items[2].Delta)
+	assert.Equal(t, "staked", items[2].BalanceType)
+}
+
+// ---------------------------------------------------------------------------
+// E2E: promoteBalanceEvents → buildPromotionAdjustItems (via fake driver)
+// ---------------------------------------------------------------------------
+
+func TestPromoteBalanceEvents_E2E_BuildPromotion(t *testing.T) {
+	tokenID := uuid.New()
+
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		if strings.Contains(query, "RETURNING") {
+			return &rfDataRows{
+				columns: promotedEventColumns,
+				data: [][]driver.Value{
+					{tokenID.String(), "addr1", "5000", int64(100), "tx-100", nil, nil, string(model.ActivityDeposit)},
+					{tokenID.String(), "addr1", "-2000", int64(101), "tx-101", nil, nil, string(model.ActivityStake)},
+					{tokenID.String(), "addr1", "1500", int64(102), "tx-102", nil, nil, string(model.ActivityUnstake)},
+				},
+			}, nil
+		}
+		return &rfEmptyRows{}, nil
+	})
+
+	dbTx, err := fakeDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = dbTx.Rollback() }()
+
+	ing := &Ingester{logger: slog.Default()}
+	events, err := ing.promoteBalanceEvents(context.Background(), dbTx, model.ChainBase, model.NetworkMainnet, 200)
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+
+	items, err := buildPromotionAdjustItems(events)
+	require.NoError(t, err)
+	// deposit(1) + stake(2) + unstake(2) = 5
+	require.Len(t, items, 5)
+	assert.Equal(t, "5000", items[0].Delta)
+	assert.Equal(t, "-2000", items[1].Delta)
+	assert.Equal(t, "2000", items[2].Delta)
+	assert.Equal(t, "staked", items[2].BalanceType)
+}
+
+// ---------------------------------------------------------------------------
+// Integration: handleFinalityPromotion with real promoted events + BulkAdjust
+// ---------------------------------------------------------------------------
+
+func TestHandleFinalityPromotion_WithPromotedEvents_CallsBulkAdjust(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tokenID := uuid.New()
+
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		if strings.Contains(query, "RETURNING") {
+			return &rfDataRows{
+				columns: promotedEventColumns,
+				data: [][]driver.Value{
+					{tokenID.String(), "addr1", "5000", int64(100), "tx-100", nil, nil, string(model.ActivityDeposit)},
+					{tokenID.String(), "addr1", "-2000", int64(101), "tx-101", nil, nil, string(model.ActivityStake)},
+				},
+			}, nil
+		}
+		return &rfEmptyRows{}, nil
+	})
+
+	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
+	mockBlockRepo := storemocks.NewMockIndexedBlockRepository(ctrl)
+
+	mockBlockRepo.EXPECT().
+		UpdateFinalityTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkMainnet, int64(200), "finalized").
+		Return(nil)
+
+	// Expect BulkAdjustBalanceTx to be called with 3 items (deposit=1 + stake=2).
+	mockBalanceRepo.EXPECT().
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainBase, model.NetworkMainnet, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, items []store.BulkAdjustItem) error {
+			assert.Len(t, items, 3, "deposit(1) + stake(2) = 3 adjust items")
+
+			// Deposit: forward delta +5000 liquid
+			assert.Equal(t, "5000", items[0].Delta)
+			assert.Equal(t, "", items[0].BalanceType)
+
+			// Stake: forward delta -2000 liquid
+			assert.Equal(t, "-2000", items[1].Delta)
+			assert.Equal(t, "", items[1].BalanceType)
+
+			// Stake: inverted delta +2000 staked
+			assert.Equal(t, "2000", items[2].Delta)
+			assert.Equal(t, "staked", items[2].BalanceType)
+
+			return nil
+		})
+
+	normalizedCh := make(chan event.NormalizedBatch)
+	ing := New(
+		&interleaveTxBeginner{db: fakeDB},
+		nil, nil,
+		mockBalanceRepo,
+		nil, nil,
+		normalizedCh,
+		slog.Default(),
+		WithIndexedBlockRepo(mockBlockRepo),
+	)
+
+	err := ing.handleFinalityPromotion(context.Background(), event.FinalityPromotion{
+		Chain:             model.ChainBase,
+		Network:           model.NetworkMainnet,
+		NewFinalizedBlock: 200,
+	})
+	require.NoError(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// Integration: handleReorg with real rollback events + BulkAdjust
+// ---------------------------------------------------------------------------
+
+func TestHandleReorg_WithRollbackEvents_CallsBulkAdjust(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tokenID := uuid.New()
+	walletID := "wallet-reorg"
+
+	fakeDB := openRFFakeDBWithHandler(t, func(query string, _ []driver.Value) (driver.Rows, error) {
+		if strings.Contains(query, "SELECT") && strings.Contains(query, "balance_events") {
+			return &rfDataRows{
+				columns: rollbackEventColumns,
+				data: [][]driver.Value{
+					{tokenID.String(), "addr1", "10000", int64(150), "tx-150", walletID, nil, string(model.ActivityDeposit), true},
+					{tokenID.String(), "addr1", "-4000", int64(120), "tx-120", walletID, nil, string(model.ActivityStake), true},
+					{tokenID.String(), "addr2", "1000", int64(130), "tx-130", nil, nil, string(model.ActivityDeposit), false},
+				},
+			}, nil
+		}
+		return &rfEmptyRows{}, nil
+	})
+
+	mockBalanceRepo := storemocks.NewMockBalanceRepository(ctrl)
+	mockWmRepo := storemocks.NewMockWatermarkRepository(ctrl)
+
+	// Expect BulkAdjustBalanceTx with reversal items:
+	// applied deposit(1 item) + applied stake(2 items) = 3 items (not-applied skipped)
+	mockBalanceRepo.EXPECT().
+		BulkAdjustBalanceTx(gomock.Any(), gomock.Any(), model.ChainEthereum, model.NetworkMainnet, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sql.Tx, _ model.Chain, _ model.Network, items []store.BulkAdjustItem) error {
+			assert.Len(t, items, 3, "deposit(1) + stake(2) = 3 reversal items")
+
+			// Deposit reversal: -10000 liquid
+			assert.Equal(t, "-10000", items[0].Delta)
+			assert.Equal(t, "", items[0].BalanceType)
+
+			// Stake reversal: +4000 liquid
+			assert.Equal(t, "4000", items[1].Delta)
+			assert.Equal(t, "", items[1].BalanceType)
+
+			// Stake reversal: -4000 staked
+			assert.Equal(t, "-4000", items[2].Delta)
+			assert.Equal(t, "staked", items[2].BalanceType)
+
+			return nil
+		})
+
+	mockWmRepo.EXPECT().
+		RewindWatermarkTx(gomock.Any(), gomock.Any(), model.ChainEthereum, model.NetworkMainnet, int64(99)).
+		Return(nil)
+
+	normalizedCh := make(chan event.NormalizedBatch)
+	ing := New(
+		&interleaveTxBeginner{db: fakeDB},
+		nil, nil,
+		mockBalanceRepo,
+		nil,
+		mockWmRepo,
+		normalizedCh,
+		slog.Default(),
+	)
+
+	err := ing.handleReorg(context.Background(), event.ReorgEvent{
+		Chain:           model.ChainEthereum,
+		Network:         model.NetworkMainnet,
+		ForkBlockNumber: 100,
+		ExpectedHash:    "0xexpected",
+		ActualHash:      "0xactual",
+		DetectedAt:      time.Now(),
+	})
+	require.NoError(t, err)
+}
+
+func ctx() context.Context { return context.Background() }
 

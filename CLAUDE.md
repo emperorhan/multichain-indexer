@@ -58,7 +58,7 @@ make run
 ```bash
 make build          # Build Go binary
 make run            # Run indexer
-make test           # Run tests
+make test           # Run tests + benchmarks + alloc guards (race, -bench=.)
 make migrate        # Run DB migrations
 make migrate-down   # Rollback migrations
 make proto          # Generate protobuf code

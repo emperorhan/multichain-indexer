@@ -95,6 +95,7 @@ func BenchmarkFetchSignatures(b *testing.B) {
 			}
 
 			ctx := context.Background()
+			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_ = f.processJob(ctx, logger, job)
@@ -132,6 +133,7 @@ func BenchmarkFetchTransactions(b *testing.B) {
 			}
 
 			ctx := context.Background()
+			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_ = f.processJob(ctx, logger, job)
@@ -183,6 +185,7 @@ func BenchmarkCanonicalizeSignatures(b *testing.B) {
 
 	for _, bc := range benchCases {
 		b.Run(bc.name, func(b *testing.B) {
+			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				canonicalizeSignatures(bc.chain, bc.sigs)
 			}
@@ -201,6 +204,7 @@ func BenchmarkSuppressBoundaryCursorSignatures(b *testing.B) {
 	}
 	cursor := "sig-000000"
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		suppressBoundaryCursorSignatures(model.ChainSolana, sigs, &cursor, 1000)
@@ -223,6 +227,7 @@ func BenchmarkSuppressPreCursorSequenceCarryover(b *testing.B) {
 		}
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		suppressPreCursorSequenceCarryover(sigs, 1000, 50)
@@ -233,6 +238,7 @@ func BenchmarkSuppressPreCursorSequenceCarryover(b *testing.B) {
 func BenchmarkReduceBatchSize(b *testing.B) {
 	f := &Fetcher{adaptiveMinBatch: 1}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = f.reduceBatchSize(256)
@@ -246,6 +252,7 @@ func BenchmarkRetryDelay(b *testing.B) {
 		backoffMax:     3 * time.Second,
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for attempt := 1; attempt <= 10; attempt++ {
@@ -269,6 +276,7 @@ func BenchmarkCanonicalizeWatchedAddressIdentity(b *testing.B) {
 
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
+			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				canonicalizeWatchedAddressIdentity(c.chain, c.address)
 			}
@@ -284,6 +292,7 @@ func BenchmarkResolveBatchSize(b *testing.B) {
 		batchSizeByAddress: cache.NewLRU[string, int](10000, time.Hour),
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		f.resolveBatchSize(model.ChainSolana, model.NetworkDevnet, "bench-addr", 100)
