@@ -96,6 +96,18 @@ func (*scriptedWatchedAddressRepo) FindByAddress(context.Context, model.Chain, m
 	return nil, nil
 }
 
+func (*scriptedWatchedAddressRepo) GetPendingBackfill(context.Context, model.Chain, model.Network) ([]model.WatchedAddress, error) {
+	return nil, nil
+}
+
+func (*scriptedWatchedAddressRepo) ClearBackfill(context.Context, model.Chain, model.Network) error {
+	return nil
+}
+
+func (*scriptedWatchedAddressRepo) SetBackfillFromBlock(context.Context, model.Chain, model.Network, []string, int64) error {
+	return nil
+}
+
 func cloneAutoTuneRestartState(state *AutoTuneRestartState) *AutoTuneRestartState {
 	if state == nil {
 		return nil

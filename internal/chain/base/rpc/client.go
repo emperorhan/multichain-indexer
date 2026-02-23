@@ -25,6 +25,7 @@ type RPCClient interface {
 	GetLogs(ctx context.Context, filter LogFilter) ([]*Log, error)
 	GetTransactionsByHash(ctx context.Context, hashes []string) ([]*Transaction, error)
 	GetTransactionReceiptsByHash(ctx context.Context, hashes []string) ([]*TransactionReceipt, error)
+	TraceBlockByNumber(ctx context.Context, blockNumber int64) ([]*BlockTrace, error)
 }
 
 type Client struct {

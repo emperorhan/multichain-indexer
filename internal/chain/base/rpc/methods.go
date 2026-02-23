@@ -246,3 +246,27 @@ func ParseHexInt64(value string) (int64, error) {
 func formatHexInt64(value int64) string {
 	return fmt.Sprintf("0x%x", value)
 }
+
+// TraceBlockByNumber calls debug_traceBlockByNumber with the callTracer.
+func (c *Client) TraceBlockByNumber(ctx context.Context, blockNumber int64) ([]*BlockTrace, error) {
+	params := []interface{}{
+		formatHexInt64(blockNumber),
+		map[string]interface{}{
+			"tracer":       "callTracer",
+			"tracerConfig": map[string]interface{}{"onlyTopCall": false},
+		},
+	}
+	result, err := c.call(ctx, "debug_traceBlockByNumber", params)
+	if err != nil {
+		return nil, fmt.Errorf("debug_traceBlockByNumber(%d): %w", blockNumber, err)
+	}
+	if string(result) == "null" {
+		return nil, nil
+	}
+
+	var traces []*BlockTrace
+	if err := json.Unmarshal(result, &traces); err != nil {
+		return nil, fmt.Errorf("unmarshal block traces: %w", err)
+	}
+	return traces, nil
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
 	"github.com/emperorhan/multichain-indexer/internal/metrics"
@@ -26,6 +27,13 @@ const (
 
 type BalanceEventRepo struct {
 	db *DB
+}
+
+func coalesceBlockTime(blockTime *time.Time) time.Time {
+	if blockTime != nil {
+		return *blockTime
+	}
+	return time.Now().UTC()
 }
 
 func NewBalanceEventRepo(db *DB) *BalanceEventRepo {
@@ -114,7 +122,7 @@ func (r *BalanceEventRepo) UpsertTx(ctx context.Context, tx *sql.Tx, be *model.B
 		be.WalletID,
 		be.OrganizationID,
 		be.BlockCursor,
-		be.BlockTime,
+		coalesceBlockTime(be.BlockTime),
 		be.ChainData,
 		be.BalanceApplied,
 		be.EventID,
@@ -230,7 +238,7 @@ func (r *BalanceEventRepo) bulkUpsertPerEvent(ctx context.Context, tx *sql.Tx, e
 			be.TokenID, be.ActivityType, be.EventAction, be.ProgramID,
 			be.Address, be.CounterpartyAddress, be.Delta, be.BalanceBefore, be.BalanceAfter,
 			be.WatchedAddress, be.WalletID, be.OrganizationID,
-			be.BlockCursor, be.BlockTime, be.ChainData, be.BalanceApplied,
+			be.BlockCursor, coalesceBlockTime(be.BlockTime), be.ChainData, be.BalanceApplied,
 			be.EventID, be.BlockHash, be.TxIndex, be.EventPath, be.EventPathType,
 			be.ActorAddress, be.AssetType, be.AssetID,
 			be.FinalityState, be.DecoderVersion, be.SchemaVersion,
@@ -354,39 +362,39 @@ func (r *BalanceEventRepo) execBulkChunk(ctx context.Context, tx *sql.Tx, chunk 
 		sb.WriteString(")")
 
 		args = append(args,
-			be.Chain,                 // $1
-			be.Network,               // $2
-			be.TransactionID,         // $3
-			be.TxHash,                // $4
-			be.OuterInstructionIndex, // $5
-			be.InnerInstructionIndex, // $6
-			be.TokenID,               // $7
-			be.ActivityType,          // $8
-			be.EventAction,           // $9
-			be.ProgramID,             // $10
-			be.Address,               // $11
-			be.CounterpartyAddress,   // $12
-			be.Delta,                 // $13
-			be.BalanceBefore,         // $14
-			be.BalanceAfter,          // $15
-			be.WatchedAddress,        // $16
-			be.WalletID,              // $17
-			be.OrganizationID,        // $18
-			be.BlockCursor,           // $19
-			be.BlockTime,             // $20
-			be.ChainData,             // $21
-			be.BalanceApplied,        // $22
-			be.EventID,               // $23
-			be.BlockHash,             // $24
-			be.TxIndex,               // $25
-			be.EventPath,             // $26
-			be.EventPathType,         // $27
-			be.ActorAddress,          // $28
-			be.AssetType,             // $29
-			be.AssetID,               // $30
-			be.FinalityState,         // $31
-			be.DecoderVersion,        // $32
-			be.SchemaVersion,         // $33
+			be.Chain,                        // $1
+			be.Network,                      // $2
+			be.TransactionID,                // $3
+			be.TxHash,                       // $4
+			be.OuterInstructionIndex,        // $5
+			be.InnerInstructionIndex,        // $6
+			be.TokenID,                      // $7
+			be.ActivityType,                 // $8
+			be.EventAction,                  // $9
+			be.ProgramID,                    // $10
+			be.Address,                      // $11
+			be.CounterpartyAddress,          // $12
+			be.Delta,                        // $13
+			be.BalanceBefore,                // $14
+			be.BalanceAfter,                 // $15
+			be.WatchedAddress,               // $16
+			be.WalletID,                     // $17
+			be.OrganizationID,               // $18
+			be.BlockCursor,                  // $19
+			coalesceBlockTime(be.BlockTime), // $20
+			be.ChainData,                    // $21
+			be.BalanceApplied,               // $22
+			be.EventID,                      // $23
+			be.BlockHash,                    // $24
+			be.TxIndex,                      // $25
+			be.EventPath,                    // $26
+			be.EventPathType,                // $27
+			be.ActorAddress,                 // $28
+			be.AssetType,                    // $29
+			be.AssetID,                      // $30
+			be.FinalityState,                // $31
+			be.DecoderVersion,               // $32
+			be.SchemaVersion,                // $33
 		)
 	}
 
@@ -434,4 +442,3 @@ func (r *BalanceEventRepo) execBulkChunk(ctx context.Context, tx *sql.Tx, chunk 
 
 	return insertedCount, nil
 }
-

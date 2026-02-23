@@ -108,6 +108,7 @@ type Pipeline struct {
 	logger        *slog.Logger
 	replayService *replay.Service
 	replayCh      chan replayOp
+	backfillCh    chan coordinator.BackfillRequest
 	health        *PipelineHealth
 
 	// Reusable channels between stages (created once in New).
@@ -183,6 +184,7 @@ func New(
 		repos:        repos,
 		logger:       logger.With("component", "pipeline"),
 		replayCh:     make(chan replayOp, 1),
+		backfillCh:   make(chan coordinator.BackfillRequest, 1),
 		health:       health,
 		jobCh:        make(chan event.FetchJob, jobBuf),
 		rawBatchCh:   make(chan event.RawBatch, rawBuf),
@@ -422,6 +424,49 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			// 3. Loop continues → pipeline restarts with fresh channels.
 			continue
 
+		case req := <-p.backfillCh:
+			// Backfill requested by coordinator: stop workers, purge, clear flags, restart.
+			p.logger.Warn("stopping pipeline for backfill",
+				"chain", p.cfg.Chain,
+				"network", p.cfg.Network,
+				"from_block", req.FromBlock,
+			)
+			runCancel()
+			<-errCh // wait for full shutdown
+
+			// Execute purge to rewind watermark.
+			if p.replayService != nil {
+				purgeReq := replay.PurgeRequest{
+					Chain:     req.Chain,
+					Network:   req.Network,
+					FromBlock: req.FromBlock,
+					Force:     true,
+					Reason:    "address backfill",
+				}
+				result, purgeErr := p.replayService.PurgeFromBlock(ctx, purgeReq)
+				if purgeErr != nil {
+					p.logger.Error("backfill purge failed, restarting pipeline",
+						"error", purgeErr,
+						"chain", p.cfg.Chain,
+						"network", p.cfg.Network,
+					)
+				} else {
+					p.logger.Info("backfill purge completed",
+						"chain", p.cfg.Chain,
+						"network", p.cfg.Network,
+						"new_watermark", result.NewWatermark,
+					)
+				}
+			}
+
+			// Clear backfill flags so they are not re-triggered.
+			if clearErr := p.repos.WatchedAddr.ClearBackfill(ctx, req.Chain, req.Network); clearErr != nil {
+				p.logger.Error("failed to clear backfill flags", "error", clearErr)
+			}
+
+			// Loop continues → pipeline restarts from rewound watermark.
+			continue
+
 		case <-p.deactiveCh:
 			// Deactivation requested: stop pipeline and loop back to wait.
 			p.logger.Warn("pipeline deactivated via runtime config",
@@ -499,6 +544,7 @@ func (p *Pipeline) runPipeline(ctx context.Context) error {
 		if p.cfg.MaxInitialLookbackBlocks > 0 {
 			coord = coord.WithMaxInitialLookbackBlocks(int64(p.cfg.MaxInitialLookbackBlocks))
 		}
+		coord = coord.WithBackfillChannel(p.backfillCh)
 	}
 
 	fetchOpts := []fetcher.Option{

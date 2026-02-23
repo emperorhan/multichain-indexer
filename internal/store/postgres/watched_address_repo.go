@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/emperorhan/multichain-indexer/internal/domain/model"
+	"github.com/lib/pq"
 )
 
 type WatchedAddressRepo struct {
@@ -21,7 +22,7 @@ func (r *WatchedAddressRepo) GetActive(ctx context.Context, chain model.Chain, n
 	defer cancel()
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, chain, network, address, wallet_id, organization_id, label, is_active, source, created_at, updated_at
+		SELECT id, chain, network, address, wallet_id, organization_id, label, is_active, source, backfill_from_block, created_at, updated_at
 		FROM watched_addresses
 		WHERE chain = $1 AND network = $2 AND is_active = true
 		ORDER BY created_at
@@ -37,7 +38,7 @@ func (r *WatchedAddressRepo) GetActive(ctx context.Context, chain model.Chain, n
 		if err := rows.Scan(
 			&a.ID, &a.Chain, &a.Network, &a.Address,
 			&a.WalletID, &a.OrganizationID, &a.Label,
-			&a.IsActive, &a.Source, &a.CreatedAt, &a.UpdatedAt,
+			&a.IsActive, &a.Source, &a.BackfillFromBlock, &a.CreatedAt, &a.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan watched address: %w", err)
 		}
@@ -69,13 +70,13 @@ func (r *WatchedAddressRepo) FindByAddress(ctx context.Context, chain model.Chai
 
 	var a model.WatchedAddress
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, chain, network, address, wallet_id, organization_id, label, is_active, source, created_at, updated_at
+		SELECT id, chain, network, address, wallet_id, organization_id, label, is_active, source, backfill_from_block, created_at, updated_at
 		FROM watched_addresses
 		WHERE chain = $1 AND network = $2 AND address = $3
 	`, chain, network, address).Scan(
 		&a.ID, &a.Chain, &a.Network, &a.Address,
 		&a.WalletID, &a.OrganizationID, &a.Label,
-		&a.IsActive, &a.Source, &a.CreatedAt, &a.UpdatedAt,
+		&a.IsActive, &a.Source, &a.BackfillFromBlock, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -84,4 +85,66 @@ func (r *WatchedAddressRepo) FindByAddress(ctx context.Context, chain model.Chai
 		return nil, fmt.Errorf("find watched address: %w", err)
 	}
 	return &a, nil
+}
+
+func (r *WatchedAddressRepo) GetPendingBackfill(ctx context.Context, chain model.Chain, network model.Network) ([]model.WatchedAddress, error) {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, chain, network, address, wallet_id, organization_id, label, is_active, source, backfill_from_block, created_at, updated_at
+		FROM watched_addresses
+		WHERE chain = $1 AND network = $2 AND backfill_from_block IS NOT NULL AND is_active = true
+		ORDER BY backfill_from_block ASC
+	`, chain, network)
+	if err != nil {
+		return nil, fmt.Errorf("query pending backfill: %w", err)
+	}
+	defer rows.Close()
+
+	var addresses []model.WatchedAddress
+	for rows.Next() {
+		var a model.WatchedAddress
+		if err := rows.Scan(
+			&a.ID, &a.Chain, &a.Network, &a.Address,
+			&a.WalletID, &a.OrganizationID, &a.Label,
+			&a.IsActive, &a.Source, &a.BackfillFromBlock, &a.CreatedAt, &a.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan pending backfill address: %w", err)
+		}
+		addresses = append(addresses, a)
+	}
+	return addresses, rows.Err()
+}
+
+func (r *WatchedAddressRepo) ClearBackfill(ctx context.Context, chain model.Chain, network model.Network) error {
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE watched_addresses SET backfill_from_block = NULL, updated_at = now()
+		WHERE chain = $1 AND network = $2 AND backfill_from_block IS NOT NULL
+	`, chain, network)
+	if err != nil {
+		return fmt.Errorf("clear backfill: %w", err)
+	}
+	return nil
+}
+
+func (r *WatchedAddressRepo) SetBackfillFromBlock(ctx context.Context, chain model.Chain, network model.Network, addresses []string, fromBlock int64) error {
+	if len(addresses) == 0 {
+		return nil
+	}
+	ctx, cancel := withTimeout(ctx, DefaultQueryTimeout)
+	defer cancel()
+
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE watched_addresses
+		SET backfill_from_block = $3, updated_at = now()
+		WHERE chain = $1 AND network = $2 AND address = ANY($4) AND is_active = true
+	`, chain, network, fromBlock, pq.Array(addresses))
+	if err != nil {
+		return fmt.Errorf("set backfill_from_block: %w", err)
+	}
+	return nil
 }

@@ -27,6 +27,7 @@ type Adapter struct {
 	evmLayer                 string // "l1" or "l2"
 	maxInitialLookbackBlocks int64
 	maxConcurrentTxs         int
+	traceEnabled             bool
 }
 
 type AdapterOption func(*Adapter)
@@ -37,6 +38,10 @@ func WithMaxInitialLookbackBlocks(n int) AdapterOption {
 
 func WithMaxConcurrentTxs(n int) AdapterOption {
 	return func(a *Adapter) { a.maxConcurrentTxs = n }
+}
+
+func WithTraceEnabled(enabled bool) AdapterOption {
+	return func(a *Adapter) { a.traceEnabled = enabled }
 }
 
 var _ chain.ChainAdapter = (*Adapter)(nil)
@@ -326,47 +331,55 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 
 	blockTimeByNum := make(map[int64]*time.Time)
 
-	// Batch-fetch all blocks in a single RPC call.
-	blockNums := make([]int64, 0, endBlock-startBlock+1)
-	for n := startBlock; n <= endBlock; n++ {
-		blockNums = append(blockNums, n)
-	}
-	blocks, err := a.client.GetBlocksByNumber(ctx, blockNums, true)
-	if err != nil {
-		return nil, fmt.Errorf("batch scan blocks %d-%d: %w", startBlock, endBlock, err)
-	}
+	// Sub-batch block fetching to limit memory peak.
+	const blockFetchBatchSize = 50
 
-	for idx, block := range blocks {
-		blockNum := blockNums[idx]
-		if block == nil {
-			continue
+	for batchStart := startBlock; batchStart <= endBlock; batchStart += blockFetchBatchSize {
+		batchEnd := batchStart + blockFetchBatchSize - 1
+		if batchEnd > endBlock {
+			batchEnd = endBlock
+		}
+		blockNums := make([]int64, 0, batchEnd-batchStart+1)
+		for n := batchStart; n <= batchEnd; n++ {
+			blockNums = append(blockNums, n)
+		}
+		blocks, err := a.client.GetBlocksByNumber(ctx, blockNums, true)
+		if err != nil {
+			return nil, fmt.Errorf("batch scan blocks %d-%d: %w", batchStart, batchEnd, err)
 		}
 
-		var blockTime *time.Time
-		if ts, err := parseHexInt64(block.Timestamp); err == nil && ts > 0 {
-			parsedTime := time.Unix(ts, 0)
-			blockTime = &parsedTime
-		}
-		blockTimeByNum[blockNum] = blockTime
-
-		for _, tx := range block.Transactions {
-			if tx == nil || strings.TrimSpace(tx.Hash) == "" {
-				continue
-			}
-			txIndex, err := parseHexInt64(tx.TransactionIndex)
-			if err != nil {
-				txIndex = -1
-			}
-
-			from := strings.ToLower(strings.TrimSpace(tx.From))
-			to := strings.ToLower(strings.TrimSpace(tx.To))
-			_, fromMatch := addrSet[from]
-			_, toMatch := addrSet[to]
-			if !fromMatch && !toMatch {
+		for idx, block := range blocks {
+			blockNum := blockNums[idx]
+			if block == nil {
 				continue
 			}
 
-			upsertCandidate(tx.Hash, blockNum, txIndex, blockTime)
+			var blockTime *time.Time
+			if ts, err := parseHexInt64(block.Timestamp); err == nil && ts > 0 {
+				parsedTime := time.Unix(ts, 0)
+				blockTime = &parsedTime
+			}
+			blockTimeByNum[blockNum] = blockTime
+
+			for _, tx := range block.Transactions {
+				if tx == nil || strings.TrimSpace(tx.Hash) == "" {
+					continue
+				}
+				txIndex, err := parseHexInt64(tx.TransactionIndex)
+				if err != nil {
+					txIndex = -1
+				}
+
+				from := strings.ToLower(strings.TrimSpace(tx.From))
+				to := strings.ToLower(strings.TrimSpace(tx.To))
+				_, fromMatch := addrSet[from]
+				_, toMatch := addrSet[to]
+				if !fromMatch && !toMatch {
+					continue
+				}
+
+				upsertCandidate(tx.Hash, blockNum, txIndex, blockTime)
+			}
 		}
 	}
 
@@ -407,6 +420,18 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 		}
 	}
 
+	// Stage 3: Trace-based internal transfer discovery (opt-in).
+	if a.traceEnabled {
+		traceCandidates, traceErr := a.scanInternalTransfers(ctx, startBlock, endBlock, addrSet, blockTimeByNum)
+		if traceErr != nil {
+			a.logger.Warn("trace scan failed, continuing without trace", "error", traceErr)
+		} else {
+			for _, tc := range traceCandidates {
+				upsertCandidate(tc.hash, tc.blockNum, tc.txIndex, tc.blockTime)
+			}
+		}
+	}
+
 	ordered := make([]candidateSignature, 0, len(candidates))
 	for _, candidate := range candidates {
 		ordered = append(ordered, candidate)
@@ -439,6 +464,59 @@ func (a *Adapter) ScanBlocks(ctx context.Context, startBlock, endBlock int64, wa
 	)
 
 	return signatures, nil
+}
+
+// scanInternalTransfers uses debug_traceBlockByNumber to discover internal
+// native transfers (e.g., contract→watched) that are invisible to from/to
+// matching and ERC-20 log scanning.
+func (a *Adapter) scanInternalTransfers(
+	ctx context.Context,
+	startBlock, endBlock int64,
+	addrSet map[string]struct{},
+	blockTimeByNum map[int64]*time.Time,
+) ([]candidateSignature, error) {
+	var candidates []candidateSignature
+	for blockNum := startBlock; blockNum <= endBlock; blockNum++ {
+		traces, err := a.client.TraceBlockByNumber(ctx, blockNum)
+		if err != nil {
+			return nil, fmt.Errorf("trace block %d: %w", blockNum, err)
+		}
+		for _, trace := range traces {
+			if trace == nil {
+				continue
+			}
+			if hasInternalTransferToWatched(trace.Result, addrSet) {
+				candidates = append(candidates, candidateSignature{
+					hash:      trace.TxHash,
+					blockNum:  blockNum,
+					txIndex:   -1,
+					blockTime: blockTimeByNum[blockNum],
+				})
+			}
+		}
+	}
+	return candidates, nil
+}
+
+// hasInternalTransferToWatched recursively checks if any sub-call in the
+// frame tree transfers native value to/from a watched address.
+func hasInternalTransferToWatched(frame rpc.CallFrame, addrSet map[string]struct{}) bool {
+	if frame.Value != "" && frame.Value != "0x0" && frame.Value != "0x" && frame.Value != "0" {
+		from := strings.ToLower(strings.TrimSpace(frame.From))
+		to := strings.ToLower(strings.TrimSpace(frame.To))
+		if _, ok := addrSet[from]; ok {
+			return true
+		}
+		if _, ok := addrSet[to]; ok {
+			return true
+		}
+	}
+	for _, child := range frame.Calls {
+		if child != nil && hasInternalTransferToWatched(*child, addrSet) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Adapter) FetchTransactions(ctx context.Context, signatures []string) ([]json.RawMessage, error) {

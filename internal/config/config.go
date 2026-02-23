@@ -89,6 +89,7 @@ type BaseConfig struct {
 	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
 	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
 	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
+	TraceEnabled             bool               `yaml:"trace_enabled"`
 }
 
 type EthereumConfig struct {
@@ -97,6 +98,7 @@ type EthereumConfig struct {
 	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
 	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
 	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
+	TraceEnabled             bool               `yaml:"trace_enabled"`
 }
 
 type BTCConfig struct {
@@ -113,6 +115,7 @@ type PolygonConfig struct {
 	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
 	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
 	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
+	TraceEnabled             bool               `yaml:"trace_enabled"`
 }
 
 type ArbitrumConfig struct {
@@ -121,6 +124,7 @@ type ArbitrumConfig struct {
 	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
 	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
 	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
+	TraceEnabled             bool               `yaml:"trace_enabled"`
 }
 
 type BSCConfig struct {
@@ -129,6 +133,7 @@ type BSCConfig struct {
 	RateLimit                RPCRateLimitConfig `yaml:"rate_limit"`
 	MaxInitialLookbackBlocks int                `yaml:"max_initial_lookback_blocks"`
 	MaxConcurrentTxs         int                `yaml:"max_concurrent_txs"`
+	TraceEnabled             bool               `yaml:"trace_enabled"`
 }
 
 const (
@@ -399,6 +404,7 @@ func applyChainEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Base.RateLimit.Burst, "BASE_RPC_BURST")
 	overrideInt(&cfg.Base.MaxInitialLookbackBlocks, "BASE_MAX_INITIAL_LOOKBACK_BLOCKS")
 	overrideInt(&cfg.Base.MaxConcurrentTxs, "BASE_MAX_CONCURRENT_TXS")
+	overrideBool(&cfg.Base.TraceEnabled, "BASE_TRACE_ENABLED")
 
 	// Ethereum
 	overrideStrAny(&cfg.Ethereum.RPCURL, "ETH_MAINNET_RPC_URL", "ETHEREUM_RPC_URL")
@@ -407,6 +413,7 @@ func applyChainEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Ethereum.RateLimit.Burst, "ETH_RPC_BURST")
 	overrideInt(&cfg.Ethereum.MaxInitialLookbackBlocks, "ETH_MAX_INITIAL_LOOKBACK_BLOCKS")
 	overrideInt(&cfg.Ethereum.MaxConcurrentTxs, "ETH_MAX_CONCURRENT_TXS")
+	overrideBool(&cfg.Ethereum.TraceEnabled, "ETH_TRACE_ENABLED")
 
 	// BTC
 	overrideStrAny(&cfg.BTC.RPCURL, "BTC_TESTNET_RPC_URL", "BTC_RPC_URL")
@@ -423,6 +430,7 @@ func applyChainEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Polygon.RateLimit.Burst, "POLYGON_RPC_BURST")
 	overrideInt(&cfg.Polygon.MaxInitialLookbackBlocks, "POLYGON_MAX_INITIAL_LOOKBACK_BLOCKS")
 	overrideInt(&cfg.Polygon.MaxConcurrentTxs, "POLYGON_MAX_CONCURRENT_TXS")
+	overrideBool(&cfg.Polygon.TraceEnabled, "POLYGON_TRACE_ENABLED")
 
 	// Arbitrum
 	overrideStrAny(&cfg.Arbitrum.RPCURL, "ARBITRUM_RPC_URL", "ARBITRUM_MAINNET_RPC_URL")
@@ -431,6 +439,7 @@ func applyChainEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.Arbitrum.RateLimit.Burst, "ARBITRUM_RPC_BURST")
 	overrideInt(&cfg.Arbitrum.MaxInitialLookbackBlocks, "ARBITRUM_MAX_INITIAL_LOOKBACK_BLOCKS")
 	overrideInt(&cfg.Arbitrum.MaxConcurrentTxs, "ARBITRUM_MAX_CONCURRENT_TXS")
+	overrideBool(&cfg.Arbitrum.TraceEnabled, "ARBITRUM_TRACE_ENABLED")
 
 	// BSC
 	overrideStrAny(&cfg.BSC.RPCURL, "BSC_RPC_URL", "BSC_MAINNET_RPC_URL")
@@ -439,6 +448,7 @@ func applyChainEnvOverrides(cfg *Config) {
 	overrideInt(&cfg.BSC.RateLimit.Burst, "BSC_RPC_BURST")
 	overrideInt(&cfg.BSC.MaxInitialLookbackBlocks, "BSC_MAX_INITIAL_LOOKBACK_BLOCKS")
 	overrideInt(&cfg.BSC.MaxConcurrentTxs, "BSC_MAX_CONCURRENT_TXS")
+	overrideBool(&cfg.BSC.TraceEnabled, "BSC_TRACE_ENABLED")
 }
 
 func applyRuntimeEnvOverrides(cfg *Config) {
@@ -608,7 +618,7 @@ func applyDefaults(cfg *Config) {
 	setDefaultFloat(&cfg.BTC.RateLimit.RPS, 5)
 	setDefault(&cfg.BTC.RateLimit.Burst, 10)
 	setDefault(&cfg.BTC.MaxInitialLookbackBlocks, 10)
-	setDefault(&cfg.BTC.BlockScanBatchSize, 3)
+	setDefault(&cfg.BTC.BlockScanBatchSize, 6)
 
 	// Polygon
 	setDefaultStr(&cfg.Polygon.Network, "mainnet")

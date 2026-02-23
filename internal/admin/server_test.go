@@ -38,10 +38,22 @@ func (m *mockWatchedAddressRepo) FindByAddress(ctx context.Context, chain model.
 	return m.findByAddressFunc(ctx, chain, network, address)
 }
 
+func (m *mockWatchedAddressRepo) GetPendingBackfill(context.Context, model.Chain, model.Network) ([]model.WatchedAddress, error) {
+	return nil, nil
+}
+
+func (m *mockWatchedAddressRepo) ClearBackfill(context.Context, model.Chain, model.Network) error {
+	return nil
+}
+
+func (m *mockWatchedAddressRepo) SetBackfillFromBlock(context.Context, model.Chain, model.Network, []string, int64) error {
+	return nil
+}
+
 type mockWatermarkRepo struct {
-	updateWatermarkFunc  func(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
-	rewindWatermarkFunc  func(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
-	getWatermarkFunc     func(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)
+	updateWatermarkFunc func(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
+	rewindWatermarkFunc func(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error
+	getWatermarkFunc    func(ctx context.Context, chain model.Chain, network model.Network) (*model.PipelineWatermark, error)
 }
 
 func (m *mockWatermarkRepo) UpdateWatermarkTx(ctx context.Context, tx *sql.Tx, chain model.Chain, network model.Network, ingestedSequence int64) error {
@@ -62,13 +74,13 @@ func (m *mockWatermarkRepo) GetWatermark(ctx context.Context, chain model.Chain,
 // --- Mock replay requester ---
 
 type mockReplayRequester struct {
-	hasPipeline    bool
-	requestResult  *replay.PurgeResult
-	requestErr     error
-	dryRunResult   *replay.PurgeResult
-	dryRunErr      error
-	watermark      *model.PipelineWatermark
-	watermarkErr   error
+	hasPipeline   bool
+	requestResult *replay.PurgeResult
+	requestErr    error
+	dryRunResult  *replay.PurgeResult
+	dryRunErr     error
+	watermark     *model.PipelineWatermark
+	watermarkErr  error
 }
 
 func (m *mockReplayRequester) HasPipeline(_ model.Chain, _ model.Network) bool {
@@ -627,7 +639,7 @@ func TestHandleReplayStatus_PipelineNotFound(t *testing.T) {
 type mockDashboardRepo struct {
 	getBalanceSummaryFunc     func(ctx context.Context, chain model.Chain, network model.Network) ([]store.DashboardAddressBalance, error)
 	getRecentEventsFunc       func(ctx context.Context, chain model.Chain, network model.Network, address string, limit, offset int) ([]store.DashboardEvent, int, error)
-	getAllWatermarksFunc       func(ctx context.Context) ([]model.PipelineWatermark, error)
+	getAllWatermarksFunc      func(ctx context.Context) ([]model.PipelineWatermark, error)
 	countWatchedAddressesFunc func(ctx context.Context) (int, error)
 }
 

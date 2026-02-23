@@ -657,9 +657,9 @@ func TestLoad_NewChainConfig(t *testing.T) {
 
 func TestValidate_NewChainRPCRequired(t *testing.T) {
 	tests := []struct {
-		name       string
+		name        string
 		chainTarget string
-		envKey     string
+		envKey      string
 		errContains string
 	}{
 		{"polygon requires RPC", "polygon-mainnet", "POLYGON_RPC_URL", "POLYGON_RPC_URL is required"},
@@ -942,7 +942,7 @@ func TestLoad_ChainAdapterConfigDefaults(t *testing.T) {
 
 	// BTC adapter defaults
 	assert.Equal(t, 10, cfg.BTC.MaxInitialLookbackBlocks)
-	assert.Equal(t, 3, cfg.BTC.BlockScanBatchSize)
+	assert.Equal(t, 6, cfg.BTC.BlockScanBatchSize)
 }
 
 func TestLoad_ChainAdapterConfigEnvOverride(t *testing.T) {

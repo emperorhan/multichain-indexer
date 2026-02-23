@@ -164,6 +164,7 @@ func (s *Server) Handler() http.Handler {
 	adminMux.HandleFunc("GET /admin/v1/address-books", s.handleListAddressBooks)
 	adminMux.HandleFunc("POST /admin/v1/address-books", s.handleAddAddressBook)
 	adminMux.HandleFunc("DELETE /admin/v1/address-books", s.handleDeleteAddressBook)
+	adminMux.HandleFunc("POST /admin/v1/backfill", s.handleBackfill)
 	adminMux.HandleFunc("GET /admin/v1/dashboard/overview", s.handleDashboardOverview)
 	adminMux.HandleFunc("GET /admin/v1/dashboard/balances", s.handleDashboardBalances)
 	adminMux.HandleFunc("GET /admin/v1/dashboard/events", s.handleDashboardEvents)
@@ -522,6 +523,67 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+// --- Backfill endpoint ---
+
+type backfillRequest struct {
+	Chain     string   `json:"chain"`
+	Network   string   `json:"network"`
+	Addresses []string `json:"addresses"`
+	FromBlock *int64   `json:"from_block"`
+	Reason    string   `json:"reason"`
+}
+
+func (s *Server) handleBackfill(w http.ResponseWriter, r *http.Request) {
+	var req backfillRequest
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Chain == "" || req.Network == "" || req.FromBlock == nil || len(req.Addresses) == 0 {
+		http.Error(w, `{"error":"chain, network, from_block, and addresses are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if *req.FromBlock < 0 {
+		http.Error(w, `{"error":"from_block must be >= 0"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Addresses) > 1000 {
+		http.Error(w, `{"error":"max 1000 addresses per request"}`, http.StatusBadRequest)
+		return
+	}
+
+	chain := model.Chain(req.Chain)
+	network := model.Network(req.Network)
+
+	if !validateChainNetwork(chain, network) {
+		http.Error(w, `{"error":"invalid chain or network value"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := s.watchedAddrRepo.SetBackfillFromBlock(r.Context(), chain, network, req.Addresses, *req.FromBlock); err != nil {
+		s.logger.Error("set backfill_from_block failed", "error", err, "chain", req.Chain, "network", req.Network)
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info("backfill scheduled via admin API",
+		"chain", req.Chain,
+		"network", req.Network,
+		"from_block", *req.FromBlock,
+		"addresses", len(req.Addresses),
+		"reason", req.Reason,
+	)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"from_block": *req.FromBlock,
+		"addresses":  len(req.Addresses),
+		"message":    "Backfill flags set. Pipeline will detect and initiate backfill on next coordinator tick.",
+	})
 }
 
 // --- Address Book endpoints ---

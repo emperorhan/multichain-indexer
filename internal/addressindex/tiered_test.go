@@ -36,6 +36,18 @@ func (m *mockWatchedAddrRepo) FindByAddress(_ context.Context, _ model.Chain, _ 
 	return wa, nil
 }
 
+func (m *mockWatchedAddrRepo) GetPendingBackfill(_ context.Context, _ model.Chain, _ model.Network) ([]model.WatchedAddress, error) {
+	return nil, nil
+}
+
+func (m *mockWatchedAddrRepo) ClearBackfill(_ context.Context, _ model.Chain, _ model.Network) error {
+	return nil
+}
+
+func (m *mockWatchedAddrRepo) SetBackfillFromBlock(_ context.Context, _ model.Chain, _ model.Network, _ []string, _ int64) error {
+	return nil
+}
+
 func newTestIndex(repo *mockWatchedAddrRepo) *TieredIndex {
 	return NewTieredIndex(repo, TieredIndexConfig{
 		BloomExpectedItems: 1000,

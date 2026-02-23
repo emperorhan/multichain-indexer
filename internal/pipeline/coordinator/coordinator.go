@@ -40,6 +40,17 @@ type Coordinator struct {
 	hasEnqueued       bool
 	lastEnqueuedStart int64
 	lastEnqueuedEnd   int64
+
+	// Backfill: channel to signal the pipeline that a backfill is needed.
+	backfillCh chan<- BackfillRequest
+}
+
+// BackfillRequest is sent from the coordinator to the pipeline when newly
+// added addresses require historical data backfill.
+type BackfillRequest struct {
+	Chain     model.Chain
+	Network   model.Network
+	FromBlock int64
 }
 
 type headSequenceProvider interface {
@@ -97,6 +108,12 @@ func (c *Coordinator) WithBlockScanMode(wmRepo store.WatermarkRepository) *Coord
 // from genesis on mainnet chains.
 func (c *Coordinator) WithMaxInitialLookbackBlocks(n int64) *Coordinator {
 	c.maxInitialLookbackBlocks = n
+	return c
+}
+
+// WithBackfillChannel sets the channel for signaling backfill requests to the pipeline.
+func (c *Coordinator) WithBackfillChannel(ch chan<- BackfillRequest) *Coordinator {
+	c.backfillCh = ch
 	return c
 }
 
@@ -476,6 +493,33 @@ func (c *Coordinator) tickBlockScan(ctx context.Context, span otelTrace.Span) er
 		attribute.Int64("start_block", startBlock),
 		attribute.Int64("end_block", endBlock),
 	)
+
+	// After normal scan, check for pending address backfills.
+	// Only trigger when watermark tracking is active and a backfill channel is set.
+	if c.backfillCh != nil && c.wmRepo != nil && hasWatermark {
+		pendingAddrs, bfErr := c.watchedAddrRepo.GetPendingBackfill(ctx, c.chain, c.network)
+		if bfErr != nil {
+			c.logger.Warn("backfill check failed", "error", bfErr)
+		} else if len(pendingAddrs) > 0 && pendingAddrs[0].BackfillFromBlock != nil {
+			minBackfillBlock := *pendingAddrs[0].BackfillFromBlock
+			if minBackfillBlock < startBlock {
+				c.logger.Info("backfill requested",
+					"from_block", minBackfillBlock,
+					"current_start", startBlock,
+					"pending_addresses", len(pendingAddrs),
+				)
+				select {
+				case c.backfillCh <- BackfillRequest{
+					Chain:     c.chain,
+					Network:   c.network,
+					FromBlock: minBackfillBlock,
+				}:
+				default:
+					c.logger.Warn("backfill channel full, will retry next tick")
+				}
+			}
+		}
+	}
 
 	return nil
 }

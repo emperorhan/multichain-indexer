@@ -287,6 +287,9 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 	if cfg.Base.MaxConcurrentTxs > 0 {
 		baseOpts = append(baseOpts, base.WithMaxConcurrentTxs(cfg.Base.MaxConcurrentTxs))
 	}
+	if cfg.Base.TraceEnabled {
+		baseOpts = append(baseOpts, base.WithTraceEnabled(true))
+	}
 	baseAdapter := base.NewAdapter(cfg.Base.RPCURL, logger, baseOpts...)
 	applyRateLimit(baseAdapter, cfg.Base.RateLimit, "base")
 
@@ -332,6 +335,9 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 		if cfg.Ethereum.MaxConcurrentTxs > 0 {
 			ethOpts = append(ethOpts, base.WithMaxConcurrentTxs(cfg.Ethereum.MaxConcurrentTxs))
 		}
+		if cfg.Ethereum.TraceEnabled {
+			ethOpts = append(ethOpts, base.WithTraceEnabled(true))
+		}
 		ethAdapter := ethereum.NewAdapter(cfg.Ethereum.RPCURL, logger, ethOpts...)
 		applyRateLimit(ethAdapter, cfg.Ethereum.RateLimit, "ethereum")
 		targets = append(targets, runtimeTarget{
@@ -351,6 +357,9 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 		}
 		if cfg.Polygon.MaxConcurrentTxs > 0 {
 			polyOpts = append(polyOpts, base.WithMaxConcurrentTxs(cfg.Polygon.MaxConcurrentTxs))
+		}
+		if cfg.Polygon.TraceEnabled {
+			polyOpts = append(polyOpts, base.WithTraceEnabled(true))
 		}
 		polyAdapter := polygon.NewAdapter(cfg.Polygon.RPCURL, logger, polyOpts...)
 		applyRateLimit(polyAdapter, cfg.Polygon.RateLimit, "polygon")
@@ -372,6 +381,9 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 		if cfg.Arbitrum.MaxConcurrentTxs > 0 {
 			arbOpts = append(arbOpts, base.WithMaxConcurrentTxs(cfg.Arbitrum.MaxConcurrentTxs))
 		}
+		if cfg.Arbitrum.TraceEnabled {
+			arbOpts = append(arbOpts, base.WithTraceEnabled(true))
+		}
 		arbAdapter := arbitrum.NewAdapter(cfg.Arbitrum.RPCURL, logger, arbOpts...)
 		applyRateLimit(arbAdapter, cfg.Arbitrum.RateLimit, "arbitrum")
 		targets = append(targets, runtimeTarget{
@@ -391,6 +403,9 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 		}
 		if cfg.BSC.MaxConcurrentTxs > 0 {
 			bscOpts = append(bscOpts, base.WithMaxConcurrentTxs(cfg.BSC.MaxConcurrentTxs))
+		}
+		if cfg.BSC.TraceEnabled {
+			bscOpts = append(bscOpts, base.WithTraceEnabled(true))
 		}
 		bscAdapter := bsc.NewAdapter(cfg.BSC.RPCURL, logger, bscOpts...)
 		applyRateLimit(bscAdapter, cfg.BSC.RateLimit, "bsc")

@@ -83,6 +83,20 @@ func (m *MockWatchedAddressRepository) EXPECT() *MockWatchedAddressRepositoryMoc
 	return m.recorder
 }
 
+// ClearBackfill mocks base method.
+func (m *MockWatchedAddressRepository) ClearBackfill(ctx context.Context, chain model.Chain, network model.Network) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClearBackfill", ctx, chain, network)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ClearBackfill indicates an expected call of ClearBackfill.
+func (mr *MockWatchedAddressRepositoryMockRecorder) ClearBackfill(ctx, chain, network any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClearBackfill", reflect.TypeOf((*MockWatchedAddressRepository)(nil).ClearBackfill), ctx, chain, network)
+}
+
 // FindByAddress mocks base method.
 func (m *MockWatchedAddressRepository) FindByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) (*model.WatchedAddress, error) {
 	m.ctrl.T.Helper()
@@ -96,6 +110,35 @@ func (m *MockWatchedAddressRepository) FindByAddress(ctx context.Context, chain 
 func (mr *MockWatchedAddressRepositoryMockRecorder) FindByAddress(ctx, chain, network, address any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByAddress", reflect.TypeOf((*MockWatchedAddressRepository)(nil).FindByAddress), ctx, chain, network, address)
+}
+
+// GetActive mocks base method.
+func (m *MockWatchedAddressRepository) GetPendingBackfill(ctx context.Context, chain model.Chain, network model.Network) ([]model.WatchedAddress, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPendingBackfill", ctx, chain, network)
+	ret0, _ := ret[0].([]model.WatchedAddress)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetPendingBackfill indicates an expected call of GetPendingBackfill.
+func (mr *MockWatchedAddressRepositoryMockRecorder) GetPendingBackfill(ctx, chain, network any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPendingBackfill", reflect.TypeOf((*MockWatchedAddressRepository)(nil).GetPendingBackfill), ctx, chain, network)
+}
+
+// SetBackfillFromBlock mocks base method.
+func (m *MockWatchedAddressRepository) SetBackfillFromBlock(ctx context.Context, chain model.Chain, network model.Network, addresses []string, fromBlock int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetBackfillFromBlock", ctx, chain, network, addresses, fromBlock)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetBackfillFromBlock indicates an expected call of SetBackfillFromBlock.
+func (mr *MockWatchedAddressRepositoryMockRecorder) SetBackfillFromBlock(ctx, chain, network, addresses, fromBlock any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetBackfillFromBlock", reflect.TypeOf((*MockWatchedAddressRepository)(nil).SetBackfillFromBlock), ctx, chain, network, addresses, fromBlock)
 }
 
 // GetActive mocks base method.

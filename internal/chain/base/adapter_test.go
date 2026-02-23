@@ -109,6 +109,10 @@ func (f *fakeRPCClient) GetTransactionsByHash(_ context.Context, hashes []string
 	return results, nil
 }
 
+func (f *fakeRPCClient) TraceBlockByNumber(_ context.Context, _ int64) ([]*rpc.BlockTrace, error) {
+	return nil, nil
+}
+
 func (f *fakeRPCClient) GetTransactionReceiptsByHash(_ context.Context, hashes []string) ([]*rpc.TransactionReceipt, error) {
 	f.batchRxCalls.Add(1)
 	f.mu.Lock()

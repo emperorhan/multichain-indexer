@@ -41,6 +41,18 @@ func (m *mockWatchedRepo) FindByAddress(_ context.Context, _ model.Chain, _ mode
 	return nil, nil
 }
 
+func (m *mockWatchedRepo) GetPendingBackfill(_ context.Context, _ model.Chain, _ model.Network) ([]model.WatchedAddress, error) {
+	return nil, nil
+}
+
+func (m *mockWatchedRepo) ClearBackfill(_ context.Context, _ model.Chain, _ model.Network) error {
+	return nil
+}
+
+func (m *mockWatchedRepo) SetBackfillFromBlock(_ context.Context, _ model.Chain, _ model.Network, _ []string, _ int64) error {
+	return nil
+}
+
 // mockBalanceRepo implements store.BalanceRepository.
 type mockBalanceRepo struct {
 	balances map[string][]model.Balance // keyed by address

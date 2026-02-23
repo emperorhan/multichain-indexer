@@ -75,3 +75,21 @@ type LogFilter struct {
 	Address   interface{}   `json:"address,omitempty"`
 	Topics    []interface{} `json:"topics,omitempty"`
 }
+
+// CallFrame represents a single call in a debug_traceBlockByNumber response.
+type CallFrame struct {
+	Type   string       `json:"type"`
+	From   string       `json:"from"`
+	To     string       `json:"to"`
+	Value  string       `json:"value,omitempty"`
+	Input  string       `json:"input,omitempty"`
+	Output string       `json:"output,omitempty"`
+	Error  string       `json:"error,omitempty"`
+	Calls  []*CallFrame `json:"calls,omitempty"`
+}
+
+// BlockTrace is the result of debug_traceBlockByNumber with callTracer.
+type BlockTrace struct {
+	TxHash string    `json:"txHash"`
+	Result CallFrame `json:"result"`
+}

@@ -1427,7 +1427,15 @@ func addDecimalStrings(a, b string) (string, error) {
 func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx, batch event.NormalizedBatch) error {
 	forkCursor := rollbackForkCursorSequence(batch)
 
-	rollbackEvents, err := ing.fetchRollbackEvents(ctx, dbTx, batch.Chain, batch.Network, batch.Address, forkCursor)
+	var rollbackEvents []rollbackBalanceEvent
+	var err error
+
+	if batch.BlockScanMode {
+		// Block-scan mode: chain-wide rollback (batch.Address is empty)
+		rollbackEvents, err = ing.fetchReorgRollbackEvents(ctx, dbTx, batch.Chain, batch.Network, forkCursor)
+	} else {
+		rollbackEvents, err = ing.fetchRollbackEvents(ctx, dbTx, batch.Chain, batch.Network, batch.Address, forkCursor)
+	}
 	if err != nil {
 		return fmt.Errorf("fetch rollback events: %w", err)
 	}
@@ -1442,11 +1450,20 @@ func (ing *Ingester) rollbackCanonicalityDrift(ctx context.Context, dbTx *sql.Tx
 		}
 	}
 
-	if _, err := dbTx.ExecContext(ctx, `
-		DELETE FROM balance_events
-		WHERE chain = $1 AND network = $2 AND watched_address = $3 AND block_cursor >= $4
-	`, batch.Chain, batch.Network, batch.Address, forkCursor); err != nil {
-		return fmt.Errorf("delete rollback balance events: %w", err)
+	if batch.BlockScanMode {
+		if _, err := dbTx.ExecContext(ctx, `
+			DELETE FROM balance_events
+			WHERE chain = $1 AND network = $2 AND block_cursor >= $3
+		`, batch.Chain, batch.Network, forkCursor); err != nil {
+			return fmt.Errorf("delete rollback balance events: %w", err)
+		}
+	} else {
+		if _, err := dbTx.ExecContext(ctx, `
+			DELETE FROM balance_events
+			WHERE chain = $1 AND network = $2 AND watched_address = $3 AND block_cursor >= $4
+		`, batch.Chain, batch.Network, batch.Address, forkCursor); err != nil {
+			return fmt.Errorf("delete rollback balance events: %w", err)
+		}
 	}
 
 	// Compute rewind sequence for watermark update

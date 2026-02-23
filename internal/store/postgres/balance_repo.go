@@ -26,9 +26,9 @@ func NewBalanceRepo(db *DB) *BalanceRepo {
 func (r *BalanceRepo) AdjustBalanceTx(ctx context.Context, tx *sql.Tx, req store.AdjustRequest) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO balances (chain, network, address, token_id, wallet_id, organization_id, amount, last_updated_cursor, last_updated_tx_hash, balance_type)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, GREATEST(0, $7::numeric), $8, $9, $10)
 		ON CONFLICT (chain, network, address, token_id, balance_type) DO UPDATE SET
-			amount = balances.amount + $7::numeric,
+			amount = GREATEST(0, balances.amount + $7::numeric),
 			last_updated_cursor = GREATEST(balances.last_updated_cursor, $8),
 			last_updated_tx_hash = $9,
 			updated_at = now()
@@ -87,7 +87,7 @@ func (r *BalanceRepo) BulkGetAmountWithExistsTx(ctx context.Context, tx *sql.Tx,
 	}
 
 	// Build a dynamic WHERE clause: (address, token_id, balance_type) IN ((...), (...), ...)
-	const cols = 3 // address, token_id, balance_type per tuple
+	const cols = 3                                   // address, token_id, balance_type per tuple
 	args := make([]interface{}, 0, 2+len(keys)*cols) // chain + network + tuples
 	args = append(args, chain, network)
 
@@ -172,21 +172,44 @@ func (r *BalanceRepo) BulkAdjustBalanceTx(ctx context.Context, tx *sql.Tx, chain
 	}
 
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO balances (chain, network, address, token_id, wallet_id, organization_id, amount, last_updated_cursor, last_updated_tx_hash, balance_type)
-		SELECT $1, $2,
-			unnest($3::text[]),
-			unnest($4::uuid[]),
-			unnest($5::text[]),
-			unnest($6::text[]),
-			GREATEST(0, unnest($7::numeric[])),
-			unnest($8::bigint[]),
-			unnest($9::text[]),
-			unnest($10::text[])
-		ON CONFLICT (chain, network, address, token_id, balance_type) DO UPDATE SET
-			amount = GREATEST(0, balances.amount + EXCLUDED.amount),
-			last_updated_cursor = GREATEST(balances.last_updated_cursor, EXCLUDED.last_updated_cursor),
-			last_updated_tx_hash = EXCLUDED.last_updated_tx_hash,
-			updated_at = now()
+		WITH input AS (
+			SELECT
+				unnest($3::text[]) AS address,
+				unnest($4::uuid[]) AS token_id,
+				unnest($5::text[]) AS wallet_id,
+				unnest($6::text[]) AS organization_id,
+				unnest($7::numeric[]) AS delta,
+				unnest($8::bigint[]) AS cursor,
+				unnest($9::text[]) AS tx_hash,
+				unnest($10::text[]) AS balance_type
+		),
+		updated AS (
+			UPDATE balances b
+			SET
+				amount = GREATEST(0, b.amount + i.delta),
+				last_updated_cursor = GREATEST(b.last_updated_cursor, i.cursor),
+				last_updated_tx_hash = i.tx_hash,
+				updated_at = now()
+			FROM input i
+			WHERE
+				b.chain = $1
+				AND b.network = $2
+				AND b.address = i.address
+				AND b.token_id = i.token_id
+				AND b.balance_type = i.balance_type
+			RETURNING b.address, b.token_id, b.balance_type
+		)
+		INSERT INTO balances (
+			chain, network, address, token_id, wallet_id, organization_id,
+			amount, last_updated_cursor, last_updated_tx_hash, balance_type
+		)
+		SELECT
+			$1, $2, i.address, i.token_id, i.wallet_id, i.organization_id,
+			GREATEST(0, i.delta), i.cursor, i.tx_hash, i.balance_type
+		FROM input i
+		LEFT JOIN updated u
+			ON u.address = i.address AND u.token_id = i.token_id AND u.balance_type = i.balance_type
+		WHERE u.address IS NULL
 	`, chain, network,
 		pq.Array(addresses),
 		pq.Array(tokenIDs),

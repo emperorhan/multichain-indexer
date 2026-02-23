@@ -19,6 +19,9 @@ type WatchedAddressRepository interface {
 	GetActive(ctx context.Context, chain model.Chain, network model.Network) ([]model.WatchedAddress, error)
 	Upsert(ctx context.Context, addr *model.WatchedAddress) error
 	FindByAddress(ctx context.Context, chain model.Chain, network model.Network, address string) (*model.WatchedAddress, error)
+	GetPendingBackfill(ctx context.Context, chain model.Chain, network model.Network) ([]model.WatchedAddress, error)
+	ClearBackfill(ctx context.Context, chain model.Chain, network model.Network) error
+	SetBackfillFromBlock(ctx context.Context, chain model.Chain, network model.Network, addresses []string, fromBlock int64) error
 }
 
 // TransactionRepository provides access to transaction data.

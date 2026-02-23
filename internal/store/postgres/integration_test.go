@@ -88,7 +88,7 @@ func TestTokenRepo_UpsertAndFind(t *testing.T) {
 	require.NotNil(t, found)
 	assert.Equal(t, tokenID, found.ID)
 	assert.Equal(t, "TST", found.Symbol)
-	assert.Equal(t, int32(9), found.Decimals)
+	assert.Equal(t, 9, found.Decimals)
 
 	// Idempotent upsert returns same ID.
 	tx2, err := db.BeginTx(ctx, nil)
@@ -665,9 +665,9 @@ func TestBalanceEventRepo_RollbackDeleteByCursor(t *testing.T) {
 			ActivityType: model.ActivityDeposit, EventAction: "deposit",
 			Address: watchedAddr, Delta: "100000",
 			WatchedAddress: &watchedAddr, BlockCursor: cursor,
-			ChainData:      json.RawMessage("{}"),
-			EventID:        fmt.Sprintf("rollback-evt-%d-%s", cursor, uuid.NewString()[:8]),
-			FinalityState:  "confirmed", BalanceBefore: strPtr("0"),
+			ChainData:     json.RawMessage("{}"),
+			EventID:       fmt.Sprintf("rollback-evt-%d-%s", cursor, uuid.NewString()[:8]),
+			FinalityState: "confirmed", BalanceBefore: strPtr("0"),
 			BalanceAfter: strPtr("100000"), DecoderVersion: "v1", SchemaVersion: "v1",
 		})
 		require.NoError(t, uErr)
