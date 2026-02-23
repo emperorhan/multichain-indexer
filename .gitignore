@@ -42,6 +42,7 @@ tmp/
 .cache/
 /indexer
 /loadtest
+/replay
 cover.out
 *.zip
 
