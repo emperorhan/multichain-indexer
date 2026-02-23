@@ -28,6 +28,7 @@ type Adapter struct {
 	client                   rpc.RPCClient
 	logger                   *slog.Logger
 	maxInitialLookbackBlocks int64
+	finalityConfirmations    int64
 	// verbosity3Supported caches whether the node supports verbosity=3.
 	// 0 = unknown, 1 = supported, -1 = unsupported.
 	verbosity3Supported int32
@@ -42,6 +43,14 @@ type AdapterOption func(*Adapter)
 
 func WithMaxInitialLookbackBlocks(n int) AdapterOption {
 	return func(a *Adapter) { a.maxInitialLookbackBlocks = int64(n) }
+}
+
+func WithFinalityConfirmations(n int) AdapterOption {
+	return func(a *Adapter) {
+		if n > 0 {
+			a.finalityConfirmations = int64(n)
+		}
+	}
 }
 
 type candidateSignature struct {
@@ -99,6 +108,7 @@ func NewAdapter(rpcURL string, logger *slog.Logger, opts ...AdapterOption) *Adap
 		client:                   rpc.NewClient(rpcURL, logger),
 		logger:                   logger.With("chain", "btc"),
 		maxInitialLookbackBlocks: maxInitialLookbackBlocks,
+		finalityConfirmations:    defaultBTCFinalityConfirmations,
 		headBlockCacheTTL:        5 * time.Second,
 	}
 	for _, opt := range opts {
@@ -179,7 +189,7 @@ func (a *Adapter) GetFinalizedBlockNumber(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("get block count: %w", err)
 	}
-	finalized := head - defaultBTCFinalityConfirmations
+	finalized := head - a.finalityConfirmations
 	if finalized < 0 {
 		finalized = 0
 	}

@@ -297,6 +297,9 @@ func buildRuntimeTargets(cfg *config.Config, logger *slog.Logger) []runtimeTarge
 	if cfg.BTC.MaxInitialLookbackBlocks > 0 {
 		btcOpts = append(btcOpts, btc.WithMaxInitialLookbackBlocks(cfg.BTC.MaxInitialLookbackBlocks))
 	}
+	if cfg.Pipeline.BTCFinalityConfirmations > 0 {
+		btcOpts = append(btcOpts, btc.WithFinalityConfirmations(cfg.Pipeline.BTCFinalityConfirmations))
+	}
 	btcAdapter := btc.NewAdapter(cfg.BTC.RPCURL, logger, btcOpts...)
 	applyRateLimit(btcAdapter, cfg.BTC.RateLimit, "btc")
 
