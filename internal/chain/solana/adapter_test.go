@@ -21,7 +21,7 @@ func newTestAdapter(ctrl *gomock.Controller) (*Adapter, *rpcmocks.MockRPCClient)
 		logger:           slog.Default(),
 		maxPageSize:      maxPageSize,
 		maxConcurrentTxs: maxConcurrentTxs,
-		headCommitment:   "finalized",
+		headCommitment:   "confirmed",
 	}
 	return adapter, mockClient
 }
@@ -44,7 +44,7 @@ func TestAdapter_GetHeadSequence(t *testing.T) {
 	adapter, mockClient := newTestAdapter(ctrl)
 
 	mockClient.EXPECT().
-		GetSlot(gomock.Any(), "finalized").
+		GetSlot(gomock.Any(), "confirmed").
 		Return(int64(123456), nil)
 
 	slot, err := adapter.GetHeadSequence(context.Background())
@@ -57,7 +57,7 @@ func TestAdapter_GetHeadSequence_Error(t *testing.T) {
 	adapter, mockClient := newTestAdapter(ctrl)
 
 	mockClient.EXPECT().
-		GetSlot(gomock.Any(), "finalized").
+		GetSlot(gomock.Any(), "confirmed").
 		Return(int64(0), errors.New("rpc error"))
 
 	_, err := adapter.GetHeadSequence(context.Background())

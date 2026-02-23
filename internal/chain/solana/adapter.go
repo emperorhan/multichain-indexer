@@ -59,7 +59,7 @@ func NewAdapter(rpcURL string, logger *slog.Logger, opts ...AdapterOption) *Adap
 		logger:           logger.With("chain", "solana"),
 		maxPageSize:      maxPageSize,
 		maxConcurrentTxs: maxConcurrentTxs,
-		headCommitment:   "finalized",
+		headCommitment:   "confirmed",
 	}
 	for _, opt := range opts {
 		if opt != nil {
