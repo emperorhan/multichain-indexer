@@ -470,3 +470,129 @@ func TestWithBackfillChannel(t *testing.T) {
 	assert.Same(t, c, result, "WithBackfillChannel should return the same coordinator for chaining")
 	assert.NotNil(t, c.backfillCh, "backfillCh should be set after WithBackfillChannel")
 }
+
+// ---------------------------------------------------------------------------
+// Run loop branch-coverage tests
+// ---------------------------------------------------------------------------
+
+// TestRun_InitialTickError_ReturnsError verifies that Run returns immediately
+// when the very first tick fails (the fail-fast path before entering the for
+// loop). This uses a headProvider error to trigger the tick failure, which is
+// distinct from the existing TestRun_ReturnsErrorOnTickFailure that uses a
+// GetActive DB error.
+func TestRun_InitialTickError_ReturnsError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	jobCh := make(chan event.FetchJob, 10)
+
+	headProvider := &stubHeadProvider{err: errors.New("head unavailable")}
+	c := New(
+		model.ChainBase, model.NetworkMainnet,
+		mockWatchedAddr,
+		100, time.Second,
+		jobCh, slog.Default(),
+	).WithHeadProvider(headProvider)
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return([]model.WatchedAddress{{Address: "0xabc"}}, nil)
+
+	err := c.Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "coordinator tick failed")
+	assert.Contains(t, err.Error(), "head unavailable")
+	assert.Empty(t, jobCh, "no jobs should be enqueued when first tick fails")
+}
+
+// TestRun_ContextCancel_ReturnsContextError verifies that Run returns
+// context.Canceled when the context is canceled while the coordinator is
+// waiting in the select loop (after the initial tick succeeds).
+func TestRun_ContextCancel_ReturnsContextError(t *testing.T) {
+	watchedRepo := &scriptedWatchedAddressRepo{
+		ticks: [][]model.WatchedAddress{
+			{{Address: "addr1"}}, // first tick (initial)
+		},
+	}
+	jobCh := make(chan event.FetchJob, 10)
+
+	c := New(
+		model.ChainSolana, model.NetworkDevnet,
+		watchedRepo,
+		100, 10*time.Second, // long interval so the ticker won't fire
+		jobCh, slog.Default(),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- c.Run(ctx)
+	}()
+
+	// Wait briefly for the initial tick to complete, then cancel.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after context cancellation")
+	}
+}
+
+// TestRun_IntervalResetCh_ResetsTimer verifies that calling UpdateInterval
+// during Run causes the intervalResetCh branch to fire, resetting the ticker
+// to the new interval. The test starts with a very long interval (10s), then
+// shortens it via UpdateInterval. The second tick should fire much sooner
+// than the original 10s interval, proving the reset path was taken.
+func TestRun_IntervalResetCh_ResetsTimer(t *testing.T) {
+	watchedRepo := &scriptedWatchedAddressRepo{
+		ticks: [][]model.WatchedAddress{
+			{{Address: "addr1"}}, // first tick (initial)
+			{{Address: "addr1"}}, // second tick (after interval reset)
+		},
+	}
+	jobCh := make(chan event.FetchJob, 10)
+
+	c := New(
+		model.ChainSolana, model.NetworkDevnet,
+		watchedRepo,
+		100, 10*time.Second, // very long initial interval
+		jobCh, slog.Default(),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- c.Run(ctx)
+	}()
+
+	// Wait for the initial tick to complete.
+	time.Sleep(20 * time.Millisecond)
+
+	// Shorten interval to 20ms — this sends a signal on intervalResetCh,
+	// which causes the Run loop to reset the ticker.
+	changed := c.UpdateInterval(20 * time.Millisecond)
+	require.True(t, changed, "UpdateInterval should return true for a new value")
+
+	// The second tick should happen within ~100ms (well under the original
+	// 10s interval). We wait up to 500ms to be safe.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		// Run should return with context error.
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after context cancellation")
+	}
+
+	// At least 2 jobs should have been enqueued: initial tick + after reset.
+	assert.GreaterOrEqual(t, len(jobCh), 2,
+		"expected at least 2 jobs (initial tick + post-reset tick)")
+}

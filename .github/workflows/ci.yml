@@ -87,8 +87,8 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
-      - name: Run SLO + benchmark tests (no race)
-        run: go test ./... -count=1 -bench=. -benchmem
+      - name: Run SLO threshold tests + benchmarks (no race)
+        run: go test ./... -count=1 -run='^TestSLO' -bench=. -benchmem -benchtime=1x
 
   go-lint:
     name: Go Lint
