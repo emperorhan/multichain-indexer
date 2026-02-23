@@ -240,3 +240,64 @@ func TestDerefStr(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// sleepContext() context cancellation tests
+// ---------------------------------------------------------------------------
+
+func TestSleepContext_ZeroDelay_ReturnsNil(t *testing.T) {
+	t.Parallel()
+	err := sleepContext(context.Background(), 0)
+	assert.NoError(t, err)
+}
+
+func TestSleepContext_PositiveDelay_ReturnsNil(t *testing.T) {
+	t.Parallel()
+	err := sleepContext(context.Background(), 1*time.Millisecond)
+	assert.NoError(t, err)
+}
+
+func TestSleepContext_ContextCancel_ReturnsError(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := sleepContext(ctx, 10*time.Second)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// ---------------------------------------------------------------------------
+// retryDelay() tests
+// ---------------------------------------------------------------------------
+
+func TestRetryDelay_ZeroStart_ReturnsZero(t *testing.T) {
+	t.Parallel()
+	ing := &Ingester{retryDelayStart: 0}
+	assert.Equal(t, time.Duration(0), ing.retryDelay(1))
+}
+
+func TestRetryDelay_FirstAttempt_ReturnsStart(t *testing.T) {
+	t.Parallel()
+	ing := &Ingester{retryDelayStart: 100 * time.Millisecond, retryDelayMax: time.Second}
+	d := ing.retryDelay(1)
+	// retryDelay adds 0-25% jitter, so check range.
+	assert.GreaterOrEqual(t, d, 100*time.Millisecond)
+	assert.LessOrEqual(t, d, 125*time.Millisecond)
+}
+
+func TestRetryDelay_FirstAttempt_CappedByMax(t *testing.T) {
+	t.Parallel()
+	ing := &Ingester{retryDelayStart: 2 * time.Second, retryDelayMax: time.Second}
+	d := ing.retryDelay(1)
+	// Should be capped to max (1s) + 0-25% jitter.
+	assert.GreaterOrEqual(t, d, time.Second)
+	assert.LessOrEqual(t, d, time.Second+250*time.Millisecond)
+}
+
+func TestRetryDelay_MultipleAttempts_ExponentialBackoff(t *testing.T) {
+	t.Parallel()
+	ing := &Ingester{retryDelayStart: 100 * time.Millisecond, retryDelayMax: 10 * time.Second}
+	d2 := ing.retryDelay(2) // 200ms + jitter
+	d3 := ing.retryDelay(3) // 400ms + jitter
+	assert.GreaterOrEqual(t, d2, 200*time.Millisecond)
+	assert.GreaterOrEqual(t, d3, 400*time.Millisecond)
+}
+

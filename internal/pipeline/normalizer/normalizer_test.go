@@ -8673,3 +8673,27 @@ func TestBuildCanonicalSolanaBalanceEvents_SelfTransfer_MixedWithRealTransfer(t 
 	assert.Equal(t, 1, activityTypes[model.ActivityFee], "fee should survive")
 	assert.Len(t, events, 3)
 }
+
+// ---------------------------------------------------------------------------
+// sleepContext() context cancellation tests
+// ---------------------------------------------------------------------------
+
+func TestSleepContext_ZeroDelay_ReturnsNil(t *testing.T) {
+	t.Parallel()
+	err := sleepContext(context.Background(), 0)
+	assert.NoError(t, err)
+}
+
+func TestSleepContext_PositiveDelay_ReturnsNil(t *testing.T) {
+	t.Parallel()
+	err := sleepContext(context.Background(), 1*time.Millisecond)
+	assert.NoError(t, err)
+}
+
+func TestSleepContext_ContextCancel_ReturnsError(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := sleepContext(ctx, 10*time.Second)
+	assert.ErrorIs(t, err, context.Canceled)
+}
