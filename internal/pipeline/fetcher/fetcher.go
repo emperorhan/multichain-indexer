@@ -432,34 +432,11 @@ func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job
 		return nil
 	}
 
-	// Fetch raw transactions with retry.
+	// Build signature info list and determine cursor values.
 	sigHashes := make([]string, len(sigs))
-	for i, sig := range sigs {
-		sigHashes[i] = sig.Hash
-	}
-
-	var rawTxs []json.RawMessage
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		var err error
-		rawTxs, err = f.adapter.FetchTransactions(ctx, sigHashes)
-		f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
-		if err == nil {
-			break
-		}
-		decision := retry.Classify(err)
-		if !decision.IsTransient() || attempt == maxAttempts {
-			return fmt.Errorf("block-scan FetchTransactions: %w", err)
-		}
-		delay := f.retryDelay(attempt)
-		log.Warn("block-scan FetchTransactions transient error, retrying",
-			"attempt", attempt, "delay", delay, "error", err)
-		if sleepErr := f.sleep(ctx, delay); sleepErr != nil {
-			return sleepErr
-		}
-	}
-
 	sigInfos := make([]event.SignatureInfo, len(sigs))
 	for i, sig := range sigs {
+		sigHashes[i] = sig.Hash
 		sigInfos[i] = event.SignatureInfo{
 			Hash:     sig.Hash,
 			Sequence: sig.Sequence,
@@ -470,76 +447,74 @@ func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job
 	newest := sigs[len(sigs)-1]
 	cursorValue := newest.Hash
 	now := time.Now()
-
 	maxBatch := f.effectiveBlockScanMaxBatchTxs()
+	totalSigs := len(sigs)
+	chunkCount := (totalSigs + maxBatch - 1) / maxBatch
 
-	// If the batch fits within the limit, send as a single batch (common path).
-	if len(rawTxs) <= maxBatch {
-		batch := event.RawBatch{
-			Chain:             job.Chain,
-			Network:           job.Network,
-			RawTransactions:   rawTxs,
-			Signatures:        sigInfos,
-			NewCursorValue:    &cursorValue,
-			NewCursorSequence: newest.Sequence,
-			BlockScanMode:     true,
-			WatchedAddresses:  job.WatchedAddresses,
-			CreatedAt:         now,
-		}
-
-		select {
-		case f.rawBatchCh <- batch:
-			metrics.FetcherTxFetched.WithLabelValues(job.Chain.String(), job.Network.String()).Add(float64(len(rawTxs)))
-			log.Info("block-scan raw batch sent",
-				"start_block", job.StartBlock,
-				"end_block", job.EndBlock,
-				"tx_count", len(rawTxs),
-			)
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		return nil
+	if chunkCount > 1 {
+		log.Info("block-scan streaming sub-batches",
+			"start_block", job.StartBlock,
+			"end_block", job.EndBlock,
+			"total_sigs", totalSigs,
+			"chunk_count", chunkCount,
+			"max_batch_txs", maxBatch,
+		)
 	}
 
-	// Chunk large batches to avoid memory spikes and gRPC payload limits.
-	totalTxs := len(rawTxs)
-	chunkCount := (totalTxs + maxBatch - 1) / maxBatch
-	log.Info("block-scan chunking large batch",
-		"start_block", job.StartBlock,
-		"end_block", job.EndBlock,
-		"total_tx_count", totalTxs,
-		"chunk_count", chunkCount,
-		"max_batch_txs", maxBatch,
-	)
-
+	// Fetch and send in sub-batches to bound peak memory usage.
+	// Each sub-batch fetches only its chunk of transactions from the RPC,
+	// sends through the pipeline, and allows GC before the next chunk.
 	for chunkIdx := 0; chunkIdx < chunkCount; chunkIdx++ {
 		start := chunkIdx * maxBatch
 		end := start + maxBatch
-		if end > totalTxs {
-			end = totalTxs
+		if end > totalSigs {
+			end = totalSigs
 		}
 
-		chunkTxs := rawTxs[start:end]
-		chunkSigs := sigInfos[start:end]
+		chunkSigHashes := sigHashes[start:end]
+		chunkSigInfos := sigInfos[start:end]
 		isLastChunk := chunkIdx == chunkCount-1
+
+		// Fetch this chunk's raw transactions with retry.
+		var chunkRawTxs []json.RawMessage
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			var err error
+			chunkRawTxs, err = f.adapter.FetchTransactions(ctx, chunkSigHashes)
+			f.recordRPCResult(job.Chain.String(), job.Network.String(), err != nil)
+			if err == nil {
+				break
+			}
+			decision := retry.Classify(err)
+			if !decision.IsTransient() || attempt == maxAttempts {
+				return fmt.Errorf("block-scan FetchTransactions chunk %d/%d: %w", chunkIdx+1, chunkCount, err)
+			}
+			delay := f.retryDelay(attempt)
+			log.Warn("block-scan FetchTransactions transient error, retrying",
+				"chunk", chunkIdx+1, "attempt", attempt, "delay", delay, "error", err)
+			if sleepErr := f.sleep(ctx, delay); sleepErr != nil {
+				return sleepErr
+			}
+		}
 
 		var chunkCursorValue *string
 		var chunkCursorSequence int64
 		if isLastChunk {
-			// Only the last sub-batch advances the watermark.
 			chunkCursorValue = &cursorValue
 			chunkCursorSequence = newest.Sequence
 		} else {
-			// Intermediate sub-batches hold the watermark at the previous position
+			// Intermediate sub-batches hold the watermark at the pre-job position
 			// so the watermark does not advance until all chunks are processed.
-			chunkCursorSequence = job.StartBlock
+			// StartBlock - 1 equals the previous watermark (coordinator computes
+			// startBlock = watermark + 1), ensuring a crash mid-chunk restarts
+			// from the same block range rather than skipping remaining tx.
+			chunkCursorSequence = job.StartBlock - 1
 		}
 
 		subBatch := event.RawBatch{
 			Chain:             job.Chain,
 			Network:           job.Network,
-			RawTransactions:   chunkTxs,
-			Signatures:        chunkSigs,
+			RawTransactions:   chunkRawTxs,
+			Signatures:        chunkSigInfos,
 			NewCursorValue:    chunkCursorValue,
 			NewCursorSequence: chunkCursorSequence,
 			BlockScanMode:     true,
@@ -549,15 +524,23 @@ func (f *Fetcher) processBlockScanJob(ctx context.Context, log *slog.Logger, job
 
 		select {
 		case f.rawBatchCh <- subBatch:
-			metrics.FetcherTxFetched.WithLabelValues(job.Chain.String(), job.Network.String()).Add(float64(len(chunkTxs)))
-			log.Info("block-scan raw sub-batch sent",
-				"start_block", job.StartBlock,
-				"end_block", job.EndBlock,
-				"chunk", chunkIdx+1,
-				"of", chunkCount,
-				"tx_count", len(chunkTxs),
-				"is_last", isLastChunk,
-			)
+			metrics.FetcherTxFetched.WithLabelValues(job.Chain.String(), job.Network.String()).Add(float64(len(chunkRawTxs)))
+			if chunkCount == 1 {
+				log.Info("block-scan raw batch sent",
+					"start_block", job.StartBlock,
+					"end_block", job.EndBlock,
+					"tx_count", len(chunkRawTxs),
+				)
+			} else {
+				log.Info("block-scan raw sub-batch sent",
+					"start_block", job.StartBlock,
+					"end_block", job.EndBlock,
+					"chunk", chunkIdx+1,
+					"of", chunkCount,
+					"tx_count", len(chunkRawTxs),
+					"is_last", isLastChunk,
+				)
+			}
 		case <-ctx.Done():
 			return ctx.Err()
 		}

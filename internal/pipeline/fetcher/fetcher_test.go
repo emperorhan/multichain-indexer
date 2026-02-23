@@ -2012,9 +2012,16 @@ func TestProcessBlockScanJob_ChunkingLargeBatch(t *testing.T) {
 		},
 	}
 
+	// Sub-batch fetch: 3 calls (chunk 0-2, 3-5, 6)
 	mockBase.EXPECT().
-		FetchTransactions(gomock.Any(), sigHashes).
-		Return(rawTxs, nil)
+		FetchTransactions(gomock.Any(), sigHashes[0:3]).
+		Return(rawTxs[0:3], nil)
+	mockBase.EXPECT().
+		FetchTransactions(gomock.Any(), sigHashes[3:6]).
+		Return(rawTxs[3:6], nil)
+	mockBase.EXPECT().
+		FetchTransactions(gomock.Any(), sigHashes[6:7]).
+		Return(rawTxs[6:7], nil)
 
 	rawBatchCh := make(chan event.RawBatch, 10)
 	f := &Fetcher{
@@ -2056,19 +2063,19 @@ func TestProcessBlockScanJob_ChunkingLargeBatch(t *testing.T) {
 	default:
 	}
 
-	// Sub-batch 1: 3 txs, cursor holds at start block
+	// Sub-batch 1: 3 txs, cursor holds at pre-job watermark (startBlock-1)
 	assert.Len(t, batches[0].RawTransactions, 3)
 	assert.Len(t, batches[0].Signatures, 3)
 	assert.Nil(t, batches[0].NewCursorValue, "intermediate sub-batch should have nil cursor value")
-	assert.Equal(t, int64(100), batches[0].NewCursorSequence, "intermediate sub-batch should hold cursor at start block")
+	assert.Equal(t, int64(99), batches[0].NewCursorSequence, "intermediate sub-batch should hold cursor at pre-job watermark (startBlock-1)")
 	assert.True(t, batches[0].BlockScanMode)
 	assert.Equal(t, []string{"0xaddr1", "0xaddr2"}, batches[0].WatchedAddresses)
 
-	// Sub-batch 2: 3 txs, cursor holds at start block
+	// Sub-batch 2: 3 txs, cursor holds at pre-job watermark (startBlock-1)
 	assert.Len(t, batches[1].RawTransactions, 3)
 	assert.Len(t, batches[1].Signatures, 3)
 	assert.Nil(t, batches[1].NewCursorValue, "intermediate sub-batch should have nil cursor value")
-	assert.Equal(t, int64(100), batches[1].NewCursorSequence, "intermediate sub-batch should hold cursor at start block")
+	assert.Equal(t, int64(99), batches[1].NewCursorSequence, "intermediate sub-batch should hold cursor at pre-job watermark (startBlock-1)")
 	assert.True(t, batches[1].BlockScanMode)
 	assert.Equal(t, []string{"0xaddr1", "0xaddr2"}, batches[1].WatchedAddresses)
 

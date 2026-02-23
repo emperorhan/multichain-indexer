@@ -563,6 +563,7 @@ func (n *Normalizer) processBatch(ctx context.Context, log *slog.Logger, client 
 		)
 	}
 	if len(decodeFailures) > 0 {
+		metrics.NormalizerDecodeFailures.WithLabelValues(batch.Chain.String(), batch.Network.String()).Add(float64(len(decodeFailures)))
 		log.Warn("decode isolation continued batch",
 			"stage", decodeStage,
 			"address", batch.Address,

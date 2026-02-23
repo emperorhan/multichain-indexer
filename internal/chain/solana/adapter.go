@@ -25,6 +25,7 @@ type Adapter struct {
 	maxPageSize      int
 	maxConcurrentTxs int
 	network          string
+	headCommitment   string // "finalized" (default) or "confirmed"
 }
 
 type AdapterOption func(*Adapter)
@@ -41,6 +42,14 @@ func WithNetwork(network string) AdapterOption {
 	return func(a *Adapter) { a.network = network }
 }
 
+func WithHeadCommitment(commitment string) AdapterOption {
+	return func(a *Adapter) {
+		if commitment == "confirmed" || commitment == "finalized" {
+			a.headCommitment = commitment
+		}
+	}
+}
+
 var _ chain.ChainAdapter = (*Adapter)(nil)
 var _ chain.BlockScanAdapter = (*Adapter)(nil)
 
@@ -50,6 +59,7 @@ func NewAdapter(rpcURL string, logger *slog.Logger, opts ...AdapterOption) *Adap
 		logger:           logger.With("chain", "solana"),
 		maxPageSize:      maxPageSize,
 		maxConcurrentTxs: maxConcurrentTxs,
+		headCommitment:   "finalized",
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -71,7 +81,7 @@ func (a *Adapter) Chain() string {
 }
 
 func (a *Adapter) GetHeadSequence(ctx context.Context) (int64, error) {
-	return a.client.GetSlot(ctx, "confirmed")
+	return a.client.GetSlot(ctx, a.headCommitment)
 }
 
 // FetchNewSignatures fetches signatures since the cursor, returning oldest-first.

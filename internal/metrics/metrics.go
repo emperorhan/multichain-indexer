@@ -90,6 +90,13 @@ var (
 		Help:      "Total normalizer errors (after retry exhaustion)",
 	}, []string{"chain", "network"})
 
+	NormalizerDecodeFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Subsystem: "normalizer",
+		Name:      "decode_failures_total",
+		Help:      "Total individual signature decode failures (partial decode isolation)",
+	}, []string{"chain", "network"})
+
 	NormalizerLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "indexer",
 		Subsystem: "normalizer",
