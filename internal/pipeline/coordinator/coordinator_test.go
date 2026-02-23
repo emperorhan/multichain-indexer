@@ -247,3 +247,226 @@ func TestTick_ContextCanceled(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, context.Canceled, err)
 }
+
+// ---------------------------------------------------------------------------
+// Backfill detection + channel saturation tests
+// ---------------------------------------------------------------------------
+
+func TestTickBlockScan_BackfillDetected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	mockWmRepo := storemocks.NewMockWatermarkRepository(ctrl)
+
+	jobCh := make(chan event.FetchJob, 10)
+	backfillCh := make(chan BackfillRequest, 1)
+
+	c := New(
+		model.ChainBase, model.NetworkMainnet,
+		mockWatchedAddr,
+		100, time.Second,
+		jobCh, slog.Default(),
+	).WithHeadProvider(&stubHeadProvider{head: 200}).
+		WithBlockScanMode(mockWmRepo).
+		WithBackfillChannel(backfillCh)
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return([]model.WatchedAddress{{Address: "addr1"}}, nil)
+
+	mockWmRepo.EXPECT().
+		GetWatermark(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return(&model.PipelineWatermark{IngestedSequence: 100}, nil)
+
+	fromBlock := int64(50)
+	mockWatchedAddr.EXPECT().
+		GetPendingBackfill(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return([]model.WatchedAddress{{Address: "addr1", BackfillFromBlock: &fromBlock}}, nil)
+
+	err := c.tick(context.Background())
+	require.NoError(t, err)
+
+	// Job should have been enqueued (startBlock=101).
+	require.Len(t, jobCh, 1)
+	job := <-jobCh
+	assert.Equal(t, int64(101), job.StartBlock)
+
+	// Backfill request should have been sent because 50 < 101.
+	require.Len(t, backfillCh, 1)
+	req := <-backfillCh
+	assert.Equal(t, model.ChainBase, req.Chain)
+	assert.Equal(t, model.NetworkMainnet, req.Network)
+	assert.Equal(t, int64(50), req.FromBlock)
+}
+
+func TestTickBlockScan_BackfillNotTriggered_WhenAheadOfWatermark(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	mockWmRepo := storemocks.NewMockWatermarkRepository(ctrl)
+
+	jobCh := make(chan event.FetchJob, 10)
+	backfillCh := make(chan BackfillRequest, 1)
+
+	c := New(
+		model.ChainBase, model.NetworkMainnet,
+		mockWatchedAddr,
+		100, time.Second,
+		jobCh, slog.Default(),
+	).WithHeadProvider(&stubHeadProvider{head: 200}).
+		WithBlockScanMode(mockWmRepo).
+		WithBackfillChannel(backfillCh)
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return([]model.WatchedAddress{{Address: "addr1"}}, nil)
+
+	mockWmRepo.EXPECT().
+		GetWatermark(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return(&model.PipelineWatermark{IngestedSequence: 100}, nil)
+
+	// BackfillFromBlock=200 is ahead of startBlock=101, so no backfill should be sent.
+	fromBlock := int64(200)
+	mockWatchedAddr.EXPECT().
+		GetPendingBackfill(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return([]model.WatchedAddress{{Address: "addr1", BackfillFromBlock: &fromBlock}}, nil)
+
+	err := c.tick(context.Background())
+	require.NoError(t, err)
+
+	// Job enqueued normally.
+	require.Len(t, jobCh, 1)
+
+	// No backfill request because 200 >= 101.
+	assert.Empty(t, backfillCh, "backfill channel should be empty when BackfillFromBlock >= startBlock")
+}
+
+func TestTickBlockScan_BackfillChannelFull(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	mockWmRepo := storemocks.NewMockWatermarkRepository(ctrl)
+
+	jobCh := make(chan event.FetchJob, 10)
+	// Zero-buffer channel: already full by construction (no reader).
+	backfillCh := make(chan BackfillRequest) // unbuffered
+
+	c := New(
+		model.ChainBase, model.NetworkMainnet,
+		mockWatchedAddr,
+		100, time.Second,
+		jobCh, slog.Default(),
+	).WithHeadProvider(&stubHeadProvider{head: 200}).
+		WithBlockScanMode(mockWmRepo).
+		WithBackfillChannel(backfillCh)
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return([]model.WatchedAddress{{Address: "addr1"}}, nil)
+
+	mockWmRepo.EXPECT().
+		GetWatermark(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return(&model.PipelineWatermark{IngestedSequence: 100}, nil)
+
+	fromBlock := int64(50)
+	mockWatchedAddr.EXPECT().
+		GetPendingBackfill(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return([]model.WatchedAddress{{Address: "addr1", BackfillFromBlock: &fromBlock}}, nil)
+
+	// Should not panic or deadlock. The default branch in the select drops
+	// the backfill request when the channel is full.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		err := c.tick(context.Background())
+		require.NoError(t, err)
+	}()
+
+	select {
+	case <-done:
+		// Completed without deadlock.
+	case <-time.After(2 * time.Second):
+		t.Fatal("tick deadlocked on full backfill channel")
+	}
+
+	// Job should still have been enqueued successfully.
+	require.Len(t, jobCh, 1)
+
+	// Backfill channel remains empty (unbuffered, no reader consumed it).
+	assert.Empty(t, backfillCh)
+}
+
+func TestTickBlockScan_NoBackfillWithoutChannel(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+	mockWmRepo := storemocks.NewMockWatermarkRepository(ctrl)
+
+	jobCh := make(chan event.FetchJob, 10)
+	// No backfillCh set -- backfillCh remains nil.
+
+	c := New(
+		model.ChainBase, model.NetworkMainnet,
+		mockWatchedAddr,
+		100, time.Second,
+		jobCh, slog.Default(),
+	).WithHeadProvider(&stubHeadProvider{head: 200}).
+		WithBlockScanMode(mockWmRepo)
+	// Intentionally NOT calling WithBackfillChannel.
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return([]model.WatchedAddress{{Address: "addr1"}}, nil)
+
+	mockWmRepo.EXPECT().
+		GetWatermark(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return(&model.PipelineWatermark{IngestedSequence: 100}, nil)
+
+	// GetPendingBackfill should NOT be called because backfillCh is nil.
+	// gomock will fail if an unexpected call is made.
+
+	err := c.tick(context.Background())
+	require.NoError(t, err)
+	require.Len(t, jobCh, 1)
+}
+
+func TestTickBlockScan_JobChannelFull_BlockingRetry(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockWatchedAddr := storemocks.NewMockWatchedAddressRepository(ctrl)
+
+	// Unbuffered job channel: first send attempt hits the default branch,
+	// second send blocks until ctx is canceled.
+	jobCh := make(chan event.FetchJob)
+
+	c := New(
+		model.ChainBase, model.NetworkMainnet,
+		mockWatchedAddr,
+		100, time.Second,
+		jobCh, slog.Default(),
+	).WithHeadProvider(&stubHeadProvider{head: 200})
+
+	mockWatchedAddr.EXPECT().
+		GetActive(gomock.Any(), model.ChainBase, model.NetworkMainnet).
+		Return([]model.WatchedAddress{{Address: "addr1"}}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := c.tick(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded,
+		"tick should return context deadline error when job channel is full")
+}
+
+func TestWithBackfillChannel(t *testing.T) {
+	jobCh := make(chan event.FetchJob, 1)
+	c := New(
+		model.ChainSolana, model.NetworkDevnet,
+		nil, 100, time.Second,
+		jobCh, slog.Default(),
+	)
+
+	assert.Nil(t, c.backfillCh, "backfillCh should be nil by default")
+
+	backfillCh := make(chan BackfillRequest, 5)
+	result := c.WithBackfillChannel(backfillCh)
+
+	assert.Same(t, c, result, "WithBackfillChannel should return the same coordinator for chaining")
+	assert.NotNil(t, c.backfillCh, "backfillCh should be set after WithBackfillChannel")
+}
