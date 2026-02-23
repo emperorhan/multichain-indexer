@@ -987,3 +987,604 @@ func TestEdge_ZeroDelta_NegativeBalance_Combined(t *testing.T) {
 		}
 	}
 }
+
+// ===========================================================================
+// EVM: internal transaction — native value transfer via trace (tx:N path)
+// ===========================================================================
+
+func TestEdge_EVM_InternalTx_NativeValueTransfer(t *testing.T) {
+	const watched = "0xinternaltxwatched111111111111111111111111"
+	const contractAddr = "0xdex_contract_addr11111111111111111111111111"
+
+	// Sidecar returns internal native transfer discovered via trace (event_path: "tx:0")
+	resp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{{
+			TxHash: "0xinternal_native_001", BlockCursor: 20700000, BlockTime: 1701100000,
+			FeeAmount: "42000000000000", FeePayer: watched, Status: string(model.TxStatusSuccess),
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				// Internal call: contract sends ETH to watched address
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "internal_transfer",
+					ProgramId: contractAddr, ContractAddress: "ETH",
+					Address: watched, CounterpartyAddress: contractAddr,
+					Delta: "750000000000000000", // 0.75 ETH received via internal call
+					TokenSymbol: "ETH", TokenDecimals: 18, TokenType: string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path":              "tx:0",
+						"base_gas_used":           "42000",
+						"base_effective_gas_price": "1000000000",
+						"trace_type":              "CALL",
+						"trace_depth":             "1",
+					},
+				},
+			},
+		}},
+	}
+
+	res := runEdgeCaseNormalizeAndIngest(t, model.ChainEthereum, model.NetworkMainnet, watched, resp, "2000000000000000000", nil)
+
+	require.Len(t, res.normalized.Transactions, 1)
+	txBEs := res.normalized.Transactions[0].BalanceEvents
+
+	// Internal transfer (deposit) + fee = 2 events
+	require.Len(t, txBEs, 2, "1 internal transfer + 1 fee")
+
+	var deposit, fee *event.NormalizedBalanceEvent
+	for i := range txBEs {
+		switch txBEs[i].ActivityType {
+		case model.ActivityDeposit:
+			deposit = &txBEs[i]
+		case model.ActivityFee:
+			fee = &txBEs[i]
+		}
+	}
+
+	require.NotNil(t, deposit, "must have deposit from internal transfer")
+	assert.Equal(t, "750000000000000000", deposit.Delta)
+	assert.Equal(t, "internal_transfer", deposit.EventAction)
+	assert.Equal(t, "base_log", deposit.EventPathType)
+	assert.Contains(t, deposit.EventPath, "tx:0", "internal tx uses tx:N event path")
+	assert.NotEmpty(t, deposit.EventID)
+
+	require.NotNil(t, fee, "must have fee event")
+	assert.True(t, strings.HasPrefix(fee.Delta, "-"))
+
+	// Ingested: both events applied
+	require.Len(t, res.ingested, 2)
+	for _, ev := range res.ingested {
+		assert.True(t, ev.BalanceApplied)
+	}
+}
+
+// ===========================================================================
+// EVM: nested internal calls (3-level depth) — multiple value transfers
+// ===========================================================================
+
+func TestEdge_EVM_InternalTx_NestedCalls(t *testing.T) {
+	const watched = "0xnestedwatched1111111111111111111111111111"
+	const router = "0xrouter11111111111111111111111111111111111"
+	const pool = "0xpool111111111111111111111111111111111111111"
+
+	// 3-level nested: user → router → pool → user (refund)
+	// Sidecar decodes these as separate balance events from trace
+	resp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{{
+			TxHash: "0xnested_internal_001", BlockCursor: 20800000, BlockTime: 1701200000,
+			FeeAmount: "84000000000000", FeePayer: watched, Status: string(model.TxStatusSuccess),
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				// Level 1: user sends 1 ETH to router (direct tx value)
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "native_transfer",
+					ProgramId: "0x0", ContractAddress: "ETH",
+					Address: watched, CounterpartyAddress: router,
+					Delta: "-1000000000000000000",
+					TokenSymbol: "ETH", TokenDecimals: 18, TokenType: string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path": "tx:0",
+						"base_gas_used": "84000", "base_effective_gas_price": "1000000000",
+						"trace_type": "CALL", "trace_depth": "0",
+					},
+				},
+				// Level 3: pool refunds 0.1 ETH back to user (internal transfer)
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "internal_transfer",
+					ProgramId: pool, ContractAddress: "ETH",
+					Address: watched, CounterpartyAddress: pool,
+					Delta: "100000000000000000",
+					TokenSymbol: "ETH", TokenDecimals: 18, TokenType: string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"event_path": "tx:1",
+						"trace_type": "CALL", "trace_depth": "2",
+					},
+				},
+				// ERC20 token received from swap (log-based event)
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "erc20_transfer",
+					ProgramId: "0xdac17f958d2ee523a2206206994597c13d831ec7", ContractAddress: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+					Address: watched, CounterpartyAddress: pool,
+					Delta: "1500000000",
+					TokenSymbol: "USDT", TokenName: "Tether USD", TokenDecimals: 6, TokenType: string(model.TokenTypeFungible),
+					Metadata: map[string]string{
+						"base_event_path": "log:3", "base_log_index": "3",
+					},
+				},
+			},
+		}},
+	}
+
+	res := runEdgeCaseNormalizeAndIngest(t, model.ChainEthereum, model.NetworkMainnet, watched, resp, "5000000000000000000", nil)
+
+	require.Len(t, res.normalized.Transactions, 1)
+	txBEs := res.normalized.Transactions[0].BalanceEvents
+
+	// 1 withdrawal (tx:0) + 1 deposit (tx:1 refund) + 1 ERC20 deposit (log:3) + 1 fee = 4
+	require.Len(t, txBEs, 4, "2 native transfers + 1 ERC20 + 1 fee")
+
+	activities := map[model.ActivityType]int{}
+	paths := map[string]bool{}
+	for _, be := range txBEs {
+		activities[be.ActivityType]++
+		paths[be.EventPath] = true
+	}
+
+	assert.Equal(t, 1, activities[model.ActivityWithdrawal], "1 ETH withdrawal")
+	assert.Equal(t, 2, activities[model.ActivityDeposit], "1 ETH refund + 1 USDT deposit")
+	assert.Equal(t, 1, activities[model.ActivityFee], "1 fee")
+
+	// Different event paths for trace (tx:N) vs log (log:N) events
+	assert.True(t, paths["tx:0"], "direct value transfer path")
+	assert.True(t, paths["tx:1"], "internal refund path")
+	assert.True(t, paths["log:3"], "ERC20 log path")
+
+	// All event IDs unique (trace and log events have distinct canonical IDs)
+	ids := map[string]struct{}{}
+	for _, be := range txBEs {
+		_, dup := ids[be.EventID]
+		assert.False(t, dup, "duplicate event_id: %s", be.EventID)
+		ids[be.EventID] = struct{}{}
+	}
+}
+
+// ===========================================================================
+// EVM: internal tx mixed with ERC20 — trace + log events coexist
+// ===========================================================================
+
+func TestEdge_EVM_InternalTx_MixedTraceAndLog(t *testing.T) {
+	const watched = "0xmixedtracelogaddr11111111111111111111111111"
+	const dex = "0xdex222222222222222222222222222222222222222"
+
+	// Swap tx: send ETH via internal call, receive USDC via log
+	resp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{{
+			TxHash: "0xmixed_trace_log_001", BlockCursor: 20900000, BlockTime: 1701300000,
+			FeeAmount: "63000000000000", FeePayer: watched, Status: string(model.TxStatusSuccess),
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				// Trace-discovered: ETH sent to DEX
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "internal_transfer",
+					ProgramId: dex, ContractAddress: "ETH",
+					Address: watched, CounterpartyAddress: dex,
+					Delta: "-500000000000000000",
+					TokenSymbol: "ETH", TokenDecimals: 18, TokenType: string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"base_event_path": "tx:0",
+						"base_gas_used": "63000", "base_effective_gas_price": "1000000000",
+						"trace_type": "CALL",
+					},
+				},
+				// Log-based: USDC received
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "erc20_transfer",
+					ProgramId: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", ContractAddress: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+					Address: watched, CounterpartyAddress: dex,
+					Delta: "1000000000",
+					TokenSymbol: "USDC", TokenDecimals: 6, TokenType: string(model.TokenTypeFungible),
+					Metadata: map[string]string{"base_event_path": "log:5", "base_log_index": "5"},
+				},
+			},
+		}},
+	}
+
+	res := runEdgeCaseNormalizeAndIngest(t, model.ChainEthereum, model.NetworkMainnet, watched, resp, "3000000000000000000", nil)
+
+	require.Len(t, res.normalized.Transactions, 1)
+	txBEs := res.normalized.Transactions[0].BalanceEvents
+
+	// Internal ETH withdrawal + USDC deposit + fee = 3
+	require.Len(t, txBEs, 3, "1 trace-based + 1 log-based + 1 fee")
+
+	var traceEvent, logEvent *event.NormalizedBalanceEvent
+	for i := range txBEs {
+		if txBEs[i].EventPath == "tx:0" {
+			traceEvent = &txBEs[i]
+		}
+		if txBEs[i].EventPath == "log:5" {
+			logEvent = &txBEs[i]
+		}
+	}
+	require.NotNil(t, traceEvent, "must have trace-based event")
+	require.NotNil(t, logEvent, "must have log-based event")
+
+	// Both have same event_path_type (base_log) but different event_paths
+	assert.Equal(t, "base_log", traceEvent.EventPathType)
+	assert.Equal(t, "base_log", logEvent.EventPathType)
+	assert.NotEqual(t, traceEvent.EventID, logEvent.EventID, "trace and log events must have distinct IDs")
+
+	// Different contract addresses
+	assert.Equal(t, "eth", strings.ToLower(traceEvent.ContractAddress))
+	assert.Contains(t, strings.ToLower(logEvent.ContractAddress), "0xa0b86991")
+
+	// Ingested with correct types
+	for _, ev := range res.ingested {
+		assert.True(t, ev.BalanceApplied)
+	}
+}
+
+// ===========================================================================
+// EVM: fully reverted tx — all transfers discarded, only L1 fee survives
+// ===========================================================================
+
+func TestEdge_EVM_Reverted_OnlyFeeL1(t *testing.T) {
+	const watched = "0xrevertedl1addr11111111111111111111111111111"
+
+	resp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{{
+			TxHash: "0xreverted_l1_001", BlockCursor: 21000000, BlockTime: 1701400000,
+			FeeAmount: "2100000000000000", FeePayer: watched, Status: string(model.TxStatusFailed),
+			Error: stringPtr("execution reverted"),
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				// Sidecar might still return events for failed tx — normalizer discards them
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "native_transfer",
+					ProgramId: "0x0", ContractAddress: "ETH",
+					Address: watched, CounterpartyAddress: "0xrecipient44444444444444444444444444444444",
+					Delta: "-5000000000000000000",
+					TokenSymbol: "ETH", TokenDecimals: 18, TokenType: string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"base_event_path": "tx:0",
+						"base_gas_used": "100000", "base_effective_gas_price": "21000000000",
+					},
+				},
+				// ERC20 that also gets reverted
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "erc20_transfer",
+					ProgramId: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", ContractAddress: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+					Address: watched, CounterpartyAddress: "0xspender5555555555555555555555555555555555",
+					Delta: "-100000000",
+					TokenSymbol: "USDC", TokenDecimals: 6, TokenType: string(model.TokenTypeFungible),
+					Metadata: map[string]string{"base_event_path": "log:0", "base_log_index": "0"},
+				},
+			},
+		}},
+	}
+
+	res := runEdgeCaseNormalizeAndIngest(t, model.ChainEthereum, model.NetworkMainnet, watched, resp, "10000000000000000000", nil)
+
+	require.Len(t, res.normalized.Transactions, 1)
+	txBEs := res.normalized.Transactions[0].BalanceEvents
+
+	// No transfer events survive
+	for _, be := range txBEs {
+		assert.NotEqual(t, model.ActivityDeposit, be.ActivityType, "no deposits on reverted tx")
+		assert.NotEqual(t, model.ActivityWithdrawal, be.ActivityType, "no withdrawals on reverted tx")
+		assert.NotEqual(t, model.ActivitySelfTransfer, be.ActivityType, "no self-transfers on reverted tx")
+	}
+
+	// L1 chain (ethereum) emits a single ActivityFee
+	require.Len(t, txBEs, 1, "only 1 fee event for L1 reverted tx")
+	assert.Equal(t, model.ActivityFee, txBEs[0].ActivityType)
+	assert.True(t, strings.HasPrefix(txBEs[0].Delta, "-"), "fee delta must be negative")
+
+	// Ingested
+	require.Len(t, res.ingested, 1)
+	assert.True(t, res.ingested[0].BalanceApplied)
+}
+
+// ===========================================================================
+// EVM L2: reverted tx — only L2+L1 fee components survive
+// ===========================================================================
+
+func TestEdge_EVM_Reverted_L2FeeDecomposition(t *testing.T) {
+	const watched = "0xrevertedl2addr11111111111111111111111111111"
+
+	resp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{{
+			TxHash: "0xreverted_l2_001", BlockCursor: 21100000, BlockTime: 1701500000,
+			FeeAmount: "300000000000000", FeePayer: watched, Status: string(model.TxStatusFailed),
+			Error: stringPtr("execution reverted: insufficient liquidity"),
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				// Transfer that should be discarded
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "native_transfer",
+					ProgramId: "0x0", ContractAddress: "ETH",
+					Address: watched, CounterpartyAddress: "0xpool66666666666666666666666666666666666666",
+					Delta: "-1000000000000000000",
+					TokenSymbol: "ETH", TokenDecimals: 18, TokenType: string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"base_event_path":         "tx:0",
+						"base_gas_used":           "150000",
+						"base_effective_gas_price": "1000000000",
+						"fee_data_l1":             "150000000000000",
+					},
+				},
+			},
+		}},
+	}
+
+	res := runEdgeCaseNormalizeAndIngest(t, model.ChainBase, model.NetworkSepolia, watched, resp, "5000000000000000000", nil)
+
+	require.Len(t, res.normalized.Transactions, 1)
+	txBEs := res.normalized.Transactions[0].BalanceEvents
+
+	// No transfer events survive
+	for _, be := range txBEs {
+		assert.NotEqual(t, model.ActivityDeposit, be.ActivityType)
+		assert.NotEqual(t, model.ActivityWithdrawal, be.ActivityType)
+	}
+
+	// L2 chain: should have FeeExecutionL2 + FeeDataL1
+	activities := map[model.ActivityType]int{}
+	for _, be := range txBEs {
+		activities[be.ActivityType]++
+	}
+	assert.Equal(t, 1, activities[model.ActivityFeeExecutionL2], "L2 execution fee survives")
+	assert.Equal(t, 1, activities[model.ActivityFeeDataL1], "L1 data fee survives")
+	assert.Equal(t, 0, activities[model.ActivityFee], "no generic fee on L2")
+	require.Len(t, txBEs, 2, "only 2 fee events for L2 reverted tx")
+
+	// Both fees are negative
+	for _, be := range txBEs {
+		assert.True(t, strings.HasPrefix(be.Delta, "-"),
+			"fee delta should be negative: %s (%s)", be.Delta, be.ActivityType)
+	}
+}
+
+// ===========================================================================
+// EVM: internal tx that reverts, but outer tx succeeds (partial revert)
+// ===========================================================================
+
+func TestEdge_EVM_InternalTx_PartialRevert(t *testing.T) {
+	const watched = "0xpartialrevertaddr1111111111111111111111111"
+	const failContract = "0xfail_contract_addr1111111111111111111111111"
+
+	// Outer tx succeeds. Inner call reverts, but sidecar correctly
+	// does NOT emit balance events for the reverted inner call.
+	// Only the successful outer transfer + fee appear.
+	resp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{{
+			TxHash: "0xpartial_revert_001", BlockCursor: 21200000, BlockTime: 1701600000,
+			FeeAmount: "105000000000000", FeePayer: watched, Status: string(model.TxStatusSuccess),
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				// Successful outer ERC20 transfer (this survives)
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "erc20_transfer",
+					ProgramId: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", ContractAddress: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+					Address: watched, CounterpartyAddress: "0xrecipient77777777777777777777777777777777",
+					Delta: "-50000000",
+					TokenSymbol: "USDC", TokenDecimals: 6, TokenType: string(model.TokenTypeFungible),
+					Metadata: map[string]string{"base_event_path": "log:2", "base_log_index": "2"},
+				},
+				// Outer tx-level native value transfer (also survives)
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "native_transfer",
+					ProgramId: "0x0", ContractAddress: "ETH",
+					Address: watched, CounterpartyAddress: failContract,
+					Delta: "-200000000000000000",
+					TokenSymbol: "ETH", TokenDecimals: 18, TokenType: string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"base_event_path":         "tx:0",
+						"base_gas_used":           "105000",
+						"base_effective_gas_price": "1000000000",
+					},
+				},
+			},
+		}},
+	}
+
+	res := runEdgeCaseNormalizeAndIngest(t, model.ChainEthereum, model.NetworkMainnet, watched, resp, "10000000000000000000", nil)
+
+	require.Len(t, res.normalized.Transactions, 1)
+	txBEs := res.normalized.Transactions[0].BalanceEvents
+
+	// USDC withdrawal + ETH withdrawal + fee = 3
+	require.Len(t, txBEs, 3, "2 successful transfers + 1 fee")
+
+	activities := map[model.ActivityType]int{}
+	for _, be := range txBEs {
+		activities[be.ActivityType]++
+	}
+	assert.Equal(t, 2, activities[model.ActivityWithdrawal], "USDC + ETH withdrawals")
+	assert.Equal(t, 1, activities[model.ActivityFee], "1 fee")
+
+	// All events ingested successfully
+	require.Len(t, res.ingested, 3)
+	for _, ev := range res.ingested {
+		assert.True(t, ev.BalanceApplied)
+		assert.NotEmpty(t, ev.EventID)
+	}
+}
+
+// ===========================================================================
+// EVM: batch with mixed success and reverted txs
+// ===========================================================================
+
+func TestEdge_EVM_Reverted_MultipleTxsInBatch(t *testing.T) {
+	const watched = "0xbatchmixaddr11111111111111111111111111111111"
+
+	resp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{
+			// TX 1: SUCCESS — normal transfer
+			{
+				TxHash: "0xbatch_success_001", BlockCursor: 21300000, BlockTime: 1701700000,
+				FeeAmount: "21000000000000", FeePayer: watched, Status: string(model.TxStatusSuccess),
+				BalanceEvents: []*sidecarv1.BalanceEventInfo{
+					{
+						EventCategory: string(model.EventCategoryTransfer), EventAction: "native_transfer",
+						ProgramId: "0x0", ContractAddress: "ETH",
+						Address: watched, CounterpartyAddress: "0xrecipient88888888888888888888888888888888",
+						Delta: "-1000000000000000000",
+						TokenSymbol: "ETH", TokenDecimals: 18, TokenType: string(model.TokenTypeNative),
+						Metadata: map[string]string{
+							"base_event_path": "tx:0", "base_gas_used": "21000",
+							"base_effective_gas_price": "1000000000",
+						},
+					},
+				},
+			},
+			// TX 2: FAILED — only fee survives
+			{
+				TxHash: "0xbatch_fail_001", BlockCursor: 21300001, BlockTime: 1701700010,
+				FeeAmount: "63000000000000", FeePayer: watched, Status: string(model.TxStatusFailed),
+				Error: stringPtr("out of gas"),
+				BalanceEvents: []*sidecarv1.BalanceEventInfo{
+					{
+						EventCategory: string(model.EventCategoryTransfer), EventAction: "erc20_transfer",
+						ProgramId: "0xdead", ContractAddress: "0xdead",
+						Address: watched, CounterpartyAddress: "0xrecipient99999999999999999999999999999999",
+						Delta: "-500000000",
+						TokenSymbol: "USDC", TokenDecimals: 6, TokenType: string(model.TokenTypeFungible),
+						Metadata: map[string]string{
+							"base_event_path": "log:0",
+							"base_gas_used": "63000", "base_effective_gas_price": "1000000000",
+						},
+					},
+				},
+			},
+			// TX 3: SUCCESS — deposit (fee payer is not watched)
+			{
+				TxHash: "0xbatch_success_002", BlockCursor: 21300002, BlockTime: 1701700020,
+				FeeAmount: "0", FeePayer: "0xsomeoneelse111111111111111111111111111111", Status: string(model.TxStatusSuccess),
+				BalanceEvents: []*sidecarv1.BalanceEventInfo{
+					{
+						EventCategory: string(model.EventCategoryTransfer), EventAction: "erc20_transfer",
+						ProgramId: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", ContractAddress: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+						Address: watched, CounterpartyAddress: "0xsender11111111111111111111111111111111111",
+						Delta: "2000000000",
+						TokenSymbol: "USDC", TokenDecimals: 6, TokenType: string(model.TokenTypeFungible),
+						Metadata: map[string]string{"base_event_path": "log:1", "base_log_index": "1"},
+					},
+				},
+			},
+		},
+	}
+
+	walletID := "wallet-batch"
+	orgID := "org-batch"
+	rawBatch := &event.RawBatch{
+		Chain: model.ChainEthereum, Network: model.NetworkMainnet,
+		Address: watched, WalletID: &walletID, OrgID: &orgID,
+		RawTransactions: []json.RawMessage{
+			json.RawMessage(`{}`), json.RawMessage(`{}`), json.RawMessage(`{}`),
+		},
+		Signatures: []event.SignatureInfo{
+			{Hash: "0xbatch_success_001", Sequence: 21300000},
+			{Hash: "0xbatch_fail_001", Sequence: 21300001},
+			{Hash: "0xbatch_success_002", Sequence: 21300002},
+		},
+	}
+
+	res := runEdgeCaseNormalizeAndIngest(t, model.ChainEthereum, model.NetworkMainnet, watched, resp, "10000000000000000000", rawBatch)
+
+	require.Len(t, res.normalized.Transactions, 3, "3 txs in batch")
+
+	// TX1 (success): 1 transfer + 1 fee = 2
+	tx1BEs := res.normalized.Transactions[0].BalanceEvents
+	assert.Len(t, tx1BEs, 2, "TX1: transfer + fee")
+
+	// TX2 (failed): only fee event (transfer discarded)
+	tx2BEs := res.normalized.Transactions[1].BalanceEvents
+	for _, be := range tx2BEs {
+		assert.True(t,
+			be.ActivityType == model.ActivityFee ||
+				be.ActivityType == model.ActivityFeeExecutionL2 ||
+				be.ActivityType == model.ActivityFeeDataL1,
+			"TX2 reverted: only fee events, got: %s", be.ActivityType)
+	}
+	assert.Len(t, tx2BEs, 1, "TX2: only fee")
+
+	// TX3 (success, fee_payer != watched): only deposit, no fee
+	tx3BEs := res.normalized.Transactions[2].BalanceEvents
+	assert.Len(t, tx3BEs, 1, "TX3: only deposit (fee payer is not watched)")
+	assert.Equal(t, model.ActivityDeposit, tx3BEs[0].ActivityType)
+
+	// Total: 2 + 1 + 1 = 4 events ingested
+	require.Len(t, res.ingested, 4, "4 total events across 3 txs")
+
+	// All event IDs unique across the batch
+	ids := map[string]struct{}{}
+	for _, ev := range res.ingested {
+		_, dup := ids[ev.EventID]
+		assert.False(t, dup, "duplicate event_id: %s", ev.EventID)
+		ids[ev.EventID] = struct{}{}
+	}
+}
+
+// ===========================================================================
+// EVM: reverted tx with zero gas price (edge: fee = 0 → no events at all)
+// ===========================================================================
+
+func TestEdge_EVM_Reverted_ZeroGasPrice(t *testing.T) {
+	const watched = "0xzerogasaddr111111111111111111111111111111111"
+
+	resp := &sidecarv1.DecodeSolanaTransactionBatchResponse{
+		Results: []*sidecarv1.TransactionResult{{
+			TxHash: "0xzero_gas_revert_001", BlockCursor: 21400000, BlockTime: 1701800000,
+			// Fee = 0 (e.g., priority fee = 0 and base fee = 0 on some L2s)
+			FeeAmount: "0", FeePayer: watched, Status: string(model.TxStatusFailed),
+			Error: stringPtr("execution reverted"),
+			BalanceEvents: []*sidecarv1.BalanceEventInfo{
+				{
+					EventCategory: string(model.EventCategoryTransfer), EventAction: "native_transfer",
+					ProgramId: "0x0", ContractAddress: "ETH",
+					Address: watched, CounterpartyAddress: "0xrecipientaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					Delta: "-100000000000000000",
+					TokenSymbol: "ETH", TokenDecimals: 18, TokenType: string(model.TokenTypeNative),
+					Metadata: map[string]string{
+						"base_event_path": "tx:0",
+						"base_gas_used": "21000", "base_effective_gas_price": "0",
+					},
+				},
+			},
+		}},
+	}
+
+	// Test normalize-only (skip ingester — 0 events causes no BulkUpsert)
+	ctrl := gomock.NewController(t)
+	normalizedCh := make(chan event.NormalizedBatch, 1)
+	n := New("unused", 2*time.Second, nil, normalizedCh, 1, slog.Default())
+	mockDecoder := normalizermocks.NewMockChainDecoderClient(ctrl)
+	mockDecoder.EXPECT().
+		DecodeSolanaTransactionBatch(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *sidecarv1.DecodeSolanaTransactionBatchRequest, _ ...grpc.CallOption) (*sidecarv1.DecodeSolanaTransactionBatchResponse, error) {
+			return resp, nil
+		}).Times(1)
+
+	walletID := "wallet-zero"
+	orgID := "org-zero"
+	rawBatch := event.RawBatch{
+		Chain: model.ChainEthereum, Network: model.NetworkMainnet,
+		Address: watched, WalletID: &walletID, OrgID: &orgID,
+		RawTransactions: []json.RawMessage{json.RawMessage(`{}`)},
+		Signatures:      []event.SignatureInfo{{Hash: "0xzero_gas_revert_001", Sequence: 21400000}},
+	}
+
+	require.NoError(t, n.processBatch(context.Background(), slog.Default(), mockDecoder, rawBatch))
+
+	var normalized event.NormalizedBatch
+	select {
+	case normalized = <-normalizedCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for normalized batch")
+	}
+
+	require.Len(t, normalized.Transactions, 1)
+	txBEs := normalized.Transactions[0].BalanceEvents
+
+	// Transfer discarded (reverted). Fee = 0 → shouldEmitBaseFeeEvent returns false.
+	// So NO events at all.
+	assert.Len(t, txBEs, 0, "reverted tx with 0 fee emits nothing")
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
