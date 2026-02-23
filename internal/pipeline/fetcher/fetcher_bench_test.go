@@ -207,27 +207,6 @@ func BenchmarkSuppressBoundaryCursorSignatures(b *testing.B) {
 	}
 }
 
-// BenchmarkSuppressPostCutoffSignatures measures cutoff filtering with varying
-// fractions of signatures beyond the cutoff.
-func BenchmarkSuppressPostCutoffSignatures(b *testing.B) {
-	sigs := make([]chain.SignatureInfo, 500)
-	for i := range sigs {
-		sigs[i] = chain.SignatureInfo{
-			Hash:     fmt.Sprintf("sig-%06d", i),
-			Sequence: int64(1000 + i),
-		}
-	}
-
-	for _, cutoff := range []int64{1250, 1400, 1499} {
-		name := fmt.Sprintf("cutoff=%d/500", cutoff)
-		b.Run(name, func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				suppressPostCutoffSignatures(sigs, cutoff)
-			}
-		})
-	}
-}
-
 // BenchmarkSuppressPreCursorSequenceCarryover benchmarks the seam carryover
 // suppression logic that merges and partitions signatures around the cursor
 // boundary.

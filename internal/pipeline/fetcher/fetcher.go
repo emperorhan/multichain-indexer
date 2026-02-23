@@ -1060,21 +1060,6 @@ func suppressBoundaryCursorSignatures(chainID model.Chain, sigs []chain.Signatur
 	return filtered
 }
 
-func suppressPostCutoffSignatures(sigs []chain.SignatureInfo, cutoffSeq int64) []chain.SignatureInfo {
-	if len(sigs) == 0 || cutoffSeq <= 0 {
-		return sigs
-	}
-
-	filtered := make([]chain.SignatureInfo, 0, len(sigs))
-	for _, sig := range sigs {
-		if sig.Sequence > cutoffSeq {
-			continue
-		}
-		filtered = append(filtered, sig)
-	}
-	return filtered
-}
-
 func suppressPreCursorSequenceCarryover(
 	sigs []chain.SignatureInfo,
 	previousCursorSequence int64,
